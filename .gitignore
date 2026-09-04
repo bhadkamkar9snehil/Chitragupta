@@ -33,3 +33,4 @@ Thumbs.db
 # Local tooling metadata, not part of the project
 .stfolder/
 .claude/
+.git_sync.log

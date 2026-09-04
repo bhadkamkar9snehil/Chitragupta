@@ -883,7 +883,17 @@ def main() -> None:
                               "machine's own last claim was) -- never pass this from an "
                               "agent turn just to silence the mismatch error.")
     parser.add_argument("--response-type", default=None,
-                         choices=["QUESTION", "UPDATE", "RESOLUTION", "L3_ESCALATION"])
+                         choices=["QUESTION", "UPDATE", "RESOLUTION", "L3_ESCALATION", "NEEDS_HUMAN_ACTION"])
+    parser.add_argument("--fail-run", action="store_true",
+                         help="Mark --run-id FAILED with --error-message (EXEC "
+                              "Hermes_L2_Fail_Run_Usp) so it becomes eligible for a plain retry "
+                              "after --retry-after-minutes. Does NOT touch the L3 human queue -- "
+                              "for pipeline-tracking failures (Kanban lost the run), not genuine "
+                              "investigation outcomes. Use --response-type L3_ESCALATION/"
+                              "NEEDS_HUMAN_ACTION via --publish-response for those instead.")
+    parser.add_argument("--error-message", default=None, help="Required with --fail-run.")
+    parser.add_argument("--retry-after-minutes", type=int, default=5,
+                         help="With --fail-run: how soon the ticket becomes re-pollable.")
     parser.add_argument("--reply-text", default=None)
     parser.add_argument("--problem-summary", default=None)
     parser.add_argument("--findings", default=None)
@@ -1216,6 +1226,17 @@ def main() -> None:
                 except Exception:
                     pass  # audit logging must never block the actual read
             print(json.dumps(result_payload, indent=2, default=str))
+            return
+
+        if args.fail_run:
+            if not (args.run_id and args.error_message):
+                parser.error("--fail-run requires --run-id and --error-message")
+            client.fail_run(
+                run_id=args.run_id,
+                error_message=args.error_message,
+                retry_after_minutes=args.retry_after_minutes,
+            )
+            print(json.dumps({"status": "FAILED", "run_id": args.run_id}, indent=2))
             return
 
         if args.publish_response:

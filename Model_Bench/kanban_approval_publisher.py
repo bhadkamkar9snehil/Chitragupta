@@ -41,7 +41,11 @@ import sys
 from pathlib import Path
 
 STATE_PATH = Path(__file__).parent / "kanban_published_runs.json"
-ORCHESTRATOR_PATH = Path(__file__).parent.parent / "Hermes_Orchestrator.py"
+# 2026-09-05: was Path(__file__).parent.parent -- see audit_kanban_completions.py
+# for the full explanation. This is the actual PUBLISH script -- if this
+# bug hit here too, real approved responses would silently never reach
+# the ticket at all despite the reviewer approving them.
+ORCHESTRATOR_PATH = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Hermes_Orchestrator.py"
 
 # 2026-09-04: Hermes_Orchestrator.py needs pyodbc, which only exists in the
 # Windows Python -- confirmed live that WSL's own interpreters (bare python3

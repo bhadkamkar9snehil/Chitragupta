@@ -56,13 +56,24 @@ except Exception:
 
 # Plain scripts, invoked with the current interpreter (all stdlib-only, no
 # extra deps -- confirmed against kanban_reject_bridge.py,
-# kanban_approval_publisher.py, drain_and_summarize.py).
+# kanban_approval_publisher.py, drain_and_summarize.py,
+# repair_incomplete_completions.py).
 #
 # kanban_forward_bridge.py retired 2026-09-04 (later): ticket_scout.py now
 # creates the reviewer card immediately, gated on the investigator's card
 # via native --parent dependency promotion -- no cron/hook-triggered
 # cross-board bridge needed for that hop anymore.
+#
+# repair_incomplete_completions.py runs FIRST, deliberately, and on every
+# kanban_complete/kanban_block (not just the investigator's) -- confirmed
+# live 2026-09-05: 73% of recent investigator completions called
+# kanban_complete with a real finding in `summary` but no response_type/
+# reply_text in metadata, which the reviewer/publisher both require. This
+# salvages what's salvageable before the reviewer card even promotes to
+# ready, so a genuinely good investigation doesn't get rejected purely for
+# a metadata-packaging failure.
 _PY_SCRIPTS = [
+    "repair_incomplete_completions.py",
     "kanban_reject_bridge.py",
     "kanban_approval_publisher.py",
     "drain_and_summarize.py",

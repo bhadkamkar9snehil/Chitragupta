@@ -26,9 +26,21 @@ BEGIN
 
     SET @ResponseType = UPPER(LTRIM(RTRIM(@ResponseType)));
 
-    IF @ResponseType NOT IN ('QUESTION', 'UPDATE', 'RESOLUTION', 'L3_ESCALATION')
+    /*
+      2026-09-05: NEEDS_HUMAN_ACTION added as a genuinely distinct
+      category from L3_ESCALATION, per explicit user direction --
+      L3_ESCALATION means the bot could NOT diagnose/solve the problem;
+      NEEDS_HUMAN_ACTION means the bot DID diagnose it and knows the fix,
+      but a human has to actually execute it (outside the bot's write
+      authority, a floor/business action, etc.). Conflating these into one
+      "L3_ESCALATION" bucket was exactly what made the human queue
+      unreadable -- a human opening it couldn't tell "nobody knows what's
+      wrong" from "we know exactly what's wrong and what to do about it"
+      without reading every row.
+    */
+    IF @ResponseType NOT IN ('QUESTION', 'UPDATE', 'RESOLUTION', 'L3_ESCALATION', 'NEEDS_HUMAN_ACTION')
     BEGIN
-        RAISERROR('ResponseType must be QUESTION, UPDATE, RESOLUTION, or L3_ESCALATION.', 16, 1);
+        RAISERROR('ResponseType must be QUESTION, UPDATE, RESOLUTION, L3_ESCALATION, or NEEDS_HUMAN_ACTION.', 16, 1);
         RETURN;
     END;
 
@@ -140,7 +152,7 @@ BEGIN
             InvestigationJson = COALESCE(@InvestigationJson, InvestigationJson),
             ActionsTakenJson = @AutoActionsJson,
             RequiresUserInput = CASE WHEN @ResponseType = 'QUESTION' THEN 1 ELSE 0 END,
-            EscalateToL3 = CASE WHEN @ResponseType = 'L3_ESCALATION' THEN 1 ELSE 0 END,
+            EscalateToL3 = CASE WHEN @ResponseType IN ('L3_ESCALATION', 'NEEDS_HUMAN_ACTION') THEN 1 ELSE 0 END,
             IsResolved = CASE WHEN @ResponseType = 'RESOLUTION' THEN 1 ELSE 0 END,
             TicketModifiedOnSeen = @TicketModifiedOn,
             NextEligibleOn =
@@ -170,18 +182,38 @@ BEGIN
           here so every call path that publishes an L3_ESCALATION response
           populates the human L3 work queue, not just one specific wrapper.
         */
-        IF @ResponseType = 'L3_ESCALATION'
+        /*
+          2026-09-05: two genuinely distinct human-queue categories, per
+          explicit direction -- do not conflate "couldn't solve it" with
+          "solved it, needs a human to execute." EscalationCategory:
+            UNRESOLVED         = L3_ESCALATION: the bot could not
+                                  diagnose/solve the problem.
+            NEEDS_HUMAN_ACTION = NEEDS_HUMAN_ACTION: the bot diagnosed the
+                                  problem and knows the fix (@Resolution),
+                                  but a human must actually execute it.
+          The generic safety-net "didn't publish in time" rescue no longer
+          reaches this table at all -- it was never a real escalation of
+          either kind, just the pipeline losing track of a run, and
+          dumping it in the human queue was pure noise. That case now goes
+          through Hermes_L2_Fail_Run_Usp instead (plain retry, no human
+          queue), see enforce_publish_safety_net.py.
+        */
+        IF @ResponseType IN ('L3_ESCALATION', 'NEEDS_HUMAN_ACTION')
         BEGIN
             INSERT INTO dbo.Hermes_L3_Escalation_Trn_Tbl
             (
                 RunID, TicketID, TicketNo, EscalatedByBot,
                 ProblemSummary, Findings, RootCause, SuggestedAction, ReplyText,
-                InvestigationJson, CreatedBy, Source
+                InvestigationJson, EscalationCategory, CreatedBy, Source
             )
             SELECT
                 r.ID, r.TicketID, c.TicketNo, r.WorkerID,
-                @ProblemSummary, @Findings, @RootCause, NULL, @ReplyText,
-                @InvestigationJson, @HermesUserID, 'T-SQL'
+                @ProblemSummary, @Findings, @RootCause,
+                CASE WHEN @ResponseType = 'NEEDS_HUMAN_ACTION' THEN @Resolution ELSE NULL END,
+                @ReplyText,
+                @InvestigationJson,
+                CASE WHEN @ResponseType = 'NEEDS_HUMAN_ACTION' THEN 'NEEDS_HUMAN_ACTION' ELSE 'UNRESOLVED' END,
+                @HermesUserID, 'T-SQL'
             FROM dbo.Hermes_L2_Response_Trn_Tbl r
             LEFT JOIN dbo.Complaint_Mst_Tbl c ON c.ID = r.TicketID
             WHERE r.ID = @RunID

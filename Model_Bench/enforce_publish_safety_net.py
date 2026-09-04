@@ -33,12 +33,21 @@ Usage (deterministic, --no-agent cron job):
 import os
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-import pyodbc
+# 2026-09-05: switched off direct pyodbc + `wsl -d Ubuntu` wrapping -- both
+# assumed this script runs on Windows natively, but it's deployed to and
+# invoked from inside WSL. Broke live after a `hermes update` changed the
+# cron script-execution environment (pyodbc importable but
+# libodbc.so.2 missing). Routes SQL through Hermes_Orchestrator.py --query
+# via the Windows Python interpreter instead, matching every other script
+# in this project; `hermes` itself is called directly when already native
+# to WSL, wrapped through `wsl -d Ubuntu` only when invoked from Windows.
+_HAS_WSL = shutil.which("wsl") is not None
+ORCHESTRATOR_PYTHON = sys.executable if _HAS_WSL else r"/mnt/c/Python314/python.exe"
 
 STALE_AFTER_MINUTES = 45
 # History: 20 -> 30 -> 15 -> 5, all tuned around the OLD single-turn
@@ -58,32 +67,44 @@ STALE_AFTER_MINUTES = 45
 # claimed via --poll in ticket_scout.py that crashed before the kanban
 # task itself got created. 45 is a true last-resort number for that
 # narrow case, not a responsiveness knob for normal investigation time.
-ORCHESTRATOR_PATH = Path(__file__).parent.parent / "Hermes_Orchestrator.py"
+# 2026-09-05: was Path(__file__).parent.parent -- see audit_kanban_completions.py
+# for the full explanation. Confirmed live: this script's find_stale_claims()
+# was silently failing every single deployed run ("could not query stale
+# claims"), caught, and reported as "No stale unpublished claims found" --
+# indistinguishable from genuinely finding nothing.
+ORCHESTRATOR_PATH = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Hermes_Orchestrator.py"
 
 
 def find_stale_claims(server, database, username, password, stale_after_minutes=STALE_AFTER_MINUTES):
-    conn = pyodbc.connect(
-        f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={server};DATABASE={database};"
-        f"UID={username};PWD={password};TrustServerCertificate=yes"
-    )
+    # ClaimedOn is written in the SQL Server's own local time (server
+    # GETDATE(), not UTC -- confirmed live 2026-09-03: comparing it
+    # against Python's UTC "now" made every real stale claim look like
+    # it was in the future, since local time here runs ~5.5h ahead of
+    # UTC). Do the cutoff entirely in SQL against GETDATE() instead of
+    # computing it client-side, so this can't drift out of sync with
+    # whatever timezone the server actually uses.
+    cmd = [
+        ORCHESTRATOR_PYTHON, str(ORCHESTRATOR_PATH),
+        "--server", server, "--database", database,
+        "--username", username, "--password", password,
+        "--query",
+        "SELECT ID, TicketID, ClaimedOn FROM Hermes_L2_Response_Trn_Tbl "
+        "WHERE ProcessStatus IN ('CLAIMED', 'INVESTIGATING') AND IsActive = 1 "
+        f"AND ClaimedOn < DATEADD(MINUTE, -{int(stale_after_minutes)}, GETDATE())",
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        print(f"WARNING: could not query stale claims: {r.stderr.strip()[:300]}")
+        return []
     try:
-        cur = conn.cursor()
-        # ClaimedOn is written in the SQL Server's own local time (server
-        # GETDATE(), not UTC -- confirmed live 2026-09-03: comparing it
-        # against Python's UTC "now" made every real stale claim look like
-        # it was in the future, since local time here runs ~5.5h ahead of
-        # UTC). Do the cutoff entirely in SQL against GETDATE() instead of
-        # computing it client-side, so this can't drift out of sync with
-        # whatever timezone the server actually uses.
-        cur.execute(
-            "SELECT ID, TicketID, ClaimedOn FROM Hermes_L2_Response_Trn_Tbl "
-            "WHERE ProcessStatus IN ('CLAIMED', 'INVESTIGATING') AND IsActive = 1 "
-            "AND ClaimedOn < DATEADD(MINUTE, -?, GETDATE())",
-            stale_after_minutes,
-        )
-        return [{"run_id": str(r[0]), "ticket_id": str(r[1]), "claimed_on": str(r[2])} for r in cur.fetchall()]
-    finally:
-        conn.close()
+        rows = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        print(f"WARNING: could not parse stale-claims query output: {r.stdout[:300]}")
+        return []
+    return [
+        {"run_id": str(row["ID"]), "ticket_id": str(row["TicketID"]), "claimed_on": str(row.get("ClaimedOn"))}
+        for row in rows
+    ]
 
 
 _NON_TERMINAL_KANBAN_STATUSES = {"ready", "blocked", "triage", "running", "review", "scheduled"}
@@ -119,10 +140,11 @@ def find_live_kanban_run_ids():
     OPEN to the old blind behavior for that sweep rather than silently
     never escalating anything."""
     try:
-        result = subprocess.run(
-            ["wsl", "-d", "Ubuntu", "--", "bash", "-lc", "hermes kanban list --json"],
-            capture_output=True, text=True, timeout=30,
-        )
+        if _HAS_WSL:
+            cmd = ["wsl", "-d", "Ubuntu", "--", "bash", "-lc", "hermes kanban list --json"]
+        else:
+            cmd = ["hermes", "kanban", "list", "--json"]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             print(f"WARNING: kanban list failed ({result.stderr.strip()[:200]}), "
                   f"falling back to blind wall-clock behavior this sweep.")
@@ -147,27 +169,33 @@ def find_live_kanban_run_ids():
 
 
 def force_escalate(run_id, server, database, username, password, dry_run):
-    reply = (
-        "This ticket was claimed for automated investigation, but the investigating "
-        "process did not publish a response within the expected time window. "
-        "Escalating for manual review -- no automated finding was recorded for this run."
+    """2026-09-05: no longer publishes a fake L3_ESCALATION. Confirmed live
+    this had grown to ~90% of all rows in the human L3 queue -- a pipeline
+    losing track of a run is not a real investigation outcome (neither
+    "couldn't solve it" nor "solved it, needs a human"), and dumping it in
+    the same queue as genuine escalations was pure noise a human had to
+    read through. Just fail the run cleanly instead -- Hermes_L2_Fail_Run_Usp
+    sets a retry window, and the ticket becomes eligible again through the
+    normal --poll path, same as any other stale/crashed run."""
+    error_message = (
+        "Safety net: run claimed but never published within the expected time window "
+        "and Kanban has lost all track of it (no live task). Auto-failed for retry."
     )
     if dry_run:
-        print(f"[DRY RUN] Would force-publish L3_ESCALATION for run {run_id}")
+        print(f"[DRY RUN] Would fail run {run_id} for retry")
         return
-    import subprocess
     result = subprocess.run(
-        [sys.executable, str(ORCHESTRATOR_PATH),
+        [ORCHESTRATOR_PYTHON, str(ORCHESTRATOR_PATH),
          "--server", server, "--database", database,
          "--username", username, "--password", password,
-         "--publish-response", "--run-id", run_id, "--force-run-id",
-         "--response-type", "L3_ESCALATION", "--reply-text", reply],
+         "--fail-run", "--run-id", run_id,
+         "--error-message", error_message, "--retry-after-minutes", "5"],
         capture_output=True, text=True, timeout=60,
     )
     if result.returncode != 0:
-        print(f"FAILED to force-publish for run {run_id}: {result.stderr.strip()}")
+        print(f"FAILED to fail-run for run {run_id}: {result.stderr.strip()}")
     else:
-        print(f"Force-published L3_ESCALATION for run {run_id}: {result.stdout.strip()}")
+        print(f"Failed run {run_id} for retry: {result.stdout.strip()}")
 
 
 def main():
