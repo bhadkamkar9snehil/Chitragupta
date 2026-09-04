@@ -1,0 +1,35 @@
+# Secrets -- never commit
+.env
+*.env
+**/.hermes_infra_creds/**
+*password*
+*credential*
+
+# Large/unrelated
+AgentCode.zip
+.venv/
+__pycache__/
+*.pyc
+
+# Local state / scratch, not meant to be shared
+*.db
+*.db-journal
+.summarized_runs.json
+.l2_trace_drain_cursor.json
+kanban_bridged_forward.json
+kanban_bridged_reject.json
+kanban_published_runs.json
+.hermes_l2_last_claim.json
+tmp_*.py
+tmp_*.sql
+_temp_*.py
+_publish*.py
+_publish*.sql
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+
+# Local tooling metadata, not part of the project
+.stfolder/
+.claude/

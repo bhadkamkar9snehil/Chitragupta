@@ -1,0 +1,1 @@
+This folder contains reference or knowledge documents about various systems.

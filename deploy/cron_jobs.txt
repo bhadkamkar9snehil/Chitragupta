@@ -1,0 +1,53 @@
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Scheduled Jobs                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  8c71d7dddafb [active]
+    Name:      Session maintenance
+    Schedule:  every 360m
+    Repeat:    ∞
+    Next run:  2026-09-04T23:46:41.651326+00:00
+    Deliver:   local
+    Script:    session_maintenance.py
+    Mode:      no-agent (script stdout delivered directly)
+    Last run:  2026-09-04T17:46:41.651326+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-04T17:46:30.374572+00:00)
+    Execution: completed  2734d3f73c99449bad6c4b39cbcde468
+
+  3390225c3ad7 [active]
+    Name:      L2 Publish Safety Net (no-LLM)
+    Schedule:  every 5m
+    Repeat:    ∞
+    Next run:  2026-09-04T17:53:42.163859+00:00
+    Deliver:   local
+    Script:    enforce_publish_safety_net.py
+    Mode:      no-agent (script stdout delivered directly)
+    Last run:  2026-09-04T17:48:42.163859+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-04T17:47:41.753256+00:00)
+    Execution: completed  4d85d1cd0fd44983a55436975e2d9928
+
+  f1915c187f11 [active]
+    Name:      L2 Ticket Scout (Kanban bridge)
+    Schedule:  every 2m
+    Repeat:    ∞
+    Next run:  2026-09-04T17:51:43.514097+00:00
+    Deliver:   local
+    Script:    ticket_scout.py
+    Mode:      no-agent (script stdout delivered directly)
+    Last run:  2026-09-04T17:49:43.514097+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-04T17:48:43.568086+00:00)
+    Execution: completed  ac14fda29aed4cb08c1afe7c9471390a
+
+  97bfe2a17d9d [active]
+    Name:      L2 Kanban Completion Audit (no-LLM)
+    Schedule:  every 10m
+    Repeat:    ∞
+    Next run:  2026-09-04T17:58:01.628051+00:00
+    Deliver:   local
+    Script:    audit_kanban_completions.py
+    Mode:      no-agent (script stdout delivered directly)
+    Last run:  2026-09-04T17:48:01.628051+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-04T17:45:59.905480+00:00)
+    Execution: completed  f801d59452344b2892e0ec332c065702
+

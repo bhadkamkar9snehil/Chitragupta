@@ -1,0 +1,7 @@
+name: xstudio-l2-orchestrator
+version: "1.1.0"
+description: "Event-driven trigger for the L2 kanban bridges: the moment kanban_complete/kanban_block succeeds, immediately fires the reject bridge, approval publisher, and trace-log drain/summarize instead of waiting for a cron tick. Debounced (skips if a run of the same script is already in flight). The forward hop (investigator -> reviewer) no longer needs a bridge at all -- ticket_scout.py creates the reviewer card gated via native --parent, so it auto-promotes on its own. Single kanban board now; the old l2-review board and its dispatch are retired."
+author: AI Helpdesk / Hermes L2 project
+requires_env: []
+provides_hooks:
+  - post_tool_call

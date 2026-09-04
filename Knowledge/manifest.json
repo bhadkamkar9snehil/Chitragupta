@@ -1,0 +1,131 @@
+{
+  "_comment": "Machine-readable mirror of task-router.md. Keep both in sync -- this file is for script-based lookup, task-router.md is the human-readable source of truth. All paths are relative to Knowledge/.",
+  "verified": "2026-09-02",
+  "always_load": [
+    "mental-model.md",
+    "execution-model.md"
+  ],
+  "skills": [
+    {
+      "name": "xstudio-l2-ticket-workflow",
+      "description": "Poll, claim, and publish one Helpdesk L2 ticket cycle.",
+      "scope": "procedure"
+    },
+    {
+      "name": "xstudio-sap-api-investigation",
+      "description": "Investigate stuck/failed SAP posting or API transactions.",
+      "scope": "domain"
+    },
+    {
+      "name": "xstudio-sohar-heat-execution",
+      "description": "Investigate EAF/LRF/CCM per-heat data and billet events.",
+      "scope": "domain"
+    },
+    {
+      "name": "xstudio-quality-delay-workorder",
+      "description": "Investigate work orders, quality results, or delay/OEE data.",
+      "scope": "domain"
+    },
+    {
+      "name": "xstudio-sql-write-discipline",
+      "description": "Follow official-SP-first discipline before any SQL write.",
+      "scope": "cross-cutting"
+    }
+  ],
+  "routes": [
+    {
+      "route": "helpdesk_ticket",
+      "description": "Ticket workflow, requester, category, priority, assignment, response/close.",
+      "keywords": ["ticket status", "priority", "assignment", "workflow", "close ticket", "response type"],
+      "skill": "xstudio-l2-ticket-workflow",
+      "load": ["helpdesk-workflow-binding.md"],
+      "live_sql_leads": ["XStudio_Helpdesk.dbo.Complaint_Mst_Tbl", "ComplaintType_Mst_Tbl", "priority_mst"]
+    },
+    {
+      "route": "sap_posting",
+      "description": "SAP production/consumption/by-product posting failed, pending, duplicate, no material document.",
+      "keywords": ["SAP", "posting stuck", "pending", "material document", "no document number", "goods movement"],
+      "skill": "xstudio-sap-api-investigation",
+      "load": ["xbatch-investigation-surfaces.md#sap-posting--integration-errors", "sql-write-model.md"],
+      "live_sql_leads": ["SAP_Posting_Tbl", "MES_SAP_Production_Trn_Tbl", "MES_SAP_Consumption_Trn_Tbl", "XMES_SAP_*_API_Error_Usp"]
+    },
+    {
+      "route": "api_transaction",
+      "description": "API failed / response error / transaction ID mentioned / whether an API call happened at all.",
+      "keywords": ["API", "transaction ID", "UsageDecision", "API call", "response error"],
+      "skill": "xstudio-sap-api-investigation",
+      "load": ["xbatch-investigation-surfaces.md#api-transaction-summary-cross-cutting-diagnostic-surface"],
+      "live_sql_leads": ["XMES_Get_API_Transaction_Summary", "XStudio_API_Error_Log_Mst_Tbl", "XMES_API_Transaction_Summary_Fact_Tbl"]
+    },
+    {
+      "route": "work_order",
+      "description": "Work order missing, wrong state, or order-creation issue.",
+      "keywords": ["work order", "WO", "campaign", "order creation"],
+      "skill": "xstudio-quality-delay-workorder",
+      "load": ["xbatch-investigation-surfaces.md#work-order-execution", "sql-write-model.md"],
+      "live_sql_leads": ["XBatch_Work_Order_Mst_Tbl", "XMES_WorkOrders_Creation", "MES_SAP_WO_Trn_Tbl", "XMES_SAP_WorkOrder_Creation_API_Error_Usp"]
+    },
+    {
+      "route": "heat_execution",
+      "description": "Heat missing, wrong EAF/LRF/CCM state, per-heat value looks wrong, heat attributed to wrong ID, lot-number confusion, SMS Plant Process Time timing/state question.",
+      "keywords": ["heat", "EAF", "LRF", "CCM", "tapping", "arcing", "casting position", "lot number", "SMS Plant Process Time", "turret"],
+      "skill": "xstudio-sohar-heat-execution",
+      "load": ["sohar-sms-event-workflows.md", "xbatch-investigation-surfaces.md#production--tracking-heat-billet-furnace"],
+      "load_note": "sohar-sms-event-workflows.md is primary for this route -- it has the actual event state-machine and workflow-SP logic, not just table names.",
+      "live_sql_leads": ["EAF_PER_HEAT", "LRF_Per_Heat", "CCM_Per_Heat", "SMS_Plant_Process_EventTime"]
+    },
+    {
+      "route": "billet_inventory",
+      "description": "Billet missing, wrong location/furnace/yard/transfer, billet count or weight looks wrong.",
+      "keywords": ["billet", "yard", "furnace position", "billet count", "billet weight", "cross section"],
+      "skill": "xstudio-sohar-heat-execution",
+      "load": ["xbatch-investigation-surfaces.md#billet--yard--inventory", "sohar-sms-event-workflows.md#billets-cast-count--data-insert-flow", "sql-write-model.md"],
+      "load_note": "sohar-sms-event-workflows.md's Billets Cast Count section has the real weight-calculation formula (count x 12 x SetWeight).",
+      "live_sql_leads": ["Billet_Inventory", "BilletsCastCount", "Billet_Cross_Section", "XMES_CCM_Billet_Genealogy_Trn_Tbl"]
+    },
+    {
+      "route": "quality",
+      "description": "Chemistry/sample/result recording/Usage Decision/Repeat Result issue.",
+      "keywords": ["chemistry", "spectro", "sample", "result", "usage decision", "UD", "RR", "deviation"],
+      "skill": "xstudio-quality-delay-workorder",
+      "load": ["xbatch-investigation-surfaces.md#quality-rr--ud--spectro--chemistry"],
+      "live_sql_leads": ["Heat_Chemistry_Quality_Data", "Quality_Spectro_File", "Quality_Spectro_Sample", "Quality_Spectro_Result", "MES_SAP_UsageDecision_Trn_Tbl", "MES_SAP_RR_Trn_Tbl"]
+    },
+    {
+      "route": "performance",
+      "description": "Delay/OEE/downtime/performance issue.",
+      "keywords": ["delay", "OEE", "downtime", "equipment delay", "agency delay"],
+      "skill": "xstudio-quality-delay-workorder",
+      "load": ["xbatch-investigation-surfaces.md#delay--oee"],
+      "live_sql_leads": ["Delay_Trn_Tbl", "ShiftDelayEntry", "DelayTypeMST", "DelayCategory_Master", "DelayAgency_Master"]
+    },
+    {
+      "route": "hermes_runtime",
+      "description": "Question about which Hermes-runtime table/SP does what, or how the L2 audit trail itself works.",
+      "keywords": ["Hermes response", "Hermes SQL action", "L2 audit", "investigation run"],
+      "skill": "xstudio-l2-ticket-workflow",
+      "load": ["hermes-runtime-database-design.md", "hermes-sp-catalog.md"],
+      "live_sql_leads": ["Hermes_L2_Response_Trn_Tbl", "Hermes_L2_SQL_Action_Trn_Tbl"]
+    },
+    {
+      "route": "discover",
+      "description": "Unknown or cross-domain symptom with no clear route match.",
+      "keywords": [],
+      "skill": "xstudio-sql-write-discipline",
+      "load": ["xbatch-investigation-surfaces.md", "sql-write-model.md"],
+      "live_sql_leads": ["sys.tables", "sys.columns", "sys.procedures", "sys.parameters", "sys.sql_modules"]
+    }
+  ],
+  "identifier_routing": {
+    "Saptransactionid": "api_transaction or sap_posting",
+    "TransactionID": "api_transaction or sap_posting",
+    "HeatNo": "heat_execution",
+    "HeatID": "heat_execution",
+    "InspectionLot": "quality",
+    "WorkOrder": "work_order",
+    "ManufacturingOrder": "work_order",
+    "BilletNo": "billet_inventory",
+    "SubLotNo": "billet_inventory",
+    "EquipmentID": "performance"
+  }
+}
