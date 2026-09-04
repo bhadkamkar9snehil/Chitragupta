@@ -1,66 +1,431 @@
 # Chitragupta — XStudio Hermes L2 Helpdesk
 
-An autonomous L2 support pipeline for the XStudio/XMES platform, built on
-[Hermes Agent](https://hermes-agent.nousresearch.com). It polls the live
-Helpdesk queue, investigates tickets against the real XStudio_Xbatch/
-XStudio_Helpdesk schema, has a second bot verify every proposed response
-before it's published, escalates genuinely stuck cases to a human work
-queue, and keeps a full, human-readable audit trail (and compute-cost
-accounting) of every investigation attempt — resolved or not.
+An autonomous L2 support pipeline for the XStudio/XMES manufacturing
+platform, built on [Hermes Agent](https://hermes-agent.nousresearch.com).
+It polls the live Helpdesk ticket queue, investigates tickets against the
+real XStudio_Xbatch/XStudio_Helpdesk database, has a second bot verify
+every proposed response before it's published, escalates genuinely stuck
+cases to a human work queue, and keeps a full, human-readable audit trail
+(with compute-cost accounting) of every investigation attempt — resolved
+or not.
 
 Named after the Hindu deity of meticulous record-keeping and judgment:
 this system's job is exactly that — investigate, keep a complete account,
 and decide what needs to go to a human.
 
-## Layout
+This README documents the whole system end to end: architecture, every
+script, every SQL object, every skill, how to deploy it on new
+infrastructure, and what to do after a Hermes update.
 
-- **`Hermes_Orchestrator.py`** — the two primitives everything else is
-  built on: atomic ticket claim (`--poll`) and audited response write-back
-  (`--publish-response`). Investigation itself is the bot's own job, using
-  its own tools.
-- **`Model_Bench/`** — deterministic bridge/orchestration scripts (kanban
-  dispatch, reject/approval publishing, trace summarization) plus the two
-  Hermes plugins (`xstudio_l2_trace_plugin`, `xstudio_l2_orchestrator_plugin`)
-  that make the pipeline event-driven instead of cron-polled.
-- **`Knowledge/`** — the deployable SQL layer (six numbered files,
-  concatenated into `00_Hermes_L2_FULL_INSTALL.sql`), plus schema/SP
-  reference dumps and routing knowledge.
-- **`deploy/`** — everything that otherwise lives *only* inside Hermes's
-  own install (`~/.hermes/...`) and wouldn't survive a fresh install or an
-  update on its own: each profile's `SOUL.md` + `config.yaml`, the
-  `xstudio-*` skills, plugin manifests, and the live cron schedule. See
-  `Model_Bench/mirror_wsl_artifacts.sh` to refresh this from a running
-  instance.
-- **`patches/`** — fixes to third-party packages inside Hermes's own venv
-  that get silently wiped by an update. **Read `patches/POST_UPDATE.md`
-  after every `hermes update`.**
-- **`AGENTS.md` / `CLAUDE.md`** — the actual agent-facing operating
-  instructions: folder map, deployment state, SQL write discipline, naming
-  gotchas. Read these first if you're an agent picking this project back
-  up.
+---
 
-## Setting this up on new infra
+## 1. Architecture
 
-1. Deploy the SQL layer (`Knowledge/00_Hermes_L2_FULL_INSTALL.sql`, then
-   `Knowledge/99_postflight.sql`).
-2. Install Hermes Agent, create the profiles listed in `deploy/profiles/`.
-3. Copy each profile's `SOUL.md`/`config.yaml` and the `xstudio-*` skills
-   from `deploy/` into the matching `~/.hermes/profiles/<name>/...` paths.
-4. Deploy the plugins from `Model_Bench/xstudio_l2_*_plugin/` and enable
-   them per profile.
-5. Set `MSSQL_MCP_SERVER`/`MSSQL_MCP_USER`/`MSSQL_MCP_PASSWORD` in the
-   environment — every script reads credentials from there, nothing is
-   hardcoded.
-6. Recreate the cron schedule from `deploy/cron_jobs.json`.
-7. Set up mem0 (`Model_Bench/setup_mem0.py`) if you want cross-run memory —
-   needs an OpenAI-compatible LLM endpoint and an Ollama instance for
-   embeddings; see the script for exact config.
-8. Run `patches/apply_mem0_json_object_patch.py` if using mem0 with
-   LM Studio as the LLM provider (LM Studio rejects mem0's default
-   `response_format`).
+```
+                    ┌─────────────────────┐
+  Complaint_Mst_Tbl │  XStudio Helpdesk    │  (live production ticket queue)
+  (Status='Enter')  │  SQL Server          │
+                    └──────────┬──────────┘
+                               │ polled every 2m (ticket_scout.py cron)
+                               ▼
+                    ┌─────────────────────┐
+                    │  Hermes_Orchestrator │  --poll: atomic claim,
+                    │  .py                 │  full ticket context
+                    └──────────┬──────────┘
+                               ▼
+                    ┌─────────────────────┐
+              ┌────►│ kanban card:        │  assignee l2-gemma
+              │     │ investigator        │  skill: xstudio-l2-ticket-workflow
+              │     └──────────┬──────────┘
+              │                │ kanban_complete(summary, metadata)
+              │                ▼ auto-promotes via native --parent gating
+              │     ┌─────────────────────┐
+              │     │ kanban card:         │  assignee l2-gemma-verifier
+              │     │ reviewer             │  skill: xstudio-l2-draft-verifier
+              │     └──────────┬──────────┘
+              │        approve │  reject → kanban_block(reason)
+              │                ▼                    │
+              │     ┌─────────────────────┐          │
+              │     │ kanban_approval_     │          │
+              │     │ publisher.py (hook-  │          │
+   rework     │     │ triggered, no-LLM)   │          │
+   card       │     └──────────┬──────────┘          │
+   created◄───┘                ▼                      │
+   (kanban_                    │--publish-response     │
+   reject_                     ▼ --force-run-id         │
+   bridge.py)       Hermes_L2_Response_Trn_Tbl          │
+                     + Complaint_Mst_Tbl (Status)       │
+                                                          ▼
+                                              Hermes_L2_Log_Blocked_
+                                              Escalation_Usp (real block
+                                              reason + trace, human queue)
+                                                          │
+                                                          ▼
+                                              Hermes_L3_Escalation_Trn_Tbl
+                                              (human work queue, excluded
+                                              from re-polling while open)
+```
 
-## Credentials
+Every hop after `kanban_complete`/`kanban_block` is **event-driven**, not
+cron-polled: a Hermes observer-hook plugin
+(`Model_Bench/xstudio_l2_orchestrator_plugin/`) fires the relevant
+deterministic script the instant the triggering tool call succeeds. Cron
+jobs still exist, but only as backstops for cases an event genuinely can't
+see (a crashed process, a gateway restart mid-flight) — not as the primary
+mechanism.
 
-Nothing in this repo is a secret. Every script reads `MSSQL_MCP_SERVER`/
-`MSSQL_MCP_USER`/`MSSQL_MCP_PASSWORD` from the environment. `.env` files,
+### Why two separate bots investigate and verify
+
+LM Studio (the local model backend used here) cannot force a specific
+named tool call — only "call something." Trusting a model to reliably
+remember a second, separate `--publish-response` call after finishing its
+reasoning turned out to fail regularly (confirmed live: 0 of 6 real
+completions in a row). So the verifier's only job is judgment
+(`kanban_complete`/`kanban_block`); a deterministic, no-LLM script performs
+the actual database write using the *investigator's own* recorded
+metadata — never anything the verifier retyped.
+
+### Why native `--parent` gating, not `hermes kanban swarm`
+
+`hermes kanban swarm` looks like the obvious fit (parallel workers →
+verifier → synthesizer) but was evaluated and rejected: its verifier/
+synthesizer skills are **hardcoded in Hermes's own source**
+(`requesting-code-review` / `humanizer`) with no CLI or config override,
+which would silently replace the real SQL/schema-verification skill with
+a generic one. Plain `kanban create --parent <task-id>` — the primitive
+swarm itself is built on — gives the same auto-promotion behavior with
+full control over assignee/skill/body. Both investigator and reviewer
+cards live on a single board; the old two-board split (see
+`Model_Bench/kanban_forward_bridge.py`, now retired) existed to avoid a
+same-task reassignment bug that doesn't apply to separate parent-gated
+cards.
+
+---
+
+## 2. Repository layout
+
+```
+Hermes_Orchestrator.py     Core CLI: --poll (atomic claim) and
+                            --publish-response (audited write-back), plus
+                            read-only investigation helpers (--query,
+                            --find-sql-objects, --get-sql-object-definition,
+                            --get-run-actions, --search-solutions,
+                            --log-activity, --create-solution,
+                            --link-solution). This is the ONLY code path
+                            that writes to the ticket/response tables.
+
+AGENTS.md / CLAUDE.md      Agent-facing operating instructions: folder map,
+                            deployment state, SQL write discipline, the
+                            Hermes-naming-collision gotcha. Read these
+                            first if you're an agent picking this project
+                            back up cold.
+
+Knowledge/                 The deployable SQL layer + reference docs.
+  00_tables_and_indexes.sql       All Hermes_* tables, indexes.
+  10_helpdesk_discovery.sql       Live-workflow discovery procs.
+  20_ticket_dispatch.sql          Hermes_L2_Get_Candidate_Tickets_Usp,
+                                   Hermes_L2_Recover_Stale_Runs_Usp.
+  30_context_and_live_discovery.sql   Ticket context, SQL object search.
+  40_investigation_runtime.sql    Claim/execute-SQL audit procs.
+  50_response_and_workflow.sql    Publish/escalate/activity/trace procs.
+  60_metrics_and_reporting.sql    Hermes_L2_Compute_Per_Ticket_Vw and
+                                   other reporting views.
+  99_postflight.sql               Verifies every expected object exists
+                                   after a deploy.
+  00_Hermes_L2_FULL_INSTALL.sql   Generated by concatenating the six
+                                   numbered files above, in order. Never
+                                   edit this file directly.
+  view_catalog.json/.md           Indexed XStudio_Xbatch views (what each
+                                   one returns, real column names).
+  schema_allowlist.json           Identifier allowlist the verifier checks
+                                   claimed table/column names against.
+  validate_identifiers.py         The script the verifier actually runs
+                                   to catch hallucinated identifiers.
+  task-router.md                  Maps ticket problem patterns to the
+                                   matching xstudio-* skill.
+  vendor_docs_extracted/,
+  view_docs/                      Per-view/per-domain investigation notes.
+
+Model_Bench/                Orchestration scripts + Hermes plugins.
+  ticket_scout.py            Cron (2m): --poll a new ticket, create the
+                              investigator card + a --parent-gated
+                              reviewer card, archive stale duplicate cards
+                              for the same ticket.
+  kanban_reject_bridge.py    Hook-triggered: verifier kanban_block → fresh
+                              rework card back to the investigator with
+                              the objection attached.
+  kanban_approval_publisher.py  Hook-triggered, no-LLM: verifier
+                              kanban_complete → real --publish-response
+                              call using the investigator's own recorded
+                              metadata, then logs a Ticket Activity entry
+                              (and a Solution article for real
+                              resolutions).
+  drain_l2_trace_log.py      Reads the trace plugin's local JSONL event
+                              log, inserts each event into
+                              Hermes_Agent_Trace_Trn_Tbl via
+                              Hermes_Log_Agent_Trace_Usp.
+  generate_readable_trace_summary.py  Turns raw trace events into one
+                              plain-English activity note per
+                              investigation attempt — runs whether or not
+                              the ticket got resolved. Also detects a real
+                              kanban_block and calls
+                              Hermes_L2_Log_Blocked_Escalation_Usp so a
+                              genuinely stuck ticket surfaces to a human
+                              instead of sitting silently blocked.
+  drain_and_summarize.py     Runs the two scripts above sequentially in
+                              one process (avoids a race where the summary
+                              could run before the drain committed).
+  enforce_publish_safety_net.py  Cron (5m) backstop: force-escalates a
+                              claimed-but-unpublished run only if Kanban
+                              has genuinely lost track of it (no live task
+                              at all) — never touches a run still tracked
+                              by a live, non-terminal kanban card.
+  audit_kanban_completions.py  Cron (10m) backstop: reconciles kanban
+                              'done' state against the actual SQL response
+                              row.
+  session_maintenance.py     Cron (6h): routine housekeeping.
+  seed_test_tickets.py       Generates realistic test tickets across
+                              multiple XStudio domains, deduped on
+                              BriefDetails.
+  model_scorecard.py,
+  verify_l2_run.py,
+  nudge_unpublished_runs.py,
+  audit_kanban_completions.py,
+  fix_malformed_ticket_ids.py,
+  build_schema_allowlist.py,
+  add_views_to_allowlist.py,
+  bulk_index_views.py,
+  export_view_samples.py,
+  extract_vendor_docs.py,
+  hermes_cli_bench.py         One-off / recurring maintenance and
+                              investigation-support utilities — see each
+                              file's own docstring.
+  setup_mem0.py               Configures the mem0 memory provider (OSS
+                              mode: LM Studio LLM + Ollama embedder +
+                              embedded Qdrant) across all 4 profiles.
+  mirror_wsl_artifacts.sh     Refreshes deploy/ from a live WSL install
+                              (SOUL.md, config.yaml, skills, plugin
+                              manifests, cron schedule).
+  git_sync.sh                 Periodic commit+push, safely no-ops if no
+                              remote is configured.
+  xstudio_l2_trace_plugin/    Hermes observer-hook plugin: records every
+                              tool call / API request / GPU+LM-Studio
+                              hardware sample to a local JSONL log,
+                              correlated to the real kanban task ID
+                              (extracted from sys.argv, NOT the task_id
+                              kwarg Hermes passes — that's actually the
+                              session_id).
+  xstudio_l2_orchestrator_plugin/  Hermes observer-hook plugin: the
+                              instant kanban_complete/kanban_block
+                              succeeds, immediately (debounced) fires
+                              kanban_reject_bridge.py,
+                              kanban_approval_publisher.py, and
+                              drain_and_summarize.py instead of waiting
+                              for a cron tick.
+
+deploy/                     Everything that otherwise lives ONLY inside a
+                             live Hermes install and would not survive a
+                             fresh install or update on its own.
+  profiles/<name>/SOUL.md    Each bot's persona/instructions.
+  profiles/<name>/config.yaml  Each profile's Hermes config (toolsets,
+                              memory provider, gateway settings — no
+                              secrets; those live in .env, gitignored).
+  skills/xstudio/*/SKILL.md  The six xstudio-* skills (see §4).
+  plugins/*.plugin.yaml      Plugin manifests.
+  cron_jobs.json / .txt      The live cron schedule at last mirror time.
+
+patches/                    Fixes to third-party packages inside Hermes's
+                             own venv that a `pip install --upgrade` or
+                             `hermes update` can silently wipe.
+  apply_mem0_json_object_patch.py  mem0's memory/main.py hardcodes
+                              response_format={"type":"json_object"} for
+                              its LLM fact-extraction calls; LM Studio
+                              only accepts "json_schema" or "text" and
+                              400s on json_object. This patch changes it
+                              to "text". Idempotent, safe to re-run.
+                              Self-healing: a daily cron job
+                              (reapply_mem0_patch.py on l2-investigator)
+                              re-runs this automatically.
+  POST_UPDATE.md              The runbook — read this after every
+                              `hermes update` or when standing this up on
+                              new infrastructure.
+
+Plans/, Agent_Comms/        Historical design docs and inter-agent
+                             coordination logs from earlier phases of the
+                             project. Kept for provenance, not
+                             load-bearing.
+
+Reference Documents/        Exported schema + stored-procedure catalogs
+                             for XStudio_Helpdesk and XStudio_Xbatch
+                             (generated by XMES/scripts/SP.py and
+                             SchemaExporter.py — see the xstudio-db-export
+                             skill if regenerating).
+```
+
+---
+
+## 3. The SQL layer
+
+All Hermes-side tables/procs/views live in `XStudio_Helpdesk`, prefixed
+`Hermes_`. Key objects:
+
+| Object | Purpose |
+|---|---|
+| `Hermes_L2_Response_Trn_Tbl` | One row per investigation attempt (run). `ProcessStatus` (CLAIMED→INVESTIGATING→COMPLETED/FAILED/WAITING_USER), `ResponseType` (UPDATE/QUESTION/RESOLUTION/L3_ESCALATION), the full proposed response text and metadata. |
+| `Hermes_L2_SQL_Action_Trn_Tbl` | Audit trail of every SQL action an investigation took (read or write), keyed by RunID. |
+| `Hermes_Agent_Trace_Trn_Tbl` | Raw event-level trace (tool calls, API requests, GPU/LM-Studio hardware samples) drained from the observer-hook plugin's local log. |
+| `Hermes_L2_Compute_Per_Ticket_Vw` | Aggregated token/tool-call/wall-clock cost per RunID, computed from the trace table. |
+| `Hermes_Ticket_Activity_Trn_Tbl` | Human-readable activity notes (existing platform table) — both real publishes and the deterministic trace-summary narrative land here. |
+| `Hermes_L3_Escalation_Trn_Tbl` | The human work queue. Populated two ways: (1) a real `L3_ESCALATION` response via `Hermes_L2_Publish_Response_Usp`, (2) a genuine stuck `kanban_block` via `Hermes_L2_Log_Blocked_Escalation_Usp` (visibility-only — does NOT complete/fail the run, Kanban is still free to retry). |
+| `Hermes_L2_Get_Candidate_Tickets_Usp` | The polling eligibility query. Excludes tickets with an active run, and (as of 2026-09-05) excludes tickets with an open L3 escalation — a ticket already in the human queue is never silently re-investigated by a later staleness event. |
+| `Hermes_L2_Recover_Stale_Runs_Usp` | Marks a run FAILED after `@StaleMinutes` (default 60) with no heartbeat — but only for runs with `@ExcludeRunIDs` NOT protected by a still-live, non-terminal kanban task (checked client-side before this SP runs; see `Hermes_Orchestrator.py`'s `recover_stale_runs()`). |
+
+Deploy order: edit the relevant numbered file in `Knowledge/`, regenerate
+`00_Hermes_L2_FULL_INSTALL.sql` by concatenation, deploy with `sqlcmd`
+(handles `GO` batch separators — `pyodbc` does not; prepend
+`SET QUOTED_IDENTIFIER ON; GO` or filtered indexes fail to create), then
+run `Knowledge/99_postflight.sql` and confirm no errors. The install is
+additive-only, but schema changes to a live shared database should still
+be confirmed with a human first.
+
+---
+
+## 4. The `xstudio-*` skills
+
+Live under `deploy/skills/xstudio/` (source of truth is whichever profile
+last had it edited — see `Model_Bench/mirror_wsl_artifacts.sh`).
+
+| Skill | Used by | Purpose |
+|---|---|---|
+| `xstudio-l2-ticket-workflow` | investigator | The poll → investigate → publish procedure, response-type semantics, when to check the knowledge base first. |
+| `xstudio-sap-api-investigation` | investigator | SAP integration error investigation patterns. |
+| `xstudio-sohar-heat-execution` | investigator | Steel-heat production/EAF/LRF/CCM domain investigation patterns. |
+| `xstudio-quality-delay-workorder` | investigator | Quality deviation / work-order delay investigation patterns. |
+| `xstudio-sql-write-discipline` | investigator + reviewer | The official-SP-first rule: prefer a real stored procedure over a direct write; documented no-SP exceptions only for genuinely new-entity system-column provisioning. |
+| `xstudio-l2-draft-verifier` | reviewer | Independent verification procedure: check every claimed identifier against `schema_allowlist.json`, verify a "doesn't exist" claim with `--find-sql-objects` before accepting it, spot-check the core factual claim with a real `--query`, judge response-type proportionality, then exactly one terminal call (`kanban_complete` to approve, `kanban_block` to reject with an actionable reason). Never calls `--publish-response` itself. |
+
+---
+
+## 5. Deploying on new infrastructure
+
+1. **SQL layer**: deploy `Knowledge/00_Hermes_L2_FULL_INSTALL.sql`, then
+   run `Knowledge/99_postflight.sql` and confirm no errors.
+2. **Hermes profiles**: install Hermes Agent, create the four profiles
+   under `deploy/profiles/` (`l2-investigator`, `l2-gemma`,
+   `l2-gemma-verifier`, `l2-qwen-verifier`). Copy each profile's
+   `SOUL.md`/`config.yaml` into the matching
+   `~/.hermes/profiles/<name>/...` path.
+3. **Skills**: copy `deploy/skills/xstudio/*/SKILL.md` into each profile's
+   `~/.hermes/profiles/<name>/skills/xstudio/<skill>/SKILL.md` (per §4 for
+   which profile needs which skill).
+4. **Plugins**: copy `Model_Bench/xstudio_l2_trace_plugin/` and
+   `xstudio_l2_orchestrator_plugin/` into
+   `~/.hermes/profiles/<name>/plugins/<plugin-name>/` for all 4 profiles,
+   enable in each profile's `config.yaml`. Restart each profile's gateway
+   after any plugin change:
+   `systemctl --user restart hermes-gateway-<profile>.service`.
+5. **Credentials**: set `MSSQL_MCP_SERVER` / `MSSQL_MCP_USER` /
+   `MSSQL_MCP_PASSWORD` in the environment. Every script reads these —
+   nothing is hardcoded anywhere in this repo.
+6. **Cron schedule**: recreate from `deploy/cron_jobs.json` (or `.txt`) —
+   see `Model_Bench/` for what script each job runs.
+7. **Memory (optional)**: run `Model_Bench/setup_mem0.py` after installing
+   `qdrant-client`, `mem0ai`, `ollama` into Hermes's own venv. Needs an
+   OpenAI-compatible LLM endpoint (this project points it at LM Studio,
+   reusing the already-loaded investigation model — do NOT load a second
+   model into LM Studio, it only serves one model at a time) and a
+   reachable Ollama instance with `nomic-embed-text` pulled for
+   embeddings (CPU-only, no GPU needed — verify with
+   `curl http://<host>:11434/api/tags`). Then run
+   `patches/apply_mem0_json_object_patch.py` — required for mem0 to work
+   with LM Studio at all (see §7).
+8. **Verify**: `hermes -p l2-investigator kanban list`, confirm the
+   dispatcher is running, trigger `ticket_scout.py`'s cron job once
+   manually and confirm both an investigator and a gated reviewer card
+   appear.
+
+---
+
+## 6. After a `hermes update`
+
+**Read `patches/POST_UPDATE.md`.** Short version: the mem0 patch (§7) is
+the single most update-fragile piece — a `mem0ai` package upgrade wipes it
+silently. A daily cron job already reapplies it automatically
+(idempotent), but if mem0 stops working right after an update, run
+`patches/apply_mem0_json_object_patch.py` by hand first. SOUL.md/skills/
+plugins/cron live in profile directories that a normal update does not
+touch; only a *fresh install* needs those redeployed from `deploy/`.
+
+---
+
+## 7. Memory (mem0)
+
+Built-in Hermes memory (`MEMORY.md`/`USER.md`) is enabled by default but
+was found completely unused in practice — the tool was available in every
+profile's toolset, but nothing prompted the small local models used here
+to actually reach for it, so 2+ days and hundreds of investigations
+produced zero memory entries. Two things fixed this:
+
+1. **A `## Memory` section in every profile's `SOUL.md`** telling the bot
+   explicitly when to write an entry (durable, reusable facts — a schema
+   gap, a dead end, a correction) and when not to (per-ticket details,
+   which belong in the ticket's own trail via `--publish-response`, not
+   memory).
+2. **Switched to the `mem0` provider** (OSS mode) for real semantic
+   retrieval instead of a flat markdown file, so a fact learned by one bot
+   benefits all four (shared vector store + shared `user_id`):
+   - **LLM** (fact extraction): LM Studio, reusing the already-loaded
+     investigation model — adds zero new VRAM.
+   - **Embedder**: Ollama, running `nomic-embed-text` (274MB, CPU-only —
+     embedding models don't need a GPU, and loading one into LM Studio
+     would have evicted the live investigation model since it only serves
+     one model at a time).
+   - **Vector store**: Qdrant, embedded via a local path — no Docker, no
+     server process.
+
+Set up via `Model_Bench/setup_mem0.py` (writes `mem0.json`/`.env`/
+`config.yaml`'s `memory.provider` per profile directly — the `hermes
+memory setup mem0 --mode oss ...` CLI flags are NOT actually wired through
+to the plugin by Hermes's own argument parser; confirmed by reading the
+source, this is a real gap in the framework, not a misuse).
+
+**Known gotcha #1**: mem0's Qdrant vector-store config defaults
+`embedding_model_dims` to 1536 (OpenAI's dimension) regardless of what
+embedder you actually configure — must be set explicitly to match your
+real embedder's output size (768 for `nomic-embed-text`), or every search
+fails with a shape-mismatch error the moment the collection already has
+data at the wrong dimension.
+
+**Known gotcha #2**: mem0's own `memory/main.py` hardcodes
+`response_format={"type": "json_object"}` for its LLM extraction calls.
+LM Studio's structured-output implementation only accepts `"json_schema"`
+or `"text"` and returns a 400 on `"json_object"`. See §6/`patches/`.
+
+---
+
+## 8. Credentials
+
+Nothing in this repo is a secret. Every script reads
+`MSSQL_MCP_SERVER`/`MSSQL_MCP_USER`/`MSSQL_MCP_PASSWORD` from the
+environment — 15 scripts that used to hardcode a literal password were
+redacted to this pattern before this repo's first commit. `.env` files,
 `.hermes_infra_creds/`, and anything password-shaped are gitignored.
+
+---
+
+## 9. Known limitations / open items
+
+- `enforce_publish_safety_net.py`'s canned "did not publish in time"
+  escalation (used only when Kanban has genuinely lost all track of a
+  run) carries no real findings — as of writing, roughly 90% of rows in
+  `Hermes_L3_Escalation_Trn_Tbl` are this generic placeholder rather than
+  a real, actionable escalation. Worth tagging/filtering distinctly in the
+  human-facing queue.
+- The reclaim-loop protection (native `--parent` gating +
+  `Hermes_L2_Get_Candidate_Tickets_Usp`'s L3-exclusion) is new as of
+  2026-09-05 — verified live against real traffic (zero re-reclaims of a
+  known-stuck ticket over the following hours), but hasn't yet run through
+  a full multi-day cycle.
+- Two legacy profiles (`l2-ministral`, `l2-nemo`) still have the
+  `xstudio-l2-draft-verifier` skill installed from an earlier architecture
+  iteration and are not currently used by the live pipeline.
