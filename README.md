@@ -34,13 +34,13 @@ infrastructure, and what to do after a Hermes update.
                     └──────────┬──────────┘
                                ▼
                     ┌─────────────────────┐
-              ┌────►│ kanban card:        │  assignee l2-eval-investigator
+              ┌────►│ kanban card:        │  assignee l2-investigator-primary
               │     │ investigator        │  skill: xstudio-l2-ticket-workflow
               │     └──────────┬──────────┘
               │                │ kanban_complete(summary, metadata)
               │                ▼ auto-promotes via native --parent gating
               │     ┌─────────────────────┐
-              │     │ kanban card:         │  assignee l2-gemma-verifier
+              │     │ kanban card:         │  assignee l2-reviewer-primary
               │     │ reviewer             │  skill: xstudio-l2-draft-verifier
               │     └──────────┬──────────┘
               │        approve │  reject → kanban_block(reason)
@@ -64,8 +64,8 @@ infrastructure, and what to do after a Hermes update.
            figure it out" escalation)          EscalationCategory stays open)
 ```
 
-All four LLM-driven profiles (`l2-eval-investigator`, `l2-investigator`,
-`l2-gemma-verifier`, `l2-qwen-verifier`) currently point at the same LM
+All active LLM-driven profiles (`l2-investigator`, `l2-investigator-primary`,
+`l2-reviewer-primary`, `l2-reviewer-fallback`) currently point at the same LM
 Studio model, `qwopus3.5-9b-coder` — see `deploy/profiles/*/config.yaml`.
 LM Studio serves one model at a time; profile-to-model assignment is a
 single line (`model.default`) per profile, changed via `hermes profile
@@ -367,9 +367,9 @@ last had it edited — see `Model_Bench/mirror_wsl_artifacts.sh`).
    run `Knowledge/99_postflight.sql` and confirm no errors.
 2. **Hermes profiles**: install Hermes Agent, create the profiles under
    `deploy/profiles/` (`l2-investigator` — hosts the kanban dispatcher
-   gateway and doubles as rework fallback; `l2-eval-investigator` — the
-   live fresh-ticket investigator; `l2-gemma-verifier` — the live
-   reviewer; `l2-qwen-verifier` — legacy second reviewer pairing, kept
+   gateway and doubles as rework fallback; `l2-investigator-primary` — the
+   live fresh-ticket investigator; `l2-reviewer-primary` — the live
+   reviewer; `l2-reviewer-fallback` — second reviewer pairing, kept
    for rework fallback only, not used by fresh dispatch; `l2-gemma` —
    fully retired, gateway stopped, kept as historical record only). Copy
    each profile's `SOUL.md`/`config.yaml` into the matching
