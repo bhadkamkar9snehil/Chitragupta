@@ -1,7 +1,7 @@
 ---
 name: xstudio-l2-ticket-workflow
-description: "Investigate and hand off one Helpdesk L2 ticket, as a Kanban-dispatched worker."
-version: 0.5.0
+description: "Investigate and hand off one Helpdesk L2 ticket as a Kanban-dispatched worker in Chitragupta's current single-board parent-gated pipeline."
+version: 0.6.0
 author: Snehil Bhadkamkar, Hermes Agent
 license: MIT
 platforms: [linux, windows]
@@ -13,260 +13,245 @@ metadata:
 
 # XStudio L2 Ticket Workflow Skill
 
-**2026-09-03: this is now a Kanban worker skill, not a poll-loop skill.**
-A deterministic script (`ticket_scout.py`, cron on `l2-investigator`) does
-the real SQL claim and creates one Kanban task per claimed ticket, assigned
-to you. The Kanban dispatcher spawns you automatically when that task is
-ready — you never poll for tickets yourself.
+This skill describes the **current live Chitragupta workflow**.
 
-**2026-09-04: your tasks live on the `default` board; the reviewer's live
-on a separate `l2-review` board.** You never touch the `l2-review` board
-directly, and no tool call of yours ever needs a `--board` flag — the
-dispatcher spawns you already scoped to the right one for whatever task
-it gave you.
+`Model_Bench/ticket_scout.py` atomically claims a Helpdesk ticket and creates two
+separate tasks on the **single default Kanban board**:
 
-This is procedure, not domain knowledge — for what to actually check once
-a ticket is claimed, this skill hands off to a domain-specific one (SAP/
-API, Sohar heat execution, or quality/delay/work-order).
+1. an investigator task assigned to `l2-investigator-primary`;
+2. a reviewer task assigned to `l2-reviewer-primary`, created with the investigator
+   task as its native `--parent` dependency.
 
-## When to Use
+The reviewer begins automatically when the investigator task completes. Hermes's
+native parent handoff carries the investigator's structured completion metadata to
+the reviewer. There is **no separate review board and no forward-bridge hop**.
+`kanban_forward_bridge.py` is retired and must not be used.
 
-- The Kanban dispatcher spawned you for a task titled "L2 Ticket ...".
-- Don't use for: XS_Builder/XStudio *configuration* work (a different,
-  separate `xstudio` skill), or any ticket outside this deployment.
+The investigator never publishes directly. The reviewer only judges the proposed
+answer. After reviewer approval, `kanban_approval_publisher.py` performs the real,
+deterministic database publication. Reviewer rejection is handled by
+`kanban_reject_bridge.py`, which creates a fresh rework task while preserving useful
+findings from the rejected attempt.
 
-## Tool discipline (read this before your first tool call)
+## Non-negotiable evidence hierarchy
 
-Only call tools that appear in your own available tool list for this turn.
-A real 2026-09-03 incident had this exact model (Ministral-3-3B) call
-`execute_code`, which isn't in this profile's enabled toolset at all — it
-was refused ("BLOCKED"), wasting a full turn. If a tool name isn't visible
-to you right now, it doesn't exist for this run; don't call it hoping it
-works, and don't retry it a second way.
+Use evidence in this order:
 
-**Don't write ad-hoc Python scripts to compose reply text.** The same
-incident had this model pipe a `python -e/-c` script through `terminal`
-just to build a formatted string, and hit a syntax error from mismatched
-quotes around an f-string. Compose reply text directly in your own
-reasoning and pass it as a plain string argument. Reserve `terminal`'s
-python calls for what actually needs it: `Hermes_Orchestrator.py`
-invocations and real SQL/schema checks.
+1. **Current live SQL/data for this ticket** — ground truth for ticket-specific facts.
+2. **Verified `Knowledge/` documents and real schema/view catalogs** — authoritative
+   product/domain reference material.
+3. **Existing solution articles** — reusable hypotheses from prior resolved tickets;
+   verify applicability against this ticket before reuse.
+4. **Prior ledger/attempt findings for this same ticket** — preserve work, but re-check
+   any fact that the final answer will depend on.
+5. **mem0 memory** — operating hints only. Never treat memory as authoritative product
+   truth, a schema source, or proof that a prior fix applies to this ticket.
+
+A retrieved article, memory, prior attempt, table suggestion, or skill example is a
+**lead, not evidence**. Claims in the final response must be supported by current data
+or a verified authoritative source.
 
 ## Procedure
 
-1. **Read your task.** Call `kanban_show()` (no args) to get the task body,
-   which contains the real `run_id` and `ticket_id` (already claimed by
-   `ticket_scout.py` — never call `--poll` yourself, there is nothing left
-   to claim, and re-polling would just claim a SECOND, unrelated ticket).
-   Do not type or recall the GUID from memory once you have it in hand —
-   copy it exactly from the task body. A real 2026-09-03 incident had this
-   exact model misstate an ID from memory in its first response.
+### 1. Read the dispatched task; never poll
 
-   **Critical architecture fact, get this wrong and every subsequent query
-   fails for a confusing reason:** `Complaint_Mst_Tbl` lives in
-   `XStudio_Helpdesk`. Production/operational tables (heat, billet, CCM,
-   EAF, SAP posting, etc.) live in `XStudio_Xbatch`. **There is no foreign
-   key between them, and Xbatch tables will NEVER have a `TicketID`
-   column.** The only link between a ticket and production data is
-   whatever identifier (Heat Number, Lot Number, WorkOrderNo) is mentioned
-   in the ticket's own `Description` text or `ExtractedEntitiesJson`. If
-   neither contains one, that's a legitimate reason for a `QUESTION` — but
-   the reason is "the ticket doesn't name a heat/lot," never "the
-   production table doesn't reference tickets."
+Call `kanban_show()` for the task you were spawned with. Copy the exact `run_id` and
+`ticket_id` from the task body. Do not reconstruct GUIDs from memory.
 
-2. **Check the ticket TYPE before you check its domain.** Look at
-   `HermesComplaintTypeName` in the task body. If it's `Request for
-   Customization` or `Request For Customization Rights`, **stop here** —
-   this is not something SQL investigation was ever going to resolve, no
-   matter how well it maps to a domain skill. A real 2026-09-03 incident
-   had this exact model see a transformer-voltage-checklist ticket typed
-   `Request for Customization`, correctly notice it didn't fit any domain
-   skill's investigation procedure, and wrongly conclude the ticket itself
-   was ambiguous and needed a human to assign a domain — when the actual
-   answer was simpler and already sitting in the ticket: **this ticket
-   type is categorically out of scope for L2, regardless of what area or
-   system it mentions.** `ticket_scout.py` already filters most of these
-   out before claiming, but a straggler claimed before that filter existed
-   (or any future edge case) can still reach you. Route it straight to
-   `L3_ESCALATION` with the reason "this is a feature/customization
-   request, not a bug or data question — routing to product/engineering,"
-   not a `QUESTION` asking who owns the domain.
+The ticket is already claimed. **Never call `--poll` from a worker.** Doing so can
+claim an unrelated second ticket.
 
-3. **Pick a domain skill** from the ticket's `ProblemCategory`/`AreaID`/
-   free text, or consult
-   `C:\Users\Admin\Documents\Office\AIHelpdesk\Knowledge\task-router.md`
-   if the domain isn't obvious (SAP/API → `xstudio-sap-api-investigation`;
-   EAF/LRF/CCM/billet/heat → `xstudio-sohar-heat-execution`; quality/
-   delay/work-order → `xstudio-quality-delay-workorder`).
+The task body is deliberately enriched by the deterministic dispatcher. It may
+already contain:
 
-3.5. **Check the knowledge base BEFORE investigating from scratch.** A
-   known-issue library now exists (`Hermes_Solution_Article_Mst_Tbl`,
-   added 2026-09-03) — always check it first:
-   ```
-   terminal(command='/mnt/c/Python314/python.exe "C:\\Users\\Admin\\Documents\\Office\\AIHelpdesk\\Hermes_Orchestrator.py" --server 10.2.6.204 --search-solutions <route-from-task-router, e.g. heat_execution>')
-   ```
-   If a matching solution exists, **treat it as a strong starting hypothesis,
-   not gospel** — still verify its ResolutionSteps against THIS ticket's
-   actual live data before reusing it; don't paste an old answer onto a
-   different real problem. If it genuinely fits, reference it in your
-   `reply_text` and record the link in step 5 (`--link-solution`). If
-   `--search-solutions` returns `[]`, the library has nothing for this
-   route yet — proceed to investigate normally, and consider whether your
-   finding is worth adding as a new solution (step 5).
+- the full ticket context;
+- mechanically suggested real tables/columns;
+- a prior investigation ledger;
+- exact interpreter/script/query commands.
 
-4. **Investigate** using that domain skill's procedure, applying
-   `xstudio-sql-write-discipline` for any write. For reads, use `--query`
-   (never `sqlcmd`, not on PATH in this environment).
+Use that material instead of rediscovering environment details.
 
-   **`--database` is REQUIRED on every `--query` call and has NO default —
-   pick wrong and every table "doesn't exist."** Confirmed live 2026-09-04:
-   a real investigation ran `--query` without `--database` for 20+ minutes,
-   cycling through five different validated-real view names, every single
-   one failing with "Invalid object name" — because the query was silently
-   hitting `XStudio_Helpdesk` (the CLI's old default) while every real
-   production/quality/heat/SAP table lives in `XStudio_Xbatch`. The CLI now
-   refuses to run `--query` without an explicit `--database` at all — but
-   don't rely on that alone, know which one you need:
-   - `XStudio_Xbatch` — almost everything you investigate: heat, EAF/LRF/
-     CCM, billet, quality, delay, work order, SAP posting/API.
-   - `XStudio_Helpdesk` — only `Complaint_Mst_Tbl` and Hermes's own runtime
-     tables (`Hermes_L2_*`, `Hermes_Ticket_*`, `Hermes_Solution_*`, etc).
-   ```
-   terminal(command='/mnt/c/Python314/python.exe "C:\\Users\\Admin\\Documents\\Office\\AIHelpdesk\\Hermes_Orchestrator.py" --server 10.2.6.204 --database XStudio_Xbatch --query "SELECT TOP 20 * FROM dbo.LRF_Per_Heat WHERE HeatNo = '"'"'H88210'"'"'"')
-   ```
-   **This is an illustrative example only** — `LRF_Per_Heat` is a real,
-   verified table (confirmed live in `schema_allowlist.json`), but it is
-   NOT necessarily the right table for YOUR ticket. A real 2026-09-03
-   incident had a prior version of this example use a fabricated table
-   name (`XSTUD_SOHAR_BILLET_TIMELINE`) that didn't exist at all — the
-   model copied it literally instead of treating it as a format sample,
-   burned 13+ minutes chasing it, and the fuzzy-match suggestion from
-   `validate_identifiers.py` (string-similar, not semantically related)
-   made it worse by pointing at unrelated shift tables. **Always pick the
-   actual table for your ticket's domain from `sys.procedures`/
-   `schema_allowlist.json` yourself** — never copy a table name out of
-   this skill's own examples verbatim.
-   ```
-   ```
-   `--query` auto-suggests a correction when a column/table name is wrong
-   — retry once with the suggested name before escalating. Before an
-   ad-hoc `SELECT` against an unfamiliar entity, check for an official
-   read procedure first (`SELECT name FROM sys.procedures WHERE name LIKE
-   '%<entity>%'`) — e.g. `SMS_GET_EAF_HeatIDList` already exists.
+If a compact investigation bundle is not already present and you need the complete
+starting context in one call, use the exact interpreter/script paths supplied in the
+task and run:
 
-5. **Finish with a plain `kanban_complete` — you never publish directly,
-   and you never hand off to the reviewer yourself either.**
-   **2026-09-04: this changed from `kanban_request_review` to plain
-   `kanban_complete`.** Investigator and reviewer now run on SEPARATE
-   Kanban boards (`default` for you, `l2-review` for them) specifically so
-   neither of you ever needs to reassign a task across roles — that
-   reassignment was the real, confirmed cause of the single largest
-   failure category this project ever found (48% of one session's logs
-   showed a worker trying `kanban_complete`/`kanban_block` on a task that
-   had already changed owner out from under it). A deterministic script
-   (`Model_Bench/kanban_forward_bridge.py`, cron, no LLM) watches for your
-   `done` tasks and creates the review-board card itself — that hop is no
-   longer your job or any model's job. `reply_text` is
-   the ONLY field a real support person ever actually sees on the ticket
-   (it gets mirrored into `SupportExecutiveRemarks`/`AskRemarks` — the
-   `problem_summary`/`findings`/`root_cause`/`resolution` fields only live
-   in Hermes' own internal audit table). **Write `reply_text` as a
-   complete, self-contained report, not a one-liner** — a real 2026-09-03
-   finding confirmed every prior "successful" response left the visible
-   ticket fields NULL because nothing mirrored the detailed fields there;
-   now that mirroring is fixed mechanically, the CONTENT still needs to
-   carry the substance. Follow the real, proven convention already used
-   on this system's genuine historical tickets (checked live, not
-   invented): open with a one-word context marker matching your
-   `response_type` ("Investigation found...", "L3 escalation: live
-   investigation confirms...", "Resolved via..."), then the real table/
-   column-level specifics you actually checked, then — if incomplete —
-   exactly what's still needed and why. Example, adapted from a real
-   ticket: *"L3 escalation: Live XStudio_Xbatch investigation confirms
-   that [specific table.column] stores [specific fact]. [What's missing/
-   why this can't be resolved automatically]. [What L3/the requester needs
-   to do next]."*
-   ```
-   kanban_complete(
-       summary="<one sentence: what you found and what you're proposing>",
-       metadata={
-           "run_id": "<the real run_id from step 1>",
-           "ticket_id": "<the real ticket_id from step 1>",
-           "response_type": "UPDATE | QUESTION | RESOLUTION | L3_ESCALATION",
-           "reply_text": "<the full, self-contained report — see above>",
-           "problem_summary": "<or omit>",
-           "findings": "<or omit>",
-           "root_cause": "<or omit>",
-           "resolution": "<or omit>",
-           "new_ticket_status": "<or omit>"
-       }
-   )
-   ```
-   This is the ENTIRE terminal step — do not also call
-   `Hermes_Orchestrator.py --publish-response` or `--draft-response`
-   yourself, and do not try to reassign, reroute, or hand this task to
-   `l2-gemma-verifier` in any way. Nothing reaches the live ticket until a
-   reviewer on the SEPARATE `l2-review` board judges this metadata and a
-   deterministic publisher writes it for real. This exists because the
-   single biggest recurring failure this project has hit is a model
-   narrating a finished investigation without ever emitting a real write —
-   Kanban's own worker protocol also auto-nudges you if you're about to
-   stop without calling `kanban_complete`/`kanban_block`, so there is a
-   second layer catching this even if you forget.
+```text
+--database XStudio_Helpdesk --investigate-bundle <ticket_id>
+```
 
-5.5. **Log your work before handing off** (always, regardless of outcome —
-   this is a work-log note, not a publish, and doesn't need review):
-   ```
-   terminal(command='/mnt/c/Python314/python.exe "C:\\Users\\Admin\\Documents\\Office\\AIHelpdesk\\Hermes_Orchestrator.py" --server 10.2.6.204 --log-activity --ticket-id <real ticket_id> --run-id <real run_id> --activity-type Note --note-text "<one-line summary of what you checked and found>"')
-   ```
+`--investigate-bundle` returns ticket context, mechanically narrowed schema
+candidates, the prior ledger, recent attempts, and known-solution candidates together.
+Do not replace that one bundle with four or five separate context-assembly calls.
 
-6. **If changes come back**, it arrives as a brand-new task titled
-   `REWORK: ...` on YOUR board (`default`), created by
-   `Model_Bench/kanban_reject_bridge.py` — not a respawn of your old task
-   (that one stayed `done`, correctly, since you did finish your turn).
-   The task body has the reviewer's exact objection plus the original
-   `run_id`/`ticket_id`. Re-fetch the ticket via `--get-ticket-context`
-   (its data may have changed since your first pass — don't trust stale
-   context), fix exactly the stated problem, then follow the normal
-   procedure to a fresh `kanban_complete` — don't restart the whole
-   investigation unless the objection genuinely requires it.
+### 2. Check ticket type before domain routing
 
-## Quick Reference
+Inspect `HermesComplaintTypeName` first.
 
-| `response_type` | Use when |
+`Request for Customization` / `Request For Customization Rights` is not a normal SQL
+L2 incident. Do not burn an investigation trying to make it fit a data domain. Hand
+it off as an out-of-scope product/engineering request with an accurate explanation.
+
+### 3. Understand the database boundary
+
+`Complaint_Mst_Tbl` and Hermes runtime/KB tables live in `XStudio_Helpdesk`.
+Production/operational data — heat, billet, CCM, EAF/LRF, quality, delays, work orders,
+SAP posting/API data — lives in `XStudio_Xbatch`.
+
+There is no production-table `TicketID` relationship. Correlate a Helpdesk ticket to
+production data using identifiers actually present in the ticket, for example:
+
+- HeatNo / HeatID
+- InspectionLot
+- WorkOrder / ManufacturingOrder
+- BilletNo / SubLotNo
+- SAP TransactionID
+- EquipmentID
+
+If the ticket does not contain the identifier required to investigate safely, ask for
+it rather than inventing a join that does not exist.
+
+### 4. Route narrowly, but do not force a single domain
+
+Use the canonical routing knowledge under `Knowledge/` and the relevant domain skill.
+Strong identifiers take precedence over vague natural-language classification.
+
+Typical routes:
+
+- SAP posting/API -> `xstudio-sap-api-investigation`
+- heat/EAF/LRF/CCM/billet -> `xstudio-sohar-heat-execution`
+- quality/delay/work-order -> `xstudio-quality-delay-workorder`
+- unclear/cross-domain -> discovery path plus `xstudio-sql-write-discipline`
+
+A route selects the starting evidence surface. It does not forbid following evidence
+into another domain.
+
+### 5. Treat retrieved knowledge as candidates, not answers
+
+The investigation bundle may contain `known_solutions`. Do not automatically apply
+them and do not perform a second legacy `--search-solutions <route>` call merely to
+repeat the same lookup.
+
+For every candidate solution:
+
+1. compare its problem/root-cause pattern with this ticket;
+2. verify the relevant live rows/views for this ticket;
+3. reject it explicitly if current evidence contradicts it;
+4. only reuse it when applicability is demonstrated.
+
+Do not create or link a solution article yourself during investigation. Reusable KB
+creation/linking belongs after reviewer-approved publication in the deterministic
+publisher path.
+
+### 6. Investigate using deterministic schema discovery first
+
+Prefer the query commands supplied by the task.
+
+When you know the entity, prefer `--build-query` because it validates the table and
+columns against the real schema before execution.
+
+When you do not know the entity, use `--suggest-tables` as a short-list generator.
+Suggested tables are not verified answers. If the correct surface is absent, use
+`--find-sql-objects` / live metadata discovery.
+
+Use raw `--query` only for read-only investigation and always specify the database.
+Never guess a table, view, procedure, or column because its name sounds plausible.
+
+For writes, follow `xstudio-sql-write-discipline`. Ticket publication never goes
+through an investigator's ad-hoc SQL write.
+
+### 7. Preserve investigation state
+
+Before completing a meaningful investigation, record a compact ledger using
+`--save-ledger` for the current `run_id`.
+
+A useful ledger records:
+
+- tables/views actually queried;
+- identifiers and key values found;
+- hypotheses ruled out;
+- evidence still missing;
+- current conclusion.
+
+Do not put per-ticket findings into shared mem0. The ledger is the correct home for
+per-ticket episodic state and is carried into rework/retry flows.
+
+### 8. Complete with structured metadata; never publish directly
+
+Finish the investigator task with `kanban_complete` and structured metadata. This
+completion automatically makes the parent-gated reviewer task eligible on the same
+board.
+
+Required publication fields are:
+
+```text
+response_type
+reply_text
+```
+
+Also include the exact `run_id` and `ticket_id`, plus structured fields when known:
+
+```text
+problem_summary
+findings
+root_cause
+resolution
+new_ticket_status
+```
+
+Valid `response_type` values are exactly:
+
+| Type | Use when |
 |---|---|
-| `UPDATE` | Investigated, have something useful, not a fix. Set `new_ticket_status: "Solution Work in Progress"`. Default case. |
-| `QUESTION` | Need more info from the requester. |
-| `RESOLUTION` | Fix verified live, not guessed. |
-| `L3_ESCALATION` | You could NOT figure out the problem -- genuinely beyond SQL investigation, or the data/schema doesn't support answering it. Do NOT fill `resolution` -- there isn't one. |
-| `NEEDS_HUMAN_ACTION` | You DID figure out the problem AND the exact fix, but you cannot execute it yourself -- outside your SQL write authority, a physical/floor action, a config change, contacting another team, etc. Put the concrete, actionable step in `resolution` (e.g. "Update HeatNo H12345's TapToTapTime in EAF_PER_HEAT to 14:32 -- confirmed correct from the shift log, currently blank due to a sync gap"). |
+| `UPDATE` | Investigation produced useful progress but is not yet a verified resolution. |
+| `QUESTION` | A specific missing requester fact/identifier is required. |
+| `RESOLUTION` | The fix/result is verified against live evidence. |
+| `L3_ESCALATION` | The cause could not be determined or the investigation is genuinely beyond L2 capability. Do not invent a resolution. |
+| `NEEDS_HUMAN_ACTION` | The cause and concrete fix are known, but execution requires a human or is outside the bot's write authority. Put the actionable step in `resolution`. |
 
-**These two are not interchangeable and a human reads them very differently.**
-`L3_ESCALATION` means "nobody knows what's wrong yet." `NEEDS_HUMAN_ACTION`
-means "we know exactly what's wrong and what to do -- someone just has to do
-it." Picking the wrong one either hides a real, ready-to-execute fix behind
-"unresolved," or makes an unsolved mystery look like a solved ticket someone
-forgot to close. If you find yourself writing a `resolution` for an
-`L3_ESCALATION`, it should almost certainly be `NEEDS_HUMAN_ACTION` instead.
+Example shape:
 
-## Pitfalls
+```text
+kanban_complete(
+    summary="<one-sentence finding/proposal>",
+    metadata={
+        "run_id": "<exact run_id>",
+        "ticket_id": "<exact ticket_id>",
+        "response_type": "UPDATE | QUESTION | RESOLUTION | L3_ESCALATION | NEEDS_HUMAN_ACTION",
+        "reply_text": "<complete support-facing response>",
+        "problem_summary": "<optional>",
+        "findings": "<optional>",
+        "root_cause": "<optional>",
+        "resolution": "<optional>",
+        "new_ticket_status": "<optional>"
+    }
+)
+```
 
-- **Never write directly to `Complaint_Mst_Tbl.Status`/`SupportExecutiveRemarks`.**
-  Everything goes through review + the deterministic publisher so the audit trail stays intact.
-- **Never try to reassign this task to a reviewer, or address `l2-gemma-verifier` directly.**
-  A plain `kanban_complete` with complete metadata is your entire job — the
-  cross-board handoff is a deterministic script's job, not yours.
-- **Don't invent a `new_ticket_status` value.** Re-check `--discover-workflow`
-  if unsure whether a status is still live.
-- **Don't fabricate certainty.** No useful finding → say so plainly in an
-  `UPDATE`, don't invent a plausible root cause.
-- **No scratch `.py`/`.sql` files in the project root.**
+`reply_text` must be self-contained and state what was actually checked, what was
+found, and the next action if the case is incomplete.
 
-## Verification
+**Do not call `--publish-response`. Do not create a reviewer task. Do not reassign the
+investigator task. Do not call a retired model-based reviewer profile.** The existing
+parent-gated reviewer and deterministic publisher own those steps.
 
-- [ ] Checked `--search-solutions <route>` before investigating from scratch.
-- [ ] Called `kanban_complete` with complete metadata (`run_id`, `ticket_id`,
-      `response_type`, `reply_text` at minimum) before this turn ends —
-      never `kanban_request_review` (removed 2026-09-04), never a reassign.
-- [ ] Logged a work-log `Note` via `--log-activity` before handoff.
-- [ ] Never called `--publish-response`/`--draft-response`/`--poll` yourself.
+### 9. Rework only the rejected point
+
+A reviewer rejection arrives as a fresh `REWORK:` task created by
+`kanban_reject_bridge.py`. Its body contains the review objection and prior findings.
+
+Re-fetch current ticket state if the objection depends on mutable data, then address
+the specific rejected claim. Reuse the carried ledger where valid; do not restart the
+whole investigation unless the rejection genuinely invalidates the earlier evidence.
+
+## Failure rules
+
+- Tool unavailable: use only tools actually exposed in the current worker session.
+- Identifier/table uncertain: discover/validate; do not guess.
+- KB candidate conflicts with live data: live data wins; record the contradiction.
+- Prior ledger conflicts with live data: live data wins; update the ledger.
+- mem0 conflicts with repo/config/live evidence: ignore the memory and use the
+  authoritative source.
+- Missing essential ticket identifier: `QUESTION`, not fabricated inference.
+- Cause diagnosed but execution outside bot authority: `NEEDS_HUMAN_ACTION`, not
+  `L3_ESCALATION`.
+- Cause genuinely unresolved after bounded investigation: `L3_ESCALATION`.
