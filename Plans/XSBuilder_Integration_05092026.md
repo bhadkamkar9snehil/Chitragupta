@@ -79,6 +79,9 @@ XSBUILDER_CONNECTION=<saved XS Builder connection profile name or ID>
 XSBUILDER_CLI=<optional full path to xsb/xsb.exe; defaults to xsb>
 ```
 
+The Conductor workflow explicitly forwards those variables into the MCP child
+process using `${VAR}` / `${VAR:-default}` interpolation.
+
 `Model_Bench/xsbuilder_query_bridge.py` invokes the CLI and has no local
 compiler fallback.
 
@@ -122,48 +125,79 @@ the UI preset.
 
 Artifact: `Chitragupta_Helpdesk_XSBuilder_BOM.xlsx`.
 
-The BOM owns the XStudio side of the Chitragupta Helpdesk extension:
+The BOM models the XStudio side of the Chitragupta Helpdesk extension:
 
 - 12 Chitragupta operational entities (runs, SQL evidence, L3 queue, activity,
   taxonomy, solution KB, problem management, feedback, escalation rules,
   agent trace)
-- their business attributes and relations
+- their business attributes
 - L2/L3/knowledge/admin/observability list views
-- human-edit surfaces
+- human-edit surfaces for knowledge/problem/admin/feedback
 - pages and menu navigation
-- L3 workflow (`Open -> Assigned -> InProgress -> Resolved/Rejected`)
+- a native XStudio Approval workflow on `Hermes_L3_Escalation_Trn_Tbl.L3Status`
+  with primary sequence `Open -> Assigned -> InProgress -> Resolved` and
+  `Rejected` as a branch state
+- workflow gate forms for assignment, resolution summary and rejection remarks
 - Helpdesk L2 / L3 / Admin roles and functional rights
 - reporting/summaries sourced from the runtime metric views
+
+### Why the operational IDs are not XStudio Relations
+
+`TicketID`, `RunID`, `SolutionID`, `ProblemID`, etc. are deliberately *not*
+declared as XStudio dropdown relations in this BOM. The live/runtime contract
+stores these as `varchar(36)`. XS Builder interprets a populated `Reference
+Entity / Object` as Dropdown intent, and its relation compiler requires a
+Dropdown attribute. Adding those relations would therefore change the datatype
+and renderer contract instead of merely documenting correlation.
+
+Correlation remains explicit in the runtime SQL, query tools, indexes and UI
+columns. If the underlying Helpdesk schema is later migrated to genuine XStudio
+Dropdown/Guid relations, that should be a separate intentional migration.
 
 Base Helpdesk objects (`Complaint_Mst_Tbl`, `priority_mst`, `Area_Mst_Tbl`,
 `ComplaintType_Mst_Tbl`, `CommonErrors`, `systemreferencedocuments`) remain
 pre-existing prerequisites; this extension BOM does not fabricate a partial
 replacement for the core Helpdesk product.
 
-## Why the runtime SQL package still exists
+## Fresh-install boundary: workbook alone is not yet the whole SQL installer
 
-The current generic XS Builder BOM can author XStudio entities/attributes and UI
-objects, but it does not fully express all runtime-only SQL contracts used here:
+The current XS Builder BOM can author XStudio entities/attributes and the
+associated XStudio UI/workflow objects, but it does not express every runtime
+SQL Server invariant in Chitragupta's custom support schema:
 
+- exact physical string lengths
+- custom SQL DEFAULT constraints
 - filtered/unique indexes
-- check constraints
-- exact SQL defaults
+- CHECK constraints
 - stored procedures
 - reporting views
 - seed taxonomy rows
 
-Those remain authoritative in `Knowledge/*.sql`. The correct fresh deployment
-sequence is therefore:
+Those contracts currently live in `Knowledge/*.sql`.
 
-1. validate + plan the BOM;
-2. deploy XStudio objects through XS Builder;
-3. apply the Chitragupta runtime SQL reconciliation/procedure/view package;
-4. run `Knowledge/99_postflight.sql`;
-5. re-plan with XS Builder and require no unexplained drift.
+**Important:** the existing `Knowledge/00_tables_and_indexes.sql` was originally
+written as a create-if-absent installer. If XS Builder creates a table first,
+that script will not automatically retrofit every table-level DEFAULT/CHECK
+inside the skipped `CREATE TABLE` block. Therefore the final fresh-install path
+must not be declared complete until one of these is implemented and tested:
 
-This is one deployment design, not two independent schema engines: the BOM owns
-XStudio metadata/UI; the repository SQL owns operational SQL Server artifacts
-that XStudio BOM cannot currently represent.
+1. preferred: make the Chitragupta SQL package a true idempotent reconciliation
+   layer for XS Builder-created entities (verify columns, add missing defaults /
+   checks / indexes, fail closed on incompatible physical types); or
+2. add a certified XS Builder "adopt existing runtime table" path and run the
+   exact Chitragupta table installer first.
+
+The feature branch intentionally does **not** hide this gap with arbitrary raw
+SQL embedded in workbook cells.
+
+The intended end state is still one deployment design:
+
+1. validate/plan the BOM;
+2. establish exact runtime table invariants through the chosen certified path;
+3. deploy/verify XStudio UI/workflow metadata through XS Builder;
+4. apply discovery/dispatch/investigation/response/reporting SQL objects;
+5. run `Knowledge/99_postflight.sql`;
+6. re-plan with XS Builder and require no unexplained drift.
 
 ## Fresh-install drift found while building the BOM
 
@@ -180,3 +214,10 @@ fully reproducible:
 
 The BOM intentionally includes both target objects so this mismatch is visible
 rather than silently perpetuated.
+
+## Validation status
+
+No live ticket was claimed and no target database was mutated while building
+this branch. The new XS Builder C# tests and Conductor YAML still need to be run
+in the real workstation checkout before merge/cutover; the branch is a reviewable
+implementation, not a production cutover.
