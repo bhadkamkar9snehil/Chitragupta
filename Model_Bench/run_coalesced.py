@@ -1,67 +1,90 @@
 #!/usr/bin/env python3
 """Coalescing supervisor for the event-driven L2 bridge scripts.
 
-Why this exists (2026-09-05): the orchestrator plugin's original debounce
-was "if a run of this script is already in flight, skip -- it will see the
-new state anyway." That assumption is wrong and silently drops the exact
-event that matters.
+Guarantees, across independent OS processes (kanban workers, the gateway,
+cron, and manual runs all trigger these):
 
-Concrete failure it causes: reviewer approves ticket X at T. The approval
-publisher happens to already be in flight since T-5s (triggered by some
-earlier completion). It has ALREADY queried the board and built its task
-list, so it never sees X. The plugin skips re-spawning because the lock is
-held. Nothing re-runs. X's approved response is never published, and the
-only thing that eventually rescues it is a wall-clock cron tick -- which is
-precisely the "dumb scheduled polling" this event layer exists to replace.
-Confirmed live: Ticket_343's approval sat unpublished until the publisher
-was invoked by hand.
+  1. At most ONE run of a given script at a time.
+  2. No trigger is ever lost -- a trigger arriving mid-run causes exactly
+     one more run afterwards, no matter how many arrive.
+  3. A crashed/killed supervisor never wedges the script permanently.
 
-The fix is the standard coalescing / run-again-if-signalled pattern:
+Why the previous design was wrong
+---------------------------------
+v1 used a PID file: "if the recorded PID is alive, skip". That is advisory
+only and has two real races:
 
-    trigger arrives, no run in flight  -> spawn supervisor, run script
-    trigger arrives, run IS in flight  -> set a `.dirty` flag, return
-    supervisor finishes a run          -> if `.dirty` was set during it,
-                                          clear it and run exactly once more
+  * TOCTOU on acquire -- two triggers can both read "no live PID" and both
+    spawn, so property (1) was never actually guaranteed.
+  * Dirty-check -> release race -- the supervisor checked the `.dirty` flag
+    and then released the lock as two separate steps. A trigger landing in
+    that window sees the lock still held (so it only sets `.dirty` and
+    returns), while the supervisor has already decided to exit. The flag is
+    set, nothing owns it, and nothing re-runs: the event is lost until a
+    cron tick -- the exact wall-clock fallback this layer exists to remove.
 
-This guarantees the property the debounce was reaching for (never more than
-one concurrent run of a script) WITHOUT the property that broke it (an
-event arriving mid-run being lost). At most one extra run is queued no
-matter how many triggers land during a run, so a burst of N completions
-still costs at most 2 runs, not N.
+How this version is actually atomic
+-----------------------------------
+Two POSIX `flock`s (kernel-enforced, and released automatically when the
+holding process dies -- which is what makes crash recovery free):
 
-Usage (invoked by the plugin, not by hand):
+  run.lock    held for the WHOLE duration of a supervisor's run loop.
+              Holding it *is* the definition of "a run is in flight".
+  state.lock  held only for microseconds, guarding reads/writes of the
+              `pending` flag.
+
+The invariant that closes the race: **run.lock is only ever released while
+state.lock is held.** So a trigger that holds state.lock cannot observe
+"run.lock is free" at the same moment the supervisor is deciding to exit --
+the two are serialised.
+
+  trigger:    lock(state) -> pending = True
+                          -> try lock(run) non-blocking
+                             acquired? -> pending = False, unlock(state), run loop
+                             busy?     -> unlock(state), exit  (owner will see pending)
+
+  owner end:  lock(state) -> pending set? -> pending = False, unlock(state), loop again
+                          -> otherwise    -> unlock(run) THEN unlock(state), exit
+
+Because the owner consumes `pending` under state.lock, and the trigger sets
+it under state.lock before ever testing run.lock, every trigger either
+becomes the owner or is guaranteed to be observed by the current owner.
+
+Usage (invoked by the orchestrator plugin, not by hand):
     run_coalesced.py <script-name> [--python <interpreter>]
-
-`<script-name>` is resolved inside this script's own directory, so the
-supervisor and the bridge scripts stay co-located and there is no path
-configuration to drift.
 """
 from __future__ import annotations
 
-import os
+import fcntl
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 LOCK_DIR = Path.home() / ".hermes" / "plugin-data" / "xstudio-l2-orchestrator" / "locks"
-# Hard ceiling on consecutive re-runs. A script that is somehow re-dirtied
-# every single time it runs must not spin forever holding the lock; the cron
-# backstop still exists for whatever the ceiling drops.
+# Ceiling on consecutive re-runs so a script that somehow re-dirties itself
+# every pass cannot hold run.lock forever. Cron still backstops the remainder.
 MAX_CONSECUTIVE_RUNS = 5
-# A single bridge run that exceeds this is treated as hung: the supervisor
-# gives up waiting rather than holding the lock (and therefore blocking every
-# future trigger for this script) indefinitely.
+# A single run exceeding this is treated as hung; the supervisor stops rather
+# than holding run.lock (and therefore blocking every future trigger) forever.
 RUN_TIMEOUT_SECONDS = 900
 
 
-def _dirty_path(script: str) -> Path:
-    return LOCK_DIR / f"{script}.dirty"
+def _paths(script: str):
+    LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    return (LOCK_DIR / f"{script}.run.lock",
+            LOCK_DIR / f"{script}.state.lock",
+            LOCK_DIR / f"{script}.pending")
 
 
-def _lock_path(script: str) -> Path:
-    return LOCK_DIR / f"{script}.pid"
+def _acquire(fh, *, blocking: bool) -> bool:
+    """flock a file handle. Returns False only for a non-blocking miss."""
+    flags = fcntl.LOCK_EX if blocking else (fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        fcntl.flock(fh.fileno(), flags)
+        return True
+    except (BlockingIOError, OSError):
+        return False
 
 
 def main() -> int:
@@ -78,16 +101,26 @@ def main() -> int:
         print(f"run_coalesced: {target} does not exist", file=sys.stderr)
         return 2
 
-    LOCK_DIR.mkdir(parents=True, exist_ok=True)
-    dirty = _dirty_path(script)
-    lock = _lock_path(script)
+    run_lock_path, state_lock_path, pending_path = _paths(script)
 
-    runs = 0
-    try:
+    # Open both lock files for the whole process lifetime; the kernel drops
+    # the flocks if we die, so a crash can never wedge this script.
+    with open(run_lock_path, "a+") as run_fh, open(state_lock_path, "a+") as state_fh:
+        # --- acquire phase, under state.lock -------------------------------
+        _acquire(state_fh, blocking=True)
+        pending_path.touch()  # announce this trigger before testing run.lock
+        owner = _acquire(run_fh, blocking=False)
+        if owner:
+            pending_path.unlink(missing_ok=True)  # we are servicing it now
+        fcntl.flock(state_fh.fileno(), fcntl.LOCK_UN)
+        if not owner:
+            # Someone else is running it. They consume `pending` under
+            # state.lock before releasing run.lock, so they cannot miss us.
+            return 0
+
+        # --- run loop, holding run.lock ------------------------------------
+        runs = 0
         while runs < MAX_CONSECUTIVE_RUNS:
-            # Clear BEFORE running: any trigger that lands from here on is a
-            # genuinely new event this run may not observe, and must re-arm.
-            dirty.unlink(missing_ok=True)
             runs += 1
             try:
                 subprocess.run(
@@ -96,22 +129,26 @@ def main() -> int:
                     stderr=subprocess.DEVNULL,
                     timeout=RUN_TIMEOUT_SECONDS,
                 )
-            except subprocess.TimeoutExpired:
-                # Hung run: stop supervising rather than hold the lock forever.
-                break
-            except Exception:
-                break
-            if not dirty.exists():
-                break
-    finally:
-        # Release the lock last, so a trigger arriving during the final run
-        # either sets dirty (and is picked up by the loop above) or, if it
-        # lands after the loop exits, finds no live lock and spawns cleanly.
-        try:
-            if lock.exists() and lock.read_text(encoding="utf-8").strip() == str(os.getpid()):
-                lock.unlink(missing_ok=True)
-        except Exception:
-            pass
+            except (subprocess.TimeoutExpired, Exception):
+                break  # hung or unlaunchable: stop supervising, release below
+
+            # Decide whether to loop again, atomically w.r.t. new triggers.
+            _acquire(state_fh, blocking=True)
+            if pending_path.exists():
+                pending_path.unlink(missing_ok=True)
+                fcntl.flock(state_fh.fileno(), fcntl.LOCK_UN)
+                continue  # a trigger landed during the run -- service it
+            # No pending work: release run.lock while STILL holding
+            # state.lock. This is the step that makes the handoff race-free.
+            fcntl.flock(run_fh.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(state_fh.fileno(), fcntl.LOCK_UN)
+            return 0
+
+        # Hit the ceiling (or a hung run): release explicitly and let cron
+        # cover whatever is still outstanding.
+        _acquire(state_fh, blocking=True)
+        fcntl.flock(run_fh.fileno(), fcntl.LOCK_UN)
+        fcntl.flock(state_fh.fileno(), fcntl.LOCK_UN)
     return 0
 
 

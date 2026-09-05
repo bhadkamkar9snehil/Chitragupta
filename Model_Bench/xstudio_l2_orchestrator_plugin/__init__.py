@@ -27,13 +27,18 @@ each script's own existing "nothing to do" early-exit decide is simpler,
 harder to get subtly wrong, and just as fast in practice given board sizes
 here (tens of tasks, not thousands).
 
-Debounced via a PID lock file per script: if several kanban_complete/
-kanban_block calls fire in quick succession (confirmed live this session:
-7 tasks completing near-simultaneously), a script already in flight is not
-re-spawned -- the in-flight run will pick up whatever accumulated by the
-time it actually gets there. A dead PID is treated as a stale lock and the
-script is respawned normally, so a crashed run never permanently blocks
-future triggers.
+Concurrency is NOT handled here. Each script is launched through
+`run_coalesced.py`, which holds real POSIX flocks so that at most one run
+of a script happens at a time, a trigger arriving mid-run causes exactly
+one more run afterwards, and a crashed supervisor releases its locks
+automatically. See that file for the full argument.
+
+This plugin previously did its own PID-file check before spawning. That
+was advisory only and raced two ways -- two near-simultaneous triggers
+could both see "no live PID" and both spawn, and a trigger landing between
+the in-flight run's dirty-check and its lock release was silently dropped,
+leaving the work for a cron tick. Both are fixed in the supervisor, so
+this file now spawns unconditionally and lets the supervisor arbitrate.
 """
 from __future__ import annotations
 
@@ -82,59 +87,30 @@ _PY_SCRIPTS = [
 _TRIGGER_TOOL_NAMES = {"kanban_complete", "kanban_block"}
 
 
-def _is_pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
-        return False
-    except Exception:
-        return True  # unknown platform quirk -- assume alive, err toward not double-spawning
+"""(_is_pid_alive / _try_lock removed 2026-09-05 -- PID-file locking was
+advisory and racy; run_coalesced.py now owns concurrency via POSIX flock.)"""
 
 
-def _try_lock(name: str) -> bool:
-    """Returns True if the caller now owns the lock (should spawn), False if
-    a live run already holds it.
-
-    2026-09-05: when a live run holds the lock we now set a `.dirty` flag
-    before returning False, instead of dropping the trigger. The old comment
-    here claimed the in-flight run "will see the new state anyway" -- it does
-    not. A run that started BEFORE this event has already queried the board
-    and built its work list, so the event is invisible to it and nothing
-    re-runs. Confirmed live: Ticket_343's approved response sat unpublished
-    because the publisher happened to be mid-run when the approval landed,
-    and only a manual invocation rescued it.
-
-    `run_coalesced.py` owns the other half: it clears `.dirty` before each
-    run and, if the flag reappears during that run, runs exactly once more.
-    """
-    _LOCK_DIR.mkdir(parents=True, exist_ok=True)
-    lock_path = _LOCK_DIR / f"{name}.pid"
-    try:
-        if lock_path.exists():
-            old_pid = int(lock_path.read_text(encoding="utf-8").strip() or "0")
-            if old_pid and _is_pid_alive(old_pid):
-                # Re-arm the in-flight supervisor rather than losing the event.
-                try:
-                    (_LOCK_DIR / f"{name}.dirty").touch()
-                except Exception:
-                    pass
-                return False
-    except Exception:
-        pass  # unreadable/corrupt lock -- treat as stale, proceed to overwrite
-    return True
 
 
 def _spawn(name: str, args: list) -> None:
-    if not _try_lock(name):
-        return
-    lock_path = _LOCK_DIR / f"{name}.pid"
+    """Fire-and-forget. Concurrency control lives entirely in
+    run_coalesced.py.
+
+    2026-09-05: this used to do its own PID-file check first. That check was
+    advisory only and raced two ways -- two triggers could both see "no live
+    PID" and both spawn, and a trigger landing between the supervisor's
+    dirty-check and its lock release was silently dropped. Both are now
+    handled by real POSIX flocks inside the supervisor, which also releases
+    them automatically if it dies. Spawning unconditionally is correct here:
+    a supervisor that finds the run lock held records the trigger and exits
+    immediately, so the redundant process is momentary and cheap.
+    """
     try:
-        proc = subprocess.Popen(
+        subprocess.Popen(
             args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        lock_path.write_text(str(proc.pid), encoding="utf-8")
     except Exception:
         pass  # a failed trigger must never break the agent loop; cron backstop still runs
 
@@ -144,7 +120,7 @@ def _fire_all() -> None:
 
     Each script is launched as `run_coalesced.py <script>` rather than
     directly, so a trigger that lands while that script is already running
-    re-arms it (see `_try_lock`) instead of being silently dropped. If the
+    re-arms it under a real lock instead of being silently dropped. If the
     supervisor is missing for any reason, fall back to launching the script
     directly -- degraded (events can be lost mid-run) but never worse than
     the pre-2026-09-05 behaviour, and the cron backstop still covers it.
