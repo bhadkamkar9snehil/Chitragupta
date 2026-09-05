@@ -1,0 +1,203 @@
+workflow:
+  name: l2-investigate-phase1
+  description: >
+    Phase 1 of the Conductor migration (see
+    Plans/Conductor_Migration_Plan_05092026.md): poll one real ticket,
+    investigate it using the same mechanical, schema-validated tools as
+    the Kanban pipeline, produce a structured proposed response + a
+    mechanically-carried investigation ledger. Deliberately does NOT
+    publish anything to the real ticket and does NOT touch Kanban -- the
+    live pipeline is completely unaffected by this running. Ends by
+    releasing its own claim (--fail-run) so the ticket goes back into the
+    normal pool immediately rather than sitting claimed for 60 minutes.
+    This is a standalone proof that the investigate step itself works
+    end-to-end against qwopus3.5-9b-coder before any cutover is considered.
+  entry_point: poll_ticket
+
+  runtime:
+    provider: openai
+    type: openai
+    wire_api: completions
+    base_url: http://100.111.69.102:1235/v1
+    api_key: lm-studio
+    default_model: qwopus3.5-9b-coder
+    temperature: 0.2
+    mcp_servers:
+      l2-investigation:
+        type: stdio
+        command: /mnt/c/Python314/python.exe
+        args: ["/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Model_Bench/l2_investigation_mcp_server.py"]
+        env:
+          MSSQL_MCP_SERVER: "10.2.6.204"
+        tools: ["*"]
+
+  # explicit = only what each agent's own `input:` block names is available
+  # to it -- nothing auto-accumulated from prior steps. The real name for
+  # this in the installed v0.1.36 schema (conductor/config/schema.py
+  # ContextConfig.mode); the public docs on main describe a per-step
+  # context_mode: accumulate|snapshot|minimal that does not exist in this
+  # installed version -- confirmed by reading the actual installed source
+  # after `conductor validate` rejected the doc-described field name.
+  context:
+    mode: explicit
+
+  limits:
+    max_iterations: 20
+    timeout_seconds: 900
+
+# Workflow-level tool allowlist -- distinct from runtime.mcp_servers.*.tools
+# (which controls what the SERVER exposes); this is what makes them
+# referenceable at all by an agent's own `tools:` list, confirmed by
+# reading conductor/config/schema.py's WorkflowConfig.tools after
+# `conductor validate` rejected every l2-investigation__* reference with
+# "Available tools:" (empty) despite the server itself listing all six
+# correctly under a raw stdio handshake.
+tools:
+  - l2-investigation__suggest_tables
+  - l2-investigation__build_query
+  - l2-investigation__find_sql_objects
+  - l2-investigation__get_sql_object_definition
+  - l2-investigation__search_solutions
+  - l2-investigation__execute_sql
+
+agents:
+  - name: poll_ticket
+    type: script
+    description: "Atomically claim one real eligible ticket (deterministic, no LLM)."
+    command: /mnt/c/Python314/python.exe
+    args:
+      - "/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Hermes_Orchestrator.py"
+      - "--poll"
+      - "--eligible-status"
+      - "Enter"
+      - "--server"
+      - "10.2.6.204"
+    timeout: 60
+    output:
+      status:
+        type: string
+      run_id:
+        type: string
+        nullable: true
+      ticket_id:
+        type: string
+        nullable: true
+      ticket:
+        type: object
+        nullable: true
+    routes:
+      - to: investigate
+        when: "{{ poll_ticket.output.status == 'CLAIMED' }}"
+      - to: $end
+
+  - name: investigate
+    type: agent
+    input:
+      - "poll_ticket.output"
+    tools:
+      - l2-investigation__suggest_tables
+      - l2-investigation__build_query
+      - l2-investigation__find_sql_objects
+      - l2-investigation__get_sql_object_definition
+      - l2-investigation__search_solutions
+      - l2-investigation__execute_sql
+    system_prompt: |
+      You investigate one XStudio Helpdesk L2 ticket. You have real,
+      schema-validated tools -- use suggest_tables first to narrow which
+      tables matter, then build_query for anything it can express
+      (never guess a column name; a hallucinated one is rejected with
+      the real name, use that correction). execute_sql is only for
+      joins/aggregates build_query can't express. find_sql_objects /
+      get_sql_object_definition let you check whether an official
+      stored procedure already covers something, and read its real
+      logic before trusting what its name implies. search_solutions
+      checks whether this class of problem already has a known fix --
+      check it before re-deriving an answer from scratch.
+
+      Two databases matter: XStudio_Helpdesk (the ticket itself) and
+      XStudio_Xbatch (the real production data -- SAP posting,
+      heat/billet tracking, quality, delays). Never assert something
+      you haven't actually queried. If ProblemCategory/SourceSystem/
+      SuspectedCause/ExtractedEntitiesJson are populated on the ticket,
+      use them as investigation hints.
+
+      When done, produce your findings. response_type must be one of:
+      UPDATE (looked into it, useful but not a fix, doesn't need the
+      user), QUESTION (need more info from the requester), RESOLUTION
+      (confident you found and can verify the actual fix), L3_ESCALATION
+      (genuinely needs a human engineer), NEEDS_HUMAN_ACTION (you
+      diagnosed it correctly but a human must execute the change).
+
+      investigation_ledger must be a genuine structured record of what
+      you actually did -- tables_queried (real table names you queried),
+      key_values_found (a small object of the concrete facts you
+      confirmed), ruled_out (hypotheses you checked and rejected, with
+      why), conclusion (one sentence). This is carried forward verbatim
+      to any future attempt on this ticket -- do not pad it or leave it
+      empty.
+    prompt: |
+      Ticket: {{ poll_ticket.output.ticket.TicketNo }}
+      Run ID: {{ poll_ticket.output.run_id }}
+      Full ticket context:
+      {{ poll_ticket.output.ticket | tojson }}
+
+      Investigate this ticket now using your tools, then produce your
+      structured findings.
+    output:
+      response_type:
+        type: string
+        enum: ["UPDATE", "QUESTION", "RESOLUTION", "L3_ESCALATION", "NEEDS_HUMAN_ACTION"]
+      reply_text:
+        type: string
+        minLength: 10
+      problem_summary:
+        type: string
+        nullable: true
+      findings:
+        type: string
+        nullable: true
+      root_cause:
+        type: string
+        nullable: true
+      resolution:
+        type: string
+        nullable: true
+      investigation_ledger:
+        type: object
+    retry:
+      max_attempts: 2
+      max_parse_recovery_attempts: 3
+    routes:
+      - to: release_claim
+
+  - name: release_claim
+    type: script
+    input:
+      - "poll_ticket.output"
+    description: >
+      Phase 1 never publishes -- release the claim cleanly instead of
+      letting it sit until the 60-minute stale-recovery window. The
+      proposed response + ledger are this workflow's own output (see
+      the top-level output: block below), for a human or Phase 2 to inspect.
+    command: /mnt/c/Python314/python.exe
+    args:
+      - "/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Hermes_Orchestrator.py"
+      - "--fail-run"
+      - "--run-id"
+      - "{{ poll_ticket.output.run_id }}"
+      - "--error-message"
+      - "Phase 1 Conductor test run -- not yet wired to publish. See investigation_ledger in workflow output."
+      - "--retry-after-minutes"
+      - "1"
+      - "--server"
+      - "10.2.6.204"
+    timeout: 30
+    routes:
+      - to: $end
+
+output:
+  status: "{{ poll_ticket.output.status }}"
+  ticket_id: "{{ poll_ticket.output.ticket_id }}"
+  response_type: "{% if investigate is defined %}{{ investigate.output.response_type }}{% else %}null{% endif %}"
+  reply_text: "{% if investigate is defined %}{{ investigate.output.reply_text }}{% else %}null{% endif %}"
+  investigation_ledger: "{% if investigate is defined %}{{ investigate.output.investigation_ledger }}{% else %}null{% endif %}"
