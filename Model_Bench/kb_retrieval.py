@@ -4,17 +4,15 @@
 This is intentionally NOT mem0 retrieval and NOT schema discovery.
 
 Responsibilities:
-- infer one or more canonical route candidates from Knowledge/manifest.json;
+- infer canonical route candidates from Knowledge/manifest.json;
 - search active Hermes_Solution_Article_Mst_Tbl articles by the ticket's actual
   words, not merely by a broad route;
 - return IDs + provenance so an investigator/reviewer can name the source;
 - abstain when no article is relevant enough instead of always returning five;
-- expose the canonical Knowledge documents associated with the likely routes.
+- expose the canonical Knowledge documents associated with likely routes.
 
-This is the first retrieval layer. It is deliberately transparent and dependency
-light so it can be evaluated before a later dense+sparse Qdrant hybrid index is
-introduced. Schema/table retrieval remains in Hermes_Orchestrator.py and ticket-
-specific episodic state remains in InvestigationJson; neither belongs here.
+Schema/table retrieval remains in Hermes_Orchestrator.py and ticket-specific
+episodic state remains in InvestigationJson; neither belongs here.
 """
 from __future__ import annotations
 
@@ -45,16 +43,6 @@ STOPWORDS = {
 }
 TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_\-]*")
 
-# Strong identifiers are routing evidence, not ordinary bag-of-words terms.
-IDENTIFIER_PATTERNS: list[tuple[re.Pattern[str], tuple[str, ...], str]] = [
-    (re.compile(r"\b(?:Saptransactionid|TransactionID)\b", re.I), ("api_transaction", "sap_posting"), "transaction identifier"),
-    (re.compile(r"\b(?:HeatNo|HeatID)\b", re.I), ("heat_execution",), "heat identifier"),
-    (re.compile(r"\bInspectionLot\b", re.I), ("quality",), "inspection lot"),
-    (re.compile(r"\b(?:WorkOrder|ManufacturingOrder|WorkOrderNo)\b", re.I), ("work_order",), "work-order identifier"),
-    (re.compile(r"\b(?:BilletNo|SubLotNo)\b", re.I), ("billet_inventory",), "billet identifier"),
-    (re.compile(r"\bEquipmentID\b", re.I), ("performance",), "equipment identifier"),
-]
-
 
 def tokenize(text: str) -> set[str]:
     return {
@@ -70,12 +58,40 @@ def load_manifest() -> dict[str, Any]:
     return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
 
+def _identifier_routes(manifest: dict[str, Any]) -> list[tuple[re.Pattern[str], tuple[str, ...], str]]:
+    """Compile strong identifier routing from the manifest.
+
+    Arrays are the canonical representation. String values remain accepted for
+    backward compatibility with older manifests that used "route_a or route_b".
+    """
+    compiled: list[tuple[re.Pattern[str], tuple[str, ...], str]] = []
+    for identifier, configured in (manifest.get("identifier_routing") or {}).items():
+        if isinstance(configured, list):
+            routes = tuple(str(r) for r in configured if r)
+        elif isinstance(configured, str):
+            routes = tuple(part.strip() for part in configured.split(" or ") if part.strip())
+        else:
+            continue
+        if not routes:
+            continue
+        compiled.append(
+            (
+                re.compile(rf"\b{re.escape(str(identifier))}\b", re.I),
+                routes,
+                f"{identifier} identifier",
+            )
+        )
+    return compiled
+
+
 def route_candidates(query: str, manifest: dict[str, Any], top: int = 3) -> list[dict[str, Any]]:
     q_tokens = tokenize(query)
     scores: dict[str, float] = {}
     reasons: dict[str, list[str]] = {}
 
-    for pattern, routes, reason in IDENTIFIER_PATTERNS:
+    # Explicit identifiers are strong structural evidence and should outrank
+    # vague natural-language overlap.
+    for pattern, routes, reason in _identifier_routes(manifest):
         if pattern.search(query):
             for route in routes:
                 scores[route] = scores.get(route, 0.0) + 30.0
