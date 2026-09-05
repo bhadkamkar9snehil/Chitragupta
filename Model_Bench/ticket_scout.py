@@ -15,6 +15,11 @@ versions independently embedded the ticket, called --suggest-tables, called
 That duplicated context, tool turns, and retrieval paths. The bundle is now the
 single dispatch-time context assembly path; its own sections degrade
 independently inside Hermes_Orchestrator.py.
+
+Solution knowledge is replaced at dispatch by Model_Bench/kb_retrieval.py. The
+legacy bundle lookup was broad-route-only and could return irrelevant articles.
+The KB retriever ranks by actual ticket text, returns provenance, and abstains
+when nothing is relevant enough.
 """
 from __future__ import annotations
 
@@ -26,6 +31,7 @@ import sys
 
 PYTHON = "/mnt/c/Python314/python.exe"
 ORCHESTRATOR = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Hermes_Orchestrator.py"
+KB_RETRIEVER = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\kb_retrieval.py"
 SERVER = "10.2.6.204"
 USER = "sa"
 PASSWORD = os.environ.get("MSSQL_MCP_PASSWORD")
@@ -45,12 +51,7 @@ _ARCHIVABLE_STATUSES = {"todo", "ready", "blocked", "triage", "scheduled"}
 
 
 def _orchestrator_cmd(*extra: str) -> list[str]:
-    """Build the standard orchestrator command without forcing a null password.
-
-    Hermes_Orchestrator.py already reads MSSQL_MCP_PASSWORD from the environment,
-    so omitting --password when the variable is absent is both safer and avoids
-    passing None into subprocess.
-    """
+    """Build the standard orchestrator command without forcing a null password."""
     cmd = [PYTHON, ORCHESTRATOR, "--server", SERVER, "--username", USER]
     if PASSWORD:
         cmd += ["--password", PASSWORD]
@@ -59,11 +60,7 @@ def _orchestrator_cmd(*extra: str) -> list[str]:
 
 
 def _run_orchestrator(extra_args: list[str], timeout: int = 60) -> dict | list | None:
-    """Run Hermes_Orchestrator.py and parse JSON stdout.
-
-    This is enrichment/dispatch support. Failure must never fabricate context;
-    callers either fall back to already-claimed ticket data or fail explicitly.
-    """
+    """Run Hermes_Orchestrator.py and parse JSON stdout."""
     try:
         r = subprocess.run(
             _orchestrator_cmd(*extra_args),
@@ -78,13 +75,69 @@ def _run_orchestrator(extra_args: list[str], timeout: int = 60) -> dict | list |
         return None
 
 
-def _archive_stale_cards_for_ticket(ticket_id: str, new_run_id: str) -> None:
-    """Archive stale queued/gated cards when the SQL ticket is reclaimed.
+def _run_kb_retrieval(ticket: dict, timeout: int = 60) -> dict:
+    """Retrieve reusable knowledge against the ticket's actual text.
 
-    Run IDs are unique per attempt, but a ticket can be reclaimed after an old
-    run expires while its Kanban card is still queued. Without ticket-level
-    cleanup that produces duplicate live work for the same ticket.
+    This deliberately replaces the bundle's old `Route=? TOP 5` solution
+    lookup. Route is a filter/bonus, never sufficient relevance on its own.
     """
+    query_parts = [
+        ticket.get("BriefDetails"),
+        ticket.get("Description"),
+        ticket.get("ProblemCategory"),
+        ticket.get("HermesAreaName"),
+        ticket.get("SuspectedCause"),
+        ticket.get("ExtractedEntitiesJson"),
+    ]
+    query = " ".join(str(v) for v in query_parts if v)
+    if not query.strip():
+        return {
+            "solutions": [],
+            "abstained": True,
+            "abstention_reason": "Ticket contains no searchable problem text.",
+        }
+
+    cmd = [
+        PYTHON,
+        KB_RETRIEVER,
+        "--server",
+        SERVER,
+        "--database",
+        "XStudio_Helpdesk",
+        "--username",
+        USER,
+        "--query",
+        query,
+        "--top",
+        "5",
+    ]
+    if PASSWORD:
+        cmd += ["--password", PASSWORD]
+
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if r.returncode != 0:
+            return {
+                "solutions": [],
+                "abstained": True,
+                "abstention_reason": f"KB retriever failed: {r.stderr.strip()[:300]}",
+            }
+        result = json.loads(r.stdout)
+        return result if isinstance(result, dict) else {
+            "solutions": [],
+            "abstained": True,
+            "abstention_reason": "KB retriever returned a non-object response.",
+        }
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError, TypeError) as exc:
+        return {
+            "solutions": [],
+            "abstained": True,
+            "abstention_reason": f"KB retriever unavailable: {type(exc).__name__}: {exc}",
+        }
+
+
+def _archive_stale_cards_for_ticket(ticket_id: str, new_run_id: str) -> None:
+    """Archive stale queued/gated cards when the SQL ticket is reclaimed."""
     result = subprocess.run(
         ["hermes", "kanban", "list", "--json"],
         capture_output=True,
@@ -126,19 +179,7 @@ def _archive_stale_cards_for_ticket(ticket_id: str, new_run_id: str) -> None:
 
 
 def _investigation_bundle_section(ticket_id: str, fallback_ticket: dict) -> str:
-    """Return the single dispatch-time context package for an investigator.
-
-    `--investigate-bundle` already assembles:
-      - current ticket context;
-      - mechanically narrowed real schema candidates;
-      - prior ledger;
-      - recent prior attempts;
-      - known-solution candidates.
-
-    Do not reproduce those as independent dispatcher calls. If the bundle command
-    itself fails, retain only the already-claimed ticket snapshot and state the
-    failure honestly; the worker still has deterministic discovery tools.
-    """
+    """Return the single dispatch-time context package for an investigator."""
     result = _run_orchestrator(
         ["--database", "XStudio_Helpdesk", "--investigate-bundle", ticket_id],
         timeout=90,
@@ -154,16 +195,20 @@ def _investigation_bundle_section(ticket_id: str, fallback_ticket: dict) -> str:
             ),
         }
 
-    # Bound card growth. The bundle is context, not a database export. Individual
-    # bundle sections are already compact; this outer cap protects Kanban/task
-    # context if an SP unexpectedly returns oversized text in the future.
+    # The orchestrator bundle still contains the old broad-route solution lookup.
+    # Never expose two competing KB retrieval paths to the worker. Remove it and
+    # replace it with the relevance-ranked, provenance-bearing result.
+    result.pop("known_solutions", None)
+    result["kb_retrieval"] = _run_kb_retrieval(fallback_ticket)
+
     rendered = json.dumps(result, indent=2, default=str)
-    if len(rendered) > 12000:
-        rendered = rendered[:12000] + "\n... [bundle truncated by dispatcher at 12,000 chars]"
+    if len(rendered) > 14000:
+        rendered = rendered[:14000] + "\n... [bundle truncated by dispatcher at 14,000 chars]"
 
     return (
         "\n--- Investigation bundle (single dispatch-time context package) ---\n"
-        "Treat retrieved solutions, prior findings, and table suggestions as leads, not proof.\n"
+        "Treat KB hits, prior findings, and table suggestions as leads, not proof.\n"
+        "Each KB solution includes its source ID/provenance and still requires live verification.\n"
         "Current live SQL/data or verified Knowledge/ sources must support final claims.\n"
         f"{rendered}\n"
     )
