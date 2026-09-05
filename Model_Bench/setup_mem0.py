@@ -19,7 +19,7 @@ USER_ID = "xstudio-l2-helpdesk"
 LLM_MODEL = "qwen/qwen3.5-9b"
 EMBEDDER_MODEL = "nomic-embed-text"
 
-PROFILES = ["l2-investigator", "l2-gemma", "l2-gemma-verifier", "l2-qwen-verifier", "l2-eval-investigator"]
+PROFILES = ["l2-investigator", "l2-gemma", "l2-reviewer-primary", "l2-reviewer-fallback", "l2-investigator-primary"]
 
 # 2026-09-05: was ONE shared path (~/.hermes/mem0_qdrant) across all 4
 # profiles. Real, live bug: Qdrant's local/embedded mode is single-process

@@ -14,7 +14,7 @@ DST=/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/deploy
 # meaning a fresh install from this repo could not reconstruct the
 # actual current topology. l2-gemma kept even though retired -- it's
 # still a real historical profile dir, not worth a special case here.
-PROFILES="l2-investigator l2-eval-investigator l2-gemma l2-gemma-verifier l2-qwen-verifier"
+PROFILES="l2-investigator l2-investigator-primary l2-gemma l2-reviewer-primary l2-reviewer-fallback"
 SKILLS="xstudio-l2-ticket-workflow xstudio-sap-api-investigation xstudio-sohar-heat-execution xstudio-quality-delay-workorder xstudio-sql-write-discipline xstudio-l2-draft-verifier"
 
 mkdir -p "$DST"

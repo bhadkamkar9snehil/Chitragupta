@@ -1,5 +1,5 @@
 model:
-  default: qwopus3.5-9b-coder
+  default: qwen/qwen3.5-9b
   provider: lmstudio
   base_url: http://100.111.69.102:1235/v1
   context_length: 65600
@@ -34,7 +34,9 @@ _config_version: 40
 platforms:
   api_server:
     host: 0.0.0.0
-    port: 8646
+    port: 8644
+  whatsapp:
+    enabled: true
 platform_toolsets:
   cli:
     - clarify

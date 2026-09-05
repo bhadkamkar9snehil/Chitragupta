@@ -60,6 +60,14 @@ ORCHESTRATOR_PATH = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Hermes_Orchestr
 # of this file only fixed it in one place and broke on the others.
 _HAS_WSL = shutil.which("wsl") is not None
 ORCHESTRATOR_PYTHON = sys.executable if _HAS_WSL else r"/mnt/c/Python314/python.exe"
+# 2026-09-05: was a bare `"verifier" in assignee` substring check -- broke
+# the instant profiles were renamed from model-based names (l2-gemma-
+# verifier, l2-qwen-verifier) to role-based ones (l2-reviewer-primary,
+# l2-reviewer-fallback), since neither new name contains "verifier". This
+# script is the ONLY thing that actually publishes an approved response --
+# a silent match failure here means nothing ever gets published again,
+# not a loud error. Explicit set instead of a substring guess.
+REVIEWER_PROFILES = {"l2-reviewer-primary", "l2-reviewer-fallback"}
 
 
 def load_published():
@@ -91,7 +99,7 @@ def list_done_verifier_tasks():
         print(f"WARNING: could not list done tasks: {result.stderr.strip()[:300]}")
         return []
     tasks = json.loads(result.stdout)
-    return [t for t in tasks if "verifier" in (t.get("assignee") or "")]
+    return [t for t in tasks if (t.get("assignee") or "") in REVIEWER_PROFILES]
 
 
 def get_runs(task_id):
@@ -150,7 +158,7 @@ def is_approved(runs):
     free-text or metadata-key parsing needed; confirmed unreliable in
     both forms previously (neither the "APPROVE:" prefix nor a
     metadata.decision key ever showed up reliably in real completions)."""
-    done_runs = [r for r in runs if r.get("status") == "done" and "verifier" in (r.get("profile") or "")]
+    done_runs = [r for r in runs if r.get("status") == "done" and (r.get("profile") or "") in REVIEWER_PROFILES]
     return bool(done_runs)
 
 

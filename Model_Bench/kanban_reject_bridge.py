@@ -62,14 +62,17 @@ MAX_ATTEMPTS_BEFORE_ESCALATION = 3
 # 2026-09-04 (later): single board now -- see ticket_scout.py's header for
 # why the two-board split (REVIEW_BOARD/DEFAULT_BOARD) was retired in
 # favor of native --parent gating on one board.
-REVIEWER_PROFILES = {"l2-gemma-verifier", "l2-qwen-verifier"}
+REVIEWER_PROFILES = {"l2-reviewer-primary", "l2-reviewer-fallback"}
 # 2026-09-05: investigator role switched from l2-gemma (gemma-4-e4b-it) to
-# l2-eval-investigator (qwopus3.5-9b-coder) -- see ticket_scout.py's own
-# INVESTIGATOR_PROFILE for why. l2-gemma's gateway is stopped; nothing
-# should route new work to it.
+# l2-eval-investigator (qwopus3.5-9b-coder), then all four profiles renamed
+# from model-based to role-based names the same day (l2-eval-investigator ->
+# l2-investigator-primary, l2-gemma-verifier -> l2-reviewer-primary,
+# l2-qwen-verifier -> l2-reviewer-fallback) once the model roster stopped
+# matching the names and it was causing real confusion reading the board.
+# l2-gemma's gateway is stopped; nothing should route new work to it.
 INVESTIGATOR_BY_REVIEWER = {
-    "l2-gemma-verifier": "l2-eval-investigator",
-    "l2-qwen-verifier": "l2-investigator",
+    "l2-reviewer-primary": "l2-investigator-primary",
+    "l2-reviewer-fallback": "l2-investigator",
 }
 
 
@@ -220,7 +223,7 @@ def main():
             continue
 
         run_id, ticket_id, investigation_task_id = extract_source_ids(t.get("body"))
-        investigator_profile = INVESTIGATOR_BY_REVIEWER.get(reviewer_profile, "l2-eval-investigator")
+        investigator_profile = INVESTIGATOR_BY_REVIEWER.get(reviewer_profile, "l2-investigator-primary")
 
         if ticket_id:
             attempt_count = get_attempt_count(ticket_id)

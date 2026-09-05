@@ -10,10 +10,10 @@ What it does, every tick:
 2. If a ticket was genuinely claimed, archives any stale kanban card
    already sitting on the board for the SAME ticket (see below), then
    creates TWO kanban tasks: the investigator's card (assignee
-   INVESTIGATOR_PROFILE, currently l2-eval-investigator -- see that
+   INVESTIGATOR_PROFILE, currently l2-investigator-primary -- see that
    constant below for the live value, not this comment, if they ever
    drift again), and a reviewer card gated on it via --parent (assignee
-   REVIEWER_PROFILE, currently l2-gemma-verifier) -- both on the single
+   REVIEWER_PROFILE, currently l2-reviewer-primary) -- both on the single
    default board. The reviewer
    card auto-promotes from 'todo' to 'ready' the moment the investigator's
    card completes; no separate bridge script needed for that hop.
@@ -74,8 +74,8 @@ SERVER = "10.2.6.204"
 USER = "sa"
 PASSWORD = os.environ.get("MSSQL_MCP_PASSWORD")
 ELIGIBLE_STATUS = "Enter"
-INVESTIGATOR_PROFILE = "l2-eval-investigator"
-REVIEWER_PROFILE = "l2-gemma-verifier"
+INVESTIGATOR_PROFILE = "l2-investigator-primary"
+REVIEWER_PROFILE = "l2-reviewer-primary"
 
 # Cards in one of these statuses have not yet been (or are no longer being)
 # actively worked -- safe to archive once we know their ticket has been
