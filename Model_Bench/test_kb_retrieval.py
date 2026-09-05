@@ -11,6 +11,11 @@ import kb_retrieval as kb  # noqa: E402
 
 MANIFEST = {
     "always_load": ["mental-model.md"],
+    "identifier_routing": {
+        "HeatNo": ["heat_execution"],
+        "HeatID": ["heat_execution"],
+        "EquipmentID": ["performance"],
+    },
     "routes": [
         {
             "route": "performance",
@@ -38,7 +43,7 @@ class RouteTests(unittest.TestCase):
     def test_strong_identifier_beats_vague_language(self):
         routes = kb.route_candidates("HeatNo 1604015 delay value looks wrong", MANIFEST)
         self.assertEqual(routes[0]["route"], "heat_execution")
-        self.assertIn("heat identifier", routes[0]["reasons"])
+        self.assertIn("HeatNo identifier", routes[0]["reasons"])
 
     def test_no_signal_abstains_to_discover(self):
         routes = kb.route_candidates("screen behaves strangely", MANIFEST)
@@ -50,6 +55,17 @@ class RouteTests(unittest.TestCase):
         paths = [d["path"] for d in docs]
         self.assertIn("Knowledge/mental-model.md", paths)
         self.assertIn("Knowledge/xbatch-investigation-surfaces.md#delay--oee", paths)
+
+    def test_legacy_string_identifier_mapping_still_parses(self):
+        legacy = dict(MANIFEST)
+        legacy["identifier_routing"] = {"TransactionID": "api_transaction or sap_posting"}
+        legacy["routes"] = MANIFEST["routes"] + [
+            {"route": "api_transaction", "description": "API transaction", "keywords": ["API"], "load": []},
+            {"route": "sap_posting", "description": "SAP posting", "keywords": ["SAP"], "load": []},
+        ]
+        routes = kb.route_candidates("TransactionID ABC failed", legacy)
+        names = [r["route"] for r in routes[:2]]
+        self.assertEqual(set(names), {"api_transaction", "sap_posting"})
 
 
 class ArticleRankingTests(unittest.TestCase):
