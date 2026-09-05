@@ -16,7 +16,7 @@ HOME = pathlib.Path.home()
 LM_STUDIO_URL = "http://100.111.69.102:1235/v1"
 OLLAMA_URL = "http://100.111.69.102:11434"
 USER_ID = "xstudio-l2-helpdesk"
-LLM_MODEL = "qwopus3.5-9b-coder"
+LLM_MODEL = "qwen/qwen3.5-9b"
 EMBEDDER_MODEL = "nomic-embed-text"
 
 PROFILES = ["l2-investigator", "l2-gemma", "l2-gemma-verifier", "l2-qwen-verifier", "l2-eval-investigator"]
