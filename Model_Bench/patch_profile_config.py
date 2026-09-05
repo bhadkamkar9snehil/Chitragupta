@@ -161,6 +161,12 @@ def patch_file(path: Path, *, check_only: bool = False) -> tuple[bool, list[str]
 
 def main(argv: list[str]) -> int:
     check_only = "--check" in argv
+    # The ROOT ~/.hermes/config.yaml only needs plugins.enabled: that is what makes
+    # plugin discovery register the xstudio_l2 toolset name. It must NOT receive the
+    # per-profile toolset/deny entries.
+    if "--enable-plugin-only" in argv:
+        global SECTIONS
+        SECTIONS = [(["plugins", "enabled"], PLUGIN_ENTRIES, True)]
     paths = [Path(a) for a in argv if not a.startswith("--")]
     if not paths:
         print(__doc__)

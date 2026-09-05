@@ -66,6 +66,22 @@ deploy_plugins() {
   done
 }
 
+# A profile-local plugin copy is enough for HOOKS to fire, but NOT for a plugin
+# to contribute a TOOLSET. Toolset gating (hermes_cli/tools_config._get_platform_tools)
+# only accepts a toolset name that plugin discovery already knows about, and that
+# discovery scans the SHARED plugins directory using the ROOT config's
+# plugins.enabled list. A tools plugin installed only under a profile therefore
+# loads its hooks, registers its tool, and still has the toolset silently dropped
+# from every session -- which is exactly why the first typed-harness ticket saw
+# its terminal fallback blocked but never got `xstudio_l2` as an alternative.
+# xstudio-l2-trace was already installed in both places for this same reason.
+install_shared_plugin_for_discovery() {
+  local plugin="$1" src="$2" dir="$HOME/.hermes/plugins/$1"
+  mkdir -p "$dir"
+  cp "$src/__init__.py" "$dir/__init__.py"
+  cp "$src/plugin.yaml" "$dir/plugin.yaml"
+}
+
 copy_soul() {
   local profile="$1" src="$ROOT/deploy/profiles/$1/SOUL.md"
   [[ -f "$src" ]] && cp "$src" "$HOME/.hermes/profiles/$1/SOUL.md"
@@ -103,6 +119,10 @@ done
 # Enable the tools plugin/toolset and the approval-deny backstop in each live
 # profile config. This is a targeted, idempotent, comment-preserving edit -- it
 # never rewrites dispatch settings, API ports, model choice, or credentials.
+echo "== Shared plugin install (required for toolset discovery) =="
+install_shared_plugin_for_discovery xstudio-l2-tools "$ROOT/Model_Bench/xstudio_l2_tools_plugin"
+echo "installed xstudio-l2-tools into $HOME/.hermes/plugins for toolset discovery"
+
 echo "== Profile config (idempotent, additive) =="
 for profile in "${ACTIVE_PROFILES[@]}"; do
   config="$HOME/.hermes/profiles/$profile/config.yaml"
@@ -112,6 +132,11 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
     echo "WARNING: $config not found; skipped"
   fi
 done
+
+# The root config drives plugin discovery, which is what makes `xstudio_l2` a
+# recognised toolset name instead of an unknown one that gets filtered out.
+echo "== Root config (plugin discovery) =="
+python3 "$ROOT/Model_Bench/patch_profile_config.py" --enable-plugin-only "$HOME/.hermes/config.yaml"
 
 if [[ "${1:-}" != "--no-restart" ]]; then
   for profile in "${ACTIVE_PROFILES[@]}"; do
