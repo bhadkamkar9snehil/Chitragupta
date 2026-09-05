@@ -49,6 +49,22 @@ REVIEWER_PRIORITY = 5
 # completed history. `todo` includes a reviewer still gated on an old parent.
 _ARCHIVABLE_STATUSES = {"todo", "ready", "blocked", "triage", "scheduled"}
 
+# Cards not yet finished -- counted as investigator backlog regardless of
+# whether they are a fresh ticket or a REWORK card (kanban_reject_bridge.py
+# assigns rework back to INVESTIGATOR_PROFILE too, so it counts here as well).
+_UNFINISHED_STATUSES = {"todo", "ready", "blocked", "triage", "scheduled", "running"}
+
+# Real 2026-09-05 incident: this script was polled every ~2m by cron
+# regardless of how much unworked investigator backlog already existed. The
+# single-worker gateway drains roughly one card per 10-20 min (--max-runtime
+# 20m), so blind polling let the backlog and its rework regeneration outrun
+# the worker by 10-20x -- 572 claimed runs were silently reaped as
+# "Recovered as stale" in 2 days, and real ticket resolution nearly stopped
+# (1 Complaint_Mst_Tbl Status write in 6 days). Claiming a new SQL ticket now
+# requires the investigator's own backlog to be below this cap first, so
+# intake can never run further ahead of drain than this many cards.
+MAX_INVESTIGATOR_BACKLOG = 3
+
 
 def _orchestrator_cmd(*extra: str) -> list[str]:
     """Build the standard orchestrator command without forcing a null password."""
@@ -134,6 +150,33 @@ def _run_kb_retrieval(ticket: dict, timeout: int = 60) -> dict:
             "abstained": True,
             "abstention_reason": f"KB retriever unavailable: {type(exc).__name__}: {exc}",
         }
+
+
+def _investigator_backlog() -> int | None:
+    """Count unfinished investigator cards (fresh + REWORK) on the board.
+
+    Returns None (not a count) when the board can't be read, so the caller
+    can decide how to fail safe.
+    """
+    result = subprocess.run(
+        ["hermes", "kanban", "list", "--json"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        print(f"WARNING: could not list board for backlog check: {result.stderr.strip()[:300]}")
+        return None
+    try:
+        tasks = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        print("WARNING: could not parse kanban list for backlog check.")
+        return None
+    return sum(
+        1
+        for t in tasks
+        if t.get("assignee") == INVESTIGATOR_PROFILE and t.get("status") in _UNFINISHED_STATUSES
+    )
 
 
 def _archive_stale_cards_for_ticket(ticket_id: str, new_run_id: str) -> None:
@@ -252,6 +295,17 @@ def _how_to_query_section(run_id: str, ticket_id: str) -> str:
 
 
 def main() -> None:
+    backlog = _investigator_backlog()
+    if backlog is None:
+        print("Could not determine investigator backlog; skipping claim this tick (fail closed).")
+        return
+    if backlog >= MAX_INVESTIGATOR_BACKLOG:
+        print(
+            f"Investigator backlog is {backlog} (cap {MAX_INVESTIGATOR_BACKLOG}); "
+            "skipping claim this tick so intake never outruns the single-worker drain rate."
+        )
+        return
+
     result = subprocess.run(
         _orchestrator_cmd(
             "--poll",

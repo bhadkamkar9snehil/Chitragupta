@@ -26,7 +26,8 @@ infrastructure, and what to do after a Hermes update.
   Complaint_Mst_Tbl │  XStudio Helpdesk    │  (live production ticket queue)
   (Status='Enter')  │  SQL Server          │
                     └──────────┬──────────┘
-                               │ polled every 2m (ticket_scout.py cron)
+                               │ polled every 2m, but only claims when
+                               │ investigator backlog < 3 (ticket_scout.py cron)
                                ▼
                     ┌─────────────────────┐
                     │  Hermes_Orchestrator │  --poll: atomic claim,
@@ -161,10 +162,16 @@ Knowledge/                 The deployable SQL layer + reference docs.
   view_docs/                      Per-view/per-domain investigation notes.
 
 Model_Bench/                Orchestration scripts + Hermes plugins.
-  ticket_scout.py            Cron (2m): --poll a new ticket, create the
-                              investigator card + a --parent-gated
-                              reviewer card, archive stale duplicate cards
-                              for the same ticket.
+  ticket_scout.py            Cron (2m tick, backlog-gated claim): checks
+                              current investigator backlog (unfinished
+                              cards, fresh + REWORK) on the kanban board
+                              first and skips claiming if it's >= 3 --
+                              intake must never run further ahead of the
+                              single-worker drain rate than that. Only
+                              below the cap does it --poll a new ticket,
+                              create the investigator card + a
+                              --parent-gated reviewer card, and archive
+                              stale duplicate cards for the same ticket.
   kanban_reject_bridge.py    Hook-triggered: verifier kanban_block → fresh
                               rework card back to the investigator with
                               the objection attached.

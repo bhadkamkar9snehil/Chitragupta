@@ -14,25 +14,48 @@ before being caught). Verify against `deploy/`/live `hermes` commands
 before trusting a specific claim below.
 
 **The live pipeline is Kanban-based, not the old poll-into-chat design.**
-`ticket_scout.py` (cron, WSL, ~2m) atomically claims a ticket and creates
-a Kanban card for `l2-eval-investigator` (investigator) plus a
-`--parent`-gated reviewer card for `l2-gemma-verifier`. Event-driven hook
-plugins publish an approval or bridge a rejection into rework, capped at
-3 attempts before escalating to the human L3 queue. Full diagram:
-`README.md` §1. This replaced an earlier single-bot-chat design
-(`hermes_l2_poll.py` injecting context into one long-lived
-`bot-chat:l2-investigator` conversation) that caused a real
-context-overflow outage — if you see that older flow described anywhere
-(old `Plans/` docs), it's history, not the live mechanism.
+`ticket_scout.py` (cron, WSL, ~2m tick) creates a Kanban card for
+`l2-investigator-primary` (investigator) plus a `--parent`-gated reviewer
+card for `l2-reviewer-primary`. Event-driven hook plugins publish an
+approval or bridge a rejection into rework, capped at 3 attempts before
+escalating to the human L3 queue. Full diagram: `README.md` §1. This
+replaced an earlier single-bot-chat design (`hermes_l2_poll.py` injecting
+context into one long-lived `bot-chat:l2-investigator` conversation) that
+caused a real context-overflow outage — if you see that older flow
+described anywhere (old `Plans/` docs), it's history, not the live
+mechanism. Profile names were renamed 2026-09-05 from model-based
+(`l2-eval-investigator`, `l2-gemma-verifier`, `l2-qwen-verifier`) to
+role-based (`l2-investigator-primary`, `l2-reviewer-primary`,
+`l2-reviewer-fallback`) — if you see the old names anywhere outside a
+historical/dated note, that's stale and worth fixing.
 
-**Model: all active profiles point at `qwopus3.5-9b-coder` via LM Studio**
-(switched 2026-09-05 from `gemma-4-e4b-it`) — `l2-investigator`,
-`l2-eval-investigator`, `l2-gemma-verifier`, `l2-qwen-verifier`. LM Studio
-serves one model at a time; `l2-gemma` is fully retired (gateway stopped,
-config kept as history only). Live-loaded-model check:
-`curl http://100.111.69.102:1235/api/v0/models` (look for `"state":
-"loaded"`), not `/v1/models` (that lists the whole catalog regardless of
-load state).
+**Ticket claiming is backlog-gated, not blindly interval-based (fixed
+2026-09-05).** A real incident: `ticket_scout.py` claimed a new SQL ticket
+on every ~2m cron tick regardless of how much unworked investigator
+backlog already existed. The single-worker gateway (see below) drains
+roughly one card per 10-20 min, so blind polling let intake — plus rework
+regenerating even more cards on every rejection — outrun the drain rate
+by 10-20x. Confirmed live over the prior 2 days: 572 claimed runs silently
+reaped as `"Recovered as stale by Hermes scheduler"`, real ticket
+resolution nearly stopped (1 `Complaint_Mst_Tbl` Status write in 6 days),
+and 300 tickets sat unclaimed. Fix: `ticket_scout.py` now checks current
+investigator backlog (unfinished cards, fresh + REWORK, via
+`_investigator_backlog()`) before polling and skips the claim entirely
+once it's >= `MAX_INVESTIGATOR_BACKLOG` (3). A board-read failure fails
+closed (skips claiming) rather than polling blind. If you're debugging
+"why didn't a new ticket get claimed this tick," check the backlog count
+first, not the cron schedule.
+
+**Model: live-loaded model as of 2026-09-05 afternoon is `qwen/qwen3.5-9b`
+via LM Studio**, serving all active profiles (`l2-investigator`,
+`l2-investigator-primary`, `l2-reviewer-primary`, `l2-reviewer-fallback`).
+This corrects an earlier entry in this same file claiming
+`qwopus3.5-9b-coder` — that claim was stale by the time it was checked
+live; do not trust either name without reverifying. LM Studio serves one
+model at a time; `l2-gemma` is fully retired (gateway stopped, config kept
+as history only). Live-loaded-model check: `curl
+http://100.111.69.102:1235/api/v0/models` (look for `"state": "loaded"`),
+not `/v1/models` (that lists the whole catalog regardless of load state).
 
 **`deploy/` is the reproducible-topology mirror — keep its `PROFILES` list
 in `Model_Bench/mirror_wsl_artifacts.sh` in sync with reality.** A real gap
@@ -93,6 +116,28 @@ right database in the old `investigate()` — the bot should do the analogous
 thing now: read these fields from `--poll`'s output and use them as
 investigation hints when populated (usually NULL today, since L1 doesn't
 exist yet).
+
+**Deterministic KB retrieval landed and was independently validated
+2026-09-05** (`Model_Bench/kb_retrieval.py`, commits `602f0a1`..`4f26ef1`).
+Replaces the old broad `Route=? TOP 5` solution lookup in the investigation
+bundle: routes are inferred from `Knowledge/manifest.json`
+(`identifier_routing` is the sole canonical identifier->route source, no
+second hardcoded mapping), articles are ranked against the ticket's actual
+text with a hard rule that **route alone can never retrieve an article**
+(route only adds a bonus once textual relevance already exists), and every
+hit carries provenance (`kb_id`, `source_ref`, `matched_terms`,
+`verification_required: true`) plus explicit abstention when nothing
+clears the relevance threshold. `ticket_scout.py` wires this in by
+stripping the bundle's old `known_solutions` and replacing it with
+`kb_retrieval`'s ranked result; a KB failure degrades to an abstention
+dict, never blocks dispatch. `Model_Bench/validate_knowledge_manifest.py`
+is a fail-fast consistency check (manifest<->task-router route drift,
+missing knowledge files, stale-workflow-skill regression) wired into
+`.github/workflows/knowledge-validation.yml`, though that workflow has not
+yet run successfully on a real runner — validate locally
+(`python3 Model_Bench/validate_knowledge_manifest.py`,
+`python3 -m unittest Model_Bench.test_kb_retrieval`) rather than trusting
+CI status.
 
 ## Quick reference
 
