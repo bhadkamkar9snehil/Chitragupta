@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "eligible_ticket_status": "Enter",
-  "resolved_ticket_status": null,
+  "resolved_ticket_status": "Closed",
   "waiting_user_ticket_status": null,
-  "waiting_user_ask_status": null,
+  "waiting_user_ask_status": "Ask",
   "l3_ticket_status": null,
   "needs_human_action_ticket_status": null,
   "strict_resolution_status_binding": true,
   "allow_metadata_status_override": false,
-  "notes": "Populate the live Helpdesk workflow values after running Hermes_Orchestrator.py --discover-workflow. RESOLUTION publication intentionally fails closed until resolved_ticket_status is configured."
+  "notes": "Generated from operator-supplied values after live --discover-workflow inspection."
 }
