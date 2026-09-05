@@ -238,7 +238,16 @@ invocations and real SQL/schema checks.
 | `UPDATE` | Investigated, have something useful, not a fix. Set `new_ticket_status: "Solution Work in Progress"`. Default case. |
 | `QUESTION` | Need more info from the requester. |
 | `RESOLUTION` | Fix verified live, not guessed. |
-| `L3_ESCALATION` | Genuinely beyond SQL investigation, needs a human. |
+| `L3_ESCALATION` | You could NOT figure out the problem -- genuinely beyond SQL investigation, or the data/schema doesn't support answering it. Do NOT fill `resolution` -- there isn't one. |
+| `NEEDS_HUMAN_ACTION` | You DID figure out the problem AND the exact fix, but you cannot execute it yourself -- outside your SQL write authority, a physical/floor action, a config change, contacting another team, etc. Put the concrete, actionable step in `resolution` (e.g. "Update HeatNo H12345's TapToTapTime in EAF_PER_HEAT to 14:32 -- confirmed correct from the shift log, currently blank due to a sync gap"). |
+
+**These two are not interchangeable and a human reads them very differently.**
+`L3_ESCALATION` means "nobody knows what's wrong yet." `NEEDS_HUMAN_ACTION`
+means "we know exactly what's wrong and what to do -- someone just has to do
+it." Picking the wrong one either hides a real, ready-to-execute fix behind
+"unresolved," or makes an unsolved mystery look like a solved ticket someone
+forgot to close. If you find yourself writing a `resolution` for an
+`L3_ESCALATION`, it should almost certainly be `NEEDS_HUMAN_ACTION` instead.
 
 ## Pitfalls
 

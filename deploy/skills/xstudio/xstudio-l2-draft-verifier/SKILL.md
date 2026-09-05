@@ -63,6 +63,22 @@ evidence doesn't back up. That second case is entirely your job.
    around, you don't need it for anything yourself, but it's how the
    deterministic publisher traces this back to the original investigation.
 
+   **Mandatory first check, before anything else: are `response_type` AND
+   `reply_text` both actually present and non-empty?** Confirmed live
+   2026-09-05: 73% of recent investigator completions had real findings
+   but were missing one or both of these -- the deterministic publisher
+   requires them and silently has nothing to publish when they're absent,
+   so a genuinely good investigation never reaches the ticket at all. This
+   is a metadata-packaging failure, not a judgment call -- if either is
+   missing, `kanban_block(reason="Missing response_type/reply_text in
+   your kanban_complete metadata -- re-package the SAME findings you
+   already have into the full metadata shape from your skill, you do not
+   need to re-investigate.", kind="needs_input")` immediately, before
+   spending any time on the checks below. Do not try to reconstruct a
+   `reply_text` yourself from `findings`/`summary` -- that's exactly the
+   "reviewer retypes the finding" failure mode this whole split-role
+   design exists to prevent.
+
 2. **Extract every table/column name mentioned** in `findings`/
    `root_cause`/`reply_text` (SQL-looking identifiers, `dbo.X`, `X_Tbl`,
    `X_Mst_Tbl`, etc.) and check each one:

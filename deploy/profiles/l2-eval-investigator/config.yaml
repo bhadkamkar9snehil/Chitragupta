@@ -27,11 +27,16 @@ plugins:
     - xstudio-l2-orchestrator
 kanban:
   dispatch_in_gateway: false
+onboarding:
+  seen:
+    tool_progress_prompt: true
 _config_version: 40
 platforms:
   api_server:
     host: 0.0.0.0
-    port: 8647
+    port: 8644
+  whatsapp:
+    enabled: true
 platform_toolsets:
   cli:
     - clarify

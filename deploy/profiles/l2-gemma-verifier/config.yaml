@@ -1,5 +1,5 @@
 model:
-  default: gemma-4-e4b-it
+  default: qwopus3.5-9b-coder
   provider: lmstudio
   base_url: http://100.111.69.102:1235/v1
   context_length: 65600

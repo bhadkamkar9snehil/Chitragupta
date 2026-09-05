@@ -9,9 +9,12 @@ What it does, every tick:
    via the Windows Python interpreter (has pyodbc).
 2. If a ticket was genuinely claimed, archives any stale kanban card
    already sitting on the board for the SAME ticket (see below), then
-   creates TWO kanban tasks: the investigator's card (assignee l2-gemma),
-   and a reviewer card gated on it via --parent (assignee
-   l2-gemma-verifier) -- both on the single default board. The reviewer
+   creates TWO kanban tasks: the investigator's card (assignee
+   INVESTIGATOR_PROFILE, currently l2-eval-investigator -- see that
+   constant below for the live value, not this comment, if they ever
+   drift again), and a reviewer card gated on it via --parent (assignee
+   REVIEWER_PROFILE, currently l2-gemma-verifier) -- both on the single
+   default board. The reviewer
    card auto-promotes from 'todo' to 'ready' the moment the investigator's
    card completes; no separate bridge script needed for that hop.
 3. If nothing was claimable, does nothing -- NO_TICKETS/NO_CLAIMABLE_TICKET

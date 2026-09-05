@@ -8,7 +8,13 @@ set -e
 SRC_HERMES=~/.hermes/profiles
 DST=/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/deploy
 
-PROFILES="l2-investigator l2-gemma l2-gemma-verifier l2-qwen-verifier"
+# 2026-09-05: l2-eval-investigator (the live investigator profile since
+# the qwopus3.5-9b-coder swap) was missing from this list -- confirmed
+# real gap: deploy/profiles/ had no l2-eval-investigator/ dir at all,
+# meaning a fresh install from this repo could not reconstruct the
+# actual current topology. l2-gemma kept even though retired -- it's
+# still a real historical profile dir, not worth a special case here.
+PROFILES="l2-investigator l2-eval-investigator l2-gemma l2-gemma-verifier l2-qwen-verifier"
 SKILLS="xstudio-l2-ticket-workflow xstudio-sap-api-investigation xstudio-sohar-heat-execution xstudio-quality-delay-workorder xstudio-sql-write-discipline xstudio-l2-draft-verifier"
 
 mkdir -p "$DST"
@@ -40,7 +46,15 @@ cp -r ~/.hermes/profiles/l2-investigator/plugins/xstudio-l2-trace/plugin.yaml "$
 
 # Cron job definitions -- documentation only (no secrets in these), so a
 # fresh install can recreate the same schedule instead of guessing it.
-hermes -p l2-investigator cron list --json > "$DST/cron_jobs.json" 2>/dev/null || \
-  hermes -p l2-investigator cron list > "$DST/cron_jobs.txt" 2>&1
+# 2026-09-05: `cron list --json` is not a real flag on this hermes version
+# at all (confirmed: argparse rejects it with "unrecognized arguments:
+# --json", exit 0, empty stdout) -- the old `--json ... || ... .txt` form
+# never actually fell through to the .txt branch because the command
+# "succeeded" (exit 0) with empty output, so cron_jobs.json shipped as a
+# permanently empty, silently-misleading file and cron_jobs.txt went
+# stale. There is no JSON form; .txt is the only real output this command
+# has. Delete any old cron_jobs.json rather than regenerate a fake one.
+rm -f "$DST/cron_jobs.json"
+hermes -p l2-investigator cron list > "$DST/cron_jobs.txt" 2>&1
 
 echo "Done. Review $DST before committing (config.yaml files especially)."

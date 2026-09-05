@@ -231,7 +231,17 @@ def build_query_mechanically(table: str, columns: List[str], where: Optional[str
 
     select_list = ", ".join(f"[{c}]" for c in resolved_columns) if resolved_columns else "*"
     top_clause = f"TOP ({int(top)}) " if top else ""
-    sql = f"SELECT {top_clause}{select_list} FROM {qualified_name}"
+    # Fully database-qualified (2026-09-05 fix): the connection this SQL
+    # actually runs against is opened once at client-construction time and
+    # never re-pointed mid-process. Emitting a bare 'dbo.Table' reference
+    # meant --execute would silently run against WHATEVER database the
+    # connection happened to already be on, not the database this table
+    # actually lives in -- a real, previously-undetected bug (only masked
+    # in prior testing by using a table that happens to exist, differently,
+    # in both databases). Three-part naming makes the query correct
+    # regardless of which database the connection is currently pointed at.
+    db_qualified_name = f"[{db}].{qualified_name}"
+    sql = f"SELECT {top_clause}{select_list} FROM {db_qualified_name}"
     if where:
         sql += f" WHERE {where}"
     if order_by:

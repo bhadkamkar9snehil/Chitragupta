@@ -3,69 +3,85 @@
 Read `AGENTS.md` first — full folder map, deployment state, SQL write
 discipline, and the "Hermes" naming-collision warning.
 
-## Current state (2026-09-02, end of day) — read this before touching anything
+## Current state (2026-09-05) — read this before touching anything
 
-**Primary working install is now WSL2 Ubuntu**, not native Windows — the
-native install hit a real, unfixable-here `[Errno 36]` POSIX-locking bug in
-Hermes's own cron fire fence. Both installs still exist and both have the
-`l2-investigator` profile, but WSL is the one whose gateway actually runs
-Routines. WSL2 itself needed a persistence fix: the VM silently shuts down
-when idle, taking its systemd services (and the gateway) down with it —
-fixed via `vmIdleTimeout=-1` in `%UserProfile%\.wslconfig` plus a hidden
-Startup-folder `WSL_KeepAlive.vbs` holding one background
-`wsl -d Ubuntu -- sleep infinity` session.
+**This section is a fast-moving daily log, not a stable reference.** If
+anything here conflicts with `README.md` or `AGENTS.md`, those two are
+more likely to be current — this file has gone stale before (a whole
+2026-09-02 architecture description, including a model name and delivery
+mode that no longer exist, survived here uncorrected for three days
+before being caught). Verify against `deploy/`/live `hermes` commands
+before trusting a specific claim below.
 
-- Bot/profile: `l2-investigator`, WSL path
-  `~/.hermes/profiles/l2-investigator/` (`/home/snehil/...`), Windows path
-  `C:\Users\Admin\AppData\Local\hermes\profiles\l2-investigator\` (parallel,
-  secondary)
-- Persona/instructions: that profile's `SOUL.md` — routes to
-  `Knowledge/task-router.md` and five `xstudio-*` Skills for what to check;
-  see "Durable Skills" below
-- Routine: "Poll Helpdesk L2 tickets", every 5 min, script
-  `hermes_l2_poll.py`, **delivers to `local`, NOT `bot-chat:l2-investigator`**
-  — the bot-chat delivery mode was the original setup and caused a real
-  context-overflow outage (one ever-growing thread instead of isolated
-  per-run sessions); fixed via `hermes cron edit <job-id> --deliver local`.
-- Gateway installed as a systemd user service
-  (`hermes-gateway-l2-investigator.service`), started automatically by the
-  WSL keep-alive session above.
-- Check it: `hermes -p l2-investigator cron status` /
-  `cron runs` (run from WSL: `wsl -d Ubuntu -- ...`), or tail
-  `~/.hermes/profiles/l2-investigator/logs/gateway.log`.
+**The live pipeline is Kanban-based, not the old poll-into-chat design.**
+`ticket_scout.py` (cron, WSL, ~2m) atomically claims a ticket and creates
+a Kanban card for `l2-eval-investigator` (investigator) plus a
+`--parent`-gated reviewer card for `l2-gemma-verifier`. Event-driven hook
+plugins publish an approval or bridge a rejection into rework, capped at
+3 attempts before escalating to the human L3 queue. Full diagram:
+`README.md` §1. This replaced an earlier single-bot-chat design
+(`hermes_l2_poll.py` injecting context into one long-lived
+`bot-chat:l2-investigator` conversation) that caused a real
+context-overflow outage — if you see that older flow described anywhere
+(old `Plans/` docs), it's history, not the live mechanism.
 
-**Durable Skills (2026-09-02)**: domain/procedure knowledge that used to be
-hardcoded prose in `SOUL.md` is now five local Hermes Skills under
-`skills/xstudio/` on this profile — `xstudio-l2-ticket-workflow`,
-`xstudio-sap-api-investigation`, `xstudio-sohar-heat-execution`,
-`xstudio-quality-delay-workorder`, `xstudio-sql-write-discipline`. Verify
-with `hermes -p l2-investigator skills list`. `Knowledge/task-router.md`
-maps ticket patterns to both the matching skill and the matching
-`Knowledge/*.md` file.
+**Model: all active profiles point at `qwopus3.5-9b-coder` via LM Studio**
+(switched 2026-09-05 from `gemma-4-e4b-it`) — `l2-investigator`,
+`l2-eval-investigator`, `l2-gemma-verifier`, `l2-qwen-verifier`. LM Studio
+serves one model at a time; `l2-gemma` is fully retired (gateway stopped,
+config kept as history only). Live-loaded-model check:
+`curl http://100.111.69.102:1235/api/v0/models` (look for `"state":
+"loaded"`), not `/v1/models` (that lists the whole catalog regardless of
+load state).
 
-**A second bot, `infra-guardian`, now maintains this bot's infrastructure**
+**`deploy/` is the reproducible-topology mirror — keep its `PROFILES` list
+in `Model_Bench/mirror_wsl_artifacts.sh` in sync with reality.** A real gap
+was found and fixed 2026-09-05: that script's hardcoded profile list was
+never updated when `l2-eval-investigator` was created, so `deploy/profiles/`
+had no dir for the profile actually running fresh ticket dispatch — a
+fresh install from this repo could not have reconstructed the real
+topology. Re-run `Model_Bench/mirror_wsl_artifacts.sh` after creating,
+renaming, or retiring any profile, not just after editing SOUL.md/skills.
+
+**Two new response-handling mechanisms (2026-09-05), both live**:
+`EscalationCategory` on `Hermes_L3_Escalation_Trn_Tbl`
+(`UNRESOLVED` vs `NEEDS_HUMAN_ACTION`) and an `AttemptNo`-capped
+reject-rework loop (`--fail-run`/`--escalate-blocked`) so a ticket stuck
+on the same mistake stops looping forever instead of generating an
+endless string of rework cards. See `README.md` §3.
+
+**A second bot, `infra-guardian`, maintains this bot's infrastructure**
 (WSL only) — separate profile/gateway, 30-min Routine, one skill
 (`hermes-infra-guardian-checks`) covering gateway/VM/LM-Studio/session
 health with an explicit guardrail: it reports LM Studio being down, never
 tries to fix it (the user controls that machine directly). See `AGENTS.md`
 for the full incident chain this was built in response to.
 
-**Known unresolved issue as of setup**: manual test calls to this profile's
-model provider (`gpt-5.6-terra`) failed twice with "Hermes can't reach the
-model provider" — and the *same* error hit the pre-existing `local-coder`
-profile too, so it's not something wrong with the new profile's config. Looks
-like a transient provider/network issue on this machine, not something to
-"fix" in this project. If Routine runs keep failing with this same error,
-that's the first thing to check (`hermes -p l2-investigator -z "test"`).
+**Conductor migration — Phase 0+1 built, not yet cut over.** Evaluating
+replacing this Kanban pipeline with Microsoft Conductor
+(`github.com/microsoft/conductor`, real, MIT, installed in WSL2) for
+deterministic step orchestration + schema-narrowed/audited tool access
+via a new local MCP server (`Model_Bench/l2_investigation_mcp_server.py`).
+**Kanban is completely unaffected and still runs the live pipeline** —
+this is a parallel, isolated proof-of-concept, not yet wired to publish
+anything real. Full phase plan, what's built vs. still open, and the
+explicit decision to retire Kanban/mem0/the 4 xstudio-* skills for this
+pipeline only if/when the cutover actually happens:
+`Plans/Conductor_Migration_Plan_05092026.md`. Read that before assuming
+either the Kanban or the Conductor path is "the" current pipeline.
 
-**Why `Hermes_Orchestrator.py` is now only ~600 lines of thin wrappers, not
-a full pipeline**: the user directly asked why a hand-written script should
-be doing investigation at all when a real reasoning bot exists. Correct
+**Why `Hermes_Orchestrator.py` is a thin-wrapper CLI, not a full
+pipeline**: the user directly asked why a hand-written script should be
+doing investigation at all when a real reasoning bot exists. Correct
 question — the keyword-search "brain" (`investigate()`, `run_one_cycle()`)
-was deleted. What's left is exactly the two primitives worth not
-re-deriving from scratch each run: atomic claim (`--poll`) and audited
-write-back (`--publish-response`). Investigation itself is the bot's job,
-using its own terminal tool.
+was deleted long ago. What's grown back since is a set of genuinely
+mechanical, schema-validated primitives worth not re-deriving from
+scratch each run: atomic claim (`--poll`), audited write-back
+(`--publish-response`), a schema-validated query builder
+(`--build-query`), schema-narrowing (`--suggest-tables`), and a
+structured investigation ledger (`--save-ledger`/`--get-ledger`, reusing
+the previously-unused `InvestigationJson` column). Investigation
+judgment itself is still the bot's/agent's job.
 
 **`dbo.Complaint_Mst_Tbl` now carries the L1 handoff fields directly**
 (`ProblemCategory`, `SourceSystem`, `ConversationSummary`, `SuspectedCause`,
