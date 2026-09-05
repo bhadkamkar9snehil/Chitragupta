@@ -94,13 +94,31 @@ def _is_pid_alive(pid: int) -> bool:
 
 def _try_lock(name: str) -> bool:
     """Returns True if the caller now owns the lock (should spawn), False if
-    a live run already holds it (skip -- it will see the new state anyway)."""
+    a live run already holds it.
+
+    2026-09-05: when a live run holds the lock we now set a `.dirty` flag
+    before returning False, instead of dropping the trigger. The old comment
+    here claimed the in-flight run "will see the new state anyway" -- it does
+    not. A run that started BEFORE this event has already queried the board
+    and built its work list, so the event is invisible to it and nothing
+    re-runs. Confirmed live: Ticket_343's approved response sat unpublished
+    because the publisher happened to be mid-run when the approval landed,
+    and only a manual invocation rescued it.
+
+    `run_coalesced.py` owns the other half: it clears `.dirty` before each
+    run and, if the flag reappears during that run, runs exactly once more.
+    """
     _LOCK_DIR.mkdir(parents=True, exist_ok=True)
     lock_path = _LOCK_DIR / f"{name}.pid"
     try:
         if lock_path.exists():
             old_pid = int(lock_path.read_text(encoding="utf-8").strip() or "0")
             if old_pid and _is_pid_alive(old_pid):
+                # Re-arm the in-flight supervisor rather than losing the event.
+                try:
+                    (_LOCK_DIR / f"{name}.dirty").touch()
+                except Exception:
+                    pass
                 return False
     except Exception:
         pass  # unreadable/corrupt lock -- treat as stale, proceed to overwrite
@@ -122,10 +140,24 @@ def _spawn(name: str, args: list) -> None:
 
 
 def _fire_all() -> None:
+    """Fire every bridge script through the coalescing supervisor.
+
+    Each script is launched as `run_coalesced.py <script>` rather than
+    directly, so a trigger that lands while that script is already running
+    re-arms it (see `_try_lock`) instead of being silently dropped. If the
+    supervisor is missing for any reason, fall back to launching the script
+    directly -- degraded (events can be lost mid-run) but never worse than
+    the pre-2026-09-05 behaviour, and the cron backstop still covers it.
+    """
     python = sys.executable
+    supervisor = _SCRIPTS_DIR / "run_coalesced.py"
     for script in _PY_SCRIPTS:
         path = _SCRIPTS_DIR / script
-        if path.exists():
+        if not path.exists():
+            continue
+        if supervisor.exists():
+            _spawn(script, [python, str(supervisor), script, "--python", python])
+        else:
             _spawn(script, [python, str(path)])
     # Single board now (default) -- already driven by the main gateway's
     # own kanban dispatcher, no separate l2-review board dispatch needed.
