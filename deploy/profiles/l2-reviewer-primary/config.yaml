@@ -129,3 +129,6 @@ known_builtin_toolsets:
 # fallback_model:
 #   provider: openrouter
 #   model: anthropic/claude-sonnet-4
+tools:
+  tool_search:
+    enabled: off

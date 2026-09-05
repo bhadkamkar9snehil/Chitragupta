@@ -128,6 +128,11 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
   config="$HOME/.hermes/profiles/$profile/config.yaml"
   if [[ -f "$config" ]]; then
     python3 "$ROOT/Model_Bench/patch_profile_config.py" "$config"
+    # Never make the worker DISCOVER xstudio_l2. Deferred tool-search is a fine
+    # trade for a large model and a trap for the 9B local one: on Ticket_360 the
+    # worker searched, found the tool, said it would use it, then completed with
+    # "database access unavailable" without ever calling it.
+    python3 "$ROOT/Model_Bench/patch_tool_search_off.py" "$config"
   else
     echo "WARNING: $config not found; skipped"
   fi
