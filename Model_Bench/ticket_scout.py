@@ -173,6 +173,15 @@ def _how_to_query_section(run_id: str, ticket_id: str) -> str:
     """Exact worker commands so the model never spends turns rediscovering paths."""
     py = PYTHON
     orch = "/mnt/c/" + ORCHESTRATOR.replace("\\", "/").removeprefix("C:/")
+    ledger_example = json.dumps(
+        {
+            "tables_queried": [],
+            "key_values_found": {},
+            "ruled_out": [],
+            "conclusion": "...",
+        },
+        separators=(",", ":"),
+    )
     return (
         "\n--- Exact investigation commands for this run ---\n"
         f"Interpreter: {py}\n"
@@ -190,8 +199,7 @@ def _how_to_query_section(run_id: str, ticket_id: str) -> str:
         '     --query "SELECT TOP 20 ... FROM dbo.SomeView WHERE ..."\n\n'
         "4) Preserve useful ticket-specific findings before completion/rework:\n"
         f'   {py} "{orch}" --server {SERVER} --database XStudio_Helpdesk \\\n'
-        f"     --save-ledger {run_id} --ledger '{{\"tables_queried\":[...],\n"
-        '     "key_values_found":{...},"ruled_out":[...],"conclusion":"..."}\'\n\n'
+        f"     --save-ledger {run_id} --ledger '{ledger_example}'\n\n"
         f"If current ticket data must be refreshed later: --get-ticket-context {ticket_id} "
         "--database XStudio_Helpdesk\n"
         "Writes to the live ticket are owned by reviewer + deterministic publisher, never --query.\n"
