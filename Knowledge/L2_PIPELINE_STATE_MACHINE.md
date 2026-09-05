@@ -3,11 +3,12 @@
 Status: **runtime contract**  
 Branch: `main`
 
-This document defines the ticket lifecycle implemented by `Model_Bench/l2_pipeline_runtime.py`.
+This document defines the lifecycle implemented by `Model_Bench/l2_pipeline_runtime.py`.
+If this document and the runtime disagree, fix the drift immediately; neither should be allowed to remain stale.
 
 ## 1. Core invariant
 
-The current LM Studio deployment has one safe inference slot (`max_in_progress: 1`). Therefore the system maximizes throughput by **finishing the active ticket before claiming another one**.
+The current LM Studio deployment has one safe inference slot (`max_in_progress: 1`). Throughput therefore comes from **finishing the active ticket before claiming another one**.
 
 Global SQL pipeline WIP is one active Hermes run.
 
@@ -17,9 +18,11 @@ rework investigation         20
 new investigation            10
 ```
 
-A fresh Helpdesk claim is allowed only when `Hermes_L2_Response_Trn_Tbl` contains no active run after reconciliation.
+A fresh Helpdesk claim is allowed only when `Hermes_L2_Response_Trn_Tbl` has no active run after reconciliation.
 
 ## 2. Normal lifecycle
+
+Reviewer creation is deliberately **deferred** until the source investigator/rework completion has been normalized and is reviewable.
 
 ```text
 Complaint_Mst_Tbl Status=eligible
@@ -32,27 +35,62 @@ INVESTIGATOR card [priority 10]
           |
           | kanban_complete(metadata)
           v
-REVIEWER card [priority 30, --parent investigator]
+normalize / validate proposal
+          |
+          | only when complete/reviewable
+          v
+REVIEWER card [priority 30]
+  frozen proposal_json
        /     \
  approve     reject
     |           |
     v           v
 PUBLISH      REWORK card [priority 20]
     |           |
+    |           | kanban_complete(metadata)
     |           v
-    |       NEW REVIEWER [priority 30, --parent rework]
+    |       normalize / validate
+    |           |
+    |           v
+    |       NEW REVIEWER [priority 30]
     |           |
     +-----------+
           |
           v
-SQL / Helpdesk terminal state
+SQL / Helpdesk terminal or waiting state
 ```
 
-The reviewer never publishes and never reassigns work. The investigator never publishes or creates its own reviewer.
+The investigator never publishes or creates its own reviewer. The reviewer never publishes, reassigns the ticket, or retypes the response for publication.
 
-## 3. Review-cycle semantics
+## 3. Frozen proposal contract
 
-`review_cycle` is a Kanban pipeline concept, separate from SQL `AttemptNo`.
+The reviewer judges a frozen `proposal_json` created from normalized investigator/rework completion metadata.
+
+The publication payload must come from that frozen reviewed proposal rather than from a later reconstruction of task prose.
+
+At minimum the proposal carries the fields needed for deterministic publication, including:
+
+```text
+run_id
+ticket_id
+response_type
+reply_text
+```
+
+and, when present:
+
+```text
+problem_summary
+findings
+root_cause
+resolution
+```
+
+A reviewer card must not exist for an incomplete/unreviewable proposal in the normal post-migration topology.
+
+## 4. Review-cycle semantics
+
+`review_cycle` is the pipeline counter for reviewer/rework loops and is separate from SQL `AttemptNo`.
 
 ```text
 cycle 0 = initial investigation review
@@ -60,41 +98,46 @@ cycle 1 = first rework review
 cycle 2 = second rework review
 ```
 
-`MAX_REVIEW_CYCLES = 3` means a rejection at cycle 2 is escalated instead of creating cycle 3.
+`MAX_REVIEW_CYCLES = 3` means a rejection at cycle 2 escalates instead of creating cycle 3.
 
-SQL `AttemptNo` is reserved for a genuinely new SQL claim/run. It is not used to count reviewer rework loops.
+SQL `AttemptNo` is reserved for genuinely new SQL claim/run attempts. It is not a reviewer-rework counter.
 
-## 4. Rejection topology
+## 5. Rejection topology
 
-A reject is terminal for that reviewer card. `l2_pipeline_runtime.py` then:
+A reject is terminal for that reviewer card.
 
-1. persists the rejected investigator's findings to the run ledger;
-2. creates a fresh `REWORK[n]` investigator card;
-3. creates a fresh reviewer card with `--parent <rework-task-id>`;
-4. archives the rejected reviewer card so it no longer falsely represents current live ownership;
-5. escalates instead of reworking when the review-cycle cap is reached.
+The reconciler then:
 
-Every investigator/rework card that can produce a publishable proposal must have exactly one reviewer child.
+1. records/preserves the reviewer objection;
+2. persists useful prior investigation state to the run ledger;
+3. creates a fresh `REWORK[n]` investigator card at priority 20;
+4. waits for that rework to complete and be normalized;
+5. creates a fresh reviewer for the normalized rework proposal at priority 30;
+6. escalates rather than creating another rework when the review-cycle cap is reached.
 
-## 5. Approval and publication
+The important invariant is:
 
-A reviewer approval is represented structurally by the reviewer task reaching `done`.
+> Every reviewable investigator/rework proposal must have exactly one reviewer, and reviewer creation happens after proposal normalization.
 
-The deterministic publisher:
+## 6. Approval and publication
 
-1. resolves the original investigator/rework card ID from the reviewer body;
-2. reads the investigator's completion metadata;
-3. never asks the reviewer to retype the response;
-4. applies the verified Helpdesk workflow binding;
-5. calls `Hermes_Orchestrator.py --publish-response --force-run-id`;
-6. verifies SQL/Helpdesk postconditions after publication;
-7. logs the human-readable activity record.
+A reviewer approval is represented structurally by the reviewer reaching `done`.
 
-A resolved ticket is **not** automatically turned into a solution article. KB curation is governed separately by `KB_IMPLEMENTATION_PLAN.md`.
+The deterministic publication path:
 
-## 6. Helpdesk workflow binding
+1. reads the reviewer's frozen `proposal_json`;
+2. applies the verified Helpdesk workflow binding;
+3. calls `Hermes_Orchestrator.py --publish-response --force-run-id`;
+4. verifies SQL/Helpdesk postconditions;
+5. records the human-readable activity entry.
 
-The model does not decide workflow status names.
+The investigator does not publish. The reviewer does not publish.
+
+A resolved ticket is **not** automatically converted into a solution article. KB promotion/deduplication is governed by `Knowledge/KB_IMPLEMENTATION_PLAN.md`.
+
+## 7. Helpdesk workflow binding
+
+Workflow status names are harness configuration, not model output.
 
 Canonical deployment file:
 
@@ -102,137 +145,165 @@ Canonical deployment file:
 deploy/helpdesk_workflow_binding.json
 ```
 
-Populate it only after running:
+Current live-verified values are:
 
 ```text
-Hermes_Orchestrator.py --discover-workflow
+eligible_ticket_status            Enter
+resolved_ticket_status            Closed
+waiting_user_ask_status           Ask
+l3_ticket_status                  null
+needs_human_action_ticket_status  null
 ```
 
-`RESOLUTION` fails closed when `strict_resolution_status_binding=true` and `resolved_ticket_status` is not configured. This prevents the contradictory state:
+`Closed` and `Ask` were derived from live Helpdesk evidence. Unproven L3/human-action ticket statuses remain unbound rather than invented.
+
+When `strict_resolution_status_binding=true`, `RESOLUTION` must fail closed if `resolved_ticket_status` is not configured. This prevents:
 
 ```text
 Hermes run = COMPLETED / RESOLUTION
 Helpdesk ticket = still visibly unresolved
 ```
 
-Use `Model_Bench/configure_helpdesk_workflow.py` to inspect the live workflow and write the exact observed values.
+Use `Model_Bench/configure_helpdesk_workflow.py` / live discovery before changing these values.
 
-## 7. Reconciliation ordering
+## 8. Reconciliation ordering
 
-One reconciler owns lifecycle sequencing. It runs synchronously in this exact order:
+One reconciler owns lifecycle mutation. Current synchronous ordering is:
 
 ```text
-1. normalize substantive investigator completions missing metadata
-2. repair missing reviewer children
-3. process reviewer rejects
-4. process reviewer approvals / publish
-5. recover true SQL/Kanban orphans
+1. normalize investigator/rework completions
+2. convert unreviewable terminal completions into bounded rework
+3. create missing reviewers for normalized reviewable completions
+4. process reviewer rejections
+5. process reviewer approvals / deterministic publish
+6. recover true SQL/Kanban orphans
 ```
 
-The old design spawned repair/reject/publisher concurrently. That allowed publisher to inspect metadata before repair completed. That race is removed.
+The old design spawned repair/reject/publisher concurrently. That race is retired and must not be reintroduced.
 
-## 8. Event delivery and backstop
+## 9. Event delivery and backstop
 
-The `xstudio-l2-orchestrator` plugin triggers `reconcile_l2_pipeline.py` immediately after successful:
+`Model_Bench/xstudio_l2_orchestrator_plugin/` triggers `reconcile_l2_pipeline.py` after successful:
 
 ```text
 kanban_complete
 kanban_block
 ```
 
-Correctness does **not** depend on the hook firing. The existing 2-minute `ticket_scout.py` cron executes reconciliation before every claim attempt, so the scout itself is the durable backstop.
+Event delivery is the fast path, not a correctness dependency.
 
-`run_coalesced.py` still prevents overlapping event-triggered reconciler runs.
+The 2-minute `ticket_scout.py` job runs reconciliation before every claim attempt and is the durable mutating backstop.
 
-## 9. Stale/orphan recovery
+`run_coalesced.py` prevents overlapping event-triggered reconciler executions.
 
-A run is not stale just because it is old.
+The old independently scheduled mutating jobs for publish safety-net / completion repair were deliberately removed. They are compatibility entrypoints only and must not be scheduled as separate lifecycle authorities.
 
-The pipeline treats all Kanban stages as ownership, including:
+The remaining completion audit is read-only.
 
-```text
-todo
-ready
-blocked
-triage
-running
-review
-scheduled
-done reviewer awaiting deterministic publish
-```
+## 10. Stale/orphan recovery
 
-`todo` is important because parent-gated reviewer cards intentionally remain there until their parent completes.
+A run is not stale merely because it is old.
 
-A SQL run is auto-failed for retry only when:
+Any Kanban card that references the run protects it, regardless of whether it is `todo`, `ready`, `running`, `blocked`, scheduled, review-related, or a done reviewer awaiting deterministic publication.
+
+A SQL run is auto-failed for clean retry only when:
 
 1. it is still active in SQL;
-2. **no Kanban task at any stage references that exact run_id**; and
+2. no Kanban task at any stage references that exact `run_id`; and
 3. it exceeds the orphan grace period.
 
-This removes the retired `l2-review` board dependency and prevents wall-clock recovery from killing valid queued/review work.
+The retired `l2-review` board is not queried by the production liveness path.
 
-## 10. Ticket claiming
+## 11. Ticket claiming
 
-The scout first reconciles, then checks active SQL runs. If any remain:
+The scout first reconciles and then checks active SQL runs.
+
+If any active run remains:
 
 ```text
 status = WIP_LIMIT
 ```
 
-and no new ticket is claimed.
+and no ticket is claimed.
 
-Only when WIP is zero does it call `--poll` and create the investigator + reviewer pair.
+Only when WIP is zero does the scout invoke the atomic poll/claim path and create **one investigator card**.
 
-If investigator-card creation fails after SQL claim, the new run is failed immediately for clean retry instead of being abandoned for an hour.
+The reviewer is **not** created during claim. It is created later by reconciliation after the investigator completion has been normalized and validated as reviewable.
 
-If initial reviewer creation fails, the active investigation remains valid; the reconciler repairs the missing reviewer child after investigator completion.
+If investigator-card creation fails after SQL claim, the run is failed promptly for clean retry rather than being abandoned.
 
-## 11. Candidate filtering
+Do not bypass this production gate with a manual raw `Hermes_Orchestrator.py --poll` test.
 
-`Knowledge/25_ticket_dispatch_hardening.sql` moves the non-L2 customization exclusion into `Hermes_L2_Get_Candidate_Tickets_Usp` **before `TOP (@BatchSize)`**.
+## 12. Candidate filtering
 
-This fixes the failure where the first 20 candidates were customization requests, Python removed all 20, and the scout incorrectly reported `NO_CLAIMABLE_TICKET` while valid incident tickets existed deeper in the queue.
+`Knowledge/25_ticket_dispatch_hardening.sql` puts the non-L2 customization exclusion inside `Hermes_L2_Get_Candidate_Tickets_Usp` **before `TOP (@BatchSize)`**.
 
-The hardening SQL is a required post-install overlay until it is folded into the generated full-install bundle.
+This prevents the old failure where the first N candidates were removed client-side and the scout falsely reported `NO_CLAIMABLE_TICKET` while valid incidents existed deeper in the queue.
 
-## 12. Pipeline status / diagnosis
+The `25` hardening source is now included in the regenerated `Knowledge/00_Hermes_L2_FULL_INSTALL.sql` bundle; it is no longer an omitted post-install-only change.
 
-Run:
+## 13. UPDATE continuation hardening
+
+`Knowledge/55_update_retry_hardening.sql` is also part of the regenerated full-install bundle.
+
+A published `UPDATE` must have bounded continuation behavior (`NextEligibleOn`) rather than becoming permanently unclaimable or immediately churning.
+
+## 14. Pipeline status / diagnosis
+
+Use the deployed runtime status command:
 
 ```bash
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 ```
 
-It reports:
+It should expose:
 
 - active SQL runs;
-- all Kanban cards grouped by `run_id`;
+- Kanban cards grouped/correlated by `run_id`;
 - topology anomalies;
-- current workflow binding;
+- workflow binding;
 - priority/WIP/review-cycle contract.
 
-Useful anomalies include:
+A healthy active run should be explainable as one of the current pipeline stages rather than as an unexplained SQL row.
+
+## 15. Cron contract
+
+Current L2 scheduling is intentionally simple:
 
 ```text
-ACTIVE_SQL_WITH_NO_KANBAN
-ACTIVE_RUN_WITHOUT_INVESTIGATOR_CARD
-DONE_INVESTIGATION_WITHOUT_REVIEWER
+L2 Ticket Scout                every 2m   mutating central reconcile + optional claim
+L2 Kanban Completion Audit     every 10m  read-only divergence audit
 ```
 
-## 13. Deployment
+Session maintenance and mem0 patch maintenance are unrelated infrastructure jobs.
+
+Do not recreate independent publisher/reject/repair cron loops.
+
+## 16. Deployment
 
 From the repo under WSL:
 
 ```bash
 bash Model_Bench/deploy_l2_pipeline_runtime.sh
+bash Model_Bench/validate_l2_pipeline_local.sh
+python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
+python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 ```
 
-Then configure the real workflow binding and apply:
+The generated SQL install bundle already includes the `25` and `55` hardening files. Run `Knowledge/98_pipeline_postflight.sql` and `Knowledge/99_postflight.sql` after deployment as appropriate.
 
-```text
-Knowledge/25_ticket_dispatch_hardening.sql
-```
+Do not use GitHub Actions as a substitute for live pipeline validation; correctness depends on the real Hermes/Kanban/SQL/WSL/LM Studio environment.
 
-Finally run the local regression tests and live status command before allowing normal ticket flow.
+## 17. Historical designs that are not current
 
-Do not use GitHub Actions as a substitute for this deployment validation; the pipeline depends on the real Hermes/Kanban/SQL/LM Studio environment.
+The following are historical only:
+
+- backlog threshold 3 as the claim governor;
+- creating investigator and reviewer as a pair during claim;
+- SQL `AttemptNo` as the rework counter;
+- separate `l2-review` board;
+- `kanban_forward_bridge.py`;
+- separately scheduled publisher/reject/repair lifecycle authorities;
+- model-based profile names used as role identity.
+
+Do not use historical `Plans/` or `Agent_Comms/` material to override this state-machine contract.
