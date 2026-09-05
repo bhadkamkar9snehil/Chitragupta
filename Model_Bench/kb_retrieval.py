@@ -28,11 +28,12 @@ from typing import Any
 
 try:
     import pyodbc
-except ImportError as exc:  # pragma: no cover - live deployment dependency
-    raise SystemExit(f"pyodbc is required: {exc}")
+except ImportError:  # pure routing/scoring tests do not need the live driver
+    pyodbc = None
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = ROOT / "Knowledge" / "manifest.json"
+MIN_MATCHED_TERMS = 2
 
 STOPWORDS = {
     "the", "a", "an", "is", "was", "were", "are", "be", "been", "and", "or",
@@ -98,9 +99,6 @@ def route_candidates(query: str, manifest: dict[str, Any], top: int = 3) -> list
             scores[route] = scores.get(route, 0.0) + (3.0 * len(overlap))
             reasons.setdefault(route, []).append("keywords: " + ", ".join(overlap[:8]))
 
-        # Multi-word configured keywords deserve a phrase bonus when present
-        # verbatim in the ticket; this preserves domain language such as
-        # "usage decision" or "material document".
         q_lower = query.lower()
         phrase_hits = [
             kw for kw in (route_def.get("keywords") or [])
@@ -143,6 +141,8 @@ def knowledge_docs_for_routes(manifest: dict[str, Any], routes: list[dict[str, A
 
 
 def connect(server: str, database: str, username: str, password: str | None):
+    if pyodbc is None:
+        raise RuntimeError("pyodbc is required for live KB retrieval; use the Windows Python deployment interpreter")
     if not password:
         raise RuntimeError("MSSQL_MCP_PASSWORD is required for KB retrieval")
     conn_str = (
@@ -198,17 +198,15 @@ def score_article(
             score += weight * len(overlap)
             reasons.append(f"{field}: {', '.join(sorted(overlap)[:8])}")
 
-    # Route may improve a genuinely relevant article, but route alone must never
-    # make an article retrievable. This is the key correction over the old
-    # WHERE Route=? TOP 5 behavior.
+    # Route can improve a textually relevant article but route alone cannot
+    # retrieve it. This is the key correction over the old Route=? TOP 5 path.
     article_route = (article.get("Route") or "").strip()
     if matched and article_route in route_rank:
         route_bonus = max(2.0, 8.0 - (2.0 * route_rank[article_route]))
         score += route_bonus
         reasons.append(f"route: {article_route}")
 
-    # Prior usage is weak evidence and only breaks ties after textual relevance.
-    # A popular but irrelevant article must never surface because of UsageCount.
+    # Usage is a tie-breaker only after textual relevance exists.
     usage = int(article.get("UsageCount") or 0)
     if matched and usage > 0:
         score += min(3.0, math.log2(usage + 1))
@@ -217,20 +215,19 @@ def score_article(
     return score, sorted(matched), reasons
 
 
-def retrieve(
-    conn,
+def rank_articles(
+    articles: list[dict[str, Any]],
     query: str,
-    manifest: dict[str, Any],
+    routes: list[dict[str, Any]],
     top: int = 5,
     min_score: float = 7.0,
-) -> dict[str, Any]:
-    routes = route_candidates(query, manifest)
-    articles = fetch_articles(conn)
-
+    min_matched_terms: int = MIN_MATCHED_TERMS,
+) -> list[dict[str, Any]]:
+    """Rank reusable solutions and reject weak one-word/domain-only matches."""
     ranked: list[dict[str, Any]] = []
     for article in articles:
         score, matched_terms, reasons = score_article(article, query, routes)
-        if score < min_score:
+        if score < min_score or len(matched_terms) < min_matched_terms:
             continue
         ranked.append(
             {
@@ -255,7 +252,26 @@ def retrieve(
         )
 
     ranked.sort(key=lambda row: (-row["retrieval_score"], -row["usage_count"], str(row["solution_id"])))
-    ranked = ranked[:top]
+    return ranked[:top]
+
+
+def retrieve(
+    conn,
+    query: str,
+    manifest: dict[str, Any],
+    top: int = 5,
+    min_score: float = 7.0,
+    min_matched_terms: int = MIN_MATCHED_TERMS,
+) -> dict[str, Any]:
+    routes = route_candidates(query, manifest)
+    ranked = rank_articles(
+        fetch_articles(conn),
+        query,
+        routes,
+        top=top,
+        min_score=min_score,
+        min_matched_terms=min_matched_terms,
+    )
 
     return {
         "query": query,
@@ -267,6 +283,7 @@ def retrieve(
         "retrieval_policy": {
             "route_only_match_allowed": False,
             "min_score": min_score,
+            "min_matched_terms": min_matched_terms,
             "top": top,
             "provenance_required": True,
             "live_verification_required": True,
@@ -283,12 +300,20 @@ def main() -> int:
     ap.add_argument("--query", required=True, help="Ticket text/problem description to retrieve against")
     ap.add_argument("--top", type=int, default=5)
     ap.add_argument("--min-score", type=float, default=7.0)
+    ap.add_argument("--min-matched-terms", type=int, default=MIN_MATCHED_TERMS)
     args = ap.parse_args()
 
     manifest = load_manifest()
     conn = connect(args.server, args.database, args.username, args.password)
     try:
-        result = retrieve(conn, args.query, manifest, top=max(1, args.top), min_score=args.min_score)
+        result = retrieve(
+            conn,
+            args.query,
+            manifest,
+            top=max(1, args.top),
+            min_score=args.min_score,
+            min_matched_terms=max(1, args.min_matched_terms),
+        )
     finally:
         conn.close()
 
