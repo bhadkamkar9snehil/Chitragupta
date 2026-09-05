@@ -5,9 +5,19 @@ Guarantees, across independent OS processes (kanban workers, the gateway,
 cron, and manual runs all trigger these):
 
   1. At most ONE run of a given script at a time.
-  2. No trigger is ever lost -- a trigger arriving mid-run causes exactly
-     one more run afterwards, no matter how many arrive.
+  2. A trigger arriving mid-run is never silently dropped by a RACE: it is
+     always either serviced by the current owner or serviced by the trigger
+     becoming the owner itself.
   3. A crashed/killed supervisor never wedges the script permanently.
+
+Deliberate limit on (2): this is race-freedom, not an unconditional
+delivery guarantee. Two bounds intentionally hand work back to the cron
+backstop rather than let one script monopolise its lock -- MAX_CONSECUTIVE_
+RUNS (a script that re-dirties itself every pass) and RUN_TIMEOUT_SECONDS
+(a hung run). When either fires, outstanding triggers are left for cron.
+That is a considered trade: unbounded re-running would starve every other
+bridge script and could spin indefinitely. So cron remains a genuine
+backstop here, not decoration.
 
 Why the previous design was wrong
 ---------------------------------

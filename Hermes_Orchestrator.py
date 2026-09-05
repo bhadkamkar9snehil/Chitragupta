@@ -1055,6 +1055,97 @@ _WRITE_KEYWORDS = re.compile(
 )
 
 
+def build_investigation_bundle(client: "HermesL2Client", ticket_id: str,
+                                top_tables: int = 8) -> Dict[str, Any]:
+    """Everything an investigation needs to START, in ONE call.
+
+    Why this exists: token cost per ticket is driven by TURN COUNT, not by
+    the model. Every tool call resends the whole conversation, so at ~12
+    tool calls and a 65K window a ticket burned ~425K tokens even after
+    wall-clock dropped 14x. Measured live, the opening turns were almost
+    entirely context assembly -- fetch the ticket, hunt for relevant tables,
+    look for prior attempts, check for known solutions -- each one a full
+    context resend before any actual investigation happened.
+
+    Collapsing that into a single call removes those resends outright. It
+    also removes a whole class of failure the model kept hitting: wrong
+    argument spelling, wrong database, wrong interpreter -- none of which
+    can happen if the harness assembles the context itself.
+
+    Every section degrades independently: a failure in one (say the
+    solution-article search) returns an "error" note for that key and never
+    prevents the rest from being returned. A partial bundle is far more
+    useful to a small model than a hard failure it has to diagnose.
+    """
+    bundle: Dict[str, Any] = {"ticket_id": ticket_id}
+
+    try:
+        ctx = client.get_ticket_context(ticket_id)
+        bundle["ticket"] = _strip_embedded_images(ctx)
+    except Exception as e:
+        bundle["ticket"] = {"error": f"{type(e).__name__}: {e}"}
+
+    ticket_row: Dict[str, Any] = {}
+    t = bundle.get("ticket")
+    if isinstance(t, dict):
+        # get_ticket_context shape varies by SP version; accept either the
+        # row directly or a wrapper containing it.
+        ticket_row = t.get("ticket") if isinstance(t.get("ticket"), dict) else t
+
+    # --- candidate tables, scored against this ticket's own words ---------
+    try:
+        text = " ".join(str(ticket_row.get(k) or "") for k in
+                        ("BriefDetails", "Description", "ProblemCategory", "SuspectedCause"))
+        src = (ticket_row.get("SourceSystem") or "").strip().lower()
+        db = "XStudio_Xbatch" if src in ("xbatch", "xstudio_xbatch") else (
+             "XStudio_Helpdesk" if src in ("helpdesk", "xstudio_helpdesk") else None)
+        bundle["suggested_tables"] = (
+            suggest_tables_mechanically(text, top=top_tables, database=db).get("candidates", [])
+            if text.strip() else []
+        )
+    except Exception as e:
+        bundle["suggested_tables"] = {"error": f"{type(e).__name__}: {e}"}
+
+    # --- what a PRIOR attempt on this same ticket already established -----
+    try:
+        bundle["prior_ledger"] = client.get_latest_ledger(ticket_id)
+    except Exception as e:
+        bundle["prior_ledger"] = {"error": f"{type(e).__name__}: {e}"}
+
+    # --- prior attempts, so a rework doesn't repeat a known-rejected answer
+    try:
+        cur = client.conn.cursor()
+        cur.execute(
+            "SELECT TOP 5 ID, ProcessStatus, ResponseType, LEFT(ISNULL(ReplyText,''),400) AS ReplyText, "
+            "LEFT(ISNULL(ErrorMessage,''),300) AS ErrorMessage, ClaimedOn "
+            "FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE TicketID = ? AND IsDeleted = 0 "
+            "ORDER BY ClaimedOn DESC;",
+            (ticket_id,),
+        )
+        bundle["prior_attempts"] = _rows_as_dicts(cur)
+    except Exception as e:
+        bundle["prior_attempts"] = {"error": f"{type(e).__name__}: {e}"}
+
+    # --- already-known solutions for this route ---------------------------
+    try:
+        route = (ticket_row.get("HermesAreaName") or ticket_row.get("ProblemCategory") or "").strip()
+        if route:
+            cur = client.conn.cursor()
+            cur.execute(
+                "SELECT TOP 5 Title, LEFT(ISNULL(ResolutionSteps,''),500) AS ResolutionSteps "
+                "FROM dbo.Hermes_Solution_Article_Mst_Tbl "
+                "WHERE IsDeleted = 0 AND (Route = ? OR Tags LIKE ?) ORDER BY CreatedOn DESC;",
+                (route, f"%{route}%"),
+            )
+            bundle["known_solutions"] = _rows_as_dicts(cur)
+        else:
+            bundle["known_solutions"] = []
+    except Exception as e:
+        bundle["known_solutions"] = {"error": f"{type(e).__name__}: {e}"}
+
+    return bundle
+
+
 def run_readonly_query(client: "HermesL2Client", sql: str, database: Optional[str] = None,
                         run_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Shared core of --query's read path (write-keyword guard, best-effort
@@ -1279,6 +1370,16 @@ def main() -> None:
                          help="JSON string. Required with --save-ledger; optional with "
                               "--publish-response (stored in the same InvestigationJson column "
                               "on the terminal response row).")
+    parser.add_argument("--investigate-bundle", default=None, metavar="TICKET_ID",
+                         help="ONE call returning everything an investigation needs to start: "
+                              "ticket context, mechanically-narrowed candidate tables with real "
+                              "column names, any prior attempt's ledger, recent prior attempts, "
+                              "and known solution articles for the route. Use this INSTEAD of "
+                              "chaining --get-ticket-context/--suggest-tables/--get-ledger/"
+                              "--search-solutions: each separate tool call resends the entire "
+                              "conversation, which is what actually drives token cost per ticket. "
+                              "Sections degrade independently -- a failure in one returns an "
+                              "'error' note for that key without losing the rest.")
     parser.add_argument("--get-ledger", default=None, metavar="TICKET_ID",
                          help="Print the most recent non-null InvestigationJson ledger recorded "
                               "for this ticket (across any prior run, terminal or not), or null "
@@ -1558,6 +1659,13 @@ def main() -> None:
                 parser.error(f"--ledger is not valid JSON: {e}")
             client.save_investigation_ledger(run_id=args.save_ledger, ledger=ledger_obj)
             print(json.dumps({"status": "LEDGER_SAVED", "run_id": args.save_ledger}, indent=2))
+            return
+
+        if args.investigate_bundle:
+            print(json.dumps(
+                build_investigation_bundle(client, args.investigate_bundle, top_tables=args.top or 8),
+                indent=2, default=str,
+            ))
             return
 
         if args.get_ledger:

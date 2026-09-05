@@ -19,15 +19,43 @@ Idempotent -- safe to run even if already patched, and safe to run on a
 schedule (see `Model_Bench/` cron jobs) so it self-heals without you having
 to remember it.
 
-## 2. Re-deploy mem0 config to all 4 profiles
+## 2. Qdrant server + mem0 config
 
-If profile directories were rebuilt (fresh install only -- a normal update
-leaves `~/.hermes/profiles/*` alone):
+**Check this after EVERY update, not just a fresh install.** mem0 memory
+depends on a Qdrant *server*, and both halves can break independently.
+
+```bash
+# 2a. Is the vector store up and does it still hold data?
+deploy/qdrant/healthcheck_qdrant.sh
+```
+
+That script exits non-zero if the service is down or the collection isn't
+green, and *warns* if the collection exists but holds zero points. Take the
+zero-points warning seriously on an established system: it is exactly what
+a silent memory regression looks like, and this project ran with zero
+memories for its entire history without noticing.
+
+If the service is missing (fresh install, or the unit was removed):
+
+```bash
+deploy/qdrant/install_qdrant.sh     # idempotent; installs binary + systemd user unit
+```
+
+**Do not "fix" a Qdrant lock error by switching mem0 back to an embedded
+local path.** That was the original configuration and it is the bug:
+embedded Qdrant is single-process, kanban workers are separate OS processes
+from their gateway, so every worker's memory call failed with `Storage
+folder ... already accessed by another instance of Qdrant client`. Giving
+each profile its own path does not fix it either — that separates gateways
+from each other, never a worker from its own gateway.
+
+Then, if profile directories were rebuilt (fresh install only -- a normal
+update leaves `~/.hermes/profiles/*` alone):
 
 ```bash
 source ~/.hermes/hermes-agent/venv/bin/activate
 pip install qdrant-client mem0ai ollama
-python3 Model_Bench/setup_mem0.py
+python3 Model_Bench/setup_mem0.py     # points mem0 at 127.0.0.1:6333
 ```
 
 Requires: LM Studio reachable (see `deploy/profiles/*/config.yaml` for the

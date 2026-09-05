@@ -228,7 +228,11 @@ Model_Bench/                Orchestration scripts + Hermes plugins.
                               file's own docstring.
   setup_mem0.py               Configures the mem0 memory provider (OSS
                               mode: LM Studio LLM + Ollama embedder +
-                              embedded Qdrant) across all 4 profiles.
+                              Qdrant SERVER on 127.0.0.1:6333) across all
+                              profiles. Embedded/local-path Qdrant was
+                              replaced 2026-09-05 -- it is single-process,
+                              so every kanban worker's memory call failed
+                              on a file lock. See §7.
   mirror_wsl_artifacts.sh     Refreshes deploy/ from a live WSL install
                               (SOUL.md, config.yaml, skills, plugin
                               manifests, cron schedule).
@@ -388,8 +392,13 @@ last had it edited — see `Model_Bench/mirror_wsl_artifacts.sh`).
    nothing is hardcoded anywhere in this repo.
 6. **Cron schedule**: recreate from `deploy/cron_jobs.json` (or `.txt`) —
    see `Model_Bench/` for what script each job runs.
-7. **Memory (optional)**: run `Model_Bench/setup_mem0.py` after installing
-   `qdrant-client`, `mem0ai`, `ollama` into Hermes's own venv. Needs an
+7. **Memory**: first run `deploy/qdrant/install_qdrant.sh` (installs the
+   Qdrant binary and enables the systemd user service; idempotent), then
+   `Model_Bench/setup_mem0.py` after installing `qdrant-client`, `mem0ai`,
+   `ollama` into Hermes's own venv. Verify with
+   `deploy/qdrant/healthcheck_qdrant.sh` -- it fails loudly if the service
+   is down and warns if the collection exists but holds zero points, which
+   is what a silent memory regression actually looks like. Needs an
    OpenAI-compatible LLM endpoint (this project points it at LM Studio,
    reusing the already-loaded investigation model — do NOT load a second
    model into LM Studio, it only serves one model at a time) and a
@@ -439,8 +448,25 @@ produced zero memory entries. Two things fixed this:
      embedding models don't need a GPU, and loading one into LM Studio
      would have evicted the live investigation model since it only serves
      one model at a time).
-   - **Vector store**: Qdrant, embedded via a local path — no Docker, no
-     server process.
+   - **Vector store**: Qdrant **server** on `127.0.0.1:6333`, run as a
+     systemd user service from the plain static binary — still no Docker.
+     Install/enable with `deploy/qdrant/install_qdrant.sh` (idempotent);
+     verify with `deploy/qdrant/healthcheck_qdrant.sh`. One shared
+     collection (`hermes_l2`) across all profiles.
+
+     **This replaced embedded/local-path Qdrant on 2026-09-05, and the
+     reason matters**: embedded mode is single-process (a file lock).
+     Kanban workers are separate OS processes from their gateway, so every
+     worker's mem0 call failed with `Storage folder ... already accessed by
+     another instance of Qdrant client`. Confirmed from a live worker log —
+     the model *did* call `mem0_search` and got that error. Memory sat at
+     zero entries for the project's entire history not because nothing
+     wrote to it, but because every read and write failed on that lock. An
+     earlier "fix" that gave each profile its own path addressed the wrong
+     level: it separated gateways from each other, never a worker from its
+     own gateway. A server is multi-process safe by construction and
+     restores the cross-profile shared learning the per-profile split had
+     given up.
 
 Set up via `Model_Bench/setup_mem0.py` (writes `mem0.json`/`.env`/
 `config.yaml`'s `memory.provider` per profile directly — the `hermes
