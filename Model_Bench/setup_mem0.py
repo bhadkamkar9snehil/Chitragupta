@@ -50,13 +50,41 @@ for profile in PROFILES:
             "provider": "ollama",
             "config": {"model": EMBEDDER_MODEL, "ollama_base_url": OLLAMA_URL, "embedding_dims": 768},
         },
+        # 2026-09-05: switched from embedded/local-path Qdrant to the real
+        # server on 127.0.0.1:6333 (systemd user unit `qdrant.service`, plain
+        # binary, no Docker).
+        #
+        # The per-profile `path` workaround added earlier this session fixed
+        # the WRONG level of the problem. It stopped two GATEWAYS fighting
+        # over one folder, but kanban workers are separate OS processes from
+        # their gateway, so every worker still hit
+        #   "Storage folder ... already accessed by another instance of
+        #    Qdrant client"
+        # and its mem0 tool call failed outright. Confirmed live from a real
+        # worker log: the model DID call mem0_search and got that error --
+        # memory was never empty because nothing wrote to it, it was empty
+        # because every read and write failed on a file lock.
+        #
+        # A server is multi-process safe by construction, and as a bonus
+        # restores the ONE shared store across all profiles (the earlier
+        # per-profile split had traded cross-bot learning away for
+        # reliability; this needs neither trade).
         "vector_store": {
             "provider": "qdrant",
             # embedding_model_dims must be set explicitly -- mem0 defaults
             # to 1536 (OpenAI's dim) regardless of the embedder section,
             # confirmed live to break search with a shape mismatch once
             # the collection is created at the wrong size.
-            "config": {"path": str(home / "mem0_qdrant"), "embedding_model_dims": 768},
+            # One shared collection on the local server. embedding_model_dims
+            # must stay explicit: mem0 defaults it to 1536 (OpenAI's) no matter
+            # what embedder is configured, which silently breaks search against
+            # nomic-embed-text's 768 once the collection exists at the wrong size.
+            "config": {
+                "host": "127.0.0.1",
+                "port": 6333,
+                "collection_name": "hermes_l2",
+                "embedding_model_dims": 768,
+            },
         },
     }
 

@@ -76,6 +76,15 @@ PASSWORD = os.environ.get("MSSQL_MCP_PASSWORD")
 ELIGIBLE_STATUS = "Enter"
 INVESTIGATOR_PROFILE = "l2-investigator-primary"
 REVIEWER_PROFILE = "l2-reviewer-primary"
+# Dispatch priority. The kanban dispatcher orders ready work by
+# `priority DESC, created_at ASC` and (deliberately) runs ONE worker at a
+# time, so ordering is the only fairness lever that doesn't cost context
+# budget. Investigation outranks review because a review card is worthless
+# until its investigation exists, and because an older-but-idle review
+# backlog would otherwise starve investigation forever (it did: zero
+# investigator dispatches project-wide until 2026-09-05).
+INVESTIGATOR_PRIORITY = 10
+REVIEWER_PRIORITY = 5
 
 # Cards in one of these statuses have not yet been (or are no longer being)
 # actively worked -- safe to archive once we know their ticket has been
@@ -121,6 +130,61 @@ def _archive_stale_cards_for_ticket(ticket_id: str, new_run_id: str) -> None:
     )
     if archive.returncode != 0:
         print(f"WARNING: archive of stale cards failed: {archive.stderr.strip()[:300]}")
+
+
+def _how_to_query_section(run_id: str, ticket_id: str) -> str:
+    """Exact, copy-pasteable commands for this specific run.
+
+    Why this is in the card body rather than left to the model: observed
+    live 2026-09-05, a worker burned four separate turns discovering that
+    `python` is not on PATH (only `python3`), that the Windows path
+    "C:/Users/..." does not resolve inside WSL (it is /mnt/c/Users/...),
+    and then `find`-ing Hermes_Orchestrator.py twice -- before it ran a
+    single query. None of that is investigation; it is environment
+    discovery the dispatcher already knows the answer to. Every token
+    spent rediscovering it is a token not spent on the ticket, and at
+    ~425K tokens/ticket that overhead is not free.
+
+    --build-query is offered FIRST deliberately: it validates table and
+    column names against the real schema before emitting SQL, so a
+    hallucinated identifier fails loudly with a correction instead of
+    silently returning nothing (this project's documented failure mode).
+    """
+    # ORCHESTRATOR is a Windows path (correct for THIS script, which shells
+    # out to a Windows interpreter). The worker, however, runs inside WSL and
+    # must use the /mnt/c form -- observed live: a worker tried
+    # "C:/Users/.../Hermes_Orchestrator.py" and got exit 2, then had to find
+    # the real path itself. Hand it the form that actually works there.
+    py = PYTHON
+    orch = "/mnt/c/" + ORCHESTRATOR.replace("\\", "/").removeprefix("C:/")
+    return (
+        "\n--- How to actually query (exact commands for THIS run -- use these\n"
+        "verbatim; do not search for the script or guess the interpreter) ---\n"
+        f"Interpreter: {py}   Script: {orch}\n"
+        "\n"
+        "1) PREFERRED -- schema-validated SELECT (rejects hallucinated table/column\n"
+        "   names with a suggested correction instead of failing silently):\n"
+        f'   {py} "{orch}" --server {SERVER} --database XStudio_Xbatch \\\n'
+        '     --build-query dbo.SomeTable --columns "ColA,ColB" \\\n'
+        '     --where "HeatNo = \'123\'" --top 20 --execute\n'
+        "\n"
+        "2) Don't know the table yet? Narrow it mechanically first:\n"
+        f'   {py} "{orch}" --server {SERVER} --database XStudio_Xbatch \\\n'
+        '     --suggest-tables "<the ticket text>" --top 8\n'
+        "\n"
+        "3) Raw read-only SQL (audited; --database is REQUIRED, there is no default):\n"
+        f'   {py} "{orch}" --server {SERVER} --database XStudio_Xbatch \\\n'
+        '     --query "SELECT TOP 20 ... FROM dbo.SomeView WHERE ..."\n'
+        "\n"
+        "4) Record what you found, so a rework/next attempt doesn't start cold:\n"
+        f'   {py} "{orch}" --server {SERVER} --database XStudio_Helpdesk \\\n'
+        f"     --save-ledger {run_id} --ledger '{{\"tables_queried\":[...],\n"
+        '     "key_values_found":{...},"ruled_out":[...],"conclusion":"..."}\'\n'
+        "\n"
+        f"Ticket context (if you need it again): --get-ticket-context {ticket_id} "
+        "--database XStudio_Helpdesk\n"
+        "Writes NEVER go through --query; they go through the reviewer + publisher.\n"
+    )
 
 
 def _run_orchestrator(extra_args: list, timeout: int = 60) -> dict | None:
@@ -249,6 +313,7 @@ def main():
     )
     body += _suggested_tables_section(ticket)
     body += _prior_ledger_section(ticket_id)
+    body += _how_to_query_section(run_id, ticket_id)
 
     create = subprocess.run(
         ["hermes", "kanban", "create", f"L2 {ticket_no}",
@@ -256,6 +321,18 @@ def main():
          "--body", body,
          "--skill", "xstudio-l2-ticket-workflow",
          "--skill", "xstudio-sql-write-discipline",
+         # Investigation outranks review in the dispatcher's
+         # `ORDER BY priority DESC, created_at ASC`. Without this the
+         # single concurrency slot goes to whatever card is OLDEST, and a
+         # backlog of older review cards starves investigation completely
+         # -- the investigator role went the entire project without being
+         # dispatched once for exactly this reason. Priority (not extra
+         # concurrency) is the right lever here: raising max_in_progress
+         # instead makes two requests share LM Studio's unified KV cache
+         # and reproduces the "Context size has been exceeded" crash.
+         # Nothing can review a ticket that was never investigated, so
+         # investigation genuinely is the higher-priority half.
+         "--priority", str(INVESTIGATOR_PRIORITY),
          "--idempotency-key", f"l2-ticket-{run_id}",
          # A single hung/slow investigation blocking the whole queue behind
          # it was a real incident 2026-09-03 (max_in_progress:1, one task
@@ -296,6 +373,7 @@ def main():
         ["hermes", "kanban", "create", f"REVIEW: L2 {ticket_no}",
          "--assignee", REVIEWER_PROFILE,
          "--body", review_body,
+         "--priority", str(REVIEWER_PRIORITY),
          "--parent", investigator_task_id,
          "--skill", "xstudio-l2-draft-verifier",
          "--skill", "xstudio-sql-write-discipline",
