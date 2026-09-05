@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploy the repo's deterministic L2 pipeline runtime into the Hermes profile
-# script/plugin/skill locations. Run from the Chitragupta repo under WSL.
+# Deploy the repo's deterministic L2 pipeline runtime AND the typed XStudio
+# investigation harness into the Hermes profile script/plugin/skill locations.
+# Run from the Chitragupta repo under WSL. Safe to run repeatedly.
+#
+# The typed-tool half of this deployment exists because of Ticket_424/Ticket_441:
+# the lifecycle was fine, but the investigator rebuilt SQL transport by hand
+# (`python3 /mnt/c/Python314/python.exe ...`, then `pip install pyodbc`) and
+# burned its whole context window. Transport is now harness-owned behind the
+# `xstudio_l2` tool, and the retired shell paths are blocked.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$HOME/.hermes/profiles/l2-investigator/scripts"
 ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
+INVESTIGATOR_PROFILES=(l2-investigator l2-investigator-primary)
+REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
 
 mkdir -p "$SCRIPTS_DIR"
 
@@ -27,28 +36,82 @@ for f in \
 
 chmod +x "$SCRIPTS_DIR"/*.py
 
+# The typed-tool bridge is invoked by the plugin at its REPO path (it needs the
+# Windows interpreter and the repo's Hermes_Orchestrator module), so it is not
+# copied into the profile. Fail loudly if it is missing rather than deploying a
+# plugin whose transport cannot start.
+test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
+  || { echo "FATAL: Model_Bench/xstudio_l2_tool_bridge.py is missing" >&2; exit 1; }
+
 # Keep the workflow binding beside the deployed scripts as a fallback. The
 # runtime also reads the canonical repo copy directly.
 cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
 
-# Deploy the observer plugin to every active role. The plugin only triggers
-# reconciliation; correctness does not depend on it because ticket_scout runs
-# the same reconciler before every new claim.
-for profile in "${ACTIVE_PROFILES[@]}"; do
-  plugin_dir="$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-orchestrator"
-  mkdir -p "$plugin_dir"
-  cp "$ROOT/Model_Bench/xstudio_l2_orchestrator_plugin/__init__.py" "$plugin_dir/__init__.py"
-  cp "$ROOT/Model_Bench/xstudio_l2_orchestrator_plugin/plugin.yaml" "$plugin_dir/plugin.yaml"
-
-  for skill in xstudio-l2-ticket-workflow xstudio-l2-draft-verifier; do
-    src="$ROOT/deploy/skills/xstudio/$skill/SKILL.md"
-    dst="$HOME/.hermes/profiles/$profile/skills/xstudio/$skill"
-    if [[ -f "$src" ]]; then
-      mkdir -p "$dst"
-      cp "$src" "$dst/SKILL.md"
+# Deploy both observer plugins to every active role. The orchestrator plugin
+# only triggers reconciliation; the tools plugin registers `xstudio_l2` and
+# enforces the execution guard. Correctness never depends on the event hook,
+# because ticket_scout runs the same reconciler before every new claim.
+deploy_plugins() {
+  local profile="$1" plugin src dir
+  for plugin in xstudio-l2-orchestrator xstudio-l2-tools; do
+    if [[ "$plugin" == "xstudio-l2-orchestrator" ]]; then
+      src="$ROOT/Model_Bench/xstudio_l2_orchestrator_plugin"
+    else
+      src="$ROOT/Model_Bench/xstudio_l2_tools_plugin"
     fi
+    dir="$HOME/.hermes/profiles/$profile/plugins/$plugin"
+    mkdir -p "$dir"
+    cp "$src/__init__.py" "$dir/__init__.py"
+    cp "$src/plugin.yaml" "$dir/plugin.yaml"
   done
- done
+}
+
+copy_soul() {
+  local profile="$1" src="$ROOT/deploy/profiles/$1/SOUL.md"
+  [[ -f "$src" ]] && cp "$src" "$HOME/.hermes/profiles/$1/SOUL.md"
+}
+
+copy_skill() {
+  local profile="$1" skill="$2"
+  local src="$ROOT/deploy/skills/xstudio/$skill/SKILL.md"
+  local dst="$HOME/.hermes/profiles/$profile/skills/xstudio/$skill"
+  if [[ -f "$src" ]]; then
+    mkdir -p "$dst"
+    cp "$src" "$dst/SKILL.md"
+  fi
+}
+
+for profile in "${ACTIVE_PROFILES[@]}"; do
+  deploy_plugins "$profile"
+  copy_soul "$profile"
+done
+
+for profile in "${INVESTIGATOR_PROFILES[@]}"; do
+  for skill in xstudio-l2-ticket-workflow xstudio-sql-write-discipline \
+               xstudio-sap-api-investigation xstudio-sohar-heat-execution \
+               xstudio-quality-delay-workorder; do
+    copy_skill "$profile" "$skill"
+  done
+done
+
+for profile in "${REVIEWER_PROFILES[@]}"; do
+  for skill in xstudio-l2-draft-verifier xstudio-sql-write-discipline; do
+    copy_skill "$profile" "$skill"
+  done
+done
+
+# Enable the tools plugin/toolset and the approval-deny backstop in each live
+# profile config. This is a targeted, idempotent, comment-preserving edit -- it
+# never rewrites dispatch settings, API ports, model choice, or credentials.
+echo "== Profile config (idempotent, additive) =="
+for profile in "${ACTIVE_PROFILES[@]}"; do
+  config="$HOME/.hermes/profiles/$profile/config.yaml"
+  if [[ -f "$config" ]]; then
+    python3 "$ROOT/Model_Bench/patch_profile_config.py" "$config"
+  else
+    echo "WARNING: $config not found; skipped"
+  fi
+done
 
 if [[ "${1:-}" != "--no-restart" ]]; then
   for profile in "${ACTIVE_PROFILES[@]}"; do
@@ -56,6 +119,8 @@ if [[ "${1:-}" != "--no-restart" ]]; then
   done
 fi
 
-echo "Deployed deterministic L2 pipeline runtime."
-echo "Next: populate deploy/helpdesk_workflow_binding.json from live --discover-workflow before allowing RESOLUTION publication."
-echo "Then run: python3 $SCRIPTS_DIR/l2_pipeline_runtime.py status"
+echo
+echo "Deployed deterministic L2 lifecycle + typed XStudio investigation harness."
+echo "Typed tool: xstudio_l2. Retired terminal transports (Hermes_Orchestrator.py,"
+echo "Windows Python, sqlcmd, pyodbc, pip) are blocked by plugin hook + approvals.deny."
+echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"

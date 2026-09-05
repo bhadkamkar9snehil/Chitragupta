@@ -71,19 +71,31 @@ Follow evidence across domains when necessary.
 
 ## 4. Query mechanically before querying creatively
 
-Prefer the exact commands embedded in the task.
+All database, schema, ticket, run-audit and ledger work goes through the typed `xstudio_l2` tool. There is no shell path to the database: the harness owns the interpreter, the driver, the credentials, auditing, read-only enforcement and output limits. Do not use terminal to reach SQL, run an interpreter, import a database driver, or install packages — those are blocked, and attempting them only burns your call budget.
 
-When the likely object is known, prefer `--build-query` because it validates table/view and column identifiers before constructing the SELECT.
+| Need | `xstudio_l2` operation |
+|---|---|
+| Read known table/view + columns | `select` (identifiers are schema-validated first) |
+| Read-only SQL you composed | `query` (writes/DDL/EXEC rejected) |
+| Narrow the schema from a symptom | `suggest_tables` |
+| Find real tables/views/procedures | `find_objects` |
+| Full definition of one object | `get_definition` |
+| Confirm a table/column exists | `validate_identifiers` |
+| Allowlisted diagnostic procedure | `read_procedure` |
+| Refresh this ticket's live row | `get_ticket_context` |
+| This run's recorded action trail | `get_run_actions` |
+| Persist findings | `save_ledger` |
 
-When the evidence surface is unclear, use `--suggest-tables` as a shortlist only. If it is insufficient, use live SQL-object discovery / metadata.
+Rules that still apply:
 
-For raw `--query`:
-
-- read-only only;
-- always pass `--database` explicitly;
+- prefer `select` over `query` when the object is known — it validates table/view and column identifiers before constructing the SELECT;
+- use `suggest_tables` as a shortlist only; if insufficient, use `find_objects`/`get_definition`;
+- always pass `database` explicitly;
 - use `XStudio_Xbatch` for production/process/quality/heat/SAP evidence;
 - use `XStudio_Helpdesk` for ticket/Hermes runtime evidence;
 - never invent a plausible table, view, procedure, or column.
+
+Your investigation budget is bounded (about 14 `xstudio_l2` calls per session). Two identical failing calls block the third: change the arguments or the evidence path instead of retrying, and narrow a query rather than repeating a truncated one.
 
 ## 5. Use KB retrieval as a candidate search
 
@@ -102,7 +114,7 @@ If retrieval abstains, continue normal investigation. `NO GOOD KB MATCH` is vali
 
 ## 6. Preserve ticket-specific investigation state
 
-Before completing meaningful work, write a compact ledger through `--save-ledger` for the exact `run_id`.
+Before completing meaningful work, write a compact ledger through `xstudio_l2` `save_ledger` for the exact `run_id`.
 
 Useful fields:
 
@@ -189,19 +201,20 @@ Every rework gets its own fresh parent-gated reviewer. The runtime caps review c
 
 ## Prohibited actions
 
-- Do not call `--publish-response`.
+- Do not publish the response yourself; the deterministic publisher owns that.
 - Do not write directly to `Complaint_Mst_Tbl`.
 - Do not create a reviewer card yourself.
 - Do not reassign the investigator task.
 - Do not use retired two-board/forward-bridge/request-changes flow.
 - Do not treat KB, prior ticket history, or mem0 as proof.
 - Do not guess a Helpdesk workflow status.
+- Do not reach the database through terminal, an interpreter, a driver import, or a package install. Use `xstudio_l2`; those paths are blocked and only waste budget.
 
 ## Completion checklist
 
 - [ ] Exact ticket/run IDs preserved mechanically.
 - [ ] Current live evidence supports every specific factual claim.
-- [ ] Database specified on every raw query.
+- [ ] Evidence gathered through `xstudio_l2`, with `database` set on every read.
 - [ ] Any KB hit was verified for applicability.
 - [ ] Ledger saved for meaningful investigation/rework.
 - [ ] Response type matches evidence strength.

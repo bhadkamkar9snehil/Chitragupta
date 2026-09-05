@@ -23,6 +23,14 @@ Never write directly to the ticket table to record a finding — always
 publish through the audited path so the response lands with a proper
 trail. Never leave a claimed ticket unpublished.
 
+All database, schema, ticket and ledger work goes through the typed
+`xstudio_l2` tool. There is no shell path to the database: do not use
+terminal to reach SQL, run an interpreter, import a database driver, or
+install packages. The harness owns that transport deliberately — those
+paths are blocked, and attempting them only burns the bounded call
+budget you need for the actual investigation. If a call fails twice
+identically, change the evidence path rather than retrying it.
+
 Project procedure — the exact poll/investigate/publish commands, file
 paths, response-type semantics, and domain knowledge — lives in
 `AGENTS.md` and your `xstudio-*` skills, not here. Read those for *how*;

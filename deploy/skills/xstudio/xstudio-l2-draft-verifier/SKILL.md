@@ -67,7 +67,7 @@ If `response_type` or `reply_text` is still missing, reject immediately with a p
 
 For every table/view/column/procedure named in the response, validate it against the real schema/catalog rather than accepting plausible names.
 
-Use the known absolute-path tools; do not search the worker scratch directory for project files.
+Use the typed `xstudio_l2` tool (`validate_identifiers`, `find_objects`, `get_definition`) for this. Do not search the worker scratch directory for project files.
 
 A false "object does not exist" claim is also a reject unless independently verified through live SQL-object discovery.
 
@@ -75,13 +75,15 @@ A false "object does not exist" claim is also a reject unless independently veri
 
 This is mandatory.
 
-Use the real `run_id` and inspect the investigator's actual SQL action trail. Then independently spot-check the ticket-specific fact being asserted: relevant row, value, timestamp, count, status, or absence.
+Use the real `run_id` with `xstudio_l2` `get_run_actions` to inspect the investigator's actual SQL action trail. Then independently spot-check the ticket-specific fact being asserted — relevant row, value, timestamp, count, status, or absence — with `select`/`query`.
+
+All of your verification goes through `xstudio_l2`. There is no shell path to the database: do not use terminal to reach SQL, run an interpreter, import a driver, or install packages. Those are blocked and only consume your bounded call budget (about 14 calls per session; two identical failures block the third).
 
 Rules:
 
 - production/process/quality/heat/SAP data normally lives in `XStudio_Xbatch`;
 - Helpdesk/Hermes runtime data lives in `XStudio_Helpdesk`;
-- `--database` is mandatory for read queries;
+- `database` is mandatory on every read;
 - a claimed `RESOLUTION` with no live evidence supporting the fix is a reject;
 - an empty action trail for a specific factual conclusion is a reject;
 - current live evidence outranks old ticket history, mem0, or KB suggestions.
@@ -129,9 +131,10 @@ The reconciler then creates the correct rework topology automatically. You do no
 
 ## Prohibited actions
 
-- Do not call `Hermes_Orchestrator.py --publish-response`.
+- Do not publish the response yourself, by any path. The deterministic publisher owns publication.
+- Do not reach the database through terminal, an interpreter, a driver import, or a package install; use `xstudio_l2`.
 - Do not write directly to `Complaint_Mst_Tbl`.
-- Do not call `kanban_request_changes`, `kanban_request_review`, or reassign either card.
+- Do not reassign either card, and do not attempt any terminal action other than `kanban_complete` or `kanban_block`.
 - Do not create another reviewer card.
 - Do not use retired model-based profile names.
 - Do not approve because the prose sounds plausible.

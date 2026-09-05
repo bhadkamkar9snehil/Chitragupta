@@ -22,6 +22,8 @@ Do **not** duplicate the lifecycle architecture here. The authoritative sources 
 - Rework cycles use `review_cycle`, not SQL `AttemptNo`; max cycles = 3.
 - `ticket_scout.py` is the 2-minute mutating reconciliation/claim backstop.
 - Separate 5-minute publish-safety-net and repair cron jobs were deliberately removed; do not recreate them.
+- L2 agents reach the database ONLY through the typed `xstudio_l2` tool (`xstudio-l2-tools` plugin + `Model_Bench/xstudio_l2_tool_bridge.py`). Model-driven terminal use of an interpreter, database driver, `sqlcmd`, or package install is blocked by the plugin guard and `approvals.deny`; benign terminal/file inspection still works. Raw agent SQL is read-only, arbitrary `EXEC` is unavailable, and `read_procedure` is an explicit allowlist. See `AGENTS.md` §8a.
+- Interpreter/driver/dependency mechanics are harness code and config, never mem0.
 - Reviewer completion audit is read-only.
 - Live-verified Helpdesk binding: eligible `Enter`, resolved `Closed`, waiting-user AskStatus `Ask`; L3/human-action ticket statuses remain unbound until proven live.
 - A `RESOLUTION` does not automatically create a KB article.

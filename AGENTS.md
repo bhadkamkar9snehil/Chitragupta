@@ -205,16 +205,63 @@ Evidence hierarchy:
 
 Never fabricate a table, view, column, SP, ticket status, or identifier.
 
-Preferred investigation path:
+Preferred investigation path, all through the typed `xstudio_l2` tool (see §8a):
 
-- use dispatch-time investigation bundle first;
-- use `--build-query` when the table/entity is known;
-- use `--suggest-tables` for deterministic narrowing;
-- use `--find-sql-objects` / live metadata when necessary;
-- use `--query` only for read-only SQL and specify the database explicitly;
-- persist meaningful per-ticket state with `--save-ledger`.
+- use the dispatch-time investigation bundle first;
+- `select` when the table/entity is known (identifiers are schema-validated);
+- `suggest_tables` for deterministic narrowing;
+- `find_objects` / `get_definition` for live metadata when necessary;
+- `query` only for read-only SQL, with `database` specified explicitly;
+- `read_procedure` only for the explicitly allowlisted diagnostics;
+- persist meaningful per-ticket state with `save_ledger`.
 
 Do not put per-ticket facts into shared mem0.
+
+## 8a. Agent execution surface is typed and harness-owned
+
+L2 agents do not build database transport. They call one typed tool,
+`xstudio_l2`, registered by the `xstudio-l2-tools` plugin
+(`Model_Bench/xstudio_l2_tools_plugin/`), which invokes the Windows-side
+bridge (`Model_Bench/xstudio_l2_tool_bridge.py`) internally. The bridge reuses
+the guarded primitives already in `Hermes_Orchestrator.py` rather than being a
+parallel SQL implementation.
+
+Why this exists: on 2026-09-05, Ticket_424 and Ticket_441 showed the lifecycle
+working correctly while the investigator burned 1,026,911 tokens / 27 tool
+calls / 2 sessions building the transport itself — it malformed the interpreter
+call as `python3 <windows-python> <orchestrator>`, retried the same broken shape
+under `timeout` wrappers, fell back to installing a database driver, hit
+Tirith's fail-closed dependency scan, and overflowed context. That is an
+agent-computer-interface defect, not a lifecycle defect.
+
+Rules:
+
+- The model never composes Windows/WSL paths, interpreters, driver imports, SQL
+  credentials, `sqlcmd`, or package installation. Those terminal forms are
+  blocked by the plugin's `pre_tool_call` guard, with `approvals.deny` entries
+  in each active profile config as defense in depth.
+- Benign terminal and file inspection (`ls`, `cat`, `grep`, `git`, reading
+  documentation) stays available. The guard targets transport, not the shell.
+- Deterministic harness subprocesses executed by trusted runtime/plugin code are
+  unaffected; the restriction is on model-driven terminal fallback.
+- Raw SQL exposed to the model is read-only. Write/DDL/`EXEC` keywords are
+  rejected after string literals are blanked, so a keyword inside quoted text is
+  not a false positive.
+- Arbitrary `EXEC` is not available. `read_procedure` accepts only procedures in
+  an explicit allowlist with a validated parameter contract (currently
+  `XMES_Get_API_Transaction_Summary` with `APIType`).
+- Ticket/Helpdesk mutation stays outside the agent interface entirely;
+  publication remains the deterministic publisher's job (§5).
+- Usage is bounded so one bad idea cannot consume the context window: about 14
+  `xstudio_l2` calls per session, a third identical failing call is blocked, and
+  results are capped (~8 KB, ~25 list rows) with an instruction to narrow rather
+  than repeat.
+- Fresh cards rendered by the runtime contain only this typed contract. They no
+  longer carry a raw interpreter/query recipe, and the plugin re-asserts the
+  contract before each LLM turn so a pre-migration card's stale command text
+  cannot steer a worker back to the retired path.
+- Interpreter paths, driver setup, and dependency mechanics are deterministic
+  harness concerns. They belong in code and config, never in mem0.
 
 ## 9. KB and memory boundaries
 
@@ -315,7 +362,9 @@ This pipeline depends on the real Windows/WSL/Hermes/Kanban/SQL/LM Studio enviro
 Useful commands:
 
 ```bash
+bash Model_Bench/deploy_l2_pipeline_runtime.sh
 bash Model_Bench/validate_l2_pipeline_local.sh
+python3 Model_Bench/test_xstudio_l2_tools_plugin.py
 python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py reconcile --dry-run
@@ -323,11 +372,19 @@ python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py reconc
 
 Do not use GitHub Actions as proof that the live pipeline is healthy.
 
+The typed-tool half of the harness is only fully proven by a naturally arriving
+ticket. For the next one, check the trace shows `xstudio_l2` calls and no
+terminal attempt at an interpreter, database driver, `sqlcmd`, or package
+install. Do not manufacture a production claim to test this, and do not raw-poll
+a ticket — that bypasses the scout's WIP/lifecycle gate.
+
 ## 16. Deployment mirror
 
 `deploy/` is the reproducible mirror of artifacts that otherwise live under `~/.hermes/profiles/...`.
 
-After changing profile SOUL/config/skills/plugins or the cron schedule, refresh the mirror with `Model_Bench/mirror_wsl_artifacts.sh` and inspect the diff before committing.
+After changing profile SOUL/config/skills/plugins or the cron schedule, refresh the mirror with `Model_Bench/mirror_wsl_artifacts.sh` and inspect the diff before committing. The mirror covers both L2 plugins — `xstudio-l2-orchestrator` and `xstudio-l2-tools` — so a fresh install cannot come up without the typed investigation tool and end up rebuilding the retired shell path.
+
+`Model_Bench/deploy_l2_pipeline_runtime.sh` installs the lifecycle scripts, both plugins, SOULs, skills, the workflow-binding fallback, and the profile-config entries, then restarts the four active gateways unless `--no-restart` is passed. It is idempotent. Config edits are applied by `Model_Bench/patch_profile_config.py`, which is deliberately a targeted text editor rather than a YAML round-trip: the live configs carry explanatory comments (Security/Tirith, fallback-model providers) that a load-and-dump silently destroys.
 
 ## 17. Security / credentials
 

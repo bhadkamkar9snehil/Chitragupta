@@ -74,16 +74,18 @@ investigation doesn't need this skill.
    implemented by SPs/triggers doing more than a single table update.
 5. **For L2 ticket responses specifically, there is no direct-write
    fallback — it is technically blocked, not just discouraged.** As of
-   2026-09-03, `approvals.deny` in this profile's `config.yaml`
-   unconditionally blocks any `sqlcmd`/`cursor.execute` UPDATE, INSERT, or
-   DELETE regardless of target table — a raw write attempt will be
-   refused before it reaches the database. `Hermes_L2_Publish_Response_Usp`
-   (via `Hermes_Orchestrator.py --publish-response`) is the only write
-   path that exists for L2, not merely the recommended one. For other,
-   non-L2 XStudio work where no deny rule applies, a direct write remains
-   possible when no suitable official path exists, done deliberately and
-   recorded: target DB/table, predicate/record IDs, before state, executed
-   SQL, after state, result.
+   2026-09-05 an L2 worker has no shell path to the database at all: the
+   typed `xstudio_l2` tool is the only interface, its `query` operation
+   rejects INSERT/UPDATE/DELETE/MERGE/DDL/EXEC outright, and `EXEC` is
+   limited to an explicit read-only procedure allowlist. Terminal attempts
+   to reach SQL through an interpreter, a database driver, `sqlcmd`, or a
+   package install are blocked by both the plugin execution guard and
+   `approvals.deny`. Publication happens only through the deterministic
+   publisher after reviewer approval — it is not something an agent
+   invokes. For other, non-L2 XStudio work where no deny rule applies, a
+   direct write remains possible when no suitable official path exists,
+   done deliberately and recorded: target DB/table, predicate/record IDs,
+   before state, executed SQL, after state, result.
 6. **Verify the complete affected chain after any write** — a successful
    SQL command is not enough:
    ```

@@ -955,20 +955,42 @@ def _investigation_bundle(args: argparse.Namespace, ticket_id: str, fallback_tic
 
 
 def _query_instructions(run_id: str, ticket_id: str) -> str:
-    orch = "/mnt/c/" + ORCHESTRATOR_WIN.replace("\\", "/").removeprefix("C:/")
-    ledger = json.dumps({
-        "tables_queried": [], "key_values_found": {}, "ruled_out": [], "conclusion": "..."
-    }, separators=(",", ":"))
+    """Render the typed-tool investigation contract for a fresh card body.
+
+    This deliberately renders NO interpreter path, script path, or shell
+    command. Ticket_424/Ticket_441 proved that handing a small local model a
+    raw `python.exe ... Hermes_Orchestrator.py` recipe invites it to rebuild
+    the transport itself, malform it, and then burn the whole context window
+    retrying wrappers and `pip install pyodbc`. Transport is harness-owned and
+    reachable only through the guarded `xstudio_l2` tool.
+    """
     return (
-        "\n--- Exact investigation commands ---\n"
-        f"Interpreter: {WINDOWS_PYTHON}\nScript: {orch}\n"
+        "\n--- Typed XStudio investigation contract ---\n"
+        "Use the xstudio_l2 tool for ALL XStudio/Helpdesk database, schema, ticket, "
+        "run-audit and ledger work. The harness owns Windows/WSL transport, Python, "
+        "pyodbc, credentials, auditing, output limits and retry guards.\n"
+        f"Current run_id: {run_id}\nCurrent ticket_id: {ticket_id}\n"
         "The starting bundle is already above; do not refetch the same context.\n\n"
-        f'Preferred validated read:\n  {WINDOWS_PYTHON} "{orch}" --server {DEFAULT_SERVER} --database XStudio_Xbatch --build-query dbo.SomeTable --columns "ColA,ColB" --where "HeatNo = \'123\'" --top 20 --execute\n\n'
-        f'If schema candidates are insufficient:\n  {WINDOWS_PYTHON} "{orch}" --server {DEFAULT_SERVER} --database XStudio_Xbatch --suggest-tables "<specific unresolved symptom>" --top 8\n\n'
-        f'Read-only SQL:\n  {WINDOWS_PYTHON} "{orch}" --server {DEFAULT_SERVER} --database XStudio_Xbatch --query "SELECT TOP 20 ..."\n\n'
-        f'Persist findings:\n  {WINDOWS_PYTHON} "{orch}" --server {DEFAULT_SERVER} --database XStudio_Helpdesk --save-ledger {run_id} --ledger \'{ledger}\'\n\n'
-        f"Refresh ticket only when needed: --get-ticket-context {ticket_id} --database XStudio_Helpdesk\n"
-        "Never write the live ticket directly. Complete the Kanban task with full structured metadata; deterministic review/publish owns the rest.\n"
+        "Operations:\n"
+        "  select              validated table+columns read (preferred; identifiers are schema-checked)\n"
+        "  query               read-only SQL (writes/DDL/EXEC are rejected)\n"
+        "  suggest_tables      narrow the real schema from a symptom description\n"
+        "  find_objects        search real tables/views/procedures\n"
+        "  get_definition      full definition text for one object\n"
+        "  validate_identifiers  confirm a table/column exists before relying on it\n"
+        "  read_procedure      explicitly allowlisted diagnostic procedures only\n"
+        "  get_ticket_context  refresh this ticket's live row\n"
+        "  get_run_actions     this run's recorded SQL/action trail\n"
+        "  save_ledger         persist findings before completing or handing to rework\n\n"
+        "Pass database explicitly: XStudio_Helpdesk for ticket/Hermes runtime data, "
+        "XStudio_Xbatch for production/heat/billet/quality/delay/SAP data.\n"
+        "There is no shell path to the database. Do not use terminal to reach SQL, to run "
+        "an interpreter, to import a database driver, or to install packages -- those are "
+        "blocked by the harness and will waste your budget. Do not retry an identical "
+        "failing call with wrappers or timeouts; correct its typed arguments or change the "
+        "evidence path. If a result is truncated, narrow the query rather than repeating it.\n"
+        "Never write the live ticket directly. Complete the Kanban task with full "
+        "structured metadata; deterministic review/publish owns the rest.\n"
     )
 
 

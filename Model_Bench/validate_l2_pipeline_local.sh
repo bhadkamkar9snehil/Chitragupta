@@ -14,7 +14,11 @@ PY_FILES=(
   Model_Bench/audit_kanban_completions.py
   Model_Bench/enforce_publish_safety_net.py
   Model_Bench/configure_helpdesk_workflow.py
+  Model_Bench/patch_profile_config.py
   Model_Bench/xstudio_l2_orchestrator_plugin/__init__.py
+  Model_Bench/xstudio_l2_tools_plugin/__init__.py
+  Model_Bench/xstudio_l2_tool_bridge.py
+  Model_Bench/test_xstudio_l2_tools_plugin.py
 )
 
 echo "== Python syntax =="
@@ -22,6 +26,9 @@ python3 -m py_compile "${PY_FILES[@]}"
 
 echo "== Deterministic contract tests =="
 python3 Model_Bench/test_l2_pipeline_runtime.py
+
+echo "== Typed investigation-tool contract tests =="
+python3 Model_Bench/test_xstudio_l2_tools_plugin.py
 
 echo "== Knowledge/skill validation =="
 python3 Model_Bench/validate_knowledge_manifest.py
@@ -47,4 +54,9 @@ Before enabling normal scout flow, separately apply in XStudio_Helpdesk:
 
 Then populate deploy/helpdesk_workflow_binding.json with the exact live resolved status
 observed above. Do not guess a status value.
+
+For the next naturally-arriving fresh ticket, verify in its trace that the worker used
+the typed xstudio_l2 tool and that NO terminal call invoked Hermes_Orchestrator.py,
+Python314/python.exe, sqlcmd, pyodbc, pip, or package installation -- that is the
+Ticket_424/Ticket_441 regression signature this harness exists to prevent.
 EOF

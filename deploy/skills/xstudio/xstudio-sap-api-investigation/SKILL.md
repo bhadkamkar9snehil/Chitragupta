@@ -27,13 +27,18 @@ documents, or any "did the API call even happen" question against
 
 ## Procedure
 
-1. **Start broad, one query, before anything else:**
-   `XMES_Get_API_Transaction_Summary @APIType = '<Type>'` (values look like
-   SAP operation names, e.g. `UsageDecision`) — reads
-   `XStudio_Configuration_Xbatch.dbo.XStudio_API_Error_Log_Mst_Tbl` (a
-   **different database** than `XStudio_Xbatch`), deduplicated to the
-   latest row per `TransactionID`. This answers "did it happen and what
-   was the result" faster than chasing domain-specific error tables first.
+1. **Start broad, one call, before anything else:** the `xstudio_l2`
+   `read_procedure` operation with
+   `procedure = "XMES_Get_API_Transaction_Summary"` and
+   `parameters = {"APIType": "<Type>"}` (values look like SAP operation
+   names, e.g. `UsageDecision`), against
+   `database = "XStudio_Configuration_Xbatch"` — it reads
+   `XStudio_API_Error_Log_Mst_Tbl` there (a **different database** than
+   `XStudio_Xbatch`), deduplicated to the latest row per `TransactionID`.
+   This answers "did it happen and what was the result" faster than
+   chasing domain-specific error tables first. This is the only stored
+   procedure the typed tool will execute; everything else is read through
+   `select`/`query`/`find_objects`.
 2. **Then narrow to the posting record:** `SAP_Posting_Tbl`, keyed by
    `WorkOrderNo`/`HeatNo`. A row with `IsProcessed = 0`/NULL, a populated
    `SAP_Message`, and no `SAP_DocumentNo` is the classic stuck signature.
