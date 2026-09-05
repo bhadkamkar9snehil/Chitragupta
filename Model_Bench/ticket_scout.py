@@ -123,6 +123,87 @@ def _archive_stale_cards_for_ticket(ticket_id: str, new_run_id: str) -> None:
         print(f"WARNING: archive of stale cards failed: {archive.stderr.strip()[:300]}")
 
 
+def _run_orchestrator(extra_args: list, timeout: int = 60) -> dict | None:
+    """Run Hermes_Orchestrator.py with the standard connection args and parse
+    its JSON stdout. Returns None on any failure -- every caller here is
+    enrichment, never load-bearing: a card must still be created if these
+    fail."""
+    try:
+        r = subprocess.run(
+            [PYTHON, ORCHESTRATOR, "--server", SERVER, "--username", USER,
+             "--password", PASSWORD] + extra_args,
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if r.returncode != 0:
+            return None
+        return json.loads(r.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        return None
+
+
+def _suggested_tables_section(ticket: dict) -> str:
+    """Mechanically narrowed candidate tables for this ticket's own text.
+
+    Why: a 9B model handed ~1200 table names (or none at all) reliably
+    latches onto a wrong-but-plausible identifier -- already root-caused in
+    this project as a real failure mode. --suggest-tables scores real
+    table/column names against the ticket's own words (no LLM, no
+    embeddings), so the investigation starts from a short list of REAL
+    tables. Verified on Ticket_343: the top candidates included
+    ShiftDelayEntry, which is exactly the table the successful
+    investigation actually used.
+
+    Explicitly labelled as a hint, not an answer -- the model must still
+    verify, and the full discovery surface (--find-sql-objects,
+    --build-query) remains available if the right table isn't listed.
+    """
+    text = " ".join(str(ticket.get(k) or "") for k in
+                    ("BriefDetails", "Description", "ProblemCategory", "SuspectedCause"))
+    if not text.strip():
+        return ""
+    db = (ticket.get("SourceSystem") or "").strip()
+    args = ["--suggest-tables", text, "--top", "8"]
+    # SourceSystem is the L1 handoff hint for which database this concerns;
+    # only pass it through when it names a database we actually know.
+    if db.lower() in ("xbatch", "xstudio_xbatch"):
+        args += ["--database", "XStudio_Xbatch"]
+    elif db.lower() in ("helpdesk", "xstudio_helpdesk"):
+        args += ["--database", "XStudio_Helpdesk"]
+    result = _run_orchestrator(args)
+    if not result or not result.get("ok") or not result.get("candidates"):
+        return ""
+    lines = [
+        "\n--- Likely relevant tables (mechanically suggested from this ticket's own",
+        "text by keyword overlap against the real schema -- a STARTING POINT, not a",
+        "verified answer. Confirm before relying on any of them, and use",
+        "--find-sql-objects / --build-query if the right table isn't here) ---",
+    ]
+    for c in result["candidates"]:
+        cols = ", ".join(c.get("matched_columns", [])[:6])
+        lines.append(f"  {c['database']}.{c['table']} (score {c['score']})"
+                     + (f" -- matched columns: {cols}" if cols else ""))
+    return "\n".join(lines) + "\n"
+
+
+def _prior_ledger_section(ticket_id: str) -> str:
+    """Any structured findings a PRIOR attempt on this same ticket recorded.
+
+    Carried forward VERBATIM, deliberately: re-summarising a previous
+    attempt's findings through a 9B model is exactly the operation small
+    models do badly, and losing them is why every reclaim/rework restarted
+    cold. Empty when this is the ticket's first attempt.
+    """
+    result = _run_orchestrator(["--get-ledger", ticket_id, "--database", "XStudio_Helpdesk"])
+    if not result or not result.get("ledger"):
+        return ""
+    return (
+        "\n--- Findings recorded by a PRIOR attempt on this same ticket (verbatim,\n"
+        "not re-summarised). Build on these instead of re-deriving them; re-verify\n"
+        "anything you intend to actually rely on. ---\n"
+        f"{json.dumps(result['ledger'], indent=2)[:2000]}\n"
+    )
+
+
 def main():
     result = subprocess.run(
         [PYTHON, ORCHESTRATOR, "--poll", "--eligible-status", ELIGIBLE_STATUS,
@@ -166,6 +247,8 @@ def main():
         f"Full ticket context (already claimed via --poll, do not re-poll):\n"
         f"{json.dumps(ticket, indent=2, default=str)[:4000]}\n"
     )
+    body += _suggested_tables_section(ticket)
+    body += _prior_ledger_section(ticket_id)
 
     create = subprocess.run(
         ["hermes", "kanban", "create", f"L2 {ticket_no}",

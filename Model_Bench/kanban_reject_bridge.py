@@ -146,6 +146,79 @@ def escalate_repeated_failure(run_id, ticket_id, reason, attempt_count):
     return r.returncode == 0
 
 
+def get_runs(task_id):
+    """Attempt history for a task (same shape kanban_approval_publisher.py
+    reads). Empty list on any failure -- callers treat it as 'no prior
+    findings available'."""
+    r = run_hermes(["kanban", "runs", task_id, "--json"])
+    if r.returncode != 0:
+        return []
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return []
+
+
+def _persist_and_render_prior_findings(investigation_task_id, run_id, *, dry_run=False):
+    """Save the rejected attempt's findings as a ledger and render them for
+    the rework card body.
+
+    The findings already exist -- the investigator recorded them in its
+    kanban_complete summary/metadata -- but until now a rejection threw them
+    away, so the next attempt started cold and paid for a full
+    re-investigation. This does two things with them:
+
+      1. Writes them to Hermes_L2_Response_Trn_Tbl.InvestigationJson via
+         --save-ledger, keyed to the run. That survives this card being
+         archived, and lets ticket_scout.py hand them to any FUTURE attempt
+         on the same ticket (--get-ledger), not just this rework.
+      2. Returns them formatted for the rework card body, verbatim.
+
+    Verbatim is deliberate: re-summarising a prior attempt through a 9B
+    model is precisely the operation these models do unreliably, and the
+    whole point is to stop losing information between attempts.
+
+    Best-effort throughout -- a rework card must still be created if any of
+    this fails.
+    """
+    if not investigation_task_id:
+        return ""
+    runs = get_runs(investigation_task_id)
+    done = [r for r in runs if r.get("status") == "done" and r.get("metadata")]
+    if not done:
+        return ""
+    md = done[-1].get("metadata") or {}
+    summary = (done[-1].get("summary") or "").strip()
+
+    ledger = {
+        "source": "rejected_attempt",
+        "prior_investigation_task_id": investigation_task_id,
+        "summary": summary,
+        **{k: md[k] for k in ("response_type", "reply_text", "findings", "root_cause", "resolution")
+           if md.get(k)},
+    }
+    if not summary and len(ledger) <= 2:
+        return ""  # nothing of substance to carry forward
+
+    if not dry_run and run_id:
+        try:
+            subprocess.run(
+                [ORCHESTRATOR_PYTHON, ORCHESTRATOR_PATH, *_base_orchestrator_args(),
+                 "--save-ledger", run_id, "--ledger", json.dumps(ledger)],
+                capture_output=True, text=True, timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            pass  # ledger persistence is enrichment, never load-bearing
+
+    return (
+        "\nFINDINGS FROM THE REJECTED ATTEMPT (verbatim -- do NOT re-derive these\n"
+        "from scratch; the objection above is usually about packaging or one\n"
+        "specific claim, not the whole investigation. Re-verify anything you\n"
+        "actually rely on):\n"
+        f"{json.dumps(ledger, indent=2)[:2000]}\n"
+    )
+
+
 def run_hermes(args, timeout=30):
     """args is a plain list of real argv tokens, no manual shell quoting."""
     if _HAS_WSL:
@@ -236,13 +309,25 @@ def main():
                         bridged += 1
                 continue
 
+        # Preserve the rejected attempt's own findings before building the
+        # rework card. A rejection is usually about HOW the response was
+        # packaged or one specific wrong claim -- the rest of the
+        # investigation is typically sound and re-deriving it from scratch
+        # wastes a full run (~442K tokens historically). Saved to SQL as a
+        # ledger AND embedded verbatim below, so it survives even if this
+        # rework card is later archived.
+        prior_findings = _persist_and_render_prior_findings(
+            investigation_task_id, run_id, dry_run=args.dry_run,
+        )
+
         title = f"REWORK: {t.get('title', task_id)}"
         body = (
             f"run_id: {run_id or 'unknown'}\n"
             f"ticket_id: {ticket_id or 'unknown'}\n"
             f"prior_investigation_task_id: {investigation_task_id or 'unknown'}\n"
             f"review_task_id: {task_id}\n\n"
-            f"REVIEWER OBJECTION (from {reviewer_profile}):\n{reason}\n\n"
+            f"REVIEWER OBJECTION (from {reviewer_profile}):\n{reason}\n"
+            f"{prior_findings}\n"
             f"Fix exactly this problem -- re-fetch the ticket via --get-ticket-context "
             f"(do not trust old context, it may be stale), address the specific objection "
             f"above, then follow the normal investigation procedure to a fresh kanban_complete."

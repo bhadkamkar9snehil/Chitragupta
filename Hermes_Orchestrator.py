@@ -257,6 +257,121 @@ def build_query_mechanically(table: str, columns: List[str], where: Optional[str
         )
     return result
 
+
+_STOPWORDS = {
+    "the", "a", "an", "is", "was", "were", "are", "be", "been", "and", "or",
+    "but", "for", "with", "this", "that", "these", "those", "on", "in", "at",
+    "to", "of", "it", "its", "as", "by", "from", "has", "have", "had", "not",
+    "no", "does", "did", "do", "why", "what", "when", "where", "how", "which",
+    "there", "here", "any", "some", "all", "than", "then", "so", "if", "into",
+}
+_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
+
+
+def _tokenize(text: str) -> List[str]:
+    """Lowercase word tokens, splitting on non-alphanumerics (camelCase/
+    underscore identifiers included), stopwords and very short tokens
+    dropped. Deliberately dumb -- no stemming/embeddings -- because this
+    only needs to overlap with equally-dumb table/column name tokens
+    below, not do real semantic matching."""
+    return [t.lower() for t in _TOKEN_RE.findall(text or "") if len(t) > 2 and t.lower() not in _STOPWORDS]
+
+
+def _split_identifier(name: str) -> List[str]:
+    """dbo.XBatch_Delay_Analysis_Vw -> ['xbatch', 'delay', 'analysis', 'vw'];
+    handles underscore and camelCase boundaries."""
+    name = name.split(".")[-1]
+    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)  # camelCase -> camel_Case
+    return [p.lower() for p in re.split(r"[_\W]+", name) if p]
+
+
+_DOMAIN_INDEX_PATH = Path(__file__).parent / "Knowledge" / "table_keyword_index.json"
+
+
+def suggest_tables_mechanically(text: str, top: int = 8, database: Optional[str] = None) -> Dict[str, Any]:
+    """Narrow ~1200 real tables down to the handful actually relevant to a
+    ticket's own text, mechanically -- no LLM, no embeddings. Exists because
+    dumping the full schema_allowlist.json at a 9B model (or even listing
+    all ~1200 names) wastes most of its context on irrelevant tables and
+    increases the chance it latches onto a wrong-but-plausible one; this
+    project already root-caused hallucinated identifiers as a real failure
+    mode (see build_query_mechanically's docstring). Scoring is deliberately
+    transparent (token overlap with table/column names, boosted by an
+    optional curated domain-keyword index), not a black box -- the caller
+    can always fall back to --find-sql-objects or --build-query if a
+    relevant table isn't in the top N.
+
+    Returns {"ok": True, "candidates": [{"table", "database", "score",
+    "matched_columns"}]} sorted by score descending, or {"ok": False,
+    "error": ...} if the schema allowlist itself is missing.
+    """
+    if not _SCHEMA_ALLOWLIST_PATH.exists():
+        return {"ok": False, "error": "schema_allowlist.json not found", "candidates": []}
+    allowlist = json.loads(_SCHEMA_ALLOWLIST_PATH.read_text(encoding="utf-8"))
+
+    domain_index: Dict[str, List[str]] = {}
+    if _DOMAIN_INDEX_PATH.exists():
+        try:
+            domain_index = json.loads(_DOMAIN_INDEX_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            domain_index = {}
+
+    query_tokens = set(_tokenize(text))
+    if not query_tokens:
+        return {"ok": True, "candidates": [], "note": "No usable keywords extracted from input text."}
+
+    # Domain-index keyword hits contribute bonus candidate tables even if
+    # the ticket text never literally contains the table/column name itself
+    # (e.g. "unattributed stoppage" -> a curated hint pointing at
+    # XBatch_Delay_Analysis_Vw, whose own name shares no tokens with that
+    # phrase at all).
+    text_lower = f" {text.lower()} "
+    domain_boost: Dict[str, int] = {}
+    for keyword, tables in domain_index.items():
+        keyword_lower = keyword.lower()
+        # Single-word keyword: token-set match (handles punctuation/case
+        # variance). Multi-word keyword phrase: substring match against the
+        # raw text (a token set has no notion of adjacency/order).
+        matched = (keyword_lower in query_tokens) if " " not in keyword_lower else (keyword_lower in text_lower)
+        if matched:
+            for t in tables:
+                domain_boost[t.lower()] = domain_boost.get(t.lower(), 0) + 3
+
+    scored: List[tuple] = []
+    for db, tables in allowlist.items():
+        if database and db.lower() != database.lower():
+            continue
+        for qname, cols in tables.items():
+            name_tokens = set(_split_identifier(qname))
+            name_overlap = len(query_tokens & name_tokens)
+            # Score by the SET of distinct query tokens matched across all
+            # columns, not the count of matching columns -- otherwise a
+            # table whose columns all share one repeated prefix word (e.g.
+            # 20 columns all starting 'Rebar_Quality_Data_') racks up a
+            # huge score from a single common token, drowning out a more
+            # specifically relevant table with fewer, more varied matches.
+            # Confirmed live: 'delay'/'heat'/'reason' ticket text matched
+            # Temp_Rebar_Quality_Data_* highest purely via the word 'data'
+            # repeated across every column, ahead of the actually-relevant
+            # ShiftDelayEntry tables.
+            matched_columns = []
+            matched_col_tokens: set = set()
+            for c in cols:
+                c_tokens = set(_split_identifier(c)) & query_tokens
+                if c_tokens:
+                    matched_col_tokens |= c_tokens
+                    matched_columns.append(c)
+            score = name_overlap * 5 + len(matched_col_tokens) * 2 + domain_boost.get(qname.lower(), 0)
+            if score > 0:
+                scored.append((score, db, qname, matched_columns[:10]))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    candidates = [
+        {"table": qname, "database": db, "score": score, "matched_columns": cols}
+        for score, db, qname, cols in scored[:top]
+    ]
+    return {"ok": True, "candidates": candidates}
+
 # A ticket Description/reply field can carry an inline base64 image
 # (<img src="data:image/png;base64,...">) pasted by a user in the source
 # helpdesk UI. A real 2026-09-03 incident: one such blob was ~93,000
@@ -731,6 +846,42 @@ class HermesL2Client:
         )
         self.conn.commit()
 
+    def save_investigation_ledger(self, run_id: str, ledger: Any) -> None:
+        """Direct UPDATE on Hermes_L2_Response_Trn_Tbl.InvestigationJson -- not a
+        status/terminal-outcome change, so no SP wraps it (this column already
+        exists, added for a generic 'investigation_json' passthrough on
+        publish_response/resolve_ticket/escalate_l3, but was never actually
+        populated by anything until this). Works regardless of the run's
+        current ProcessStatus -- including a run that was just rejected and
+        never gets published -- so a reviewer's rejection doesn't also throw
+        away the investigator's real findings."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "UPDATE dbo.Hermes_L2_Response_Trn_Tbl SET InvestigationJson = ?, ModifiedOn = SYSUTCDATETIME() "
+            "WHERE ID = ? AND IsDeleted = 0;",
+            (json.dumps(ledger), run_id),
+        )
+        self.conn.commit()
+
+    def get_latest_ledger(self, ticket_id: str) -> Optional[Any]:
+        """Most recent non-null InvestigationJson for this ticket, across any
+        prior run (terminal or not) -- what a rework/new attempt on the same
+        ticket should be handed verbatim instead of starting cold."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT TOP 1 InvestigationJson FROM dbo.Hermes_L2_Response_Trn_Tbl "
+            "WHERE TicketID = ? AND InvestigationJson IS NOT NULL AND IsDeleted = 0 "
+            "ORDER BY ClaimedOn DESC;",
+            (ticket_id,),
+        )
+        row = cur.fetchone()
+        if not row or not row[0]:
+            return None
+        try:
+            return json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            return row[0]  # not valid JSON somehow -- return raw rather than hide it
+
     def log_activity(self, ticket_id: str, activity_type: str, note_text: Optional[str] = None,
                       actor_type: str = "Bot", actor_name: Optional[str] = None,
                       old_value: Optional[str] = None, new_value: Optional[str] = None,
@@ -902,6 +1053,33 @@ _WRITE_KEYWORDS = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|EXEC|EXECUTE|MERGE|CREATE|GRANT|REVOKE|DENY)\b",
     re.IGNORECASE,
 )
+
+
+def run_readonly_query(client: "HermesL2Client", sql: str, database: Optional[str] = None,
+                        run_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Shared core of --query's read path (write-keyword guard, best-effort
+    audit if a run_id is available, raw execute + rows-as-dicts) --
+    factored out so the l2-investigation MCP server's execute_sql tool
+    calls the exact same guarded path the CLI does, rather than a second,
+    divergent implementation. Does NOT include --query's CLI-only
+    failure-suggestion enrichment (fuzzy name correction on a pyodbc
+    error) -- callers wanting that should prefer build_query/suggest_tables
+    up front instead of relying on a failure to correct them."""
+    query_without_literals = re.sub(r"'(?:[^']|'')*'", "''", sql)
+    if _WRITE_KEYWORDS.search(query_without_literals):
+        raise ValueError(
+            "Query must be read-only (SELECT / sys.* metadata lookups only) -- "
+            "writes go through --publish-response, never a direct query."
+        )
+    if run_id:
+        try:
+            client.execute_sql(run_id=run_id, database_name=database or "", action_type="READ",
+                                sql=sql, operation_name="mcp_execute_sql", purpose="Investigation read")
+        except Exception:
+            pass  # audit logging must never block the actual read
+    cur = client.conn.cursor()
+    cur.execute(sql)
+    return _rows_as_dicts(cur)
 
 
 def poll_and_claim(client: HermesL2Client, eligible_status_csv: str, bot_label: Optional[str] = None) -> Dict[str, Any]:
@@ -1082,6 +1260,29 @@ def main() -> None:
     parser.add_argument("--execute", action="store_true",
                          help="With --build-query: actually run the constructed SQL (read-only, "
                               "audited) instead of just printing it.")
+    parser.add_argument("--suggest-tables", default=None, metavar="TEXT",
+                         help="Mechanically narrow ~1200 real tables down to the ones actually "
+                              "relevant to TEXT (a ticket's own description/summary), via keyword "
+                              "overlap against real table/column names plus an optional curated "
+                              "domain index (Knowledge/table_keyword_index.json) -- no LLM, no "
+                              "embeddings. Use before --build-query/--query when you don't already "
+                              "know which table to look at. --top controls how many candidates.")
+    parser.add_argument("--save-ledger", default=None, metavar="RUN_ID",
+                         help="Write a structured investigation ledger (tables queried, key "
+                              "values found, ruled-out hypotheses, conclusion -- whatever shape "
+                              "the caller uses) to this run's InvestigationJson column, "
+                              "independent of whether/how the run terminates. Requires --ledger. "
+                              "Exists so a REJECTED investigation's findings aren't lost -- "
+                              "kanban_reject_bridge.py carries this forward verbatim into the "
+                              "rework card instead of the next attempt starting cold.")
+    parser.add_argument("--ledger", default=None,
+                         help="JSON string. Required with --save-ledger; optional with "
+                              "--publish-response (stored in the same InvestigationJson column "
+                              "on the terminal response row).")
+    parser.add_argument("--get-ledger", default=None, metavar="TICKET_ID",
+                         help="Print the most recent non-null InvestigationJson ledger recorded "
+                              "for this ticket (across any prior run, terminal or not), or null "
+                              "if none exists yet.")
     parser.add_argument("--reply-text", default=None)
     parser.add_argument("--problem-summary", default=None)
     parser.add_argument("--findings", default=None)
@@ -1341,6 +1542,29 @@ def main() -> None:
             args.database = args.database or result["database"]
             print(f"Executing mechanically-built query: {result['sql']}", file=sys.stderr)
 
+        if args.suggest_tables:
+            result = suggest_tables_mechanically(
+                args.suggest_tables, top=args.top or 8, database=_database_explicitly_given,
+            )
+            print(json.dumps(result, indent=2))
+            return
+
+        if args.save_ledger:
+            if not args.ledger:
+                parser.error("--save-ledger requires --ledger")
+            try:
+                ledger_obj = json.loads(args.ledger)
+            except json.JSONDecodeError as e:
+                parser.error(f"--ledger is not valid JSON: {e}")
+            client.save_investigation_ledger(run_id=args.save_ledger, ledger=ledger_obj)
+            print(json.dumps({"status": "LEDGER_SAVED", "run_id": args.save_ledger}, indent=2))
+            return
+
+        if args.get_ledger:
+            ledger = client.get_latest_ledger(ticket_id=args.get_ledger)
+            print(json.dumps({"ticket_id": args.get_ledger, "ledger": ledger}, indent=2))
+            return
+
         if args.query:
             # Strip single-quoted string literals before checking for write
             # keywords -- otherwise a legitimate read like
@@ -1498,6 +1722,13 @@ def main() -> None:
                     f"claimed run before overriding."
                 )
 
+            ledger_obj = None
+            if args.ledger:
+                try:
+                    ledger_obj = json.loads(args.ledger)
+                except json.JSONDecodeError as e:
+                    parser.error(f"--ledger is not valid JSON: {e}")
+
             client.publish_response(
                 run_id=run_id,
                 response_type=args.response_type,
@@ -1506,6 +1737,7 @@ def main() -> None:
                 findings=args.findings,
                 root_cause=args.root_cause,
                 resolution=args.resolution,
+                investigation_json=ledger_obj,
                 new_ticket_status=args.new_ticket_status,
                 new_ask_status=args.new_ask_status,
                 mirror_reply_to_support_remarks=args.mirror_to_support_remarks,
