@@ -456,6 +456,132 @@ BEGIN
 END;
 GO
 
+/*
+  Hermes_L3_Release_Defect_Escalations_Usp
+
+  Batch-release L3 escalations that a HARNESS DEFECT produced, rather than a
+  genuine L2 capability limit, so their tickets become claimable by L2 again.
+
+  Why this exists: between 2026-09-04 and 2026-09-05 the L2 worker could not
+  reach the database at all (it tried to build the SQL transport itself, hit a
+  fail-closed dependency scan, and escalated instead of investigating). Combined
+  with completion-metadata packaging failures, archived-parent handoffs and
+  stale-reap backfills, that parked ~225 of 309 open escalations in the human L3
+  queue for reasons that were never about the ticket. Because
+  Hermes_L2_Get_Candidate_Tickets_Usp correctly refuses to re-poll a ticket with
+  an open escalation, the entire queue deadlocked and the scout reported
+  NO_TICKETS while 300 tickets sat in 'Enter'.
+
+  Hermes_L3_Update_Escalation_Status_Usp is per-escalation and stays the normal
+  path for real human decisions. This procedure is the reviewed batch operation
+  for administratively releasing defect-caused rows, so that correction does not
+  have to happen as an ad-hoc direct UPDATE.
+
+  It is conservative by design:
+    * only touches the active queue (Open/Assigned/InProgress);
+    * only matches root causes that name a known harness-defect family;
+    * an empty RootCause counts as defect-caused only when @IncludeEmptyRootCause
+      = 1, because such rows carry nothing actionable for a human either way;
+    * genuine verified findings (a real "does not exist in <view>" conclusion, a
+      reviewer catching a hallucinated identifier, an out-of-scope UI answer) do
+      not match any pattern and are deliberately left Open;
+    * @DryRun = 1 (the default) reports what it would do and changes nothing.
+
+  Always run it with @DryRun = 1 first and read MatchedCount.
+*/
+CREATE OR ALTER PROCEDURE dbo.Hermes_L3_Release_Defect_Escalations_Usp
+(
+    @DryRun                 bit           = 1,
+    @IncludeEmptyRootCause  bit           = 1,
+    @NewL3Status            varchar(30)   = 'Rejected',
+    @L3Remarks              nvarchar(max) = NULL,
+    @HermesUserID           varchar(36)   = NULL
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF @NewL3Status NOT IN ('Resolved', 'Rejected')
+    BEGIN
+        RAISERROR('NewL3Status must be Resolved or Rejected; this procedure only closes escalations.', 16, 1);
+        RETURN;
+    END;
+
+    IF @L3Remarks IS NULL
+        SET @L3Remarks = N'Released to L2 by Hermes_L3_Release_Defect_Escalations_Usp: this escalation was '
+            + N'produced by a harness defect (unreachable SQL transport, completion-metadata packaging failure, '
+            + N'archived-parent handoff, or stale-reap backfill), not by a genuine L2 capability limit. '
+            + N'The underlying defect has been fixed; the ticket is released for a real investigation.';
+
+    -- One definition of "defect-caused", used by both the count and the update.
+    DECLARE @Matches table (ID varchar(36) PRIMARY KEY);
+
+    INSERT INTO @Matches (ID)
+    SELECT e.ID
+    FROM dbo.Hermes_L3_Escalation_Trn_Tbl AS e
+    WHERE e.IsDeleted = 0
+      AND e.L3Status IN ('Open', 'Assigned', 'InProgress')
+      AND (
+            (@IncludeEmptyRootCause = 1 AND LTRIM(RTRIM(ISNULL(e.RootCause, ''))) = '')
+            -- transport / environment the agent never should have been building
+            OR ISNULL(e.RootCause, '') LIKE '%pyodbc%'
+            OR ISNULL(e.RootCause, '') LIKE '%Tirith%'
+            OR ISNULL(e.RootCause, '') LIKE '%database access%'
+            OR ISNULL(e.RootCause, '') LIKE '%approvals.deny%'
+            OR ISNULL(e.RootCause, '') LIKE '%security scanner%'
+            -- completion-contract packaging failures (now normalized deterministically)
+            OR ISNULL(e.RootCause, '') LIKE '%response_type%'
+            OR ISNULL(e.RootCause, '') LIKE '%reply_text%'
+            OR ISNULL(e.RootCause, '') LIKE '%kanban_complete%'
+            OR ISNULL(e.RootCause, '') LIKE '%metadata%'
+            -- lost/archived parent handoffs and empty audit trails
+            OR ISNULL(e.RootCause, '') LIKE '%archived%'
+            OR ISNULL(e.RootCause, '') LIKE '%no SQL actions%'
+            OR ISNULL(e.RootCause, '') LIKE '%lacks investigation evidence%'
+            OR ISNULL(e.RootCause, '') LIKE '%audit trail%empty%'
+            -- stale-reap backfills and failed queries, not real L2 limits
+            OR ISNULL(e.RootCause, '') LIKE '%staleness/timeout%'
+            OR ISNULL(e.RootCause, '') LIKE '%backfilled during%'
+            OR ISNULL(e.RootCause, '') LIKE '%query failed%'
+            OR ISNULL(e.RootCause, '') LIKE '%SQL syntax error%'
+          );
+
+    DECLARE @MatchedCount int = (SELECT COUNT(*) FROM @Matches);
+    DECLARE @ClosedCount  int = 0;
+
+    IF @DryRun = 0 AND @MatchedCount > 0
+    BEGIN
+        UPDATE e
+        SET
+            e.L3Status            = @NewL3Status,
+            e.L3Remarks           = @L3Remarks,
+            e.L3ResolutionSummary = N'Released back to L2: escalation cause was a harness defect, since fixed.',
+            e.ResolvedByUserID    = COALESCE(@HermesUserID, e.ResolvedByUserID),
+            e.ResolvedOn          = GETDATE(),
+            e.ModifiedBy          = @HermesUserID,
+            e.ModifiedOn          = GETDATE(),
+            e.Source              = 'T-SQL'
+        FROM dbo.Hermes_L3_Escalation_Trn_Tbl AS e
+        INNER JOIN @Matches AS m ON m.ID = e.ID;
+
+        SET @ClosedCount = @@ROWCOUNT;
+    END;
+
+    SELECT
+        CASE WHEN @DryRun = 1 THEN 'DRY_RUN' ELSE 'APPLIED' END AS Mode,
+        @MatchedCount AS MatchedCount,
+        @ClosedCount  AS ClosedCount,
+        (SELECT COUNT(*) FROM dbo.Hermes_L3_Escalation_Trn_Tbl
+         WHERE IsDeleted = 0 AND L3Status IN ('Open', 'Assigned', 'InProgress')) AS RemainingActiveEscalations,
+        (SELECT COUNT(*) FROM dbo.Complaint_Mst_Tbl c
+         WHERE ISNULL(c.IsDeleted, 0) = 0
+           AND c.Status = 'Enter'
+           AND NOT EXISTS (SELECT 1 FROM dbo.Hermes_L3_Escalation_Trn_Tbl l3
+                           WHERE l3.TicketID = c.ID AND l3.IsDeleted = 0
+                             AND l3.L3Status IN ('Open', 'Assigned', 'InProgress'))) AS EnterTicketsNotBlockedByL3;
+END;
+GO
+
 CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Fail_Run_Usp
 (
     @RunID             varchar(36),
