@@ -567,6 +567,18 @@ class HermesL2Client:
         )
         self.conn.commit()
 
+    def log_blocked_escalation(self, run_id: str, ticket_id: str, block_reason: str,
+                                findings: Optional[str] = None) -> None:
+        """EXEC dbo.Hermes_L2_Log_Blocked_Escalation_Usp -- visibility-only human-queue
+        insert, does not touch Complaint_Mst_Tbl or require an active run."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "EXEC dbo.Hermes_L2_Log_Blocked_Escalation_Usp @RunID = ?, @TicketID = ?, "
+            "@BlockReason = ?, @Findings = ?, @HermesUserID = ?;",
+            (run_id, ticket_id, block_reason, findings, self.hermes_user_id),
+        )
+        self.conn.commit()
+
     def log_activity(self, ticket_id: str, activity_type: str, note_text: Optional[str] = None,
                       actor_type: str = "Bot", actor_name: Optional[str] = None,
                       old_value: Optional[str] = None, new_value: Optional[str] = None,
@@ -894,6 +906,12 @@ def main() -> None:
     parser.add_argument("--error-message", default=None, help="Required with --fail-run.")
     parser.add_argument("--retry-after-minutes", type=int, default=5,
                          help="With --fail-run: how soon the ticket becomes re-pollable.")
+    parser.add_argument("--escalate-blocked", action="store_true",
+                         help="EXEC Hermes_L2_Log_Blocked_Escalation_Usp -- pure visibility "
+                              "insert into the human L3 queue, does not touch "
+                              "Hermes_L2_Response_Trn_Tbl or Complaint_Mst_Tbl. Requires "
+                              "--run-id, --ticket-id, --block-reason.")
+    parser.add_argument("--block-reason", default=None, help="Required with --escalate-blocked.")
     parser.add_argument("--reply-text", default=None)
     parser.add_argument("--problem-summary", default=None)
     parser.add_argument("--findings", default=None)
@@ -1226,6 +1244,16 @@ def main() -> None:
                 except Exception:
                     pass  # audit logging must never block the actual read
             print(json.dumps(result_payload, indent=2, default=str))
+            return
+
+        if args.escalate_blocked:
+            if not (args.run_id and args.ticket_id and args.block_reason):
+                parser.error("--escalate-blocked requires --run-id, --ticket-id, and --block-reason")
+            client.log_blocked_escalation(
+                run_id=args.run_id, ticket_id=args.ticket_id,
+                block_reason=args.block_reason, findings=args.findings,
+            )
+            print(json.dumps({"status": "ESCALATED", "run_id": args.run_id}, indent=2))
             return
 
         if args.fail_run:

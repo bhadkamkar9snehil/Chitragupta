@@ -154,6 +154,36 @@ def _find_block_reason(events):
     return None
 
 
+def find_trace_free_terminal_runs(cur, already_summarized: set):
+    """2026-09-05: a run that failed/completed before a single trace event
+    was ever recorded (crashed immediately, or predates the trace pipeline
+    working at all) can never be found by find_runs_to_summarize() -- that
+    query requires a matching Hermes_Agent_Trace_Trn_Tbl row to exist.
+    Confirmed live: 131 terminal runs in the last 2 days had zero Bot
+    activity note. Direct, trace-independent fallback: any terminal run
+    (COMPLETED/FAILED/WAITING_USER) with no Bot note on its ticket at all
+    gets at least a minimal, honest one -- "irrespective of whatever, we
+    should write outputs in Helpdesk" is the actual requirement here, not
+    "write a rich narrative when we happen to have one."""
+    cur.execute(
+        """
+        SELECT r.ID, r.TicketID, r.ProcessStatus, r.ErrorMessage, r.ResponseType, r.ReplyText
+        FROM dbo.Hermes_L2_Response_Trn_Tbl r
+        WHERE r.IsDeleted = 0
+          AND r.ProcessStatus IN ('COMPLETED', 'FAILED', 'WAITING_USER')
+          AND NOT EXISTS (
+              SELECT 1 FROM dbo.Hermes_Ticket_Activity_Trn_Tbl a
+              WHERE a.TicketID = r.TicketID AND a.ActorType = 'Bot' AND a.CreatedOn >= r.ClaimedOn
+          )
+        """
+    )
+    return [
+        (str(row.ID), str(row.TicketID), row.ProcessStatus, row.ErrorMessage, row.ResponseType, row.ReplyText)
+        for row in cur.fetchall()
+        if str(row.ID) not in already_summarized
+    ]
+
+
 def find_runs_to_summarize(cur, already_summarized: set):
     """Runs with a terminal kanban_complete/kanban_block event, or old enough
     that nothing new is coming (fallback for a run that never reached one)."""
@@ -188,8 +218,7 @@ def main():
         cur = conn.cursor()
         runs = find_runs_to_summarize(cur, state)
         if not runs:
-            print("No runs ready to summarize.")
-            return
+            print("No trace-based runs ready to summarize.")
 
         for run_id, ticket_id in runs:
             cur.execute(
@@ -228,9 +257,34 @@ def main():
                 conn.commit()
             state.add(run_id)
 
+        # Trace-independent fallback -- see find_trace_free_terminal_runs()
+        # for why this exists: a run that never got a single trace event
+        # would otherwise never receive a note at all.
+        fallback_runs = find_trace_free_terminal_runs(cur, state)
+        for run_id, ticket_id, process_status, error_message, response_type, reply_text in fallback_runs:
+            if reply_text and reply_text.strip():
+                note = f"[{process_status}] {reply_text.strip()[:3800]}"
+            elif error_message:
+                note = f"[{process_status}] {error_message.strip()[:3800]}"
+            else:
+                note = f"[{process_status}] Run ended with no recorded findings, error, or trace data."
+
+            print(f"{'[DRY RUN] ' if args.dry_run else ''}Fallback note for run {run_id} (ticket {ticket_id}): {process_status}")
+            if args.dry_run:
+                print(f"  {note[:200]}")
+                continue
+
+            cur.execute(
+                "EXEC dbo.Hermes_Log_Ticket_Activity_Usp @TicketID=?, @ActivityType='Note', "
+                "@ActorType='Bot', @NoteText=?, @RunID=?;",
+                ticket_id, note, run_id,
+            )
+            conn.commit()
+            state.add(run_id)
+
         if not args.dry_run:
             save_state(state)
-        print(f"\n{len(runs)} run(s) summarized.")
+        print(f"\n{len(runs)} trace-based run(s) + {len(fallback_runs)} fallback run(s) summarized.")
     finally:
         conn.close()
 

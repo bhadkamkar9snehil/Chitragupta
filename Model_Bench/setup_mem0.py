@@ -15,38 +15,50 @@ import sys
 HOME = pathlib.Path.home()
 LM_STUDIO_URL = "http://100.111.69.102:1235/v1"
 OLLAMA_URL = "http://100.111.69.102:11434"
-QDRANT_PATH = str(HOME / ".hermes" / "mem0_qdrant")
 USER_ID = "xstudio-l2-helpdesk"
 LLM_MODEL = "gemma-4-e4b-it"
 EMBEDDER_MODEL = "nomic-embed-text"
 
-OSS_CONFIG = {
-    "llm": {
-        "provider": "openai",
-        "config": {"model": LLM_MODEL, "openai_base_url": LM_STUDIO_URL},
-    },
-    "embedder": {
-        "provider": "ollama",
-        "config": {"model": EMBEDDER_MODEL, "ollama_base_url": OLLAMA_URL, "embedding_dims": 768},
-    },
-    "vector_store": {
-        "provider": "qdrant",
-        # mem0's Qdrant config defaults embedding_model_dims to 1536 (OpenAI's
-        # text-embedding-3-small) regardless of the embedder section --
-        # confirmed live: without this explicit override, the collection gets
-        # created at 1536 dims and every real search against our 768-dim
-        # nomic-embed-text vectors fails with a shape mismatch.
-        "config": {"path": QDRANT_PATH, "embedding_model_dims": 768},
-    },
-}
-
 PROFILES = ["l2-investigator", "l2-gemma", "l2-gemma-verifier", "l2-qwen-verifier"]
+
+# 2026-09-05: was ONE shared path (~/.hermes/mem0_qdrant) across all 4
+# profiles. Real, live bug: Qdrant's local/embedded mode is single-process
+# only (a file lock, not a server) -- confirmed live via gateway error
+# logs ("Storage folder ... already accessed by another instance") the
+# moment two profiles' gateways (both long-running, separate processes)
+# tried to touch it around the same time. Since l2-gemma (investigator)
+# and l2-gemma-verifier (reviewer) run concurrently by design, this wasn't
+# a rare edge case -- it silently broke memory writes/reads for whichever
+# profile didn't win the lock, unpredictably. Fix: one embedded Qdrant
+# path PER PROFILE. Trade-off: a fact learned by one bot no longer
+# automatically appears in another's search results (the "shared
+# learning" this project wanted); reliability wins over that until a real
+# Qdrant server (multi-process safe) is worth the extra service.
 
 for profile in PROFILES:
     home = HOME / ".hermes" / "profiles" / profile
     if not home.exists():
         print(f"{profile}: SKIP, no profile dir")
         continue
+
+    oss_config = {
+        "llm": {
+            "provider": "openai",
+            "config": {"model": LLM_MODEL, "openai_base_url": LM_STUDIO_URL},
+        },
+        "embedder": {
+            "provider": "ollama",
+            "config": {"model": EMBEDDER_MODEL, "ollama_base_url": OLLAMA_URL, "embedding_dims": 768},
+        },
+        "vector_store": {
+            "provider": "qdrant",
+            # embedding_model_dims must be set explicitly -- mem0 defaults
+            # to 1536 (OpenAI's dim) regardless of the embedder section,
+            # confirmed live to break search with a shape mismatch once
+            # the collection is created at the wrong size.
+            "config": {"path": str(home / "mem0_qdrant"), "embedding_model_dims": 768},
+        },
+    }
 
     mem0_json_path = home / "mem0.json"
     existing = {}
@@ -55,7 +67,7 @@ for profile in PROFILES:
             existing = json.loads(mem0_json_path.read_text(encoding="utf-8"))
         except Exception:
             pass
-    existing.update({"mode": "oss", "user_id": USER_ID, "agent_id": "hermes", "oss": OSS_CONFIG})
+    existing.update({"mode": "oss", "user_id": USER_ID, "agent_id": "hermes", "oss": oss_config})
     mem0_json_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 
     env_path = home / ".env"
