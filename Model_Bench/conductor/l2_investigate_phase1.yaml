@@ -25,6 +25,8 @@ workflow:
         args: ["/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Model_Bench/l2_investigation_mcp_server.py"]
         env:
           MSSQL_MCP_SERVER: "10.2.6.204"
+          XSBUILDER_CONNECTION: "${XSBUILDER_CONNECTION}"
+          XSBUILDER_CLI: "${XSBUILDER_CLI:-xsb}"
         tools: ["*"]
 
   context:
