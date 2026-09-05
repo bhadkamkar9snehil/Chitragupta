@@ -173,13 +173,25 @@ table/procedure needed instead.
 ## Before deploying any SQL change
 
 1. Edit the relevant numbered file in `Knowledge/` (`00_tables_and_indexes.sql`
-   … `50_response_and_workflow.sql`), never `00_Hermes_L2_FULL_INSTALL.sql`
+   … `60_metrics_and_reporting.sql`, now nine files including the
+   `25_ticket_dispatch_hardening.sql`/`55_update_retry_hardening.sql`
+   overlays added 2026-09-05), never `00_Hermes_L2_FULL_INSTALL.sql`
    directly.
-2. Regenerate `00_Hermes_L2_FULL_INSTALL.sql` by concatenating the six files
-   in numeric order.
+2. Regenerate `00_Hermes_L2_FULL_INSTALL.sql` by concatenating all numbered
+   files in numeric order (`00`, `10`, `20`, `25`, `30`, `40`, `50`, `55`,
+   `60` — `98_pipeline_postflight.sql`/`99_postflight.sql` are verification,
+   not part of the install bundle). A real drift was caught and fixed
+   2026-09-05: the bundle went stale for a day after `25`/`55` were added,
+   so a fresh install from it alone would have missed both hardening fixes
+   silently. Diff-check after regenerating:
+   `diff <(cat Knowledge/00_tables_and_indexes.sql Knowledge/10_helpdesk_discovery.sql Knowledge/20_ticket_dispatch.sql Knowledge/25_ticket_dispatch_hardening.sql Knowledge/30_context_and_live_discovery.sql Knowledge/40_investigation_runtime.sql Knowledge/50_response_and_workflow.sql Knowledge/55_update_retry_hardening.sql Knowledge/60_metrics_and_reporting.sql) Knowledge/00_Hermes_L2_FULL_INSTALL.sql`
+   should print nothing.
 3. Deploy with `sqlcmd` (handles `GO` batch separators; `pyodbc` does not) —
    prepend `SET QUOTED_IDENTIFIER ON; GO` or the filtered index on
-   `Hermes_L2_Response_Trn_Tbl` fails to create.
+   `Hermes_L2_Response_Trn_Tbl` fails to create. On a Windows checkout,
+   `MSSQL_MCP_PASSWORD` may not be visible inside WSL even when it works
+   fine for Windows Python — use the Windows `sqlcmd.exe` (via PowerShell)
+   in that case, not WSL's.
 4. Run `Knowledge/99_postflight.sql` and confirm no errors.
 5. Schema changes to a live, shared database are confirm-first with the
    user, even though the install script is additive-only.
