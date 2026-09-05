@@ -570,7 +570,12 @@ def create_rework_card(
 
     tasks = list_tasks()
     if _source_has_rework(tasks, source_task["id"]):
-        return "existing"
+        # Idempotency, not a new action: callers count any truthy return as
+        # "created", so returning a truthy sentinel here inflated
+        # rework_created/processed counters on every reconcile tick that
+        # touched an already-covered source (confirmed live: counter kept
+        # incrementing with zero new Kanban cards created).
+        return None
 
     prior = "" if dry_run else _persist_rejected_ledger(args, investigation_task_id, run_id)
     ticket_no = body_field(source_task.get("body"), "ticket_no") or ticket_id
