@@ -29,17 +29,20 @@ The generated bundle remains the base schema/procedure package.
 
 ## 2. Apply required pipeline hardening overlays
 
-Apply after the base bundle:
+Apply after the base bundle, in this order:
 
 ```text
 Knowledge/25_ticket_dispatch_hardening.sql
+Knowledge/55_update_retry_hardening.sql
 ```
 
-This changes candidate selection so non-L2 customization requests are excluded **before** `TOP (@BatchSize)`. Without it, 20 customization rows at the front of the queue can hide valid L2 incident tickets deeper in the queue and make the scout incorrectly return `NO_CLAIMABLE_TICKET`.
+`25_ticket_dispatch_hardening.sql` changes candidate selection so non-L2 customization requests are excluded **before** `TOP (@BatchSize)`. Without it, 20 customization rows at the front of the queue can hide valid L2 incident tickets deeper in the queue and make the scout incorrectly return `NO_CLAIMABLE_TICKET`.
+
+`55_update_retry_hardening.sql` gives an `UPDATE` response a default 15-minute `NextEligibleOn` only when the publish path did not supply one. Without it, an UPDATE can become permanently ineligible unless the requester edits the ticket, which contradicts UPDATE's meaning: useful progress without a final outcome.
 
 If additional numbered hardening overlays exist, apply them in numeric order after the base bundle.
 
-These overlays are additive/idempotent `CREATE OR ALTER` deployment units. They exist so hardening can be deployed without hand-editing the generated full-install artifact.
+These overlays are additive/idempotent deployment units. They exist so hardening can be deployed without hand-editing the generated full-install artifact.
 
 ## 3. Discover and bind the live Helpdesk workflow
 
