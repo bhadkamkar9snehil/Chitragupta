@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
 """Deterministic state machine for the Chitragupta L2 Helpdesk pipeline.
 
-One inference slot means throughput comes from finishing tickets, not pre-claiming
-more work. This module therefore owns all non-LLM lifecycle choreography:
+The pipeline has one safe LM Studio inference slot. Correct throughput therefore means
+finishing the active ticket before claiming another one, not accumulating a queue of
+higher-priority investigations that starves review/rework.
 
-    SQL claim -> investigator -> reviewer -> publish
-                               -> reject -> rework -> reviewer -> ...
+Lifecycle owned here (no LLM choreography):
 
-Every public operation is idempotent and can be triggered both from the Hermes
-observer hook and from the 2-minute ticket-scout backstop.
+    SQL claim
+      -> investigator
+      -> reviewer
+         -> approve -> publish
+         -> reject  -> rework investigator -> reviewer -> ... (bounded)
+
+Important design choice: reviewer cards are created only *after* an investigator/rework
+completion has been normalized into the required metadata contract. We do not pre-create
+a parent-gated reviewer anymore. That removes the race where Hermes could promote/start
+the reviewer before the deterministic metadata-repair step had finished.
+
+Every operation is idempotent and may be triggered both by the observer hook and by the
+2-minute ticket-scout backstop.
 """
 from __future__ import annotations
 
@@ -35,21 +46,22 @@ REVIEWER_PROFILE = os.environ.get("L2_REVIEWER_PROFILE", "l2-reviewer-primary")
 REVIEWER_PROFILES = {REVIEWER_PROFILE, "l2-reviewer-primary", "l2-reviewer-fallback"}
 INVESTIGATOR_PROFILES = {INVESTIGATOR_PROFILE, "l2-investigator-primary", "l2-investigator"}
 
-# With LM Studio unified KV cache and max_in_progress=1, closing in-flight work
-# must outrank opening new work.
+# Finish work before starting work. With max_in_progress=1 this is the scheduling
+# policy that prevents reviewer/rework starvation.
 NEW_INVESTIGATION_PRIORITY = 10
 REWORK_PRIORITY = 20
 REVIEW_PRIORITY = 30
-MAX_REVIEW_CYCLES = 3  # initial review (0) + at most two rework reviews (1, 2)
 
-# `todo` is deliberately live: parent-gated reviewer cards sit there until their
-# investigator completes. Omitting it was a real stale-recovery bug.
-LIVE_KANBAN_STATUSES = {"todo", "ready", "blocked", "triage", "running", "review", "scheduled"}
-TERMINAL_KANBAN_STATUSES = {"done", "archived"}
-ARCHIVABLE_STALE_STATUSES = {"todo", "ready", "blocked", "triage", "scheduled"}
-
-MIN_SUMMARY_CHARS = 40
+# Review cycles are deliberately distinct from SQL AttemptNo. SQL AttemptNo increments
+# only when a ticket is claimed into a genuinely new Hermes run; a reject/rework stays
+# inside the same run.
+MAX_REVIEW_CYCLES = 3  # cycle 0 initial + cycle 1/2 rework reviews; reject at 2 escalates
 ORPHAN_GRACE_MINUTES = 45
+MIN_SUMMARY_CHARS = 40
+
+# Kept broad for diagnostics/compatibility. `todo` remains a live state even though the
+# new reconciler no longer relies on pre-created parent-gated reviewers.
+LIVE_KANBAN_STATUSES = {"todo", "ready", "blocked", "triage", "running", "review", "scheduled"}
 
 REPO_ROOT_WSL = Path("/mnt/c/Users/Admin/Documents/Office/AIHelpdesk")
 BINDING_CANDIDATES = [
@@ -60,11 +72,16 @@ BINDING_CANDIDATES = [
 ]
 
 _RESPONSE_TYPE_PATTERNS = [
+    ("NEEDS_HUMAN_ACTION", re.compile(r"\bneeds? human action\b|\bhuman (?:must|needs to)\b", re.I)),
     ("L3_ESCALATION", re.compile(r"\bl3 escalat|\bescalat\w* to l3|\bescalating\b", re.I)),
     ("RESOLUTION", re.compile(r"\bresolved\b|\bfix(?:ed)? confirmed\b|\bverified live\b.*\bfix", re.I)),
     ("QUESTION", re.compile(r"\?\s*$|need(?:s)? (?:more info|clarification) from|requester\b.*\bconfirm", re.I)),
 ]
 
+
+# ---------------------------------------------------------------------------
+# Process / transport helpers
+# ---------------------------------------------------------------------------
 
 def _is_windows() -> bool:
     return os.name == "nt"
@@ -75,15 +92,18 @@ def _orch_python() -> str:
 
 
 def _base_orchestrator_args(args: argparse.Namespace) -> list[str]:
-    out = [
+    cmd = [
         _orch_python(), ORCHESTRATOR_WIN,
         "--server", args.server,
         "--database", args.database,
         "--username", args.username,
     ]
+    # WSL-native cron/hook processes may not see the Windows environment variable.
+    # Passing a literal None in argv crashes subprocess before the Windows interpreter
+    # can read its own environment, so omit the flag when absent.
     if args.password:
-        out += ["--password", args.password]
-    return out
+        cmd += ["--password", args.password]
+    return cmd
 
 
 def run_orchestrator(args: argparse.Namespace, extra: Iterable[str], *, timeout: int = 60) -> Any:
@@ -137,6 +157,10 @@ def get_runs(task_id: str) -> list[dict[str, Any]]:
     return data if isinstance(data, list) else []
 
 
+# ---------------------------------------------------------------------------
+# Kanban/task metadata helpers
+# ---------------------------------------------------------------------------
+
 def body_field(body: Optional[str], key: str) -> Optional[str]:
     prefix = f"{key}:"
     for raw in (body or "").splitlines():
@@ -163,10 +187,55 @@ def task_review_cycle(task: dict[str, Any]) -> int:
         return 0
 
 
+def task_proposal(task: dict[str, Any]) -> Optional[dict[str, Any]]:
+    raw = body_field(task.get("body"), "proposal_json")
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def latest_done_run(task_id: str) -> Optional[dict[str, Any]]:
     done = [r for r in get_runs(task_id) if r.get("status") == "done"]
     return done[-1] if done else None
 
+
+def _source_has_reviewer(tasks: list[dict[str, Any]], source_task_id: str) -> bool:
+    return any(body_field(t.get("body"), "investigation_task_id") == source_task_id for t in tasks)
+
+
+def _source_has_rework(tasks: list[dict[str, Any]], source_task_id: str) -> bool:
+    return any(body_field(t.get("body"), "rework_source_id") == source_task_id for t in tasks)
+
+
+def _completion_metadata(task: dict[str, Any]) -> Optional[dict[str, Any]]:
+    latest = latest_done_run(task["id"])
+    if not latest:
+        return None
+    md = dict(latest.get("metadata") or {})
+    if not md.get("run_id"):
+        md["run_id"] = task_run_id(task)
+    if not md.get("ticket_id"):
+        md["ticket_id"] = task_ticket_id(task)
+    return md
+
+
+def _proposal_complete(md: Optional[dict[str, Any]]) -> bool:
+    return bool(
+        md
+        and md.get("run_id")
+        and md.get("ticket_id")
+        and md.get("response_type")
+        and str(md.get("reply_text") or "").strip()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Workflow binding
+# ---------------------------------------------------------------------------
 
 def load_workflow_binding() -> dict[str, Any]:
     for path in BINDING_CANDIDATES:
@@ -183,14 +252,130 @@ def load_workflow_binding() -> dict[str, Any]:
         "schema_version": 1,
         "eligible_ticket_status": DEFAULT_ELIGIBLE_STATUS,
         "strict_resolution_status_binding": True,
+        "allow_metadata_status_override": False,
         "_path": None,
     }
 
+
+def _binding_ready_for_claims(binding: dict[str, Any]) -> tuple[bool, Optional[str]]:
+    if binding.get("strict_resolution_status_binding", True) and not binding.get("resolved_ticket_status"):
+        return False, (
+            "resolved_ticket_status is not configured; run Model_Bench/configure_helpdesk_workflow.py "
+            "against the live Helpdesk and bind the exact observed terminal status before new claims."
+        )
+    return True, None
+
+
+def _status_args_for_response(binding: dict[str, Any], metadata: dict[str, Any]) -> tuple[list[str], Optional[str]]:
+    response_type = str(metadata.get("response_type") or "").upper()
+    out: list[str] = []
+    expected_status: Optional[str] = None
+
+    # Workflow transitions are harness-owned. Model-provided new_ticket_status is ignored
+    # unless a deployment explicitly opts into overrides.
+    allow_override = bool(binding.get("allow_metadata_status_override", False))
+    override = metadata.get("new_ticket_status") if allow_override else None
+
+    if response_type == "RESOLUTION":
+        expected_status = override or binding.get("resolved_ticket_status")
+        if not expected_status and binding.get("strict_resolution_status_binding", True):
+            raise RuntimeError(
+                "RESOLUTION approved but workflow binding has no resolved_ticket_status; "
+                "refusing to complete Hermes while leaving Helpdesk visibly unresolved."
+            )
+    elif response_type == "QUESTION":
+        expected_status = override or binding.get("waiting_user_ticket_status")
+        ask = binding.get("waiting_user_ask_status")
+        if ask:
+            out += ["--new-ask-status", str(ask)]
+    elif response_type == "L3_ESCALATION":
+        expected_status = override or binding.get("l3_ticket_status")
+    elif response_type == "NEEDS_HUMAN_ACTION":
+        expected_status = override or binding.get("needs_human_action_ticket_status") or binding.get("l3_ticket_status")
+
+    if expected_status:
+        out += ["--new-ticket-status", str(expected_status)]
+    return out, expected_status
+
+
+# ---------------------------------------------------------------------------
+# SQL/run state helpers
+# ---------------------------------------------------------------------------
+
+def default_args() -> argparse.Namespace:
+    return argparse.Namespace(
+        server=os.environ.get("MSSQL_MCP_SERVER") or DEFAULT_SERVER,
+        database=DEFAULT_DATABASE,
+        username=os.environ.get("MSSQL_MCP_USER") or DEFAULT_USER,
+        password=os.environ.get("MSSQL_MCP_PASSWORD"),
+        eligible_status=DEFAULT_ELIGIBLE_STATUS,
+        stale_after_minutes=ORPHAN_GRACE_MINUTES,
+        dry_run=False,
+    )
+
+
+def safe_query_active_run(run_id: str, args: Optional[argparse.Namespace] = None) -> list[dict[str, Any]]:
+    args = args or default_args()
+    safe = run_id.replace("'", "''")
+    sql = (
+        "SELECT ID, TicketID, ProcessStatus, IsActive, ResponseType, ReplyText, ClaimedOn, HeartbeatOn "
+        "FROM dbo.Hermes_L2_Response_Trn_Tbl "
+        f"WHERE ID = '{safe}' AND IsDeleted = 0 AND IsActive = 1"
+    )
+    try:
+        rows = run_orchestrator(args, ["--query", sql])
+    except RuntimeError:
+        return []
+    return rows if isinstance(rows, list) else []
+
+
+def query_active_runs(args: argparse.Namespace) -> list[dict[str, Any]]:
+    sql = (
+        "SELECT ID, TicketID, ProcessStatus, ClaimedOn, HeartbeatOn, "
+        "DATEDIFF(MINUTE, ISNULL(HeartbeatOn, ClaimedOn), GETDATE()) AS AgeMinutes "
+        "FROM dbo.Hermes_L2_Response_Trn_Tbl "
+        "WHERE IsActive = 1 AND IsDeleted = 0 ORDER BY ClaimedOn"
+    )
+    rows = run_orchestrator(args, ["--query", sql])
+    return rows if isinstance(rows, list) else []
+
+
+def _query_published_state(args: argparse.Namespace, run_id: str) -> list[dict[str, Any]]:
+    safe = run_id.replace("'", "''")
+    sql = (
+        "SELECT r.ID, r.TicketID, r.ProcessStatus, r.ResponseType, r.ReplyText, r.IsResolved, "
+        "r.NextEligibleOn, c.Status AS TicketStatus, c.AskStatus, c.SupportExecutiveRemarks "
+        "FROM dbo.Hermes_L2_Response_Trn_Tbl r "
+        "JOIN dbo.Complaint_Mst_Tbl c ON c.ID = r.TicketID "
+        f"WHERE r.ID = '{safe}' AND r.IsDeleted = 0"
+    )
+    rows = run_orchestrator(args, ["--query", sql])
+    return rows if isinstance(rows, list) else []
+
+
+def _l3_exists(args: argparse.Namespace, run_id: str) -> bool:
+    safe = run_id.replace("'", "''")
+    sql = (
+        "SELECT TOP 1 ID FROM dbo.Hermes_L3_Escalation_Trn_Tbl "
+        f"WHERE RunID = '{safe}' AND IsDeleted = 0"
+    )
+    try:
+        rows = run_orchestrator(args, ["--query", sql])
+    except RuntimeError:
+        return False
+    return bool(rows)
+
+
+# ---------------------------------------------------------------------------
+# Completion normalization and reviewer creation
+# ---------------------------------------------------------------------------
 
 def infer_response_type(summary: str) -> str:
     for response_type, pattern in _RESPONSE_TYPE_PATTERNS:
         if pattern.search(summary):
             return response_type
+    # Safest fallback. A verifier may reject/downgrade/upgrade based on evidence, but
+    # the repair layer never invents a terminal outcome from ambiguous prose.
     return "UPDATE"
 
 
@@ -203,7 +388,11 @@ def normalize_investigator_completions(*, dry_run: bool = False) -> int:
         if not latest:
             continue
         metadata = dict(latest.get("metadata") or {})
-        if metadata.get("response_type") and metadata.get("reply_text"):
+        if _proposal_complete({
+            **metadata,
+            "run_id": metadata.get("run_id") or task_run_id(task),
+            "ticket_id": metadata.get("ticket_id") or task_ticket_id(task),
+        }):
             continue
         summary = (latest.get("summary") or "").strip()
         if len(summary) < MIN_SUMMARY_CHARS:
@@ -221,6 +410,7 @@ def normalize_investigator_completions(*, dry_run: bool = False) -> int:
         })
         if dry_run:
             print(f"[DRY RUN] normalize investigator task {task['id']}")
+            repaired += 1
             continue
         r = run_hermes([
             "kanban", "edit", task["id"],
@@ -234,51 +424,49 @@ def normalize_investigator_completions(*, dry_run: bool = False) -> int:
     return repaired
 
 
-def _reviewer_for_investigation(tasks: list[dict[str, Any]], investigation_task_id: str) -> Optional[dict[str, Any]]:
-    for t in tasks:
-        if body_field(t.get("body"), "investigation_task_id") == investigation_task_id:
-            return t
-    return None
-
-
 def create_reviewer_card(
     *,
-    investigation_task_id: str,
-    run_id: str,
-    ticket_id: str,
-    ticket_no: str,
-    review_cycle: int,
+    source_task: dict[str, Any],
+    proposal: dict[str, Any],
     dry_run: bool = False,
 ) -> Optional[str]:
+    run_id = str(proposal["run_id"])
+    ticket_id = str(proposal["ticket_id"])
+    ticket_no = body_field(source_task.get("body"), "ticket_no") or ticket_id
+    cycle = task_review_cycle(source_task)
+    proposal_json = json.dumps(proposal, separators=(",", ":"), default=str)
+
+    # Proposal is frozen into the reviewer card. The reviewer and publisher therefore
+    # judge/publish the exact same payload; neither has to reconstruct it from prose or
+    # from mutable parent state later.
     body = (
         f"run_id: {run_id}\n"
         f"ticket_id: {ticket_id}\n"
         f"ticket_no: {ticket_no}\n"
-        f"investigation_task_id: {investigation_task_id}\n"
-        f"review_cycle: {review_cycle}\n"
-        "pipeline_stage: review\n\n"
-        "This is a parent-gated review card. Use kanban_show() and the completed parent's "
-        "structured completion metadata as the proposal. Verify the core claim against live "
-        "evidence. Approve with kanban_complete; reject with kanban_block."
+        f"investigation_task_id: {source_task['id']}\n"
+        f"review_cycle: {cycle}\n"
+        "pipeline_stage: review\n"
+        f"proposal_json: {proposal_json}\n\n"
+        "Verify the frozen proposal above against live evidence. Approve with kanban_complete; "
+        "reject with kanban_block. The deterministic reconciler owns publication/rework."
     )
     argv = [
-        "kanban", "create", f"REVIEW[{review_cycle}]: L2 {ticket_no}",
+        "kanban", "create", f"REVIEW[{cycle}]: L2 {ticket_no}",
         "--assignee", REVIEWER_PROFILE,
         "--body", body,
         "--priority", str(REVIEW_PRIORITY),
-        "--parent", investigation_task_id,
         "--skill", "xstudio-l2-draft-verifier",
         "--skill", "xstudio-sql-write-discipline",
-        "--idempotency-key", f"review-{run_id}-{review_cycle}-{investigation_task_id}",
+        "--idempotency-key", f"review-{run_id}-{cycle}-{source_task['id']}",
         "--max-runtime", "15m",
         "--json",
     ]
     if dry_run:
-        print(f"[DRY RUN] create reviewer for {investigation_task_id} cycle={review_cycle}")
+        print(f"[DRY RUN] create reviewer for {source_task['id']} cycle={cycle}")
         return "dry-run"
     r = run_hermes(argv)
     if r.returncode != 0:
-        print(f"WARNING: reviewer create failed: {r.stderr.strip()[:300]}")
+        print(f"WARNING: reviewer create failed for {source_task['id']}: {r.stderr.strip()[:300]}")
         return None
     try:
         return (json.loads(r.stdout) or {}).get("id")
@@ -286,79 +474,28 @@ def create_reviewer_card(
         return None
 
 
-def default_args() -> argparse.Namespace:
-    return argparse.Namespace(
-        server=os.environ.get("MSSQL_MCP_SERVER") or DEFAULT_SERVER,
-        database=DEFAULT_DATABASE,
-        username=os.environ.get("MSSQL_MCP_USER") or DEFAULT_USER,
-        password=os.environ.get("MSSQL_MCP_PASSWORD"),
-        eligible_status=DEFAULT_ELIGIBLE_STATUS,
-        stale_after_minutes=ORPHAN_GRACE_MINUTES,
-        dry_run=False,
-    )
-
-
-def safe_query_active_run(run_id: str, args: Optional[argparse.Namespace] = None) -> list[dict[str, Any]]:
-    if args is None:
-        args = default_args()
-    safe = run_id.replace("'", "''")
-    sql = (
-        "SELECT ID, TicketID, ProcessStatus, IsActive, ResponseType, ReplyText, ClaimedOn, HeartbeatOn "
-        "FROM dbo.Hermes_L2_Response_Trn_Tbl "
-        f"WHERE ID = '{safe}' AND IsDeleted = 0 AND IsActive = 1"
-    )
-    try:
-        rows = run_orchestrator(args, ["--query", sql])
-    except RuntimeError:
-        return []
-    return rows if isinstance(rows, list) else []
-
-
-def ensure_missing_reviewers(*, dry_run: bool = False) -> int:
+def ensure_missing_reviewers(args: argparse.Namespace, *, dry_run: bool = False) -> int:
     tasks = list_tasks()
     created = 0
     for task in tasks:
         if task.get("status") != "done" or (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
             continue
-        run_id, ticket_id = task_run_id(task), task_ticket_id(task)
-        if not run_id or not ticket_id:
+        run_id = task_run_id(task)
+        if not run_id or not safe_query_active_run(run_id, args):
             continue
-        if _reviewer_for_investigation(tasks, task["id"]):
+        if _source_has_reviewer(tasks, task["id"]) or _source_has_rework(tasks, task["id"]):
             continue
-        if not safe_query_active_run(run_id):
+        proposal = _completion_metadata(task)
+        if not _proposal_complete(proposal):
             continue
-        cycle = task_review_cycle(task)
-        ticket_no = body_field(task.get("body"), "ticket_no") or ticket_id
-        if create_reviewer_card(
-            investigation_task_id=task["id"], run_id=run_id, ticket_id=ticket_id,
-            ticket_no=ticket_no, review_cycle=cycle, dry_run=dry_run,
-        ):
+        if create_reviewer_card(source_task=task, proposal=proposal or {}, dry_run=dry_run):
             created += 1
     return created
 
 
-def query_active_runs(args: argparse.Namespace) -> list[dict[str, Any]]:
-    sql = (
-        "SELECT ID, TicketID, ProcessStatus, ClaimedOn, HeartbeatOn, "
-        "DATEDIFF(MINUTE, ISNULL(HeartbeatOn, ClaimedOn), GETDATE()) AS AgeMinutes "
-        "FROM dbo.Hermes_L2_Response_Trn_Tbl "
-        "WHERE IsActive = 1 AND IsDeleted = 0 ORDER BY ClaimedOn"
-    )
-    rows = run_orchestrator(args, ["--query", sql])
-    return rows if isinstance(rows, list) else []
-
-
-def reviewer_block_reason(task: dict[str, Any]) -> str:
-    profile = task.get("assignee") or ""
-    runs = get_runs(task["id"])
-    blocks = [
-        r for r in runs
-        if r.get("outcome") == "blocked" and (not profile or r.get("profile") == profile)
-    ]
-    if not blocks:
-        blocks = [r for r in runs if r.get("outcome") == "blocked"]
-    return ((blocks[-1].get("summary") if blocks else None) or "Reviewer rejected without a recorded reason.").strip()
-
+# ---------------------------------------------------------------------------
+# Rework/escalation
+# ---------------------------------------------------------------------------
 
 def _persist_rejected_ledger(args: argparse.Namespace, investigation_task_id: Optional[str], run_id: str) -> str:
     if not investigation_task_id:
@@ -378,174 +515,174 @@ def _persist_rejected_ledger(args: argparse.Namespace, investigation_task_id: Op
         run_orchestrator(args, ["--save-ledger", run_id, "--ledger", json.dumps(ledger)], timeout=45)
     except RuntimeError:
         pass
-    return json.dumps(ledger, indent=2)[:3000]
+    return json.dumps(ledger, indent=2, default=str)[:3000]
 
 
-def archive_task(task_id: str) -> None:
-    r = run_hermes(["kanban", "archive", task_id])
-    if r.returncode != 0:
-        print(f"WARNING: could not archive {task_id}: {r.stderr.strip()[:200]}")
-
-
-def _l3_exists(args: argparse.Namespace, run_id: str) -> bool:
-    safe = run_id.replace("'", "''")
-    sql = (
-        "SELECT TOP 1 ID FROM dbo.Hermes_L3_Escalation_Trn_Tbl "
-        f"WHERE RunID = '{safe}' AND IsDeleted = 0"
-    )
-    try:
-        rows = run_orchestrator(args, ["--query", sql])
-    except RuntimeError:
-        return False
-    return bool(rows)
-
-
-def escalate_review_cycle(args: argparse.Namespace, task: dict[str, Any], reason: str, *, dry_run: bool) -> bool:
-    run_id, ticket_id = task_run_id(task), task_ticket_id(task)
-    if not run_id or not ticket_id:
-        return False
-    cycle = task_review_cycle(task)
+def _escalate_run(
+    args: argparse.Namespace,
+    *,
+    run_id: str,
+    ticket_id: str,
+    reason: str,
+    cycle: int,
+    dry_run: bool,
+) -> bool:
     if dry_run:
-        print(f"[DRY RUN] escalate run {run_id} after review cycle {cycle}: {reason[:120]}")
+        print(f"[DRY RUN] escalate run {run_id} after cycle {cycle}: {reason[:160]}")
         return True
-    if not _l3_exists(args, run_id):
-        try:
-            if safe_query_active_run(run_id, args):
-                run_orchestrator(args, [
-                    "--fail-run", "--run-id", run_id,
-                    "--error-message", f"Review cycle cap reached after {cycle + 1} reviews. {reason[:500]}",
-                    "--retry-after-minutes", "999999",
-                ])
+    try:
+        if safe_query_active_run(run_id, args):
+            run_orchestrator(args, [
+                "--fail-run", "--run-id", run_id,
+                "--error-message", f"Automated review cycle cap reached after {cycle + 1} cycles. {reason[:500]}",
+                "--retry-after-minutes", "999999",
+            ])
+        if not _l3_exists(args, run_id):
             run_orchestrator(args, [
                 "--escalate-blocked", "--run-id", run_id,
                 "--ticket-id", ticket_id,
-                "--block-reason", f"Review cycle cap reached after {cycle + 1} reviews. Latest objection: {reason[:1500]}",
+                "--block-reason", f"Automated review cycle cap reached after {cycle + 1} cycles. {reason[:1500]}",
             ])
-        except RuntimeError as exc:
-            print(f"WARNING: escalation failed for {run_id}: {exc}")
-            return False
-    archive_task(task["id"])
+    except RuntimeError as exc:
+        print(f"WARNING: escalation failed for {run_id}: {exc}")
+        return False
     return True
+
+
+def create_rework_card(
+    args: argparse.Namespace,
+    *,
+    source_task: dict[str, Any],
+    reason: str,
+    investigation_task_id: Optional[str],
+    dry_run: bool = False,
+) -> Optional[str]:
+    run_id, ticket_id = task_run_id(source_task), task_ticket_id(source_task)
+    if not run_id or not ticket_id:
+        return None
+    current_cycle = task_review_cycle(source_task)
+    next_cycle = current_cycle + 1
+    if next_cycle >= MAX_REVIEW_CYCLES:
+        return "escalated" if _escalate_run(
+            args, run_id=run_id, ticket_id=ticket_id, reason=reason,
+            cycle=current_cycle, dry_run=dry_run,
+        ) else None
+
+    tasks = list_tasks()
+    if _source_has_rework(tasks, source_task["id"]):
+        return "existing"
+
+    prior = "" if dry_run else _persist_rejected_ledger(args, investigation_task_id, run_id)
+    ticket_no = body_field(source_task.get("body"), "ticket_no") or ticket_id
+    body = (
+        f"run_id: {run_id}\n"
+        f"ticket_id: {ticket_id}\n"
+        f"ticket_no: {ticket_no}\n"
+        f"review_cycle: {next_cycle}\n"
+        f"rework_source_id: {source_task['id']}\n"
+        f"prior_investigation_task_id: {investigation_task_id or 'unknown'}\n"
+        "pipeline_stage: rework\n\n"
+        f"REWORK REASON:\n{reason}\n\n"
+        "Address this exact rejected/invalid point using current live evidence. Reuse prior verified "
+        "findings; do not restart the entire investigation unless the objection invalidates them. "
+        "Complete with the full structured metadata contract.\n"
+    )
+    if prior:
+        body += f"\nPRIOR FINDINGS (verbatim):\n{prior}\n"
+
+    argv = [
+        "kanban", "create", f"REWORK[{next_cycle}]: L2 {ticket_no}",
+        "--body", body,
+        "--assignee", INVESTIGATOR_PROFILE,
+        "--priority", str(REWORK_PRIORITY),
+        "--skill", "xstudio-l2-ticket-workflow",
+        "--skill", "xstudio-sql-write-discipline",
+        "--idempotency-key", f"rework-{source_task['id']}",
+        "--max-runtime", "20m",
+        "--json",
+    ]
+    if dry_run:
+        print(f"[DRY RUN] create rework from {source_task['id']} cycle={next_cycle}: {reason[:120]}")
+        return "dry-run"
+    r = run_hermes(argv)
+    if r.returncode != 0:
+        print(f"WARNING: rework create failed for {source_task['id']}: {r.stderr.strip()[:300]}")
+        return None
+    try:
+        return (json.loads(r.stdout) or {}).get("id") or "created"
+    except json.JSONDecodeError:
+        return "created"
+
+
+def process_unreviewable_completions(args: argparse.Namespace, *, dry_run: bool = False) -> int:
+    """Turn a terminal investigator packaging failure into bounded rework.
+
+    A done investigator with a short/non-substantive summary and missing required metadata
+    cannot be reviewed or published. Leaving it active forever is worse than a bounded rework,
+    so this path creates the rework deterministically after normalization had a chance to salvage it.
+    """
+    tasks = list_tasks()
+    processed = 0
+    for task in tasks:
+        if task.get("status") != "done" or (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
+            continue
+        run_id = task_run_id(task)
+        if not run_id or not safe_query_active_run(run_id, args):
+            continue
+        if _source_has_reviewer(tasks, task["id"]) or _source_has_rework(tasks, task["id"]):
+            continue
+        proposal = _completion_metadata(task)
+        if _proposal_complete(proposal):
+            continue
+        reason = (
+            "Investigator completion is not reviewable: required run_id/ticket_id/response_type/reply_text "
+            "metadata is still incomplete after deterministic normalization. Re-package verified findings; "
+            "do not invent new evidence."
+        )
+        if create_rework_card(
+            args, source_task=task, reason=reason,
+            investigation_task_id=task["id"], dry_run=dry_run,
+        ):
+            processed += 1
+    return processed
+
+
+def reviewer_block_reason(task: dict[str, Any]) -> str:
+    profile = task.get("assignee") or ""
+    runs = get_runs(task["id"])
+    blocks = [
+        r for r in runs
+        if r.get("outcome") == "blocked" and (not profile or r.get("profile") == profile)
+    ]
+    if not blocks:
+        blocks = [r for r in runs if r.get("outcome") == "blocked"]
+    return ((blocks[-1].get("summary") if blocks else None) or "Reviewer rejected without a recorded reason.").strip()
 
 
 def process_rejections(args: argparse.Namespace, *, dry_run: bool = False) -> int:
     processed = 0
-    tasks = list_tasks("blocked")
-    all_tasks = list_tasks()
-    for task in tasks:
+    for task in list_tasks("blocked"):
         if (task.get("assignee") or "") not in REVIEWER_PROFILES:
             continue
-        run_id, ticket_id = task_run_id(task), task_ticket_id(task)
-        investigation_task_id = body_field(task.get("body"), "investigation_task_id")
-        if not run_id or not ticket_id:
+        run_id = task_run_id(task)
+        if not run_id or not safe_query_active_run(run_id, args):
             continue
-        already = any(body_field(t.get("body"), "source_review_task_id") == task["id"] for t in all_tasks)
-        if already:
+        # A rework created from this exact review task is the durable idempotency marker.
+        if _source_has_rework(list_tasks(), task["id"]):
             continue
         reason = reviewer_block_reason(task)
-        current_cycle = task_review_cycle(task)
-        next_cycle = current_cycle + 1
-        if next_cycle >= MAX_REVIEW_CYCLES:
-            if escalate_review_cycle(args, task, reason, dry_run=dry_run):
-                processed += 1
-            continue
-
-        prior = _persist_rejected_ledger(args, investigation_task_id, run_id) if not dry_run else ""
-        body = (
-            f"run_id: {run_id}\n"
-            f"ticket_id: {ticket_id}\n"
-            f"ticket_no: {body_field(task.get('body'), 'ticket_no') or ticket_id}\n"
-            f"review_cycle: {next_cycle}\n"
-            f"source_review_task_id: {task['id']}\n"
-            f"prior_investigation_task_id: {investigation_task_id or 'unknown'}\n"
-            "pipeline_stage: rework\n\n"
-            f"REVIEWER OBJECTION:\n{reason}\n\n"
-            "Address the rejected point using current live evidence. Reuse prior verified findings; do not "
-            "restart the entire investigation unless the objection invalidates them. Complete with the full "
-            "structured metadata contract.\n"
-        )
-        if prior:
-            body += f"\nPRIOR FINDINGS (verbatim):\n{prior}\n"
-        argv = [
-            "kanban", "create", f"REWORK[{next_cycle}]: {task.get('title') or ticket_id}",
-            "--body", body,
-            "--assignee", INVESTIGATOR_PROFILE,
-            "--priority", str(REWORK_PRIORITY),
-            "--skill", "xstudio-l2-ticket-workflow",
-            "--skill", "xstudio-sql-write-discipline",
-            "--idempotency-key", f"rework-{task['id']}",
-            "--max-runtime", "20m",
-            "--json",
-        ]
-        if dry_run:
-            print(f"[DRY RUN] create rework for reviewer {task['id']} cycle={next_cycle}")
+        investigation_task_id = body_field(task.get("body"), "investigation_task_id")
+        if create_rework_card(
+            args, source_task=task, reason=reason,
+            investigation_task_id=investigation_task_id, dry_run=dry_run,
+        ):
             processed += 1
-            continue
-        r = run_hermes(argv)
-        if r.returncode != 0:
-            print(f"WARNING: rework create failed for {task['id']}: {r.stderr.strip()[:300]}")
-            continue
-        try:
-            rework_id = (json.loads(r.stdout) or {}).get("id")
-        except json.JSONDecodeError:
-            rework_id = None
-        if not rework_id:
-            print(f"WARNING: rework created but id could not be parsed for {task['id']}")
-            continue
-        ticket_no = body_field(task.get("body"), "ticket_no") or ticket_id
-        reviewer_id = create_reviewer_card(
-            investigation_task_id=rework_id, run_id=run_id, ticket_id=ticket_id,
-            ticket_no=ticket_no, review_cycle=next_cycle, dry_run=False,
-        )
-        if not reviewer_id:
-            print(f"WARNING: rework {rework_id} exists but reviewer child creation failed; reconciler will repair topology")
-        archive_task(task["id"])
-        processed += 1
     return processed
 
 
-def _metadata_for_review(task: dict[str, Any]) -> Optional[dict[str, Any]]:
-    source_id = body_field(task.get("body"), "investigation_task_id")
-    if not source_id:
-        return None
-    done = [r for r in get_runs(source_id) if r.get("status") == "done"]
-    candidates = [r for r in done if (r.get("metadata") or {}).get("response_type")]
-    if not candidates:
-        return None
-    return dict(candidates[-1].get("metadata") or {})
-
-
-def _status_args_for_response(binding: dict[str, Any], metadata: dict[str, Any]) -> tuple[list[str], Optional[str]]:
-    response_type = str(metadata.get("response_type") or "").upper()
-    out: list[str] = []
-    expected_status: Optional[str] = None
-
-    # Workflow transitions are harness-owned. Model-provided new_ticket_status is
-    # ignored unless the deployment explicitly permits it.
-    allow_override = bool(binding.get("allow_metadata_status_override", False))
-    override = metadata.get("new_ticket_status") if allow_override else None
-
-    if response_type == "RESOLUTION":
-        expected_status = override or binding.get("resolved_ticket_status")
-        if not expected_status and binding.get("strict_resolution_status_binding", True):
-            raise RuntimeError(
-                "RESOLUTION approved but deploy/helpdesk_workflow_binding.json has no resolved_ticket_status. "
-                "Refusing to create an internally-completed ticket that still looks unresolved in Helpdesk."
-            )
-    elif response_type == "QUESTION":
-        expected_status = override or binding.get("waiting_user_ticket_status")
-        ask = binding.get("waiting_user_ask_status")
-        if ask:
-            out += ["--new-ask-status", str(ask)]
-    elif response_type == "L3_ESCALATION":
-        expected_status = override or binding.get("l3_ticket_status")
-    elif response_type == "NEEDS_HUMAN_ACTION":
-        expected_status = override or binding.get("needs_human_action_ticket_status") or binding.get("l3_ticket_status")
-
-    if expected_status:
-        out += ["--new-ticket-status", str(expected_status)]
-    return out, expected_status
-
+# ---------------------------------------------------------------------------
+# Approval / publish
+# ---------------------------------------------------------------------------
 
 def _post_publish_activity(args: argparse.Namespace, run_id: str, ticket_id: str, metadata: dict[str, Any]) -> None:
     response_type = str(metadata.get("response_type") or "UPDATE").upper()
@@ -564,50 +701,57 @@ def _post_publish_activity(args: argparse.Namespace, run_id: str, ticket_id: str
         ])
     except RuntimeError as exc:
         print(f"WARNING: activity log failed for {run_id}: {exc}")
-    # Deliberately no automatic solution-article creation here. A resolved
-    # incident is episodic history; KB promotion/dedupe is a separate governed
-    # post-resolution process (Knowledge/KB_IMPLEMENTATION_PLAN.md).
+    # No automatic solution-article creation here. A resolved incident is episodic
+    # history; KB promotion/dedupe is governed by Knowledge/KB_IMPLEMENTATION_PLAN.md.
 
 
-def _query_published_state(args: argparse.Namespace, run_id: str) -> list[dict[str, Any]]:
-    safe = run_id.replace("'", "''")
-    sql = (
-        "SELECT r.ID, r.TicketID, r.ProcessStatus, r.ResponseType, r.ReplyText, r.IsResolved, "
-        "c.Status AS TicketStatus, c.AskStatus, c.SupportExecutiveRemarks "
-        "FROM dbo.Hermes_L2_Response_Trn_Tbl r "
-        "JOIN dbo.Complaint_Mst_Tbl c ON c.ID = r.TicketID "
-        f"WHERE r.ID = '{safe}' AND r.IsDeleted = 0"
-    )
-    rows = run_orchestrator(args, ["--query", sql])
-    return rows if isinstance(rows, list) else []
-
-
-def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> int:
+def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
     binding = load_workflow_binding()
-    processed = 0
+    counts = {"published": 0, "blocked_configuration": 0, "rework_created": 0}
+
     for task in list_tasks("done"):
         if (task.get("assignee") or "") not in REVIEWER_PROFILES:
             continue
         run_id, ticket_id = task_run_id(task), task_ticket_id(task)
         if not run_id or not ticket_id:
             continue
+
         state = _query_published_state(args, run_id)
         if state and state[0].get("ProcessStatus") in ("COMPLETED", "WAITING_USER") and state[0].get("ReplyText"):
             continue
-        metadata = _metadata_for_review(task)
-        if not metadata or not metadata.get("response_type") or not metadata.get("reply_text"):
-            print(f"WARNING: reviewer {task['id']} is done but source completion metadata is incomplete; leaving publish pending for deterministic repair")
+        if not safe_query_active_run(run_id, args):
+            # Old done reviewer for a run already failed/reclaimed. Do not resurrect it.
             continue
-        response_type = str(metadata["response_type"]).upper()
+
+        proposal = task_proposal(task)
+        if not _proposal_complete(proposal):
+            # Reviewer should never have been created without a frozen complete proposal in
+            # the new topology. Legacy/pre-migration cards may violate that; bounded rework
+            # is safer than publishing reconstructed prose.
+            reason = "Reviewer reached done but its frozen proposal_json is missing/incomplete; re-package the original verified finding through a fresh investigation/review cycle."
+            source_id = body_field(task.get("body"), "investigation_task_id")
+            if create_rework_card(
+                args, source_task=task, reason=reason,
+                investigation_task_id=source_id, dry_run=dry_run,
+            ):
+                counts["rework_created"] += 1
+            continue
+
+        response_type = str(proposal["response_type"]).upper()
         try:
-            workflow_args, expected_status = _status_args_for_response(binding, metadata)
+            workflow_args, expected_status = _status_args_for_response(binding, proposal)
         except RuntimeError as exc:
+            # Deployment binding is a harness configuration problem, not an investigator
+            # defect. Keep the run active and visible; global WIP prevents new claims until
+            # the operator fixes the binding, then the same reconciler publishes it.
             print(f"PUBLISH BLOCKED for run {run_id}: {exc}")
+            counts["blocked_configuration"] += 1
             continue
+
         cmd = [
             "--publish-response", "--run-id", run_id, "--force-run-id",
             "--response-type", response_type,
-            "--reply-text", str(metadata["reply_text"]),
+            "--reply-text", str(proposal["reply_text"]),
             "--mirror-to-support-remarks",
             *workflow_args,
         ]
@@ -619,34 +763,50 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> int
             ("root_cause", "--root-cause"),
             ("resolution", "--resolution"),
         ):
-            if metadata.get(key):
-                cmd += [flag, str(metadata[key])]
+            if proposal.get(key):
+                cmd += [flag, str(proposal[key])]
+
         if dry_run:
             print(f"[DRY RUN] publish reviewer {task['id']} run={run_id} type={response_type} status={expected_status}")
-            processed += 1
+            counts["published"] += 1
             continue
+
         try:
             run_orchestrator(args, cmd, timeout=90)
         except RuntimeError as exc:
             print(f"WARNING: publish failed for run {run_id}: {exc}")
             continue
+
         verify = _query_published_state(args, run_id)
         if not verify:
             print(f"WARNING: publish returned success but no SQL row found for {run_id}")
             continue
         row = verify[0]
-        if row.get("ProcessStatus") not in ("COMPLETED", "WAITING_USER") or not row.get("ReplyText"):
+        if row.get("ProcessStatus") not in ("COMPLETED", "WAITING_USER") or not str(row.get("ReplyText") or "").strip():
             print(f"WARNING: publish postcondition failed for {run_id}: {row}")
             continue
         if expected_status and row.get("TicketStatus") != expected_status:
             print(f"WARNING: Helpdesk status postcondition failed for {run_id}: expected {expected_status!r}, got {row.get('TicketStatus')!r}")
             continue
-        _post_publish_activity(args, run_id, ticket_id, metadata)
-        processed += 1
-    return processed
+
+        _post_publish_activity(args, run_id, ticket_id, proposal)
+        counts["published"] += 1
+
+    return counts
 
 
-def recover_orphan_runs(args: argparse.Namespace, *, dry_run: bool = False, stale_after_minutes: int = ORPHAN_GRACE_MINUTES) -> int:
+# ---------------------------------------------------------------------------
+# Recovery / audit
+# ---------------------------------------------------------------------------
+
+def recover_orphan_runs(
+    args: argparse.Namespace,
+    *,
+    dry_run: bool = False,
+    stale_after_minutes: int = ORPHAN_GRACE_MINUTES,
+) -> int:
+    # Any Kanban card referencing the run protects it, regardless of status. This covers
+    # ready/running/blocked work and a done reviewer awaiting deterministic publication.
     tasks = list_tasks()
     referenced_run_ids = {task_run_id(t) for t in tasks if task_run_id(t)}
     recovered = 0
@@ -661,7 +821,7 @@ def recover_orphan_runs(args: argparse.Namespace, *, dry_run: bool = False, stal
         if age < stale_after_minutes:
             continue
         if dry_run:
-            print(f"[DRY RUN] fail orphan run {run_id} age={age}m")
+            print(f"[DRY RUN] fail true orphan run {run_id} age={age}m")
             recovered += 1
             continue
         try:
@@ -677,6 +837,11 @@ def recover_orphan_runs(args: argparse.Namespace, *, dry_run: bool = False, stal
 
 
 def audit_done_reviewers(args: argparse.Namespace, *, dry_run: bool = False) -> int:
+    """Read-only divergence count for reviewer-done vs SQL truth.
+
+    The older audit wrote the same comment every cron tick and also inspected investigator
+    cards. Reconciliation is now the repair mechanism; audit only reports reviewer divergence.
+    """
     false_positives = 0
     for task in list_tasks("done"):
         if (task.get("assignee") or "") not in REVIEWER_PROFILES:
@@ -685,40 +850,57 @@ def audit_done_reviewers(args: argparse.Namespace, *, dry_run: bool = False) -> 
         if not run_id:
             continue
         rows = _query_published_state(args, run_id)
-        ok = bool(rows and rows[0].get("ProcessStatus") in ("COMPLETED", "WAITING_USER") and rows[0].get("ResponseType") and str(rows[0].get("ReplyText") or "").strip())
-        if ok:
-            continue
-        false_positives += 1
-        if dry_run:
-            print(f"[DRY RUN] reviewer done but SQL not terminal: {task['id']} run={run_id}")
-            continue
-        marker = f"PIPELINE AUDIT: reviewer done but run {run_id} is not yet published in SQL."
-        r = run_hermes(["kanban", "comment", task["id"], marker])
-        if r.returncode != 0:
-            print(f"WARNING: audit comment failed for {task['id']}: {r.stderr.strip()[:200]}")
+        ok = bool(
+            rows
+            and rows[0].get("ProcessStatus") in ("COMPLETED", "WAITING_USER")
+            and rows[0].get("ResponseType")
+            and str(rows[0].get("ReplyText") or "").strip()
+        )
+        if not ok:
+            false_positives += 1
+            print(f"{'[DRY RUN] ' if dry_run else ''}REVIEW/SQL DIVERGENCE task={task['id']} run={run_id}")
     return false_positives
 
 
-def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
-    # Ordering is a contract. These are synchronous function calls, not the old
-    # concurrent Popen launches that let publisher race ahead of metadata repair.
+# ---------------------------------------------------------------------------
+# Reconciliation (ordering is a correctness contract)
+# ---------------------------------------------------------------------------
+
+def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
+    # Synchronous ordering removes the old Popen race (publisher reading metadata before
+    # repair completed). Reviewers do not exist until normalization/unreviewable handling
+    # has finished for their source completion.
+    normalized = normalize_investigator_completions(dry_run=dry_run)
+    unreviewable = process_unreviewable_completions(args, dry_run=dry_run)
+    reviewers = ensure_missing_reviewers(args, dry_run=dry_run)
+    rejections = process_rejections(args, dry_run=dry_run)
+    approvals = process_approvals(args, dry_run=dry_run)
+    orphans = recover_orphan_runs(
+        args, dry_run=dry_run, stale_after_minutes=args.stale_after_minutes,
+    )
     return {
-        "normalized": normalize_investigator_completions(dry_run=dry_run),
-        "reviewers_repaired": ensure_missing_reviewers(dry_run=dry_run),
-        "rejections_processed": process_rejections(args, dry_run=dry_run),
-        "approvals_published": process_approvals(args, dry_run=dry_run),
-        "orphans_recovered": recover_orphan_runs(args, dry_run=dry_run, stale_after_minutes=args.stale_after_minutes),
+        "normalized": normalized,
+        "unreviewable_reworked": unreviewable,
+        "reviewers_created": reviewers,
+        "rejections_processed": rejections,
+        "approvals": approvals,
+        "orphans_recovered": orphans,
     }
 
 
+# ---------------------------------------------------------------------------
+# Investigation bundle / claim
+# ---------------------------------------------------------------------------
+
 def _run_kb_retrieval(args: argparse.Namespace, ticket: dict[str, Any]) -> dict[str, Any]:
-    # Do not feed model-generated SuspectedCause back into PRE_INVESTIGATION
-    # retrieval; that creates confirmation bias.
+    # PRE_INVESTIGATION query is requester-grounded. Deliberately exclude the
+    # model/L1-generated SuspectedCause so a hypothesis cannot retrieve its own confirmation.
     query = " ".join(str(ticket.get(k) or "") for k in (
         "BriefDetails", "Description", "ProblemCategory", "HermesAreaName", "ExtractedEntitiesJson"
     )).strip()
     if not query:
         return {"solutions": [], "abstained": True, "abstention_reason": "Ticket contains no searchable problem text."}
+
     cmd = [
         _orch_python(), KB_RETRIEVER_WIN,
         "--server", args.server,
@@ -753,6 +935,8 @@ def _investigation_bundle(args: argparse.Namespace, ticket_id: str, fallback_tic
         }
     if not isinstance(bundle, dict):
         bundle = {"ticket_id": ticket_id, "ticket": fallback_ticket, "bundle_warning": "Unexpected bundle shape."}
+    # Orchestrator still has the old route-only solution lookup for compatibility. Never expose
+    # two competing KB paths to the worker.
     bundle.pop("known_solutions", None)
     bundle["kb_retrieval"] = _run_kb_retrieval(args, fallback_ticket)
     rendered = json.dumps(bundle, indent=2, default=str)
@@ -767,7 +951,9 @@ def _investigation_bundle(args: argparse.Namespace, ticket_id: str, fallback_tic
 
 def _query_instructions(run_id: str, ticket_id: str) -> str:
     orch = "/mnt/c/" + ORCHESTRATOR_WIN.replace("\\", "/").removeprefix("C:/")
-    ledger = json.dumps({"tables_queried": [], "key_values_found": {}, "ruled_out": [], "conclusion": "..."}, separators=(",", ":"))
+    ledger = json.dumps({
+        "tables_queried": [], "key_values_found": {}, "ruled_out": [], "conclusion": "..."
+    }, separators=(",", ":"))
     return (
         "\n--- Exact investigation commands ---\n"
         f"Interpreter: {WINDOWS_PYTHON}\nScript: {orch}\n"
@@ -775,20 +961,23 @@ def _query_instructions(run_id: str, ticket_id: str) -> str:
         f'Preferred validated read:\n  {WINDOWS_PYTHON} "{orch}" --server {DEFAULT_SERVER} --database XStudio_Xbatch --build-query dbo.SomeTable --columns "ColA,ColB" --where "HeatNo = \'123\'" --top 20 --execute\n\n'
         f'If schema candidates are insufficient:\n  {WINDOWS_PYTHON} "{orch}" --server {DEFAULT_SERVER} --database XStudio_Xbatch --suggest-tables "<specific unresolved symptom>" --top 8\n\n'
         f'Read-only SQL:\n  {WINDOWS_PYTHON} "{orch}" --server {DEFAULT_SERVER} --database XStudio_Xbatch --query "SELECT TOP 20 ..."\n\n'
-        f'Persist ticket-specific findings:\n  {WINDOWS_PYTHON} "{orch}" --server {DEFAULT_SERVER} --database XStudio_Helpdesk --save-ledger {run_id} --ledger \'{ledger}\'\n\n'
+        f'Persist findings:\n  {WINDOWS_PYTHON} "{orch}" --server {DEFAULT_SERVER} --database XStudio_Helpdesk --save-ledger {run_id} --ledger \'{ledger}\'\n\n'
         f"Refresh ticket only when needed: --get-ticket-context {ticket_id} --database XStudio_Helpdesk\n"
-        "Never write the live ticket directly. Complete the Kanban task with full structured metadata; reviewer + deterministic publisher own publication.\n"
+        "Never write the live ticket directly. Complete the Kanban task with full structured metadata; deterministic review/publish owns the rest.\n"
     )
 
 
 def _archive_stale_cards_for_ticket(ticket_id: str, new_run_id: str) -> None:
+    # Only archive stale queued cards from OLD runs; completed/blocked history is useful
+    # provenance and also prevents topology re-creation if Hermes lists those states.
+    stale_statuses = {"todo", "ready", "triage", "scheduled"}
     try:
         tasks = list_tasks()
     except RuntimeError:
         return
     stale = [
         t["id"] for t in tasks
-        if t.get("status") in ARCHIVABLE_STALE_STATUSES
+        if t.get("status") in stale_statuses
         and task_ticket_id(t) == ticket_id
         and task_run_id(t) != new_run_id
     ]
@@ -804,16 +993,28 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
     if dry_run:
         return {"status": "DRY_RUN", "reconcile": reconciliation}
 
-    # Global WIP=1: a single LM Studio inference slot should finish the active
-    # pipeline before another SQL ticket is claimed. This removes reviewer/rework
-    # starvation and makes active-run state a real backpressure signal.
+    # A configuration error should stop NEW work, not reconciliation of already-claimed work.
+    binding = load_workflow_binding()
+    ready, reason = _binding_ready_for_claims(binding)
+    if not ready:
+        return {
+            "status": "WORKFLOW_BINDING_NOT_READY",
+            "reason": reason,
+            "binding_path": binding.get("_path"),
+            "reconcile": reconciliation,
+        }
+
+    # Global WIP=1. Existing work always wins over a new claim.
     active = query_active_runs(args)
     if active:
         return {"status": "WIP_LIMIT", "active_runs": active, "reconcile": reconciliation}
 
-    binding = load_workflow_binding()
     eligible = str(binding.get("eligible_ticket_status") or args.eligible_status or DEFAULT_ELIGIBLE_STATUS)
-    poll = run_orchestrator(args, ["--poll", "--eligible-status", eligible, "--bot-label", INVESTIGATOR_PROFILE], timeout=90)
+    poll = run_orchestrator(
+        args,
+        ["--poll", "--eligible-status", eligible, "--bot-label", INVESTIGATOR_PROFILE],
+        timeout=90,
+    )
     if not isinstance(poll, dict):
         raise RuntimeError(f"unexpected poll response: {poll!r}")
     if poll.get("status") in ("NO_TICKETS", "NO_CLAIMABLE_TICKET"):
@@ -862,62 +1063,97 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
     except json.JSONDecodeError:
         investigator_id = None
     if not investigator_id:
+        # Kanban creation may actually have succeeded, so do not create an untracked duplicate.
+        # The active SQL run remains protected; next reconciliation/status makes the mismatch visible.
         raise RuntimeError("investigator task was created but its id could not be parsed")
 
-    reviewer_id = create_reviewer_card(
-        investigation_task_id=investigator_id, run_id=run_id, ticket_id=ticket_id,
-        ticket_no=ticket_no, review_cycle=0, dry_run=False,
-    )
-    if not reviewer_id:
-        print(f"WARNING: reviewer child creation failed for investigator {investigator_id}; reconciler will retry")
-
+    # No reviewer is pre-created. The completion hook/scout reconciler first normalizes the
+    # investigator's result, then freezes that exact proposal into a new high-priority reviewer.
     return {
         "status": "CLAIMED",
         "run_id": run_id,
         "ticket_id": ticket_id,
         "investigator_task_id": investigator_id,
-        "reviewer_task_id": reviewer_id,
-        "priorities": {"investigation": NEW_INVESTIGATION_PRIORITY, "rework": REWORK_PRIORITY, "review": REVIEW_PRIORITY},
+        "reviewer_task_id": None,
+        "reviewer_creation": "deferred_until_normalized_completion",
+        "priorities": {
+            "investigation": NEW_INVESTIGATION_PRIORITY,
+            "rework": REWORK_PRIORITY,
+            "review": REVIEW_PRIORITY,
+        },
         "reconcile": reconciliation,
     }
 
+
+# ---------------------------------------------------------------------------
+# Status / diagnosis
+# ---------------------------------------------------------------------------
 
 def pipeline_status(args: argparse.Namespace) -> dict[str, Any]:
     tasks = list_tasks()
     active = query_active_runs(args)
     by_run: dict[str, list[dict[str, Any]]] = {}
-    for t in tasks:
-        rid = task_run_id(t)
-        if rid:
-            by_run.setdefault(rid, []).append({
-                "id": t.get("id"), "title": t.get("title"), "status": t.get("status"),
-                "assignee": t.get("assignee"), "review_cycle": task_review_cycle(t),
-            })
-    anomalies = []
+    for task in tasks:
+        rid = task_run_id(task)
+        if not rid:
+            continue
+        by_run.setdefault(rid, []).append({
+            "id": task.get("id"),
+            "title": task.get("title"),
+            "status": task.get("status"),
+            "assignee": task.get("assignee"),
+            "pipeline_stage": body_field(task.get("body"), "pipeline_stage"),
+            "review_cycle": task_review_cycle(task),
+            "source": body_field(task.get("body"), "investigation_task_id") or body_field(task.get("body"), "rework_source_id"),
+        })
+
+    anomalies: list[dict[str, Any]] = []
     for row in active:
         rid = str(row.get("ID"))
         owned = by_run.get(rid, [])
         if not owned:
             anomalies.append({"run_id": rid, "type": "ACTIVE_SQL_WITH_NO_KANBAN"})
+            continue
+
+        investigators = [t for t in owned if t.get("assignee") in INVESTIGATOR_PROFILES]
         reviewers = [t for t in owned if t.get("assignee") in REVIEWER_PROFILES]
-        investigations = [t for t in owned if t.get("assignee") in INVESTIGATOR_PROFILES]
-        if not investigations:
+        if not investigators:
             anomalies.append({"run_id": rid, "type": "ACTIVE_RUN_WITHOUT_INVESTIGATOR_CARD"})
-        if investigations and not reviewers and all(t.get("status") == "done" for t in investigations):
-            anomalies.append({"run_id": rid, "type": "DONE_INVESTIGATION_WITHOUT_REVIEWER"})
+        if investigators and not reviewers and all(t.get("status") == "done" for t in investigators):
+            # Could be a transient between completion and next reconcile, but it should never
+            # persist across a scout tick.
+            anomalies.append({"run_id": rid, "type": "DONE_INVESTIGATION_WITHOUT_REVIEWER_OR_REWORK"})
+        if any(t.get("status") == "done" for t in reviewers):
+            anomalies.append({"run_id": rid, "type": "REVIEW_APPROVED_PUBLISH_PENDING_OR_BLOCKED"})
+        if any(t.get("status") == "blocked" for t in reviewers):
+            anomalies.append({"run_id": rid, "type": "REVIEW_REJECTED_REWORK_PENDING_OR_ACTIVE"})
+
+    binding = load_workflow_binding()
+    binding_ready, binding_reason = _binding_ready_for_claims(binding)
     return {
         "active_runs": active,
         "tasks_by_run": by_run,
         "anomalies": anomalies,
-        "binding": load_workflow_binding(),
+        "binding": binding,
+        "binding_ready_for_new_claims": binding_ready,
+        "binding_block_reason": binding_reason,
         "contract": {
             "max_pipeline_wip": 1,
-            "priorities": {"review": REVIEW_PRIORITY, "rework": REWORK_PRIORITY, "new_investigation": NEW_INVESTIGATION_PRIORITY},
+            "priorities": {
+                "review": REVIEW_PRIORITY,
+                "rework": REWORK_PRIORITY,
+                "new_investigation": NEW_INVESTIGATION_PRIORITY,
+            },
             "max_review_cycles": MAX_REVIEW_CYCLES,
-            "live_kanban_statuses": sorted(LIVE_KANBAN_STATUSES),
+            "reviewer_creation": "after_normalized_investigator_completion",
+            "frozen_review_proposal": True,
         },
     }
 
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
@@ -936,26 +1172,31 @@ def cli(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.mode == "scout":
-            out = scout(args, dry_run=args.dry_run)
+            result = scout(args, dry_run=args.dry_run)
         elif args.mode == "reconcile":
-            out = reconcile(args, dry_run=args.dry_run)
+            result = reconcile(args, dry_run=args.dry_run)
         elif args.mode == "repair":
-            out = {"normalized": normalize_investigator_completions(dry_run=args.dry_run), "reviewers_repaired": ensure_missing_reviewers(dry_run=args.dry_run)}
+            result = {
+                "normalized": normalize_investigator_completions(dry_run=args.dry_run),
+                "unreviewable_reworked": process_unreviewable_completions(args, dry_run=args.dry_run),
+                "reviewers_created": ensure_missing_reviewers(args, dry_run=args.dry_run),
+            }
         elif args.mode == "publish":
-            normalize_investigator_completions(dry_run=args.dry_run)
-            out = {"approvals_published": process_approvals(args, dry_run=args.dry_run)}
+            result = process_approvals(args, dry_run=args.dry_run)
         elif args.mode == "reject":
-            out = {"rejections_processed": process_rejections(args, dry_run=args.dry_run)}
+            result = {"rejections_processed": process_rejections(args, dry_run=args.dry_run)}
         elif args.mode == "recover":
-            out = {"orphans_recovered": recover_orphan_runs(args, dry_run=args.dry_run, stale_after_minutes=args.stale_after_minutes)}
+            result = {"orphans_recovered": recover_orphan_runs(
+                args, dry_run=args.dry_run, stale_after_minutes=args.stale_after_minutes,
+            )}
         elif args.mode == "audit":
-            out = {"false_positive_reviews": audit_done_reviewers(args, dry_run=args.dry_run)}
+            result = {"review_sql_divergences": audit_done_reviewers(args, dry_run=args.dry_run)}
         else:
-            out = pipeline_status(args)
+            result = pipeline_status(args)
     except Exception as exc:
         print(json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, default=str))
         return 1
-    print(json.dumps({"ok": True, "mode": args.mode, "result": out}, indent=2, default=str))
+    print(json.dumps({"ok": True, "mode": args.mode, "result": result}, indent=2, default=str))
     return 0
 
 
