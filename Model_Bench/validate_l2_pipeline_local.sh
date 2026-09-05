@@ -24,7 +24,7 @@ PY_FILES=(
 echo "== Python syntax =="
 python3 -m py_compile "${PY_FILES[@]}"
 
-echo "== Deterministic contract tests =="
+echo "== Deterministic lifecycle contract tests =="
 python3 Model_Bench/test_l2_pipeline_runtime.py
 
 echo "== Typed investigation-tool contract tests =="
@@ -40,23 +40,26 @@ python3 Model_Bench/configure_helpdesk_workflow.py
 echo "== Pipeline status (read-only) =="
 python3 Model_Bench/l2_pipeline_runtime.py status
 
-echo "== Reconcile preview (read-only / no lifecycle mutations) =="
+echo "== Reconcile preview (dry-run) =="
 python3 Model_Bench/l2_pipeline_runtime.py reconcile --dry-run
 
 echo
 cat <<'EOF'
 LOCAL VALIDATION COMPLETE.
 
-Before enabling normal scout flow, separately apply in XStudio_Helpdesk:
-  Knowledge/25_ticket_dispatch_hardening.sql
-  Knowledge/55_update_retry_hardening.sql
+SQL deployment note:
+  Knowledge/00_Hermes_L2_FULL_INSTALL.sql is the generated complete bundle.
+  It already includes the current 25_ticket_dispatch_hardening and
+  55_update_retry_hardening sources. Do not re-apply those merely because
+  the numbered source files exist.
+
+After deploying/regenerating the SQL bundle, run:
   Knowledge/98_pipeline_postflight.sql
 
-Then populate deploy/helpdesk_workflow_binding.json with the exact live resolved status
-observed above. Do not guess a status value.
+Confirm deploy/helpdesk_workflow_binding.json still matches live workflow values.
+Do not guess replacement status names.
 
-For the next naturally-arriving fresh ticket, verify in its trace that the worker used
-the typed xstudio_l2 tool and that NO terminal call invoked Hermes_Orchestrator.py,
-Python314/python.exe, sqlcmd, pyodbc, pip, or package installation -- that is the
-Ticket_424/Ticket_441 regression signature this harness exists to prevent.
+For the next naturally arriving fresh ticket, verify its trace uses xstudio_l2 for
+database/schema/ticket evidence and does not attempt to recreate SQL transport via
+terminal, an interpreter, pyodbc/sqlcmd, or package installation.
 EOF

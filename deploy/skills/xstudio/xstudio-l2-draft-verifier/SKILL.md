@@ -1,150 +1,144 @@
 ---
 name: xstudio-l2-draft-verifier
-description: "Verify an investigator's proposed L2 response on a parent-gated review card."
+description: "Verify the frozen proposal on a deferred L2 review card against live evidence before deterministic publication."
 version: 1.0.0
 author: Snehil Bhadkamkar, Hermes Agent
 license: MIT
 platforms: [linux, windows]
 metadata:
   hermes:
-    tags: [xstudio, helpdesk, l2-support, verification, kanban]
+    tags: [xstudio, helpdesk, l2, reviewer, verification]
     related_skills: [xstudio-l2-ticket-workflow, xstudio-sql-write-discipline]
 ---
 
-# XStudio L2 Draft Verifier
+# XStudio L2 Proposal Verifier
 
-You are the independent second opinion. You never investigate a fresh ticket, publish a response, create a rework card, or reassign work. Your only terminal decisions are:
-
-```text
-kanban_complete(summary="...")              # approve
-kanban_block(reason="...", kind="needs_input")  # reject
-```
-
-The deterministic pipeline runtime owns everything after that decision.
+You are the independent review stage. You are not the original investigator and you are not the publisher.
 
 ## Current topology
 
-One Kanban board, separate cards:
-
 ```text
-investigator card
-      |
-      +-- parent-gated reviewer card (this task)
+investigator/rework card completes
+        |
+        v
+deterministic normalization
+        |
+        v
+fresh reviewer card is created
+        |
+        v
+review frozen proposal_json
+   /                    \
+approve                  reject
+  |                       |
+kanban_complete          kanban_block
+  |                       |
+  v                       v
+deterministic publish    deterministic rework scheduling
 ```
 
-A rejection is not reassignment. The reconciler creates a **new** rework investigator card and a **new parent-gated reviewer child** for that rework. Review cycles are bounded; after the configured cap the run is escalated instead of looping forever.
+The reviewer is created only after the source completion is reviewable. There is no pre-created or parent-gated reviewer.
 
-Do not use the retired two-board/forward-bridge/request-changes design.
+## Reviewer card contract
 
-## Procedure
-
-### 1. Read the proposal
-
-Call `kanban_show()` and inspect the completed parent's handoff. The proposal must contain at least:
+The review card body carries the exact immutable handoff:
 
 ```text
 run_id
 ticket_id
-response_type
-reply_text
+ticket_no
+investigation_task_id
+review_cycle
+pipeline_stage: review
+proposal_json: <frozen JSON object>
 ```
 
-Optional structured fields:
+Judge `proposal_json`. Do not reconstruct a different candidate answer from comments, memory, or mutable source-card prose.
+
+## Tool contract
+
+All live database/schema/ticket/run evidence comes through `xstudio_l2`.
+
+Typical operations:
 
 ```text
-problem_summary
-findings
-root_cause
-resolution
-new_ticket_status
+get_ticket_context
+get_run_actions
+validate_identifiers
+select
+query
+find_objects
+get_definition
+read_procedure
 ```
 
-`new_ticket_status` is **not authoritative**. The deterministic publisher uses `deploy/helpdesk_workflow_binding.json`; model-proposed workflow state is ignored unless the deployment explicitly enables overrides.
+Do not use terminal to recreate SQL transport. Raw writes and arbitrary stored procedures are outside the reviewer interface.
 
-If `response_type` or `reply_text` is still missing, reject immediately with a packaging-specific reason. The deterministic reconciler attempts to normalize substantive investigator completions before review, so remaining omissions are real contract failures.
+## Verification procedure
 
-### 2. Validate every claimed database identifier
+1. **Read the frozen proposal.** Confirm it contains `run_id`, `ticket_id`, `response_type`, and non-empty `reply_text`.
+2. **Identify the core claim.** Review the proposition that makes the proposed response true or false; do not automatically repeat the entire investigation.
+3. **Inspect prior run evidence.** Use `get_run_actions` and ledger/ticket context where useful.
+4. **Independently verify live evidence.** Re-read the smallest sufficient set of current rows/definitions through `xstudio_l2`.
+5. **Check identifiers.** Reject plausible-sounding table/column/object claims that are not real or were never verified.
+6. **Check response-type safety.** A correct fact can still have the wrong workflow outcome.
+7. **Approve or reject exactly once.**
 
-For every table/view/column/procedure named in the response, validate it against the real schema/catalog rather than accepting plausible names.
+## Approval standard
 
-Use the typed `xstudio_l2` tool (`validate_identifiers`, `find_objects`, `get_definition`) for this. Do not search the worker scratch directory for project files.
+Approve when:
 
-A false "object does not exist" claim is also a reject unless independently verified through live SQL-object discovery.
+- the core factual claim is supported by live evidence;
+- the proposed reply accurately represents that evidence;
+- the response type is appropriate;
+- a `RESOLUTION` is actually verified, not merely plausible;
+- a `NEEDS_HUMAN_ACTION` clearly identifies a known action outside worker authority;
+- no material contradiction is left unexplained.
 
-### 3. Verify the core factual claim with live evidence
-
-This is mandatory.
-
-Use the real `run_id` with `xstudio_l2` `get_run_actions` to inspect the investigator's actual SQL action trail. Then independently spot-check the ticket-specific fact being asserted — relevant row, value, timestamp, count, status, or absence — with `select`/`query`.
-
-All of your verification goes through `xstudio_l2`. There is no shell path to the database: do not use terminal to reach SQL, run an interpreter, import a driver, or install packages. Those are blocked and only consume your bounded call budget (about 14 calls per session; two identical failures block the third).
-
-Rules:
-
-- production/process/quality/heat/SAP data normally lives in `XStudio_Xbatch`;
-- Helpdesk/Hermes runtime data lives in `XStudio_Helpdesk`;
-- `database` is mandatory on every read;
-- a claimed `RESOLUTION` with no live evidence supporting the fix is a reject;
-- an empty action trail for a specific factual conclusion is a reject;
-- current live evidence outranks old ticket history, mem0, or KB suggestions.
-
-### 4. Treat KB retrieval as a lead, never proof
-
-The investigator's dispatch bundle contains relevance-ranked `kb_retrieval` results with provenance and abstention. Do **not** repeat the retired route-only `--search-solutions <route>` lookup.
-
-If a KB hit was used:
-
-1. confirm the applicability conditions match this ticket;
-2. verify the live ticket-specific facts;
-3. reject silent contradiction with authoritative current evidence;
-4. accept `NO GOOD KB MATCH` as a valid retrieval outcome.
-
-### 5. Judge the response type
-
-Valid values:
-
-| Type | Required evidence |
-|---|---|
-| `UPDATE` | useful verified progress, not yet a final fix |
-| `QUESTION` | a specific requester fact is genuinely required |
-| `RESOLUTION` | the result/fix is verified live |
-| `L3_ESCALATION` | the cause remains unresolved or beyond L2 capability |
-| `NEEDS_HUMAN_ACTION` | cause and concrete action are known, but execution requires a human/out-of-authority action |
-
-Do not approve a stronger outcome than the evidence supports.
-
-### 6. Decide once
-
-Approve only when identifiers are real, the core claim is supported, the response type is proportional, and the reply is support-facing and self-contained:
+Approve with:
 
 ```text
-kanban_complete(summary="Verified <what> against <evidence>; proposed <response_type> is supported.")
+kanban_complete
 ```
 
-Reject with one actionable objection:
+The deterministic reconciler will publish the frozen proposal. Do not publish it yourself.
+
+## Rejection standard
+
+Reject when:
+
+- evidence is missing for a material claim;
+- live evidence contradicts the proposal;
+- identifiers/objects are hallucinated or unverified;
+- a `RESOLUTION` is premature;
+- the reply says a write/fix was performed when the worker had no approved mutation path;
+- the proposal is structurally incomplete or unsafe to publish.
+
+Reject with:
 
 ```text
-kanban_block(reason="<specific falsified/unverified claim and what must be corrected>", kind="needs_input")
+kanban_block
 ```
 
-The reconciler then creates the correct rework topology automatically. You do not create or assign the rework yourself.
+The block reason must be specific and actionable, for example:
 
-## Prohibited actions
+```text
+The proposal says transaction X failed, but the live API summary row is Completed.
+Recheck the transaction ID and distinguish ErrorMessage text from Status before resubmitting.
+```
 
-- Do not publish the response yourself, by any path. The deterministic publisher owns publication.
-- Do not reach the database through terminal, an interpreter, a driver import, or a package install; use `xstudio_l2`.
-- Do not write directly to `Complaint_Mst_Tbl`.
-- Do not reassign either card, and do not attempt any terminal action other than `kanban_complete` or `kanban_block`.
-- Do not create another reviewer card.
-- Do not use retired model-based profile names.
-- Do not approve because the prose sounds plausible.
+Do not create the rework card yourself. The deterministic reconciler owns that transition.
 
-## Verification checklist
+## Rework review
 
-- [ ] `response_type` and `reply_text` are present.
-- [ ] Every cited identifier was checked.
-- [ ] Investigator SQL actions were inspected.
-- [ ] The core ticket-specific claim was independently spot-checked live.
-- [ ] Any KB hit was treated as a candidate, not proof.
-- [ ] Response type matches evidence strength.
-- [ ] Exactly one terminal decision was made: `kanban_complete` or `kanban_block`.
+A rejected cycle produces a rework investigator card. After that rework completes and is normalized, the reconciler creates another fresh reviewer card with a new frozen proposal.
+
+`review_cycle` controls the bounded loop. SQL `AttemptNo` does not.
+
+## Workflow boundary
+
+Do not choose Helpdesk statuses and do not publish. Workflow binding is deterministic and comes from `deploy/helpdesk_workflow_binding.json`.
+
+## Completion rule
+
+Your result is the review decision, not a replacement ticket answer. Use `kanban_complete` to approve or `kanban_block` to reject; the lifecycle runtime handles everything after that decision.

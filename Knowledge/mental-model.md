@@ -1,8 +1,9 @@
 ---
 type: "Mental Model"
 title: "Hermes L2 Mental Model"
-description: "Defines the minimal L1/L2/L3 split and the role of SQL, routing, evidence, and existing XStudio Helpdesk workflows."
-status: draft
+description: "Current authority split between XStudio Helpdesk, deterministic lifecycle code, read-only L2 workers, review, and publication."
+status: current
+verified: "2026-09-05"
 tags:
   - hermes
   - l2-support
@@ -14,100 +15,112 @@ tags:
 ## One-line model
 
 ```text
-XStudio handles L1 and owns the Helpdesk.
-Hermes reads unresolved L2 tickets, investigates the live system, writes the L2 result,
-and resolves the ticket when it can. Humans receive only L3 escalations.
+XStudio owns L1 and the Helpdesk.
+Deterministic code owns claim/review/rework/publication.
+Hermes workers investigate and verify live evidence through a typed read-only surface.
+Humans act only when the required action is outside L2 authority or the problem genuinely needs L3.
 ```
 
-Hermes is not another Helpdesk and is not a separate chat application.
+Hermes is not a second Helpdesk and the model is not the workflow engine.
 
-## What already exists
-
-The supplied `XStudio_Helpdesk` snapshot already has the ticket record in
-`dbo.Complaint_Mst_Tbl`. The table contains the ticket number, area, complaint type,
-description, solution, status, priority, assignment, message/remarks fields and requester
-details. The same Helpdesk database also contains area, complaint type, common-error,
-priority and reference-document masters.
-
-The snapshot also contains `dbo.systemreferencedocuments`, with existing user-guide
-documents for Helpdesk, SMS KPI, billet yard, SMS/RM delay conditions, EAF/LRF/CCM KPI,
-billet conditions and mill topics.
-
-Therefore Hermes does not need a second ticketing/workflow product.
-
-## Minimal runtime components
+## Current runtime shape
 
 ```text
 Existing XStudio Helpdesk
         |
-        | unresolved L2 ticket rows
         v
-Hermes scheduled runner
-        |
-        v
-ONE Hermes investigator
-        |
-        +--> SQL schema/SP discovery
-        +--> SQL reads
-        +--> SQL/SP writes when resolution requires them
-        +--> existing project documents
+reconcile-first ticket scout
         |
         v
-Hermes L2 response table
+one claimed SQL run (global WIP = 1)
         |
-        +--> answer / ask for more information
-        +--> resolution + existing ticket close/resolve workflow
-        +--> L3 escalation
+        v
+investigator
+  typed xstudio_l2 reads
+  + routed project knowledge
+  + run ledger
+        |
+        v
+normalize structured completion
+        |
+        v
+deferred reviewer
+  frozen proposal_json
+  independent live verification
+      /       \
+ approve     reject
+    |          |
+    v          v
+publisher    rework -> normalize -> fresh reviewer
 ```
 
-There is no permanent set of specialist bots.
+Reviewer cards are not pre-created and are not parent-gated.
 
-A ticket may be decomposed into several investigation *steps*, but those steps are tool
-calls executed by the same Hermes investigator. If parallel subtasks are introduced later,
-they should be short-lived workers created only for a specific ticket, not a taxonomy of
-long-running domain agents.
+## Authority boundaries
 
-## No RAG dependency
+### XStudio Helpdesk
 
-Hermes knowledge is routed, not vector-searched.
+`XStudio_Helpdesk.dbo.Complaint_Mst_Tbl` remains the user-visible ticket/workflow record. Existing Helpdesk status and AskStatus semantics are reused rather than replaced.
 
-The core knowledge sources are:
+### Deterministic lifecycle runtime
 
-```text
-OKF explainer/playbook docs
-+ current SQL schema
-+ current stored-procedure definitions
-+ current operational rows
-+ Helpdesk reference documents
-```
+`Model_Bench/l2_pipeline_runtime.py` owns:
 
-When the exact object is unknown, Hermes searches SQL metadata and the local knowledge
-catalog by identifiers/keywords. That is sufficient for the first system.
+- completion normalization;
+- reviewer creation;
+- frozen proposal handoff;
+- bounded reject/rework cycles;
+- approved publication;
+- workflow binding;
+- orphan recovery;
+- WIP admission.
 
-## SQL is both an evidence source and an action surface
+These transitions are not delegated to an LLM.
 
-Hermes is SQL-write capable.
+### Investigator
 
-For XStudio/XMES actions, use the XKB precedence:
+The investigator is a reasoning/evidence worker. It does not publish tickets and does not own database transport. All database, schema, ticket, and ledger work goes through `xstudio_l2`.
 
-```text
-official supported path / installed stored procedure
--> inspected trigger-mediated path
--> direct table write when no suitable official path exists
-```
+### Reviewer
 
-This is not a read-only diagnostic architecture. The point of L2 is to investigate and,
-where possible, fix the issue.
+The reviewer is an independent evidence gate. It approves with `kanban_complete` or rejects with `kanban_block`. It does not publish, reassign, or create rework.
 
-## Evidence levels
+### Publisher
 
-Hermes should keep the following distinction internally:
+After approval, deterministic code publishes the exact frozen proposal through the audited Hermes SQL path and applies only workflow states allowed by `deploy/helpdesk_workflow_binding.json`.
 
-| Level | Meaning |
+## L2 database surface is read-only
+
+The worker-facing `xstudio_l2` surface supports bounded reads, discovery, identifier validation, an explicit read-procedure allowlist, ticket/run evidence, and ledger persistence.
+
+It deliberately does **not** expose arbitrary SQL mutation or arbitrary `EXEC`.
+
+If investigation proves that a production/configuration mutation is required:
+
+- return `NEEDS_HUMAN_ACTION` when the cause and required action are known but the worker is not authorized to execute it;
+- return `L3_ESCALATION` when the cause remains unresolved or the issue is beyond L2 capability.
+
+A future deterministic corrective-action harness may add explicitly reviewed operations, but a model must never recreate a raw SQL write path itself.
+
+## Knowledge authority
+
+Use sources according to what they are good at:
+
+| Source | Role |
 |---|---|
-| Project knowledge | How this Hermes deployment is intended to work |
-| Supplied snapshot | What the exported schema/SP files showed on 2026-09-02 |
-| Live verified | What Hermes inspected in SQL for the current ticket |
-| Runtime proven | The write/action was executed and its intended result was checked |
+| Live SQL for this ticket | Current incident authority |
+| Git-tracked `Knowledge/` | Canonical domain/runtime reference |
+| Approved SQL Solution article | Reusable known-issue guidance |
+| Problem/ticket history | Episodic and recurring-root-cause evidence |
+| mem0 | Compact durable operational heuristics |
+| Qdrant | Retrieval index only |
 
-A dated export is a routing lead. Live SQL is the authority for the current incident.
+A KB hit, old ticket, snapshot, or memory item is a lead. A current-ticket factual claim must be verified against live evidence when live verification is possible.
+
+## No permanent domain-bot taxonomy
+
+There is one investigator role and one reviewer role. Domain skills route the same workers toward the right evidence surfaces; they do not create a permanent fleet of specialist agents.
+
+## Completion means reviewed publication, not plausible prose
+
+An investigation is not complete because the model says it is done. The lifecycle is complete only when the proposal is structurally reviewable, independently reviewed, and either deterministically published or sent through the bounded rework/escalation path.

@@ -1,21 +1,18 @@
 #!/usr/bin/env python3
-"""Fail-fast consistency checks for Chitragupta's knowledge routing layer.
+"""Fail-fast consistency checks for Chitragupta's current knowledge/runtime contract.
 
-This validator intentionally checks things that otherwise fail silently at runtime:
-- a manifest route points at a missing Knowledge document;
-- an identifier maps to a route that no longer exists;
-- a route names a skill that is not deployable;
-- manifest/task-router route taxonomies drift apart;
-- the live L2 workflow skill regresses to retired board/bridge instructions.
+Checks structural drift that otherwise fails silently:
+- routed Knowledge documents or deployable skills disappear;
+- manifest/task-router route taxonomies diverge;
+- current workflow skills regress to retired review-board/parent-gating instructions;
+- retired duplicate lifecycle or model-owned SQL-transport scripts reappear.
 
-It does not judge the semantic correctness of domain documentation. That belongs to
-retrieval evaluation and live verification, not a filesystem consistency check.
+Semantic domain correctness still requires retrieval evaluation and live verification.
 """
 from __future__ import annotations
 
 import json
 import re
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,6 +21,19 @@ MANIFEST = KNOWLEDGE / "manifest.json"
 TASK_ROUTER = KNOWLEDGE / "task-router.md"
 DEPLOY_SKILLS = ROOT / "deploy" / "skills" / "xstudio"
 L2_SKILL = DEPLOY_SKILLS / "xstudio-l2-ticket-workflow" / "SKILL.md"
+REVIEW_SKILL = DEPLOY_SKILLS / "xstudio-l2-draft-verifier" / "SKILL.md"
+
+RETIRED_RUNTIME_PATHS = (
+    ROOT / "Model_Bench" / "dispatch_l2_review.py",
+    ROOT / "Model_Bench" / "kanban_forward_bridge.py",
+    ROOT / "Model_Bench" / "nudge_unpublished_runs.py",
+    ROOT / "Model_Bench" / "_tmp_restart_gateways.sh",
+    ROOT / "Model_Bench" / "_tmp_switch_to_qwen.sh",
+    ROOT / "Model_Bench" / "_tmp_test_invoke.sh",
+    ROOT / "deploy" / "profiles" / "l2-gemma",
+    ROOT / "investigate_sap_posting.py",
+    ROOT / "test_conn.py",
+)
 
 
 def _targets(value) -> list[str]:
@@ -32,6 +42,25 @@ def _targets(value) -> list[str]:
     if isinstance(value, str):
         return [part.strip() for part in value.split(" or ") if part.strip()]
     return []
+
+
+def _check_current_skill(path: Path, label: str, errors: list[str]) -> None:
+    if not path.exists():
+        errors.append(f"missing deployable {label} skill: {path}")
+        return
+    text = path.read_text(encoding="utf-8")
+    forbidden = {
+        "separate `l2-review` board": "retired separate review-board architecture",
+        "kanban_forward_bridge.py": "retired cross-board forward bridge",
+        "parent-gated reviewer child": "retired pre-created/parent-gated reviewer topology",
+        "parent-gated reviewer flow": "retired pre-created/parent-gated reviewer topology",
+        "fresh parent-gated reviewer": "retired pre-created/parent-gated reviewer topology",
+        "l2-gemma-verifier": "retired model-based reviewer profile",
+        "l2-qwen-verifier": "retired model-based reviewer profile",
+    }
+    for needle, why in forbidden.items():
+        if needle in text:
+            errors.append(f"{label} skill contains {why}: {needle}")
 
 
 def main() -> int:
@@ -51,7 +80,6 @@ def main() -> int:
     route_defs = manifest.get("routes") or []
     route_names = [r.get("route") for r in route_defs if r.get("route")]
     route_set = set(route_names)
-
     if len(route_names) != len(route_set):
         errors.append("duplicate route names in Knowledge/manifest.json")
     if "discover" not in route_set:
@@ -63,7 +91,6 @@ def main() -> int:
     if len(skill_names) != len(skill_set):
         errors.append("duplicate skill names in Knowledge/manifest.json")
 
-    # Every declared skill and every route skill must actually be deployable.
     for skill in sorted(skill_set):
         skill_path = DEPLOY_SKILLS / skill / "SKILL.md"
         if not skill_path.exists():
@@ -75,9 +102,6 @@ def main() -> int:
         if skill and skill not in skill_set:
             errors.append(f"route {route_name!r} references undeclared skill {skill!r}")
 
-    # Every knowledge file referenced by the machine router must exist. Anchors are
-    # intentionally stripped because the filesystem validator cannot verify markdown
-    # heading semantics without turning into another markdown parser.
     referenced = list(manifest.get("always_load") or [])
     for route in route_defs:
         referenced.extend(route.get("load") or [])
@@ -86,7 +110,6 @@ def main() -> int:
         if not (KNOWLEDGE / base).exists():
             errors.append(f"manifest references missing Knowledge file: {rel}")
 
-    # Identifier mappings must point only at canonical routes.
     for identifier, configured in (manifest.get("identifier_routing") or {}).items():
         targets = _targets(configured)
         if not targets:
@@ -96,9 +119,6 @@ def main() -> int:
             if target not in route_set:
                 errors.append(f"identifier {identifier!r} points at unknown route {target!r}")
 
-    # The human router may contain richer prose, but it must at least expose the same
-    # canonical route names. This catches the common silent failure where one side is
-    # renamed/added and the other side is forgotten.
     if TASK_ROUTER.exists():
         router_text = TASK_ROUTER.read_text(encoding="utf-8")
         for route in sorted(route_set):
@@ -107,20 +127,12 @@ def main() -> int:
     else:
         errors.append("Knowledge/task-router.md is missing")
 
-    # Prevent the exact stale-workflow regression fixed on 2026-09-05.
-    if L2_SKILL.exists():
-        skill_text = L2_SKILL.read_text(encoding="utf-8")
-        forbidden = {
-            "separate `l2-review` board": "retired separate review-board architecture",
-            "kanban_forward_bridge.py` watches": "retired forward bridge",
-            "l2-gemma-verifier": "retired model-based reviewer profile",
-            "l2-qwen-verifier": "retired model-based reviewer profile",
-        }
-        for needle, why in forbidden.items():
-            if needle in skill_text:
-                errors.append(f"workflow skill contains {why}: {needle}")
-    else:
-        errors.append("deployable xstudio-l2-ticket-workflow skill is missing")
+    _check_current_skill(L2_SKILL, "investigator workflow", errors)
+    _check_current_skill(REVIEW_SKILL, "reviewer", errors)
+
+    for path in RETIRED_RUNTIME_PATHS:
+        if path.exists():
+            errors.append(f"retired lifecycle/transport artifact has reappeared: {path.relative_to(ROOT)}")
 
     verified = manifest.get("verified")
     if not verified:

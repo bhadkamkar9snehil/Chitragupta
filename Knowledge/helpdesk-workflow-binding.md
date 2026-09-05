@@ -1,141 +1,109 @@
 ---
 type: "Reference"
 title: "Helpdesk Workflow Binding for Hermes"
-description: "Explains how Hermes uses the existing Complaint_Mst_Tbl workflow without creating a second ticket lifecycle."
+description: "Current deterministic binding between reviewed Hermes L2 responses and the existing XStudio Helpdesk workflow."
 tags:
-  - "hermes"
-  - "helpdesk"
-  - "workflow"
-status: draft
+  - hermes
+  - helpdesk
+  - workflow
+status: current
+verified: "2026-09-05"
 ---
 
 # Helpdesk Workflow Binding for Hermes
 
-## What is known from the supplied snapshot
+XStudio remains the workflow engine. Hermes publishes reviewed responses through the audited SQL runtime and uses only live-observed Helpdesk state values recorded in the deployment binding.
 
-`dbo.Complaint_Mst_Tbl` contains:
+## Canonical deployment binding
 
-```text
-Status
-Solution
-SupportExecutiveRemarks
-AskRemarks
-ReplyRemarks
-AskStatus
-messages
-ssmmessage
-Soharmessage
-AssignedUserID
-Priority
+The current binding is `deploy/helpdesk_workflow_binding.json`:
+
+```json
+{
+  "eligible_ticket_status": "Enter",
+  "resolved_ticket_status": "Closed",
+  "waiting_user_ticket_status": null,
+  "waiting_user_ask_status": "Ask",
+  "l3_ticket_status": null,
+  "needs_human_action_ticket_status": null,
+  "strict_resolution_status_binding": true,
+  "allow_metadata_status_override": false
+}
 ```
 
-The supplied Helpdesk stored-procedure export contains ticket-number and assignment
-procedures and a UAT procedure that inserts complaints, but it does not show a generic
-close/reply procedure.
+`Closed` and `Ask` were bound from observed live workflow values. The null entries are intentionally unbound; they must not be replaced with guessed names.
 
-That does not prove one does not exist in the current installed configuration/system
-databases.
+If the Helpdesk workflow changes, rediscover it and update the binding from live evidence.
 
-## First deployment action
+## Discovery
 
-Run:
+Use the deployment helper/read-only discovery path:
+
+```bash
+python Model_Bench/configure_helpdesk_workflow.py
+```
+
+The SQL discovery primitive is:
 
 ```sql
 EXEC dbo.Hermes_L2_Discover_Helpdesk_Workflow_Usp;
 ```
 
-It returns:
+Do not infer status names such as `Open`, `Resolved`, `L3`, or `Waiting` from convention.
 
-1. distinct current `Status` / `AskStatus` / `messages` combinations;
-2. priority IDs;
-3. complaint types;
-4. current SQL modules that touch `Complaint_Mst_Tbl` or reply fields;
-5. current triggers on the ticket table;
-6. recent ticket rows with the workflow/reply fields.
+## Deterministic response mapping
 
-Review those results before binding Hermes.
+The model proposes a `response_type`; deterministic code maps that type to the configured workflow fields.
 
-## Hermes does not invent status names
+### RESOLUTION
 
-The stored-procedure package deliberately avoids assumptions such as:
+- Uses `resolved_ticket_status`.
+- With `strict_resolution_status_binding = true`, publication fails closed if that status is absent.
+- The run is not allowed to become resolved while the visible Helpdesk ticket remains unresolved.
 
-```text
-Status = Open
-Status = L2
-Status = Closed
-Status = L3
-```
+### QUESTION
 
-The actual values come from the current Helpdesk.
+- Uses `waiting_user_ticket_status` when one is bound.
+- Uses `waiting_user_ask_status` when one is bound.
+- In the current binding, ticket Status is left unchanged and `AskStatus` becomes `Ask`.
 
-The runtime supplies:
+### L3_ESCALATION
 
-```text
-EligibleStatusCsv       statuses Hermes should poll as unresolved L2
-ResolvedTicketStatus    existing Helpdesk state representing resolved/closed
-L3TicketStatus          existing Helpdesk state shown to humans
-NewAskStatus            existing question/waiting state, if the current workflow uses one
-```
+- Uses `l3_ticket_status` only when one is bound.
+- With the current null binding, the runtime does not invent a ticket status.
 
-## L2 reply storage
+### NEEDS_HUMAN_ACTION
 
-The detailed L2 response is stored in:
+- Uses `needs_human_action_ticket_status` when bound, otherwise falls back to `l3_ticket_status` when bound.
+- With both currently null, the runtime records the structured response without inventing a workflow state.
+
+### UPDATE
+
+- Does not force a terminal Helpdesk status.
+- The SQL publish path supplies continuation eligibility so useful progress is not treated as final resolution.
+
+## Model status overrides are disabled
+
+`allow_metadata_status_override` is currently false. A model-provided `new_ticket_status` is therefore ignored.
+
+This prevents a plausible-sounding response from inventing or bypassing real Helpdesk workflow values.
+
+## Structured L2 history
+
+Detailed Hermes responses live in:
 
 ```text
 Hermes_L2_Response_Trn_Tbl
 ```
 
-joined by:
+linked by:
 
 ```text
 Complaint_Mst_Tbl.ID = Hermes_L2_Response_Trn_Tbl.TicketID
 ```
 
-This is the structured reply surface XStudio should display.
+Existing single-value remark fields are not the canonical Hermes history store. Mirroring to legacy fields is a deployment/publish-path concern, not an investigator action.
 
-The existing single-value fields such as `SupportExecutiveRemarks` and `AskRemarks` are not
-required to become the history store.
+## Ownership rule
 
-`Hermes_L2_Publish_Response_Usp` can optionally mirror the reply into those existing fields
-during transition, but the default is not to overwrite them.
-
-## User follow-up
-
-When Hermes asks a question:
-
-```text
-Hermes response row = QUESTION
-RequiresUserInput = 1
-TicketModifiedOnSeen = ticket ModifiedOn after Hermes publication
-```
-
-The candidate query does not pick the ticket again until the Helpdesk row changes after that
-timestamp.
-
-When the user replies through the existing Helpdesk mechanism, the ticket's `ModifiedOn`
-changes. Hermes sees it again and starts the next attempt with the previous Hermes response
-history loaded.
-
-## Resolve and L3
-
-Resolution:
-
-```sql
-EXEC dbo.Hermes_L2_Resolve_Ticket_Usp
-    @RunID = ...,
-    @ReplyText = ...,
-    @Resolution = ...,
-    @ResolvedTicketStatus = '<LIVE STATUS>';
-```
-
-L3:
-
-```sql
-EXEC dbo.Hermes_L2_Escalate_L3_Usp
-    @RunID = ...,
-    @ReplyText = ...,
-    @L3TicketStatus = '<LIVE STATUS>';
-```
-
-The Helpdesk remains the workflow engine; Hermes merely drives the already-valid transition
-state through SQL.
+Investigators and reviewers never update `Complaint_Mst_Tbl` directly and never publish workflow states themselves. The deterministic publisher owns the approved transition and verifies the resulting SQL/ticket state.

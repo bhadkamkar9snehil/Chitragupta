@@ -20,9 +20,11 @@ kanban_bridged_forward.json
 kanban_bridged_reject.json
 kanban_published_runs.json
 .hermes_l2_last_claim.json
-tmp_*.py
-tmp_*.sql
-_temp_*.py
+nudged_runs.json
+Model_Bench/drafts/
+tmp_*
+_temp_*
+_tmp_*
 _publish*.py
 _publish*.sql
 

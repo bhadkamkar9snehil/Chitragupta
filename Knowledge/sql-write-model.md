@@ -1,155 +1,80 @@
 ---
-type: "Write Model"
-title: "Hermes SQL Write Model"
-description: "Defines how Hermes performs SQL-backed L2 fixes while following XKB's official-SP-first and live-verification principles."
-status: draft
+type: "Mutation Boundary"
+title: "Hermes L2 SQL Mutation Boundary"
+description: "Defines the current read-only L2 worker boundary and the safety rules for any future deterministic corrective-action surface."
+status: current
+verified: "2026-09-05"
 tags:
   - hermes
   - sql
   - write
-  - stored-procedure
+  - safety
 ---
 
-# Hermes SQL Write Model
+# Hermes L2 SQL Mutation Boundary
 
-## Hermes is allowed to write
+## Current L2 workers are read-only
 
-Hermes is not constrained to read-only diagnosis.
+The investigator and reviewer do not have an arbitrary SQL write surface.
 
-It may write:
+Their database interface is the typed `xstudio_l2` tool. Its agent-facing contract permits bounded reads/discovery and rejects write/DDL/EXEC SQL. Arbitrary stored-procedure execution is unavailable; `read_procedure` is limited to an explicit reviewed read-only allowlist.
+
+This is a structural boundary, not a prompt preference.
+
+## What happens when diagnosis implies a write
+
+Do not improvise a write path through terminal, Python, pyodbc, sqlcmd, package installation, or an unreviewed procedure.
+
+Classify the outcome instead:
 
 ```text
-XStudio_Helpdesk
-XStudio_Xbatch / related project data databases
-XStudio project configuration databases when the routed L2 fix requires it
+Cause known + exact corrective action known + worker not authorized
+    -> NEEDS_HUMAN_ACTION
+
+Cause unresolved / contradictory / genuinely beyond L2
+    -> L3_ESCALATION
 ```
 
-The exact write is determined by the ticket and by the current installed XStudio/XMES
-surface.
+The response should include the evidence already gathered and, for `NEEDS_HUMAN_ACTION`, the specific action a human/operator should evaluate.
 
-## Write-path precedence
+## Ticket publication is different
 
-Adopt the XKB rule:
+Publishing an approved L2 response is a deterministic runtime responsibility, not an investigator/reviewer write.
+
+The publisher uses the audited Hermes SQL path after reviewer approval and applies only workflow states allowed by `deploy/helpdesk_workflow_binding.json`.
+
+A model does not call the publisher directly and does not choose arbitrary Helpdesk status values.
+
+## Future corrective-action harnesses
+
+If a deterministic production-fix operation is added later, expose it as a narrow reviewed operation rather than reopening raw SQL mutation to the model.
+
+For each such operation:
 
 ```text
-1. resolve the real target database/object
-2. search for the official stored procedure/API that owns the operation
+1. resolve the real database/object
+2. identify the official supported SP/API/trigger-mediated path
 3. inspect the current signature/definition
-4. use it when it covers the required operation
-5. inspect trigger side effects when relevant
-6. if no suitable official path exists, use a direct SQL write deliberately
-7. verify the complete affected chain
+4. explicitly allowlist the operation and parameters
+5. capture before-state evidence
+6. execute through harness-owned code
+7. re-read the affected chain
+8. audit target, parameters/action, before state, after state, and result
 ```
 
-This rule exists because XStudio behaviour is often implemented by SPs/triggers that do
-more than a single table update. It is not a prohibition on SQL writes.
+If no suitable official path exists, a direct write is an operator/development decision requiring its own explicit implementation and review. It is not an agent fallback.
 
-## Procedure discovery before a fix
+## Why official-path-first still matters
 
-Hermes can perform the discovery itself:
+XStudio/XMES stored procedures and triggers often perform linked business logic, logging, derived-row creation, SAP integration work, and state transitions. A procedure name alone does not prove whether it reads or writes.
 
-```sql
-SELECT s.name AS SchemaName, p.name AS ProcedureName
-FROM sys.procedures p
-JOIN sys.schemas s ON s.schema_id = p.schema_id
-WHERE p.name LIKE '%<feature>%'
-ORDER BY p.name;
+Therefore discovery and definition inspection remain useful during diagnosis, but the L2 worker reads those definitions rather than executing unreviewed mutation procedures.
 
-SELECT OBJECT_SCHEMA_NAME(m.object_id) AS SchemaName,
-       OBJECT_NAME(m.object_id) AS ObjectName
-FROM sys.sql_modules m
-WHERE m.definition LIKE '%<target table or column>%';
+## Verification checklist
 
-SELECT OBJECT_NAME(object_id) AS ProcedureName,
-       parameter_id, name,
-       TYPE_NAME(user_type_id) AS DataType,
-       max_length, is_output
-FROM sys.parameters
-WHERE object_id = OBJECT_ID('dbo.<ProcedureName>')
-ORDER BY parameter_id;
-
-SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.<ProcedureName>'));
-```
-
-Search the relevant shared configuration, system configuration and data databases rather
-than assuming the procedure is in one fixed database.
-
-## Why the SP-first rule matters in this project
-
-The supplied XBatch snapshot already demonstrates that procedures can:
-
-- generate or transform posting rows;
-- perform SAP posting sequence logic;
-- populate API error summaries;
-- log execution to `XMES_Log_Trn_Tbl`;
-- update linked domain states;
-- validate billet/heat/quantity conditions;
-- recalculate summaries.
-
-For example, `SAP_Posting_Data_ByHeat_Usp` is not a read procedure despite the word
-"Data" in its name: the supplied definition inserts pending production/consumption rows
-into `SAP_Posting_Tbl`.
-
-Therefore Hermes must inspect definitions, not infer mutability from names.
-
-## Direct writes
-
-Direct writes are valid L2 actions when the current system has no suitable official operation.
-
-Hermes should still record:
-
-```text
-ticket ID
-target DB/table
-predicate/record IDs
-before state
-executed SQL
-after state
-result
-```
-
-This can live in the structured L2 response's investigation/action JSON rather than requiring
-a second audit subsystem.
-
-## Audit identity
-
-Use a dedicated Hermes service/user identity where the schema/SP accepts a user ID.
-Preserve the platform's existing `CreatedBy`, `ModifiedBy`, `Source`, `ModifiedOn` conventions.
-
-Do not invent a new `Source` value where downstream logic treats `Source` as an enum; inspect
-the current data/SP behaviour first.
-
-## Postflight
-
-After a mutation, re-read the primary row and its dependent chain.
-
-Examples:
-
-### SAP posting fix
-
-```text
-domain production/consumption row
--> SAP transaction ID/status
--> API summary/error
--> material/inspection document response where applicable
--> execution log
-```
-
-### Heat correction
-
-```text
-source per-heat row
--> integrated heat tracking
--> production/summary consumer
--> any SAP transaction derived from it
-```
-
-### Helpdesk resolution
-
-```text
-Hermes L2 response inserted
--> existing ticket status/solution updated through current workflow path
--> ticket re-read
-```
-
-Hermes can close the ticket when the technical result and Helpdesk write both succeed.
+- [ ] All ticket-specific database evidence came through `xstudio_l2`.
+- [ ] Table/column names were validated rather than guessed.
+- [ ] No agent terminal call recreated a database transport.
+- [ ] No arbitrary write/DDL/EXEC SQL was attempted.
+- [ ] A required production/configuration mutation was represented as `NEEDS_HUMAN_ACTION` or `L3_ESCALATION`, not silently performed.
+- [ ] Ticket publication, if approved, remained deterministic and workflow-bound.

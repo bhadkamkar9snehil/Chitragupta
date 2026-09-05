@@ -1,26 +1,118 @@
-# Hermes L2 Bundle Validation
+# Hermes L2 Validation Guide
 
-- OKF validator: **PASS**
-- Stored procedures in full install: **20**
-- Unique stored procedures: **20**
-- Routing regression cases: **9/9 PASS**
+This file is a validation procedure, not a permanent PASS certificate. Runtime, model, workflow, and live SQL state can change after any commit.
 
-## Routing regression cases
+## Local validation authority
 
-| Ticket | Expected | Got | Pass |
-|---|---|---|---|
-| Heat 12345 production is not posting to SAP | `sap_posting` | `sap_posting` | Yes |
-| Transaction 3F8... failed and has an API response error | `api_transaction` | `api_transaction` | Yes |
-| Work order 50001234 is missing or not released | `work_order` | `work_order` | Yes |
-| Heat 12345 is visible in EAF but missing in CCM | `heat_execution` | `heat_execution` | Yes |
-| Billet 123456 is not available in billet yard / rolling | `billet_inventory` | `billet_inventory` | Yes |
-| Chemistry result or usage decision is not reflected | `quality` | `quality` | Yes |
-| OEE/delay value is wrong for yesterday | `performance` | `performance` | Yes |
-| Ticket workflow reply/close status is wrong | `helpdesk_ticket` | `helpdesk_ticket` | Yes |
-| Unclassified cross-domain MES fault | `discover` | `discover` | Yes |
+Run from the checked-out repository in the real Windows/WSL/Hermes environment:
 
-## SQL static checks
+```bash
+bash Model_Bench/validate_l2_pipeline_local.sh
+```
 
-- All expected Hermes procedure definitions are present once in the full-install script.
-- The package was not executed against the LMEL SQL Server in this session; live deployment must run `sql/99_postflight.sql`.
-- Helpdesk `Status` / `AskStatus` semantics are intentionally not invented from the truncated snapshot. Run `Hermes_L2_Discover_Helpdesk_Workflow_Usp` after deployment.
+That script performs:
+
+- Python syntax checks for current lifecycle/tooling files;
+- deterministic lifecycle contract tests;
+- typed `xstudio_l2` contract tests;
+- knowledge manifest/retrieval checks;
+- read-only workflow discovery;
+- read-only pipeline status;
+- reconcile dry-run.
+
+Do not treat a GitHub Actions result as the production validation authority for this project.
+
+## SQL deployment validation
+
+`Knowledge/00_Hermes_L2_FULL_INSTALL.sql` is the generated complete bundle and already contains the current ticket-dispatch and UPDATE-continuation hardening sources.
+
+After deploying the generated bundle, run:
+
+```text
+Knowledge/98_pipeline_postflight.sql
+```
+
+Then check:
+
+```bash
+python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
+```
+
+Expected contract:
+
+```text
+max_pipeline_wip = 1
+review priority = 30
+rework priority = 20
+new investigation priority = 10
+max_review_cycles = 3
+workflow binding ready = true
+```
+
+No unexplained active SQL run should exist without corresponding Kanban lifecycle state.
+
+## Architecture regression checks
+
+Current operational instructions must continue to describe:
+
+```text
+claim one ticket
+-> investigator
+-> normalize
+-> deferred reviewer with frozen proposal_json
+-> approve/publish OR reject/rework
+-> normalize
+-> fresh reviewer
+```
+
+The following are retired and must not reappear as current instructions or runtime dependencies:
+
+- separate `l2-review` board;
+- `kanban_forward_bridge.py`;
+- parent-gated/pre-created reviewer cards;
+- backlog `< 3` claim admission;
+- SQL `AttemptNo` as the review counter;
+- model-based verifier profile names;
+- investigator-driven draft/approve/reject publication choreography.
+
+## Typed-tool regression check
+
+For a naturally arriving fresh ticket, inspect the worker trace. Database/schema/ticket evidence should use `xstudio_l2`.
+
+A production worker should not attempt terminal execution of:
+
+```text
+Hermes_Orchestrator.py
+Windows Python as a database bridge
+sqlcmd
+pyodbc import/installation
+pip/uv/conda/apt package installation for SQL transport
+```
+
+Those are harness concerns, not model decisions.
+
+## Knowledge routing regression set
+
+The canonical routes remain:
+
+```text
+helpdesk_ticket
+sap_posting
+api_transaction
+work_order
+heat_execution
+billet_inventory
+quality
+performance
+hermes_runtime
+discover
+```
+
+Run:
+
+```bash
+python3 Model_Bench/validate_knowledge_manifest.py
+python3 Model_Bench/test_kb_retrieval.py
+```
+
+Ticket-specific conclusions still require live evidence; routing-test success does not prove a production diagnosis.
