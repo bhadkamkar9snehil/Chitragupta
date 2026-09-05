@@ -1,112 +1,152 @@
 ---
 type: "Reference"
 title: "Hermes L2 Runtime Database Design"
-description: "Defines the minimal SQL persistence model and stored-procedure surface used by the Hermes L2 worker."
+description: "Current SQL persistence and authority boundaries for the deterministic Hermes L2 runtime."
 tags:
-  - "hermes"
-  - "l2"
-  - "sql"
-  - "runtime"
-status: draft
+  - hermes
+  - l2
+  - sql
+  - runtime
+status: current
+verified: "2026-09-05"
 ---
 
 # Hermes L2 Runtime Database Design
 
-## Minimal persistence
+## Authority split
 
-Hermes adds only two runtime tables to `XStudio_Helpdesk`.
+`XStudio_Helpdesk.dbo.Complaint_Mst_Tbl` remains the user-visible ticket/workflow record. Hermes adds structured run, evidence, escalation, activity, and governed-knowledge persistence around that existing Helpdesk.
+
+The key boundary is not whether an internal SQL procedure is technically capable of mutation. It is **which actor is allowed to invoke which surface**:
+
+```text
+investigator/reviewer
+    -> typed xstudio_l2 surface
+    -> bounded live reads/discovery + run ledger
+    -> no arbitrary SQL write/DDL/EXEC
+
+deterministic lifecycle runtime
+    -> claim/recover/publish/fail/workflow procedures
+    -> audited harness-owned SQL transport
+
+human/operator maintenance
+    -> explicit reviewed L3/admin procedures
+```
+
+The model is not the database policy engine and is not the ticket publisher.
+
+## Core run persistence
 
 ```text
 Complaint_Mst_Tbl                    existing ticket/workflow master
         |
         | ID = TicketID
         v
-Hermes_L2_Response_Trn_Tbl           one row per Hermes attempt/run/reply
+Hermes_L2_Response_Trn_Tbl           one row per claimed L2 run/response
         |
         | ID = RunID
         v
-Hermes_L2_SQL_Action_Trn_Tbl         SQL/SP reads and writes performed in that run
+Hermes_L2_SQL_Action_Trn_Tbl         audited SQL actions performed by harness code
 ```
 
-There is no queue table. There is no RAG table. There is no vector table. There is no
-separate workflow database.
+A response row also acts as the durable L2 run row. It carries claim/liveness state, structured investigation state, retry eligibility, and eventual response/completion state. This avoids a second queue/run database alongside the Helpdesk.
 
-The existing Helpdesk remains authoritative for ticket status and lifecycle.
+Kanban is orchestration state in Hermes; SQL remains authoritative for the ticket/run record.
 
-## Why a response row is also a run row
+## Additional support persistence
 
-A Hermes attempt needs only enough state to:
-
-- claim the ticket;
-- avoid duplicate parallel work;
-- survive/recover from a failed worker;
-- preserve the routed problem statement and investigation;
-- wait for a user reply;
-- publish a resolution or L3 escalation.
-
-`Hermes_L2_Response_Trn_Tbl` therefore carries both execution state and the eventual
-structured L2 response. This avoids a redundant queue/run subsystem.
-
-## SQL action table
-
-Hermes is explicitly allowed to write SQL.
-
-Every significant SQL or stored-procedure action can be executed through
-`Hermes_L2_Execute_SQL_Usp`, which stores:
+The SQL package also contains supporting structures including:
 
 ```text
-ticket/run
-action number
-database/object
-action type
-SQL text
-parameter summary
-before evidence
-after evidence
-success/failure
-row count
-error
-timestamps
+Hermes_L3_Escalation_Trn_Tbl         structured L3 handoff / human queue
+Hermes_Ticket_Activity_Trn_Tbl       timestamped Helpdesk activity history
+Hermes_Solution_Article_Mst_Tbl      governed reusable solution knowledge
+Hermes_Agent_Trace_Trn_Tbl           platform-level agent/tool trace sink
 ```
 
-This is an audit surface, not a policy engine.
+Problem/feedback/linking structures support history and governance. They do not mean every L2 response becomes a Solution article automatically.
 
-The stored procedure does not restrict the statement to `SELECT`. Actual capability is
-determined by the SQL login used by Hermes.
+## SQL action audit versus worker capability
 
-## XKB principle preserved
+`Hermes_L2_Execute_SQL_Usp` is an internal audited execution primitive used by harness code. Its existence does **not** grant investigators or reviewers arbitrary SQL mutation rights.
 
-For an XStudio/XMES change, the reasoning order remains:
+The worker-facing `xstudio_l2` plugin structurally constrains the model:
+
+- `select` and `query` are read-only;
+- write/DDL/EXEC SQL is rejected;
+- arbitrary stored-procedure execution is unavailable;
+- `read_procedure` is restricted to an explicit reviewed read-only allowlist;
+- schema/object discovery and definitions are read operations;
+- database targets are allowlisted;
+- result size and repeated-failure behavior are bounded;
+- terminal attempts to recreate Python/pyodbc/sqlcmd transport are blocked.
+
+A required production/configuration mutation therefore becomes `NEEDS_HUMAN_ACTION` when the cause/action are known, or `L3_ESCALATION` when the safe cause/path remains unresolved.
+
+## Typed-tool discovery is deployment infrastructure
+
+A profile-local plugin copy is sufficient for plugin hooks to run, but live testing showed it is **not** sufficient for Hermes to expose the plugin's toolset. The `xstudio-l2-tools` plugin must also be installed in the shared Hermes plugin directory and enabled in the root Hermes config so toolset discovery recognises `xstudio_l2`.
+
+For the small local 9B L2 profiles, deferred `tool_search` is disabled. A mandatory evidence tool should be directly present in the worker's tool list rather than requiring an extra discovery round trip. These requirements are enforced by `Model_Bench/deploy_l2_pipeline_runtime.sh` and its targeted config patchers.
+
+## Deterministic lifecycle ownership
+
+The central lifecycle is owned by `Model_Bench/l2_pipeline_runtime.py`:
 
 ```text
-route
--> inspect current object/SP/trigger
--> use the current official SP/API/trigger when it owns the operation
--> direct SQL when that is the correct/current path
--> postflight the affected state
+claim one ticket
+-> investigator [10]
+-> normalize structured completion
+-> create reviewer [30] with frozen proposal_json
+-> approve -> deterministic publish
+   reject  -> rework [20] -> normalize -> fresh reviewer
 ```
 
-The generic Hermes SQL executor is therefore not an excuse to ignore the existing XMES
-stored procedures.
+`review_cycle` bounds review/rework independently of SQL `AttemptNo`. Reviewer cards are created only after the source completion is reviewable; there is no pre-created or parent-gated reviewer.
 
-The supplied XBatch SP snapshot already demonstrates why definition inspection matters:
-procedures such as `XMES_SAP_Posting_Sequence_Usp` modify posting states, while a name such
-as `SAP_Posting_Data_ByHeat_Usp` can perform inserts rather than merely return "data".
+Ticket publication uses the audited SQL runtime only after review approval. Model-supplied ticket status is ignored by default.
 
-## Workflow status values
+## Workflow binding
 
-The supplied schema export does not expose the `Status`/`AskStatus` values in its truncated
-sample columns.
+Current deployment binding:
 
-Hermes therefore does not hard-code invented workflow states.
-
-Run:
-
-```sql
-EXEC dbo.Hermes_L2_Discover_Helpdesk_Workflow_Usp;
+```text
+eligible ticket status:       Enter
+resolved ticket status:       Closed
+waiting-user AskStatus:       Ask
+waiting-user ticket status:   unbound
+L3 ticket status:             unbound
+needs-human-action status:    unbound
 ```
 
-and bind the actual current Helpdesk values in Hermes configuration.
+Canonical file:
 
-The dispatcher receives the live unresolved-L2 statuses as `@EligibleStatusCsv`.
-Resolution and L3 procedures receive the actual target status values as parameters.
+```text
+deploy/helpdesk_workflow_binding.json
+```
+
+`RESOLUTION` publication fails closed if the resolved status is not bound. Null L3/human-action statuses are not replaced with guessed values.
+
+## L3 maintenance boundary
+
+Per-escalation human decisions use `Hermes_L3_Update_Escalation_Status_Usp`.
+
+`Hermes_L3_Release_Defect_Escalations_Usp` is an explicit operator maintenance procedure for releasing stale L3 blocks whose root cause matches known historical harness-defect families. It defaults to dry-run, only targets active escalation states, and is not an investigator/reviewer tool.
+
+This pattern is intentional: corrective administration should be a narrow reviewed deterministic operation with observable effect, not an ad-hoc direct UPDATE or a model-owned write path.
+
+## Live validation lesson
+
+A Git cleanup is not automatically a deployment cleanup. Live validation found retired lifecycle scripts still present under the deployed Hermes scripts directory after they had been deleted from the repository. The deployment script now removes the known retired copies on every deploy, and local validation fails if they reappear.
+
+The live end-to-end run also verified the intended rejection path: the reviewer used `xstudio_l2`, rejected a proposal that mischaracterised a stale scheduler recovery as a database-access failure, and the reconciler created priority-20 rework with an incremented `review_cycle`.
+
+## Knowledge boundary
+
+- Git-tracked `Knowledge/` is canonical domain/runtime reference.
+- SQL Solution articles are governed reusable known-issue knowledge.
+- Ticket/problem history is episodic evidence.
+- mem0 contains compact durable heuristics only.
+- Qdrant is retrieval/indexing, not source of truth.
+
+Current-ticket factual claims still require live evidence when live verification is possible.

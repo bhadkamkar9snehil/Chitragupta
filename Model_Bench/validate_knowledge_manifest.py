@@ -5,6 +5,7 @@ Checks structural drift that otherwise fails silently:
 - routed Knowledge documents or deployable skills disappear;
 - manifest/task-router route taxonomies diverge;
 - current workflow skills regress to retired review-board/parent-gating instructions;
+- runtime docs regress to model-owned arbitrary SQL mutation/publication;
 - retired duplicate lifecycle or model-owned SQL-transport scripts reappear.
 
 Semantic domain correctness still requires retrieval evaluation and live verification.
@@ -19,6 +20,8 @@ ROOT = Path(__file__).resolve().parent.parent
 KNOWLEDGE = ROOT / "Knowledge"
 MANIFEST = KNOWLEDGE / "manifest.json"
 TASK_ROUTER = KNOWLEDGE / "task-router.md"
+RUNTIME_DESIGN = KNOWLEDGE / "hermes-runtime-database-design.md"
+SP_CATALOG = KNOWLEDGE / "hermes-sp-catalog.md"
 DEPLOY_SKILLS = ROOT / "deploy" / "skills" / "xstudio"
 L2_SKILL = DEPLOY_SKILLS / "xstudio-l2-ticket-workflow" / "SKILL.md"
 REVIEW_SKILL = DEPLOY_SKILLS / "xstudio-l2-draft-verifier" / "SKILL.md"
@@ -44,23 +47,14 @@ def _targets(value) -> list[str]:
     return []
 
 
-def _check_current_skill(path: Path, label: str, errors: list[str]) -> None:
+def _check_forbidden(path: Path, label: str, forbidden: dict[str, str], errors: list[str]) -> None:
     if not path.exists():
-        errors.append(f"missing deployable {label} skill: {path}")
+        errors.append(f"missing {label}: {path}")
         return
     text = path.read_text(encoding="utf-8")
-    forbidden = {
-        "separate `l2-review` board": "retired separate review-board architecture",
-        "kanban_forward_bridge.py": "retired cross-board forward bridge",
-        "parent-gated reviewer child": "retired pre-created/parent-gated reviewer topology",
-        "parent-gated reviewer flow": "retired pre-created/parent-gated reviewer topology",
-        "fresh parent-gated reviewer": "retired pre-created/parent-gated reviewer topology",
-        "l2-gemma-verifier": "retired model-based reviewer profile",
-        "l2-qwen-verifier": "retired model-based reviewer profile",
-    }
     for needle, why in forbidden.items():
         if needle in text:
-            errors.append(f"{label} skill contains {why}: {needle}")
+            errors.append(f"{label} contains {why}: {needle}")
 
 
 def main() -> int:
@@ -127,8 +121,26 @@ def main() -> int:
     else:
         errors.append("Knowledge/task-router.md is missing")
 
-    _check_current_skill(L2_SKILL, "investigator workflow", errors)
-    _check_current_skill(REVIEW_SKILL, "reviewer", errors)
+    skill_forbidden = {
+        "separate `l2-review` board": "retired separate review-board architecture",
+        "kanban_forward_bridge.py": "retired cross-board forward bridge",
+        "parent-gated reviewer child": "retired pre-created/parent-gated reviewer topology",
+        "parent-gated reviewer flow": "retired pre-created/parent-gated reviewer topology",
+        "fresh parent-gated reviewer": "retired pre-created/parent-gated reviewer topology",
+        "l2-gemma-verifier": "retired model-based reviewer profile",
+        "l2-qwen-verifier": "retired model-based reviewer profile",
+    }
+    _check_forbidden(L2_SKILL, "investigator workflow skill", skill_forbidden, errors)
+    _check_forbidden(REVIEW_SKILL, "reviewer skill", skill_forbidden, errors)
+
+    runtime_forbidden = {
+        "Hermes is explicitly allowed to write SQL": "retired model-owned arbitrary SQL authority",
+        "worker can execute that SP through": "retired worker mutation path",
+        "creates + links a solution article": "retired automatic per-resolution Solution promotion",
+        "poll/investigate/publish": "retired worker-owned publication choreography",
+    }
+    _check_forbidden(RUNTIME_DESIGN, "runtime database design", runtime_forbidden, errors)
+    _check_forbidden(SP_CATALOG, "stored procedure catalog", runtime_forbidden, errors)
 
     for path in RETIRED_RUNTIME_PATHS:
         if path.exists():

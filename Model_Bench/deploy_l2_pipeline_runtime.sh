@@ -16,8 +16,21 @@ SCRIPTS_DIR="$HOME/.hermes/profiles/l2-investigator/scripts"
 ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
 INVESTIGATOR_PROFILES=(l2-investigator l2-investigator-primary)
 REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
+RETIRED_DEPLOYED_SCRIPTS=(dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py)
 
 mkdir -p "$SCRIPTS_DIR"
+
+# Repo deletion is not deployment deletion. Earlier cleanup removed these files
+# from Git but left old copies under ~/.hermes/profiles/.../scripts, which made
+# the live machine look like it still had two orchestration systems. Remove the
+# known retired entrypoints explicitly on every deploy so repo and live state
+# converge idempotently.
+for retired in "${RETIRED_DEPLOYED_SCRIPTS[@]}"; do
+  if [[ -e "$SCRIPTS_DIR/$retired" ]]; then
+    rm -f "$SCRIPTS_DIR/$retired"
+    echo "removed retired deployed script: $retired"
+  fi
+done
 
 for f in \
   l2_pipeline_runtime.py \
@@ -72,9 +85,7 @@ deploy_plugins() {
 # discovery scans the SHARED plugins directory using the ROOT config's
 # plugins.enabled list. A tools plugin installed only under a profile therefore
 # loads its hooks, registers its tool, and still has the toolset silently dropped
-# from every session -- which is exactly why the first typed-harness ticket saw
-# its terminal fallback blocked but never got `xstudio_l2` as an alternative.
-# xstudio-l2-trace was already installed in both places for this same reason.
+# from every session -- exactly what the first typed-harness live run exposed.
 install_shared_plugin_for_discovery() {
   local plugin="$1" src="$2" dir="$HOME/.hermes/plugins/$1"
   mkdir -p "$dir"
@@ -153,4 +164,5 @@ echo
 echo "Deployed deterministic L2 lifecycle + typed XStudio investigation harness."
 echo "Typed tool: xstudio_l2. Retired terminal transports (Hermes_Orchestrator.py,"
 echo "Windows Python, sqlcmd, pyodbc, pip) are blocked by plugin hook + approvals.deny."
+echo "Known retired deployed lifecycle scripts are removed on every deploy."
 echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"

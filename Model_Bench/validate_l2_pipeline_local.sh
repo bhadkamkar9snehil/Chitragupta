@@ -15,6 +15,7 @@ PY_FILES=(
   Model_Bench/enforce_publish_safety_net.py
   Model_Bench/configure_helpdesk_workflow.py
   Model_Bench/patch_profile_config.py
+  Model_Bench/patch_tool_search_off.py
   Model_Bench/xstudio_l2_orchestrator_plugin/__init__.py
   Model_Bench/xstudio_l2_tools_plugin/__init__.py
   Model_Bench/xstudio_l2_tool_bridge.py
@@ -33,6 +34,21 @@ python3 Model_Bench/test_xstudio_l2_tools_plugin.py
 echo "== Knowledge/skill validation =="
 python3 Model_Bench/validate_knowledge_manifest.py
 python3 Model_Bench/test_kb_retrieval.py
+
+echo "== Retired live-deployment guard =="
+DEPLOYED_SCRIPTS="$HOME/.hermes/profiles/l2-investigator/scripts"
+retired_found=0
+for retired in dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py; do
+  if [[ -e "$DEPLOYED_SCRIPTS/$retired" ]]; then
+    echo "FAIL: retired script is still deployed live: $DEPLOYED_SCRIPTS/$retired" >&2
+    retired_found=1
+  fi
+done
+if [[ "$retired_found" -ne 0 ]]; then
+  echo "Run: bash Model_Bench/deploy_l2_pipeline_runtime.sh" >&2
+  exit 1
+fi
+echo "PASS: no known retired lifecycle scripts remain in the live scripts directory"
 
 echo "== Live workflow discovery (read-only) =="
 python3 Model_Bench/configure_helpdesk_workflow.py
@@ -58,6 +74,11 @@ After deploying/regenerating the SQL bundle, run:
 
 Confirm deploy/helpdesk_workflow_binding.json still matches live workflow values.
 Do not guess replacement status names.
+
+Live deployment note:
+  deploy_l2_pipeline_runtime.sh now removes known retired lifecycle scripts from
+  ~/.hermes/profiles/l2-investigator/scripts. Validation fails if those stale
+  copies reappear even when they are absent from Git.
 
 For the next naturally arriving fresh ticket, verify its trace uses xstudio_l2 for
 database/schema/ticket evidence and does not attempt to recreate SQL transport via
