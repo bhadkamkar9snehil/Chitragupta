@@ -139,6 +139,68 @@ yet run successfully on a real runner — validate locally
 `python3 -m unittest Model_Bench.test_kb_retrieval`) rather than trusting
 CI status.
 
+**The ticket lifecycle was centralized into `Model_Bench/l2_pipeline_runtime.py`
+(2026-09-05), validated and deployed live the same day.** This is now the
+single owner of investigator/reviewer/rework/publish sequencing — read
+`Knowledge/L2_PIPELINE_STATE_MACHINE.md` before touching any of it.
+Everything the compat-named scripts (`kanban_approval_publisher.py`,
+`kanban_reject_bridge.py`, `repair_incomplete_completions.py`,
+`audit_kanban_completions.py`, `enforce_publish_safety_net.py`) do is now
+just `cli(["<mode>", ...])` into that one module — they are thin
+compatibility entrypoints, not independent orchestration authorities. Key
+facts:
+- **Global WIP = 1.** `ticket_scout.py` (still the 2-minute cron) now runs
+  the full synchronous `reconcile()` (normalize → repair missing
+  reviewers → process rejections → process approvals/publish → recover
+  true orphans) before ever checking whether to claim, and refuses a new
+  claim (`WIP_LIMIT`) while any SQL run is active. `MAX_INVESTIGATOR_BACKLOG`
+  from the prior day's fix is gone — superseded by this stricter global gate.
+- **Priorities**: review=30, rework=20, new investigation=10 — finish
+  existing work before starting more.
+- **Reviewer cards are created only after the investigator's completion
+  metadata is normalized**, and carry a **frozen `proposal_json`** the
+  reviewer judges and the publisher later publishes verbatim — no
+  reconstruction from prose at either step.
+- **Review cycles are a separate `review_cycle` counter**, not SQL
+  `AttemptNo`. `MAX_REVIEW_CYCLES = 3`; a rejection at cycle 2 escalates
+  instead of looping forever.
+- **`deploy/helpdesk_workflow_binding.json` is the sole source of workflow
+  status names** — `resolved_ticket_status` bound to the live-verified
+  `"Closed"` (confirmed by cross-referencing the one real RESOLUTION this
+  project had published, `Ticket_233`), `waiting_user_ask_status` bound to
+  `"Ask"`. `l3_ticket_status`/`needs_human_action_ticket_status` are
+  deliberately left `null` — no distinct live value for either was ever
+  observed, and the runtime fails closed rather than inventing one.
+  `RESOLUTION` publication fails closed if this binding is incomplete.
+- **No automatic KB article creation on RESOLUTION anymore** — that's a
+  separate governed process now (`Knowledge/KB_IMPLEMENTATION_PLAN.md`).
+- **Cron cleanup (2026-09-05)**: removed "L2 Publish Safety Net"
+  (`enforce_publish_safety_net.py`, 5m) and "L2 Repair Incomplete
+  Completions" (`repair_incomplete_completions.py`, 5m) — both were pure
+  subsets of what `ticket_scout.py`'s `reconcile()` already does every
+  2 minutes, and running them as separate independently-scheduled OS
+  processes reintroduced the exact concurrent-mutation race this
+  migration's synchronous-reconciler design exists to eliminate. Only
+  "L2 Ticket Scout" (mutating, 2m) and "L2 Kanban Completion Audit"
+  (read-only, 10m) remain. See `deploy/cron_jobs.txt`.
+- **Real defect found and fixed during validation**: `Knowledge/
+  00_Hermes_L2_FULL_INSTALL.sql` had gone stale — never regenerated after
+  `25_ticket_dispatch_hardening.sql`/`55_update_retry_hardening.sql` were
+  added, so a fresh install from it alone would have silently missed both.
+  Regenerated; `.gitattributes` now forces LF on `*.sh`/`*.sql` so a
+  Windows checkout's `core.autocrlf` can't corrupt either the install
+  bundle or WSL-executed shell scripts again (the latter broke
+  `Model_Bench/validate_l2_pipeline_local.sh` outright — `pipefail\r:
+  invalid option name` — until this was added).
+- A genuine **pre-migration backlog of ~32 stale active SQL runs** existed
+  at cutover (average age 13+ hours, from the old ticket_scout.py's
+  since-fixed backlog-runaway bug). The reconciler correctly recognizes
+  all of them via their still-live Kanban tasks (0 anomalies) and refuses
+  new claims until they drain — this is expected transitional state, not
+  a pipeline defect. Check `python3 ~/.hermes/profiles/l2-investigator/
+  scripts/l2_pipeline_runtime.py status` for current backlog depth before
+  assuming the pipe is idle vs. draining.
+
 ## Quick reference
 
 ```

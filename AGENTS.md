@@ -1,326 +1,259 @@
-# AI Helpdesk / Hermes L2 — Agent Rules
+# Claude / Agent Entry Point — AI Helpdesk (Hermes L2)
 
-## No scratch files in this project root
+Read `AGENTS.md` first — full folder map, deployment state, SQL write
+discipline, and the "Hermes" naming-collision warning.
 
-Investigating bots (Windows, WSL, and Codex on the teammate's machine — this
-folder syncs both ways via Syncthing) have repeatedly littered this
-directory with one-off investigation scripts (`_ticket43_live_read.py`,
-`lrf_investigation_queries.sql`, etc.) and even a broken script that
-imported a nonexistent `hermes_tools` module. **Do not write files here to
-investigate a ticket.** Run SQL/Python directly via your terminal tool
-(`sqlcmd -Q "..."` or `python -c "..."`/a python one-liner with `-c`); if you
-genuinely need a scratch file, use your own tmp directory, never this
-project's folder. `Hermes_Orchestrator.py`'s functions are called by
-importing that module directly (`from Hermes_Orchestrator import
-HermesL2Client`) — there is no `hermes_tools` package, and `terminal` is a
-tool you call directly, not a Python function to import.
+## Current state (2026-09-05) — read this before touching anything
 
-## What this project is
+**This section is a fast-moving daily log, not a stable reference.** If
+anything here conflicts with `README.md` or `AGENTS.md`, those two are
+more likely to be current — this file has gone stale before (a whole
+2026-09-02 architecture description, including a model name and delivery
+mode that no longer exist, survived here uncorrected for three days
+before being caught). Verify against `deploy/`/live `hermes` commands
+before trusting a specific claim below.
 
-A live investigator for the existing XStudio Helpdesk (`XStudio_Helpdesk` on
-SQL Server `10.2.6.204`). Not a collection of domain bots, no vector
-DB/RAG/embeddings, does not replace the existing Helpdesk ticketing system.
-The real ticket table is `dbo.Complaint_Mst_Tbl` — reads/writes go through it
-directly via the workflow discovered live, never a parallel queue.
+**The live pipeline is Kanban-based, not the old poll-into-chat design.**
+`ticket_scout.py` (cron, WSL, ~2m tick) creates a Kanban card for
+`l2-investigator-primary` (investigator) plus a `--parent`-gated reviewer
+card for `l2-reviewer-primary`. Event-driven hook plugins publish an
+approval or bridge a rejection into rework, capped at 3 attempts before
+escalating to the human L3 queue. Full diagram: `README.md` §1. This
+replaced an earlier single-bot-chat design (`hermes_l2_poll.py` injecting
+context into one long-lived `bot-chat:l2-investigator` conversation) that
+caused a real context-overflow outage — if you see that older flow
+described anywhere (old `Plans/` docs), it's history, not the live
+mechanism. Profile names were renamed 2026-09-05 from model-based
+(`l2-eval-investigator`, `l2-gemma-verifier`, `l2-qwen-verifier`) to
+role-based (`l2-investigator-primary`, `l2-reviewer-primary`,
+`l2-reviewer-fallback`) — if you see the old names anywhere outside a
+historical/dated note, that's stale and worth fixing.
+
+**Ticket claiming is backlog-gated, not blindly interval-based (fixed
+2026-09-05).** A real incident: `ticket_scout.py` claimed a new SQL ticket
+on every ~2m cron tick regardless of how much unworked investigator
+backlog already existed. The single-worker gateway (see below) drains
+roughly one card per 10-20 min, so blind polling let intake — plus rework
+regenerating even more cards on every rejection — outrun the drain rate
+by 10-20x. Confirmed live over the prior 2 days: 572 claimed runs silently
+reaped as `"Recovered as stale by Hermes scheduler"`, real ticket
+resolution nearly stopped (1 `Complaint_Mst_Tbl` Status write in 6 days),
+and 300 tickets sat unclaimed. Fix: `ticket_scout.py` now checks current
+investigator backlog (unfinished cards, fresh + REWORK, via
+`_investigator_backlog()`) before polling and skips the claim entirely
+once it's >= `MAX_INVESTIGATOR_BACKLOG` (3). A board-read failure fails
+closed (skips claiming) rather than polling blind. If you're debugging
+"why didn't a new ticket get claimed this tick," check the backlog count
+first, not the cron schedule.
+
+**Model: live-loaded model as of 2026-09-05 afternoon is `qwen/qwen3.5-9b`
+via LM Studio**, serving all active profiles (`l2-investigator`,
+`l2-investigator-primary`, `l2-reviewer-primary`, `l2-reviewer-fallback`).
+This corrects an earlier entry in this same file claiming
+`qwopus3.5-9b-coder` — that claim was stale by the time it was checked
+live; do not trust either name without reverifying. LM Studio serves one
+model at a time; `l2-gemma` is fully retired (gateway stopped, config kept
+as history only). Live-loaded-model check: `curl
+http://100.111.69.102:1235/api/v0/models` (look for `"state": "loaded"`),
+not `/v1/models` (that lists the whole catalog regardless of load state).
+
+**`deploy/` is the reproducible-topology mirror — keep its `PROFILES` list
+in `Model_Bench/mirror_wsl_artifacts.sh` in sync with reality.** A real gap
+was found and fixed 2026-09-05: that script's hardcoded profile list was
+never updated when `l2-eval-investigator` was created, so `deploy/profiles/`
+had no dir for the profile actually running fresh ticket dispatch — a
+fresh install from this repo could not have reconstructed the real
+topology. Re-run `Model_Bench/mirror_wsl_artifacts.sh` after creating,
+renaming, or retiring any profile, not just after editing SOUL.md/skills.
+
+**Two new response-handling mechanisms (2026-09-05), both live**:
+`EscalationCategory` on `Hermes_L3_Escalation_Trn_Tbl`
+(`UNRESOLVED` vs `NEEDS_HUMAN_ACTION`) and an `AttemptNo`-capped
+reject-rework loop (`--fail-run`/`--escalate-blocked`) so a ticket stuck
+on the same mistake stops looping forever instead of generating an
+endless string of rework cards. See `README.md` §3.
+
+**A second bot, `infra-guardian`, maintains this bot's infrastructure**
+(WSL only) — separate profile/gateway, 30-min Routine, one skill
+(`hermes-infra-guardian-checks`) covering gateway/VM/LM-Studio/session
+health with an explicit guardrail: it reports LM Studio being down, never
+tries to fix it (the user controls that machine directly). See `AGENTS.md`
+for the full incident chain this was built in response to.
+
+**Conductor migration — Phase 0+1 built, not yet cut over.** Evaluating
+replacing this Kanban pipeline with Microsoft Conductor
+(`github.com/microsoft/conductor`, real, MIT, installed in WSL2) for
+deterministic step orchestration + schema-narrowed/audited tool access
+via a new local MCP server (`Model_Bench/l2_investigation_mcp_server.py`).
+**Kanban is completely unaffected and still runs the live pipeline** —
+this is a parallel, isolated proof-of-concept, not yet wired to publish
+anything real. Full phase plan, what's built vs. still open, and the
+explicit decision to retire Kanban/mem0/the 4 xstudio-* skills for this
+pipeline only if/when the cutover actually happens:
+`Plans/Conductor_Migration_Plan_05092026.md`. Read that before assuming
+either the Kanban or the Conductor path is "the" current pipeline.
+
+**Why `Hermes_Orchestrator.py` is a thin-wrapper CLI, not a full
+pipeline**: the user directly asked why a hand-written script should be
+doing investigation at all when a real reasoning bot exists. Correct
+question — the keyword-search "brain" (`investigate()`, `run_one_cycle()`)
+was deleted long ago. What's grown back since is a set of genuinely
+mechanical, schema-validated primitives worth not re-deriving from
+scratch each run: atomic claim (`--poll`), audited write-back
+(`--publish-response`), a schema-validated query builder
+(`--build-query`), schema-narrowing (`--suggest-tables`), and a
+structured investigation ledger (`--save-ledger`/`--get-ledger`, reusing
+the previously-unused `InvestigationJson` column). Investigation
+judgment itself is still the bot's/agent's job.
+
+**`dbo.Complaint_Mst_Tbl` now carries the L1 handoff fields directly**
+(`ProblemCategory`, `SourceSystem`, `ConversationSummary`, `SuspectedCause`,
+`ExtractedEntitiesJson`, `ConversationLogJson`) — added straight to the
+platform table per the user's explicit instruction, not a companion table.
+Verified live: a ticket with `ExtractedEntitiesJson = {"HeatNo": "H12345"}`
+and `SourceSystem = 'Xbatch'` correctly steered a keyword search toward the
+right database in the old `investigate()` — the bot should do the analogous
+thing now: read these fields from `--poll`'s output and use them as
+investigation hints when populated (usually NULL today, since L1 doesn't
+exist yet).
+
+**Deterministic KB retrieval landed and was independently validated
+2026-09-05** (`Model_Bench/kb_retrieval.py`, commits `602f0a1`..`4f26ef1`).
+Replaces the old broad `Route=? TOP 5` solution lookup in the investigation
+bundle: routes are inferred from `Knowledge/manifest.json`
+(`identifier_routing` is the sole canonical identifier->route source, no
+second hardcoded mapping), articles are ranked against the ticket's actual
+text with a hard rule that **route alone can never retrieve an article**
+(route only adds a bonus once textual relevance already exists), and every
+hit carries provenance (`kb_id`, `source_ref`, `matched_terms`,
+`verification_required: true`) plus explicit abstention when nothing
+clears the relevance threshold. `ticket_scout.py` wires this in by
+stripping the bundle's old `known_solutions` and replacing it with
+`kb_retrieval`'s ranked result; a KB failure degrades to an abstention
+dict, never blocks dispatch. `Model_Bench/validate_knowledge_manifest.py`
+is a fail-fast consistency check (manifest<->task-router route drift,
+missing knowledge files, stale-workflow-skill regression) wired into
+`.github/workflows/knowledge-validation.yml`, though that workflow has not
+yet run successfully on a real runner — validate locally
+(`python3 Model_Bench/validate_knowledge_manifest.py`,
+`python3 -m unittest Model_Bench.test_kb_retrieval`) rather than trusting
+CI status.
+
+**The ticket lifecycle was centralized into `Model_Bench/l2_pipeline_runtime.py`
+(2026-09-05), validated and deployed live the same day.** This is now the
+single owner of investigator/reviewer/rework/publish sequencing — read
+`Knowledge/L2_PIPELINE_STATE_MACHINE.md` before touching any of it.
+Everything the compat-named scripts (`kanban_approval_publisher.py`,
+`kanban_reject_bridge.py`, `repair_incomplete_completions.py`,
+`audit_kanban_completions.py`, `enforce_publish_safety_net.py`) do is now
+just `cli(["<mode>", ...])` into that one module — they are thin
+compatibility entrypoints, not independent orchestration authorities. Key
+facts:
+- **Global WIP = 1.** `ticket_scout.py` (still the 2-minute cron) now runs
+  the full synchronous `reconcile()` (normalize → repair missing
+  reviewers → process rejections → process approvals/publish → recover
+  true orphans) before ever checking whether to claim, and refuses a new
+  claim (`WIP_LIMIT`) while any SQL run is active. `MAX_INVESTIGATOR_BACKLOG`
+  from the prior day's fix is gone — superseded by this stricter global gate.
+- **Priorities**: review=30, rework=20, new investigation=10 — finish
+  existing work before starting more.
+- **Reviewer cards are created only after the investigator's completion
+  metadata is normalized**, and carry a **frozen `proposal_json`** the
+  reviewer judges and the publisher later publishes verbatim — no
+  reconstruction from prose at either step.
+- **Review cycles are a separate `review_cycle` counter**, not SQL
+  `AttemptNo`. `MAX_REVIEW_CYCLES = 3`; a rejection at cycle 2 escalates
+  instead of looping forever.
+- **`deploy/helpdesk_workflow_binding.json` is the sole source of workflow
+  status names** — `resolved_ticket_status` bound to the live-verified
+  `"Closed"` (confirmed by cross-referencing the one real RESOLUTION this
+  project had published, `Ticket_233`), `waiting_user_ask_status` bound to
+  `"Ask"`. `l3_ticket_status`/`needs_human_action_ticket_status` are
+  deliberately left `null` — no distinct live value for either was ever
+  observed, and the runtime fails closed rather than inventing one.
+  `RESOLUTION` publication fails closed if this binding is incomplete.
+- **No automatic KB article creation on RESOLUTION anymore** — that's a
+  separate governed process now (`Knowledge/KB_IMPLEMENTATION_PLAN.md`).
+- **Cron cleanup (2026-09-05)**: removed "L2 Publish Safety Net"
+  (`enforce_publish_safety_net.py`, 5m) and "L2 Repair Incomplete
+  Completions" (`repair_incomplete_completions.py`, 5m) — both were pure
+  subsets of what `ticket_scout.py`'s `reconcile()` already does every
+  2 minutes, and running them as separate independently-scheduled OS
+  processes reintroduced the exact concurrent-mutation race this
+  migration's synchronous-reconciler design exists to eliminate. Only
+  "L2 Ticket Scout" (mutating, 2m) and "L2 Kanban Completion Audit"
+  (read-only, 10m) remain. See `deploy/cron_jobs.txt`.
+- **Real defect found and fixed during validation**: `Knowledge/
+  00_Hermes_L2_FULL_INSTALL.sql` had gone stale — never regenerated after
+  `25_ticket_dispatch_hardening.sql`/`55_update_retry_hardening.sql` were
+  added, so a fresh install from it alone would have silently missed both.
+  Regenerated; `.gitattributes` now forces LF on `*.sh`/`*.sql` so a
+  Windows checkout's `core.autocrlf` can't corrupt either the install
+  bundle or WSL-executed shell scripts again (the latter broke
+  `Model_Bench/validate_l2_pipeline_local.sh` outright — `pipefail\r:
+  invalid option name` — until this was added).
+- A genuine **pre-migration backlog of ~32 stale active SQL runs** existed
+  at cutover (average age 13+ hours, from the old ticket_scout.py's
+  since-fixed backlog-runaway bug). The reconciler correctly recognizes
+  all of them via their still-live Kanban tasks (0 anomalies) and refuses
+  new claims until they drain — this is expected transitional state, not
+  a pipeline defect. Check `python3 ~/.hermes/profiles/l2-investigator/
+  scripts/l2_pipeline_runtime.py status` for current backlog depth before
+  assuming the pipe is idle vs. draining.
+
+## Quick reference
 
 ```
-End user  <->  L1 chatbot (NOT built yet -- lives outside this project)
-                    |
-                    |  only when L1 can't resolve it -- writes ONE row
-                    v
-     dbo.Complaint_Mst_Tbl (Status='Enter' + the ProblemCategory/
-     SourceSystem/ConversationSummary/SuspectedCause/ExtractedEntitiesJson/
-     ConversationLogJson columns L1 fills in -- this row IS the L2 ticket)
-                    v
-     ticket_scout.py (cron, ~2m, deterministic, no LLM) --poll's one
-     ticket atomically, creates a Kanban card for it
-                    v
-     Kanban card, assignee l2-eval-investigator (LLM, qwopus3.5-9b-coder
-     via LM Studio) -- investigates using its own terminal tool against
-     XStudio_Helpdesk/XStudio_Xbatch, calls kanban_complete(summary,
-     metadata) when done -- NEVER calls --publish-response itself
-                    v  auto-promotes via native --parent gating
-     Kanban card, assignee l2-gemma-verifier (LLM, same model) -- judges
-     the proposal: kanban_complete (approve) or kanban_block(reason)
-     (reject) -- its ONLY two terminal actions, never publishes itself
-                    v
-     event-driven hook plugin fires the instant the tool call succeeds:
-       approve -> kanban_approval_publisher.py (no LLM) runs
-                  Hermes_Orchestrator.py --publish-response using the
-                  INVESTIGATOR's own recorded metadata, never anything
-                  the reviewer retyped
-       reject  -> kanban_reject_bridge.py checks AttemptNo for this
-                  ticket: under 3, creates a fresh rework card back to
-                  the investigator with the objection attached; at 3,
-                  --fail-run + --escalate-blocked instead of another
-                  rework cycle (EscalationCategory='UNRESOLVED')
+python Hermes_Orchestrator.py --discover-workflow
+python Hermes_Orchestrator.py --poll --eligible-status "Enter" --server 10.2.6.204
+python Hermes_Orchestrator.py --publish-response --run-id <ID> --response-type UPDATE --reply-text "..." --server 10.2.6.204
 ```
 
-This is the current (2026-09-05) Kanban-based pipeline — see the README's
-§1 diagram for the fuller picture including the `NEEDS_HUMAN_ACTION`
-response type. **This replaced an earlier single-bot-chat design**
-(`hermes_l2_poll.py` injecting context into one long-lived
-`bot-chat:l2-investigator` conversation) that caused a real
-context-overflow outage — every run grew one ever-growing thread instead
-of isolated per-attempt sessions. If you see a reference to that older
-flow anywhere (old Plans/ docs, a stale skill), it is history, not the
-live mechanism.
+Pin `--server 10.2.6.204` explicitly — `$MSSQL_MCP_SERVER` (`SSLDATABASE`
+hostname) intermittently failed to resolve during testing even though the
+server itself was fine.
 
-**L1 does not exist.** Nothing in this project talks to end users or decides
-when to escalate. `Complaint_Mst_Tbl` is also still the plain manual IT
-helpdesk table any human can file a ticket into directly — there is no field
-that proves a given row came from L1 rather than a person. Working
-assumption (confirmed with the user 2026-09-02): `Status='Enter'` is the
-eligibility filter regardless; L1 populating the structured columns is what
-turns a ticket from a bare complaint into something meaningfully
-investigable.
+`hermes` CLI lives at `C:\Users\Admin\AppData\Local\hermes\bin\hermes.exe`
+(not necessarily on PATH — add it or use the full path). Useful commands:
 
-**"Hermes" names two unrelated things — do not conflate them.** (1) The
-project's own L2 investigator concept, from the user's original whiteboard
-plan. (2) Nous Research's real Hermes Agent desktop platform, installed on
-this machine, with its own Bots/Profiles/Cron/Gateway. Early work in this
-project built a standalone Python script + tried Claude Code's `CronCreate`
-+ tried a raw Windows Scheduled Task — all wrong, because none of them used
-the actual Hermes Agent platform the user meant. See the
-[[hermes-l2-helpdesk-project]] memory for the full history if this comes up
-again. As of 2026-09-02 the real Hermes Agent bot (`l2-investigator` profile)
-is what runs this — read `CLAUDE.md` for the current setup.
-
-**A second bot, `infra-guardian`, maintains the first bot's infrastructure**
-(2026-09-02, WSL only) — separate profile, separate gateway
-(`hermes-gateway-infra-guardian.service`), 30-min Routine, does NOT touch
-ticket content. Built after a real multi-hour outage chain that day: a
-stalled cron ticker → traced to the whole WSL2 VM silently shutting down
-when idle (fixed: `vmIdleTimeout=-1` in `.wslconfig` + a Startup-folder
-`WSL_KeepAlive.vbs` holding one background `wsl sleep infinity` session,
-same hidden-launch pattern as the existing Hermes gateway `.vbs`s) → a
-context-compression exhaustion → a hung single LLM turn against a
-deliberately-stopped LM Studio. `infra-guardian` exists so the next
-occurrence of any of these gets caught by a dedicated bot instead of
-another manual debugging session. Its whole runbook (health-check
-commands, known-good baseline, and — critically — the guardrail that it
-must only report LM Studio being down, never try to fix it) lives in its
-`hermes-infra-guardian-checks` skill, not duplicated here.
-
-**Working remote PowerShell to the desktop running LM Studio** (Tailscale
-`B19CL3PC` / `100.111.69.102`), set up 2026-09-02 — confirmed working
-end-to-end, both from this laptop's native PowerShell and from WSL via
-interop:
-```powershell
-$cred = Import-Clixml "$env:USERPROFILE\.hermes_infra_creds\desktop_pc.xml"
-Invoke-Command -ComputerName 100.111.69.102 -Credential $cred -ScriptBlock { ... }
 ```
-From WSL: `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -File "C:/..."` —
-write the script to a `.ps1` file first (inline `-Command` mangles
-`$variables` through the bash→wsl→powershell.exe chain) and use forward
-slashes in the path (backslashes get stripped crossing the WSL→Win32
-boundary). Full setup story, gotchas, and the "wrong machine" debugging
-saga are in `infra-guardian`'s `hermes-infra-guardian-checks` skill and
-the `desktop-pc-remote-access` Claude memory — don't re-diagnose from
-scratch, read those first. **Never type a password into chat, even with
-explicit user authorization** — that's a hard rule; use `Get-Credential`
-interactively instead.
+hermes profile list
+hermes profile use l2-investigator   # then: hermes profile use default  to switch back
+hermes cron list / status / runs / doctor
+hermes gateway status / list
+```
 
-**Circular-dependency fix (2026-09-02)**: `infra-guardian`'s core health
-checks (gateway ticker, LM Studio server, LM Studio actual generation) now
-also run as a separate deterministic `--no-agent` cron job
-(`infra_watchdog.py`, every 10 min, zero LLM calls) — the whole point
-being that an LLM-driven health-check bot is useless when the LLM it needs
-is the exact thing that's broken. The LLM-driven `hermes-infra-guardian-checks`
-skill is for deeper analysis when the model IS available; the watchdog is
-the check that survives when it isn't.
+## Don't re-duplicate the schema/SP dumps
 
-**Both bots now carry durable Hermes Skills, not just SOUL.md prose**
-(2026-09-02, following Anthropic's/OpenAI's published agent-skill
-guidance — narrow scope per skill, description written as a trigger
-condition not a summary, high-signal gotchas over restating the obvious):
-the investigator role (`l2-eval-investigator`, plus `l2-investigator` for
-rework fallback) has five (`xstudio-l2-ticket-workflow`,
-`xstudio-sap-api-investigation`, `xstudio-sohar-heat-execution`,
-`xstudio-quality-delay-workorder`, `xstudio-sql-write-discipline`, all
-under `skills/xstudio/`), the reviewer role (`l2-gemma-verifier`,
-`l2-qwen-verifier`) has `xstudio-l2-draft-verifier` +
-`xstudio-sql-write-discipline`, `infra-guardian` has one
-(`hermes-infra-guardian-checks`, under `skills/ops/`). Verify with `hermes
--p <profile> skills list`. `Knowledge/task-router.md` maps ticket patterns
-to both the matching skill and the matching `Knowledge/*.md` file — add a
-row there for anything new rather than only adding a skill.
+`Reference Documents/` holds the one copy of the exported
+`XStudio_Helpdesk`/`XStudio_Xbatch` schema and SP catalogs. `Knowledge/` had
+a second copy of all four plus two zip archives (~100K redundant lines)
+that was removed 2026-09-02 specifically because it made the folder too
+large to read productively. Grep `Reference Documents/` for the specific
+table/procedure needed instead.
 
-**Live profile roster (2026-09-05)** — all currently point `model.default`
-at the same LM Studio model, `qwopus3.5-9b-coder` (LM Studio serves one
-model at a time; do not point active profiles at different models unless
-deliberately accepting load/evict thrash):
-- `l2-investigator` — hosts the kanban dispatcher gateway; also the
-  rework-fallback investigator for `l2-qwen-verifier` rejections.
-- `l2-eval-investigator` — the live fresh-ticket investigator (what
-  `ticket_scout.py` assigns new tickets to).
-- `l2-gemma-verifier` — the live reviewer paired with fresh dispatch.
-- `l2-qwen-verifier` — legacy second reviewer pairing from an earlier
-  A/B setup; not used by fresh dispatch, kept only for in-flight rework.
-- `l2-gemma` — fully retired (was gemma-4-e4b-it, the original
-  investigator model). Gateway stopped, config left as historical
-  record, zero live kanban tasks. `l2-ministral`/`l2-nemo` (an even
-  earlier iteration) were deleted outright, not just retired.
+## Before deploying any SQL change
 
-## Folder map
-
-- **`Model_Bench/`** — the Kanban orchestration scripts (`ticket_scout.py`,
-  `kanban_reject_bridge.py`, `kanban_approval_publisher.py`, the trace
-  drain/summary pair, the safety-net/audit backstops) and the two Hermes
-  observer-hook plugins that fire them event-driven. This is where the
-  actual pipeline logic lives now — `README.md` §2 documents every file;
-  don't re-derive what each script does from scratch, read that first.
-- **`deploy/`** — mirror of what only exists live inside a Hermes install
-  (SOUL.md/config.yaml per profile, skills, plugin manifests, cron
-  schedule) — would not survive a fresh install/update otherwise. See
-  `Model_Bench/mirror_wsl_artifacts.sh` and README §5/§2.
-- **`Hermes_Orchestrator.py`** — thin Python client around the 20
-  `Hermes_L2_*` stored procedures. Deliberately does NOT contain any
-  investigation logic (that used to be here as a keyword-search heuristic;
-  removed 2026-09-02 — the calling bot reasons, this script doesn't). Two
-  CLI entry points only:
-  - `--poll --eligible-status "Enter"` — atomically claim one ticket, print
-    its full context as JSON, stop. Wraps `Hermes_L2_Claim_Ticket_Usp`'s
-    `sp_getapplock`/`UPDLOCK`/`OUTPUT`-param handling, which is genuinely
-    easy to get wrong from scratch (this project got it wrong once already).
-  - `--publish-response --run-id ID --response-type {QUESTION,UPDATE,
-    RESOLUTION,L3_ESCALATION} --reply-text "..."` — write a response
-    through `Hermes_L2_Publish_Response_Usp` so it lands in
-    `Hermes_L2_Response_Trn_Tbl` with a proper audit trail instead of a raw
-    `UPDATE Complaint_Mst_Tbl`.
-  - `--discover-workflow` — print live `Status`/`AskStatus` combinations.
-  See the module docstring for full changelog (v1 hallucinated schema, v2
-  added a keyword-search brain, v3 removed the brain in favor of the bot).
-- **`Knowledge/`** — the deployable SQL runtime and its design docs.
-  - `00_Hermes_L2_FULL_INSTALL.sql` — deploy artifact, a straight
-    concatenation of `00_tables_and_indexes.sql`, `10_helpdesk_discovery.sql`,
-    `20_ticket_dispatch.sql`, `30_context_and_live_discovery.sql`,
-    `40_investigation_runtime.sql`, `50_response_and_workflow.sql` in that
-    order. **Edit the numbered per-concern file, then regenerate this one by
-    re-concatenating** — do not hand-edit `00_Hermes_L2_FULL_INSTALL.sql`
-    directly, it will drift out of sync (happened once already).
-  - `99_postflight.sql` — verification script; run after any redeploy.
-  - `*.md` — design docs (mental model, execution model, SQL write model,
-    task router, SP catalog, runtime DB design, deploy playbook, validation
-    notes). Short (< 160 lines each), safe to read in full.
-- **`dbo.Complaint_Mst_Tbl` schema extension (2026-09-02)** — 6 nullable
-  columns added directly to the live platform table, at the user's explicit
-  instruction (they rejected a companion table): `ProblemCategory
-  varchar(100)`, `SourceSystem varchar(100)`, `ConversationSummary
-  nvarchar(max)`, `SuspectedCause nvarchar(max)`, `ExtractedEntitiesJson
-  nvarchar(max)`, `ConversationLogJson nvarchar(max)`. Additive only —
-  verified existing views/rows/procs unaffected. `Hermes_L2_Get_Ticket_Context_Usp`
-  uses `c.*` so these flow through automatically. Meant for the (not yet
-  built) L1 chatbot to fill in; today they're NULL on real tickets, and the
-  investigating bot should query/reason over them when present rather than
-  assume they're always empty.
-- **`Reference Documents/`** — the **one** copy of the live-exported
-  `XStudio_Helpdesk` / `XStudio_Xbatch` schema and stored-procedure dumps.
-  Large (schema: ~12K/33K lines, SPs: ~1K/54K lines). **Do not duplicate
-  these into `Knowledge/`** — that happened once (~100K redundant lines,
-  removed 2026-09-02). Grep the specific table/procedure needed instead of
-  loading these files whole.
-- **`Plans/`** — planning docs, one per planning session, dated in the
-  filename.
-- **`Knowledge/task-router.md`** (+ its machine-readable mirror
-  `Knowledge/manifest.json`) — the entry point for domain knowledge. Routes
-  a ticket's category/area/identifiers to the specific `Knowledge/*.md`
-  file(s) worth loading, instead of either cold-searching with
-  `find_sql_objects` or hand-listing files in `SOUL.md` (both bot profiles
-  read this router now, 2026-09-02 — adding a new knowledge file means
-  adding a row here, not editing `SOUL.md`).
-  - **`Knowledge/xbatch-investigation-surfaces.md`** — curated map of the
-    real SAP integration / historian / production-tracking / work order /
-    quality / delay-OEE / billet-yard / API-transaction table and SP
-    families in `XStudio_Xbatch`, grounded in live-exported schema/SP text
-    (not name-guessing).
-  - **`Knowledge/sohar-sms-event-workflows.md`** — one level deeper: the
-    real event state-machine and workflow-SP SQL behind the EAF/LRF/CCM/
-    Billets/SMS-Plant-Process-Time per-heat flows, sourced from the
-    vendor's own project handover docs (confirms `XStudio_Xbatch` on
-    10.2.6.204 **is** the Sohar Steel Oman plant). Explains *why* a value
-    is wrong/missing, not just where it lives — e.g. it documents a real,
-    live-confirmed `@ActualHeatID = @HeatID - 1` decrement in the SMS
-    Plant Process Time workflow that looks like a bug but isn't.
-  Still verify the specific object live before trusting either file — the
-  map can go stale, schema drifts.
-
-## Mechanism verification (2026-09-02)
-
-All 20 `Hermes_L2_*` procedures were individually exercised against real
-claimed tickets with real DB-state assertions (not just "no exception") —
-every terminal outcome (`RESOLUTION`, `QUESTION`, `L3_ESCALATION`, `FAILED`
-via each of `Resolve_Ticket`/`Ask_Question`/`Escalate_L3`/`Fail_Run`), the
-full mid-investigation lifecycle (`Start_Investigation` → `Heartbeat` →
-`Save_Investigation_State` → `Execute_SQL` → `Update_SQL_Action_Evidence` →
-`Get_Run`/`Get_Run_Actions`), and the discovery surface
-(`Find_SQL_Objects`, `Get_SQL_Object_Definition`, `Get_Reference_Documents`).
-32/33 assertions passed on first run; the one apparent failure
-(`Get_Candidate_Tickets` not immediately re-surfacing a just-failed ticket)
-turned out to be correct retry-window behavior (`NextEligibleOn` filtering,
-confirmed by re-checking after the window elapsed) — 0 real defects found.
-`Recover_Stale_Runs` was separately proven working multiple times earlier in
-the session (visible `"stale_runs_recovered"` counts in live cycle output).
-Conclusion: the SQL runtime mechanism is sound. What's still shallow is
-investigation *content* (see `xbatch-investigation-surfaces.md` above), not
-the plumbing.
-
-## Deployment state (verified 2026-09-02, extended 2026-09-05)
-
-The Hermes SQL runtime **is deployed** to `10.2.6.204` / `XStudio_Helpdesk`:
-2 tables (`Hermes_L2_Response_Trn_Tbl`, `Hermes_L2_SQL_Action_Trn_Tbl`) + 20
-`Hermes_L2_*` stored procedures. `99_postflight.sql` ran clean. The full
-poll→claim→publish cycle was proven end-to-end multiple times against real
-tickets. Before assuming this is still deployed and current, re-run
-`99_postflight.sql` — this paragraph is a snapshot, not live proof.
-
-**2026-09-05 additions, also live and verified**: `EscalationCategory`
-column on `Hermes_L3_Escalation_Trn_Tbl` (added via `XStudio_AddAttribute_Usp`,
-confirmed physical column landed); `NEEDS_HUMAN_ACTION` as a real
-`--response-type`; the whole pipeline moved from a single-bot-chat design
-to the Kanban-based investigator→reviewer→publish flow described above —
-see `README.md` §1 for the current diagram, `CLAUDE.md` for whatever is
-most current day-to-day (it changes faster than this file).
-
-The install is idempotent (`IF OBJECT_ID(...) IS NULL` / `CREATE OR ALTER`)
-— safe to re-run after edits. It does **not** touch `Complaint_Mst_Tbl`
-directly (the 6 handoff columns were a separate, explicit `ALTER TABLE`).
-
-**Bugs found and fixed during the original deploy**: `sp_getapplock`'s
-`@Resource` parameter was passed as a string-concatenation expression
-directly in the `EXEC` call — T-SQL doesn't accept expressions there, only
-constants/variables (fixed via a `@LockResource` variable in
-`20_ticket_dispatch.sql`/`40_investigation_runtime.sql`). Also needed `SET
-QUOTED_IDENTIFIER ON` before running the install, or the filtered index on
-`Hermes_L2_Response_Trn_Tbl` fails to create.
-
-## SQL write discipline
-
-Investigation and writes are not read-only — direct `UPDATE`/`INSERT`/DDL is
-fine when no official path exists. Follow the precedence in
-`Knowledge/sql-write-model.md`: resolve the real database/object → search
-for the official SP/API that owns the operation → inspect its live
-definition → use it if it covers the operation → only then a direct write,
-deliberately → verify the full affected chain afterward. Prefer
-`Hermes_L2_Execute_SQL_Usp` (records every action to
-`Hermes_L2_SQL_Action_Trn_Tbl`) over an unaudited raw connection when
-practical.
-
-## Credentials
-
-Never hardcode a password into a command that gets logged, written to a
-file, or pasted into this repo. Everything here defaults to
-`$MSSQL_MCP_SERVER` / `$MSSQL_MCP_USER` / `$MSSQL_MCP_PASSWORD` (persistent
-Windows user env vars) when not passed explicitly. Note: the `SSLDATABASE`
-hostname (`$MSSQL_MCP_SERVER`'s value) has intermittently failed to resolve
-during testing even though the server is fine — the IP `10.2.6.204` has been
-reliable every time; the cron poll script pins the IP explicitly for this
-reason.
-
-## Verify claims against the live server, not memory
-
-This project has repeatedly had code written against guessed schema that
-turned out not to exist (v1 of `Hermes_Orchestrator.py` invented tables and
-columns wholesale). Query `sys.parameters` / `INFORMATION_SCHEMA` /
-`sys.columns` before writing SQL against a table or procedure you haven't
-just checked.
+1. Edit the relevant numbered file in `Knowledge/` (`00_tables_and_indexes.sql`
+   … `60_metrics_and_reporting.sql`, now nine files including the
+   `25_ticket_dispatch_hardening.sql`/`55_update_retry_hardening.sql`
+   overlays added 2026-09-05), never `00_Hermes_L2_FULL_INSTALL.sql`
+   directly.
+2. Regenerate `00_Hermes_L2_FULL_INSTALL.sql` by concatenating all numbered
+   files in numeric order (`00`, `10`, `20`, `25`, `30`, `40`, `50`, `55`,
+   `60` — `98_pipeline_postflight.sql`/`99_postflight.sql` are verification,
+   not part of the install bundle). A real drift was caught and fixed
+   2026-09-05: the bundle went stale for a day after `25`/`55` were added,
+   so a fresh install from it alone would have missed both hardening fixes
+   silently. Diff-check after regenerating:
+   `diff <(cat Knowledge/00_tables_and_indexes.sql Knowledge/10_helpdesk_discovery.sql Knowledge/20_ticket_dispatch.sql Knowledge/25_ticket_dispatch_hardening.sql Knowledge/30_context_and_live_discovery.sql Knowledge/40_investigation_runtime.sql Knowledge/50_response_and_workflow.sql Knowledge/55_update_retry_hardening.sql Knowledge/60_metrics_and_reporting.sql) Knowledge/00_Hermes_L2_FULL_INSTALL.sql`
+   should print nothing.
+3. Deploy with `sqlcmd` (handles `GO` batch separators; `pyodbc` does not) —
+   prepend `SET QUOTED_IDENTIFIER ON; GO` or the filtered index on
+   `Hermes_L2_Response_Trn_Tbl` fails to create. On a Windows checkout,
+   `MSSQL_MCP_PASSWORD` may not be visible inside WSL even when it works
+   fine for Windows Python — use the Windows `sqlcmd.exe` (via PowerShell)
+   in that case, not WSL's.
+4. Run `Knowledge/99_postflight.sql` and confirm no errors.
+5. Schema changes to a live, shared database are confirm-first with the
+   user, even though the install script is additive-only.
