@@ -170,12 +170,12 @@ except Exception:
 
 def _resolve_task_ids_blocking(kanban_task_id: str) -> None:
     run_id = ticket_id = None
-    for board_args in (["kanban", "show", kanban_task_id, "--json"],
-                        ["kanban", "--board", "l2-review", "show", kanban_task_id, "--json"]):
-        try:
-            result = subprocess.run(["hermes"] + board_args, capture_output=True, text=True, timeout=8)
-            if result.returncode != 0:
-                continue
+    try:
+        result = subprocess.run(
+            ["hermes", "kanban", "show", kanban_task_id, "--json"],
+            capture_output=True, text=True, timeout=8,
+        )
+        if result.returncode == 0:
             data = json.loads(result.stdout)
             body = data.get("body") or (data.get("task") or {}).get("body") or ""
             for line in body.splitlines():
@@ -184,17 +184,8 @@ def _resolve_task_ids_blocking(kanban_task_id: str) -> None:
                     run_id = line.split(":", 1)[1].strip()
                 elif line.lower().startswith("ticket_id:"):
                     ticket_id = line.split(":", 1)[1].strip()
-                elif line.lower().startswith("investigation_task_id:") and not run_id:
-                    # A review-board card doesn't carry run_id/ticket_id directly in
-                    # its own top-level lines the same way -- but its body embeds
-                    # them further down (kanban_forward_bridge.py's own format), so
-                    # the generic scan above already catches them there too. This
-                    # branch is just documentation of that fact, not extra logic.
-                    pass
-            if run_id or ticket_id:
-                break
-        except Exception:
-            continue
+    except Exception:
+        pass
     with _TASK_CACHE_LOCK:
         _TASK_CACHE[kanban_task_id] = {"run_id": run_id, "ticket_id": ticket_id}
         _RESOLVING.discard(kanban_task_id)
