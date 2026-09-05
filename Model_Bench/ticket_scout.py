@@ -71,7 +71,7 @@ SERVER = "10.2.6.204"
 USER = "sa"
 PASSWORD = os.environ.get("MSSQL_MCP_PASSWORD")
 ELIGIBLE_STATUS = "Enter"
-INVESTIGATOR_PROFILE = "l2-gemma"
+INVESTIGATOR_PROFILE = "l2-eval-investigator"
 REVIEWER_PROFILE = "l2-gemma-verifier"
 
 # Cards in one of these statuses have not yet been (or are no longer being)

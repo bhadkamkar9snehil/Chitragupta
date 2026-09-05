@@ -105,6 +105,148 @@ try:
 except ImportError:
     pyodbc = None  # HermesL2Client imports it locally too; only needed here for --query error handling
 
+_SCHEMA_ALLOWLIST_PATH = Path(__file__).parent / "Knowledge" / "schema_allowlist.json"
+# Matches a plain identifier or db.schema.table / schema.table dotted form --
+# deliberately conservative (letters/digits/underscore only) so it never
+# mistakes a string literal or a number for a column name.
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _load_flat_schema(database: Optional[str] = None) -> Dict[str, tuple]:
+    """normalized table name (no schema/db prefix, lowercased) -> (db, qualified_name, columns).
+    Same shape --query's own post-failure suggestion logic builds inline --
+    factored out here so --build-query can validate BEFORE ever running
+    anything, not just suggest a fix after a real SQL error comes back.
+
+    A table name that exists in more than one database (confirmed live:
+    dbo.Area_Mst_Tbl in both XStudio_Helpdesk and XStudio_Xbatch) would
+    otherwise silently resolve to whichever database's entry happened to
+    be inserted last. Pass `database` to disambiguate; without it, first
+    match wins and is reported honestly (not silently)."""
+    if not _SCHEMA_ALLOWLIST_PATH.exists():
+        return {}
+    allowlist = json.loads(_SCHEMA_ALLOWLIST_PATH.read_text(encoding="utf-8"))
+    flat: Dict[str, tuple] = {}
+    for db, tables in allowlist.items():
+        if database and db.lower() != database.lower():
+            continue
+        for qname, cols in tables.items():
+            key = qname.split(".")[-1].lower()
+            if key not in flat:  # first match wins, never silently overwritten by a later db
+                flat[key] = (db, qname, cols)
+    return flat
+
+
+def build_query_mechanically(table: str, columns: List[str], where: Optional[str] = None,
+                              order_by: Optional[str] = None, top: Optional[int] = None,
+                              database: Optional[str] = None) -> Dict[str, Any]:
+    """Mechanically construct a SELECT against the REAL schema, validating
+    every identifier against Knowledge/schema_allowlist.json before ever
+    building a string -- a hallucinated table/column is rejected here,
+    with a concrete correction, instead of only being caught after a real
+    query fails (or, worse, never actually being run at all and just
+    asserted as fact -- confirmed live 2026-09-04, a claim with zero
+    matching rows in Hermes_L2_SQL_Action_Trn_Tbl). Read-only by
+    construction: only ever emits a SELECT.
+
+    Returns {"ok": True, "database": ..., "sql": ...} on success, or
+    {"ok": False, "error": ..., "suggestions": [...]} with the closest
+    real names on any unresolved identifier -- never partial/best-guess
+    SQL.
+    """
+    flat = _load_flat_schema(database)
+    if not flat:
+        return {"ok": False, "error": "schema_allowlist.json not found or empty", "suggestions": []}
+
+    table_key = table.split(".")[-1].strip("[]").lower()
+    entry = flat.get(table_key)
+    ambiguity_warning = None
+    if entry and not database:
+        all_dbs_flat = _load_flat_schema(None)
+        dbs_with_table = [db for db, tbls in json.loads(_SCHEMA_ALLOWLIST_PATH.read_text(encoding="utf-8")).items()
+                          if any(q.split(".")[-1].lower() == table_key for q in tbls)]
+        if len(dbs_with_table) > 1:
+            ambiguity_warning = (
+                f"'{table}' exists in multiple databases {dbs_with_table} -- resolved to "
+                f"{entry[0]} (first match) since --database wasn't given. Pass --database "
+                f"explicitly if that's the wrong one."
+            )
+    if not entry:
+        suggestions = difflib.get_close_matches(table_key, list(flat.keys()), n=5, cutoff=0.4)
+        return {
+            "ok": False,
+            "error": f"Table/view '{table}' does not exist in the live schema.",
+            "suggestions": [flat[s][1] for s in suggestions],
+        }
+    db, qualified_name, real_columns = entry
+    real_columns_lower = {c.lower(): c for c in real_columns}
+
+    def _validate_identifier(name: str) -> Optional[str]:
+        """Returns the real, correctly-cased column name, or None if it
+        doesn't resolve (caller reports suggestions in that case)."""
+        return real_columns_lower.get(name.strip("[]").lower())
+
+    resolved_columns = []
+    bad_columns = []
+    for c in columns:
+        real = _validate_identifier(c)
+        if real:
+            resolved_columns.append(real)
+        else:
+            bad_columns.append(c)
+    if bad_columns:
+        all_suggestions = {}
+        for bad in bad_columns:
+            all_suggestions[bad] = difflib.get_close_matches(bad, real_columns, n=3, cutoff=0.4)
+        return {
+            "ok": False,
+            "error": f"Column(s) {bad_columns} do not exist on {qualified_name}.",
+            "suggestions": all_suggestions,
+            "real_columns": real_columns,
+        }
+
+    # Best-effort identifier check inside WHERE -- catches a hallucinated
+    # filter column even though the free-text clause itself isn't fully
+    # parsed. Skips SQL keywords/operators and anything that isn't a bare
+    # identifier token (string/number literals, quoted values).
+    _SQL_KEYWORDS = {
+        "and", "or", "not", "in", "is", "null", "like", "between", "exists",
+        "select", "from", "where", "top", "asc", "desc", "order", "by", "as",
+        "true", "false",
+    }
+    where_bad = []
+    if where:
+        tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", where)
+        for tok in tokens:
+            if tok.lower() in _SQL_KEYWORDS or tok.upper() in {"N"}:  # N'...' unicode literal prefix
+                continue
+            if not _validate_identifier(tok):
+                # Only flag it if it isn't clearly a value (e.g. a status
+                # string) -- heuristic: real schema identifiers are what we
+                # actually know, so anything NOT matching a real column
+                # here AND not a keyword is worth a warning, not a hard
+                # block (free text WHERE clauses legitimately reference
+                # values that happen to look like identifiers).
+                where_bad.append(tok)
+
+    select_list = ", ".join(f"[{c}]" for c in resolved_columns) if resolved_columns else "*"
+    top_clause = f"TOP ({int(top)}) " if top else ""
+    sql = f"SELECT {top_clause}{select_list} FROM {qualified_name}"
+    if where:
+        sql += f" WHERE {where}"
+    if order_by:
+        sql += f" ORDER BY {order_by}"
+
+    result = {"ok": True, "database": db, "table": qualified_name, "sql": sql}
+    if ambiguity_warning:
+        result["ambiguity_warning"] = ambiguity_warning
+    if where_bad:
+        result["warning"] = (
+            f"These WHERE tokens don't match a real column on {qualified_name} -- "
+            f"double check they're intended as literal values, not column names: {where_bad}"
+        )
+    return result
+
 # A ticket Description/reply field can carry an inline base64 image
 # (<img src="data:image/png;base64,...">) pasted by a user in the source
 # helpdesk UI. A real 2026-09-03 incident: one such blob was ~93,000
@@ -912,6 +1054,24 @@ def main() -> None:
                               "Hermes_L2_Response_Trn_Tbl or Complaint_Mst_Tbl. Requires "
                               "--run-id, --ticket-id, --block-reason.")
     parser.add_argument("--block-reason", default=None, help="Required with --escalate-blocked.")
+    parser.add_argument("--build-query", default=None, metavar="TABLE",
+                         help="Mechanically construct a SELECT against TABLE, validating every "
+                              "column against Knowledge/schema_allowlist.json BEFORE building any "
+                              "SQL -- a hallucinated table/column is rejected here, with the "
+                              "closest real name, instead of only being caught after a query fails "
+                              "or (worse) never being run at all. Requires --columns. Prints the "
+                              "SQL by default; add --execute to actually run it (read-only, "
+                              "audited the same as --query).")
+    parser.add_argument("--columns", default=None,
+                         help="Comma-separated column list for --build-query.")
+    parser.add_argument("--where", default=None,
+                         help="With --build-query: raw WHERE clause text (identifiers checked "
+                              "best-effort against the real schema, values are not).")
+    parser.add_argument("--top", type=int, default=None, help="With --build-query: TOP N rows.")
+    parser.add_argument("--order-by", default=None, help="With --build-query: ORDER BY clause.")
+    parser.add_argument("--execute", action="store_true",
+                         help="With --build-query: actually run the constructed SQL (read-only, "
+                              "audited) instead of just printing it.")
     parser.add_argument("--reply-text", default=None)
     parser.add_argument("--problem-summary", default=None)
     parser.add_argument("--findings", default=None)
@@ -1005,6 +1165,14 @@ def main() -> None:
                               "stale (e.g. corrected after you were assigned) -- don't keep "
                               "querying against values that were already fixed upstream.")
     args = parser.parse_args()
+    # --build-query needs to know whether --database was actually typed by
+    # the caller, to decide whether an ambiguous table name (one that
+    # exists in more than one database) deserves a warning. Captured here,
+    # before the unconditional default-fill below overwrites args.database
+    # for every other code path -- confirmed live this exact bug: the
+    # ambiguity warning could never fire because args.database was never
+    # actually None by the time --build-query's own handler ran.
+    _database_explicitly_given = args.database
 
     if not args.server:
         parser.error("--server is required (or set MSSQL_MCP_SERVER)")
@@ -1136,6 +1304,32 @@ def main() -> None:
         if args.get_ticket_context:
             print(json.dumps(client.get_ticket_context(args.get_ticket_context), indent=2, default=str))
             return
+
+        if args.build_query:
+            if not args.columns:
+                parser.error("--build-query requires --columns")
+            result = build_query_mechanically(
+                table=args.build_query,
+                columns=[c.strip() for c in args.columns.split(",") if c.strip()],
+                where=args.where, order_by=args.order_by, top=args.top,
+                database=_database_explicitly_given,
+            )
+            if not result["ok"]:
+                print(json.dumps(result, indent=2))
+                sys.exit(1)
+            if not args.execute:
+                print(json.dumps(result, indent=2))
+                return
+            # Fall through into the exact same audited --query path below --
+            # no separate execution code to maintain, and it gets the same
+            # write-keyword refusal, the same audit trail, and the same
+            # post-failure fuzzy-suggestion safety net for free (structurally
+            # unreachable here since every identifier was already validated,
+            # but a real, still-useful backstop against anything this
+            # validator itself missed).
+            args.query = result["sql"]
+            args.database = args.database or result["database"]
+            print(f"Executing mechanically-built query: {result['sql']}", file=sys.stderr)
 
         if args.query:
             # Strip single-quoted string literals before checking for write

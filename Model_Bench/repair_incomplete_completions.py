@@ -39,7 +39,7 @@ from pathlib import Path
 STATE_PATH = Path(__file__).parent / ".repaired_tasks.json"
 _HAS_WSL = shutil.which("wsl") is not None
 
-INVESTIGATOR_PROFILES = {"l2-gemma", "l2-investigator"}
+INVESTIGATOR_PROFILES = {"l2-gemma", "l2-investigator", "l2-eval-investigator"}
 MIN_SUMMARY_CHARS = 40  # below this, too thin to trust as a real finding
 
 # Ordered most-specific-first; first match wins. Deliberately conservative --

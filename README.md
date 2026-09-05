@@ -34,7 +34,7 @@ infrastructure, and what to do after a Hermes update.
                     └──────────┬──────────┘
                                ▼
                     ┌─────────────────────┐
-              ┌────►│ kanban card:        │  assignee l2-gemma
+              ┌────►│ kanban card:        │  assignee l2-eval-investigator
               │     │ investigator        │  skill: xstudio-l2-ticket-workflow
               │     └──────────┬──────────┘
               │                │ kanban_complete(summary, metadata)
@@ -45,26 +45,34 @@ infrastructure, and what to do after a Hermes update.
               │     └──────────┬──────────┘
               │        approve │  reject → kanban_block(reason)
               │                ▼                    │
-              │     ┌─────────────────────┐          │
-              │     │ kanban_approval_     │          │
-              │     │ publisher.py (hook-  │          │
-   rework     │     │ triggered, no-LLM)   │          │
-   card       │     └──────────┬──────────┘          │
-   created◄───┘                ▼                      │
-   (kanban_                    │--publish-response     │
-   reject_                     ▼ --force-run-id         │
-   bridge.py)       Hermes_L2_Response_Trn_Tbl          │
-                     + Complaint_Mst_Tbl (Status)       │
-                                                          ▼
-                                              Hermes_L2_Log_Blocked_
-                                              Escalation_Usp (real block
-                                              reason + trace, human queue)
-                                                          │
-                                                          ▼
-                                              Hermes_L3_Escalation_Trn_Tbl
-                                              (human work queue, excluded
-                                              from re-polling while open)
+              │     ┌─────────────────────┐          │  AttemptNo < 3?
+              │     │ kanban_approval_     │          ▼  yes: rework card
+   rework     │     │ publisher.py (hook-  │   kanban_reject_bridge.py
+   card       │     │ triggered, no-LLM)   │          │  no: --fail-run +
+   created◄───┘     └──────────┬──────────┘          │  --escalate-blocked
+   (attempt < 3)                ▼                      │  (EscalationCategory
+                     │--publish-response                │   = UNRESOLVED)
+                     ▼ --force-run-id                    ▼
+          Hermes_L2_Response_Trn_Tbl          Hermes_L2_Log_Blocked_
+          + Complaint_Mst_Tbl (Status)        Escalation_Usp (visibility-
+          (ResponseType incl.                 only -- doesn't touch the run)
+           NEEDS_HUMAN_ACTION, which also                │
+           writes EscalationCategory =                    ▼
+           'NEEDS_HUMAN_ACTION' -- diagnosed   Hermes_L3_Escalation_Trn_Tbl
+           but needs a human to act, distinct  (human work queue, excluded
+           from an UNRESOLVED "couldn't        from re-polling while its own
+           figure it out" escalation)          EscalationCategory stays open)
 ```
+
+All four LLM-driven profiles (`l2-eval-investigator`, `l2-investigator`,
+`l2-gemma-verifier`, `l2-qwen-verifier`) currently point at the same LM
+Studio model, `qwopus3.5-9b-coder` — see `deploy/profiles/*/config.yaml`.
+LM Studio serves one model at a time; profile-to-model assignment is a
+single line (`model.default`) per profile, changed via `hermes profile
+use <name>` triggering a JIT load/evict, never by loading two models
+side by side. `l2-gemma` (the original gemma-4-e4b-it investigator this
+project started with) is fully retired — profile still exists with its
+old config as historical record, gateway stopped, zero live kanban tasks.
 
 Every hop after `kanban_complete`/`kanban_block` is **event-driven**, not
 cron-polled: a Hermes observer-hook plugin
@@ -111,8 +119,14 @@ Hermes_Orchestrator.py     Core CLI: --poll (atomic claim) and
                             --find-sql-objects, --get-sql-object-definition,
                             --get-run-actions, --search-solutions,
                             --log-activity, --create-solution,
-                            --link-solution). This is the ONLY code path
-                            that writes to the ticket/response tables.
+                            --link-solution), plus (2026-09-05) --fail-run
+                            (mark a run FAILED with a reason, without
+                            publishing a response), --escalate-blocked
+                            (visibility-only L3 insert for a genuinely
+                            stuck investigation), and --build-query
+                            (mechanically-built, schema-validated SELECT —
+                            see §3). This is the ONLY code path that
+                            writes to the ticket/response tables.
 
 AGENTS.md / CLAUDE.md      Agent-facing operating instructions: folder map,
                             deployment state, SQL write discipline, the
@@ -172,6 +186,18 @@ Model_Bench/                Orchestration scripts + Hermes plugins.
                               Hermes_L2_Log_Blocked_Escalation_Usp so a
                               genuinely stuck ticket surfaces to a human
                               instead of sitting silently blocked.
+                              (2026-09-05) Second pass,
+                              find_trace_free_terminal_runs(): catches
+                              terminal runs (COMPLETED/FAILED/
+                              WAITING_USER) that somehow got zero trace
+                              events at all -- the original trace-based
+                              loop could never find these -- and writes a
+                              minimal honest note anyway, so "something is
+                              always written to Helpdesk" holds even when
+                              the trace pipeline itself missed a run.
+                              Recovered 206 previously-silent runs on
+                              first live pass, alongside 162 normal
+                              trace-based summaries.
   drain_and_summarize.py     Runs the two scripts above sequentially in
                               one process (avoids a race where the summary
                               could run before the drain committed).
@@ -276,9 +302,34 @@ All Hermes-side tables/procs/views live in `XStudio_Helpdesk`, prefixed
 | `Hermes_Agent_Trace_Trn_Tbl` | Raw event-level trace (tool calls, API requests, GPU/LM-Studio hardware samples) drained from the observer-hook plugin's local log. |
 | `Hermes_L2_Compute_Per_Ticket_Vw` | Aggregated token/tool-call/wall-clock cost per RunID, computed from the trace table. |
 | `Hermes_Ticket_Activity_Trn_Tbl` | Human-readable activity notes (existing platform table) — both real publishes and the deterministic trace-summary narrative land here. |
-| `Hermes_L3_Escalation_Trn_Tbl` | The human work queue. Populated two ways: (1) a real `L3_ESCALATION` response via `Hermes_L2_Publish_Response_Usp`, (2) a genuine stuck `kanban_block` via `Hermes_L2_Log_Blocked_Escalation_Usp` (visibility-only — does NOT complete/fail the run, Kanban is still free to retry). |
-| `Hermes_L2_Get_Candidate_Tickets_Usp` | The polling eligibility query. Excludes tickets with an active run, and (as of 2026-09-05) excludes tickets with an open L3 escalation — a ticket already in the human queue is never silently re-investigated by a later staleness event. |
+| `Hermes_L3_Escalation_Trn_Tbl` | The human work queue. Populated two ways: (1) a real `L3_ESCALATION`/`NEEDS_HUMAN_ACTION` response via `Hermes_L2_Publish_Response_Usp`, (2) a genuine stuck `kanban_block` via `Hermes_L2_Log_Blocked_Escalation_Usp` (visibility-only — does NOT complete/fail the run, Kanban is still free to retry). Carries an `EscalationCategory` column (`UNRESOLVED` vs `NEEDS_HUMAN_ACTION`) added 2026-09-05 via the official `XStudio_AddAttribute_Usp` route — a real diagnosis that needs a human to *execute* a change is now distinguishable from a genuine "couldn't figure it out." |
+| `Hermes_L2_Get_Candidate_Tickets_Usp` | The polling eligibility query. Excludes tickets with an active run, and excludes tickets with an open L3 escalation — a ticket already in the human queue is never silently re-investigated by a later staleness event. |
 | `Hermes_L2_Recover_Stale_Runs_Usp` | Marks a run FAILED after `@StaleMinutes` (default 60) with no heartbeat — but only for runs with `@ExcludeRunIDs` NOT protected by a still-live, non-terminal kanban task (checked client-side before this SP runs; see `Hermes_Orchestrator.py`'s `recover_stale_runs()`). |
+
+**Reject-rework loop cap (2026-09-05)**: `kanban_reject_bridge.py` counts
+`AttemptNo` (already tracked per-ticket by the claim logic) for the
+ticket behind a rejected card. Under 3 attempts → a fresh rework card
+back to the investigator with the reviewer's exact objection attached.
+At 3 → `--fail-run` (stops the run looking active) then
+`--escalate-blocked` (visibility-only L3 insert, `EscalationCategory=
+'UNRESOLVED'`) instead of another doomed rework cycle. This closed a real
+unbounded-loop bug: a ticket hitting the same underlying mistake forever
+got a brand-new kanban task ID each time, so the native
+block-recurrence-breaker (which keys off a single re-blocked task) never
+applied.
+
+**Mechanical, schema-validated query building (2026-09-05)**:
+`Hermes_Orchestrator.py --build-query <table> --columns c1,c2 [--where
+...] [--top N] [--order-by ...] [--execute] [--database ...]` builds a
+SELECT deterministically against `Knowledge/schema_allowlist.json` (the
+same allowlist the verifier already checks claims against), rejecting
+any hallucinated table/column with `difflib`-based fuzzy suggestions
+toward the real name, and warning when a table name is ambiguous across
+`XStudio_Helpdesk`/`XStudio_Xbatch` (e.g. `Area_Mst_Tbl` exists in both).
+Exists because a 9B local model, unassisted, occasionally invents a
+plausible-sounding column name — this gives it (and the human) a way to
+get a guaranteed-valid query without round-tripping through
+`INFORMATION_SCHEMA` by hand first.
 
 Deploy order: edit the relevant numbered file in `Knowledge/`, regenerate
 `00_Hermes_L2_FULL_INSTALL.sql` by concatenation, deploy with `sqlcmd`
@@ -310,11 +361,19 @@ last had it edited — see `Model_Bench/mirror_wsl_artifacts.sh`).
 
 1. **SQL layer**: deploy `Knowledge/00_Hermes_L2_FULL_INSTALL.sql`, then
    run `Knowledge/99_postflight.sql` and confirm no errors.
-2. **Hermes profiles**: install Hermes Agent, create the four profiles
-   under `deploy/profiles/` (`l2-investigator`, `l2-gemma`,
-   `l2-gemma-verifier`, `l2-qwen-verifier`). Copy each profile's
-   `SOUL.md`/`config.yaml` into the matching
-   `~/.hermes/profiles/<name>/...` path.
+2. **Hermes profiles**: install Hermes Agent, create the profiles under
+   `deploy/profiles/` (`l2-investigator` — hosts the kanban dispatcher
+   gateway and doubles as rework fallback; `l2-eval-investigator` — the
+   live fresh-ticket investigator; `l2-gemma-verifier` — the live
+   reviewer; `l2-qwen-verifier` — legacy second reviewer pairing, kept
+   for rework fallback only, not used by fresh dispatch; `l2-gemma` —
+   fully retired, gateway stopped, kept as historical record only). Copy
+   each profile's `SOUL.md`/`config.yaml` into the matching
+   `~/.hermes/profiles/<name>/...` path. All active profiles currently
+   point `model.default` at the same LM Studio model
+   (`qwopus3.5-9b-coder`) — LM Studio only serves one model at a time,
+   so do not point different active profiles at different models unless
+   you're deliberately accepting the load/evict thrash that causes.
 3. **Skills**: copy `deploy/skills/xstudio/*/SKILL.md` into each profile's
    `~/.hermes/profiles/<name>/skills/xstudio/<skill>/SKILL.md` (per §4 for
    which profile needs which skill).
@@ -415,17 +474,23 @@ redacted to this pattern before this repo's first commit. `.env` files,
 
 ## 9. Known limitations / open items
 
-- `enforce_publish_safety_net.py`'s canned "did not publish in time"
-  escalation (used only when Kanban has genuinely lost all track of a
-  run) carries no real findings — as of writing, roughly 90% of rows in
-  `Hermes_L3_Escalation_Trn_Tbl` are this generic placeholder rather than
-  a real, actionable escalation. Worth tagging/filtering distinctly in the
-  human-facing queue.
-- The reclaim-loop protection (native `--parent` gating +
-  `Hermes_L2_Get_Candidate_Tickets_Usp`'s L3-exclusion) is new as of
-  2026-09-05 — verified live against real traffic (zero re-reclaims of a
-  known-stuck ticket over the following hours), but hasn't yet run through
-  a full multi-day cycle.
-- Two legacy profiles (`l2-ministral`, `l2-nemo`) still have the
-  `xstudio-l2-draft-verifier` skill installed from an earlier architecture
-  iteration and are not currently used by the live pipeline.
+- The `EscalationCategory` split (`UNRESOLVED` vs `NEEDS_HUMAN_ACTION`)
+  and the `AttemptNo`-capped reject-rework loop are new as of 2026-09-05
+  — verified live (11 rows correctly tagged, 6 pre-existing stale tickets
+  up to 10 attempts deep escalated and confirmed excluded from
+  re-polling), but haven't yet run through a full multi-day cycle under
+  the current `qwopus3.5-9b-coder` model.
+- `l2-ministral`/`l2-nemo` (earlier architecture iteration, unused) have
+  been deleted (2026-09-05), not just left installed.
+- The investigator model was switched from `gemma-4-e4b-it` to
+  `qwopus3.5-9b-coder` (2026-09-05) after evaluating LM Studio's full
+  local model catalog; not yet run through the same multi-day volume the
+  gemma configuration saw, so its real reject/rework/escalation rates
+  under load are still unproven, only spot-checked.
+- **Cross-run context loss**: each investigation attempt starts cold —
+  a rejected attempt's reviewer objection is passed forward via the
+  rework card body, but a genuinely NEW ticket gets no benefit from a
+  similar ticket solved days earlier beyond whatever mem0 happens to
+  surface unprompted. Evaluating Microsoft Conductor and
+  knowledge-base-retrieval tooling for this gap is an open, in-progress
+  task — see `Plans/` for the latest research findings once written up.

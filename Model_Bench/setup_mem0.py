@@ -16,10 +16,10 @@ HOME = pathlib.Path.home()
 LM_STUDIO_URL = "http://100.111.69.102:1235/v1"
 OLLAMA_URL = "http://100.111.69.102:11434"
 USER_ID = "xstudio-l2-helpdesk"
-LLM_MODEL = "gemma-4-e4b-it"
+LLM_MODEL = "qwopus3.5-9b-coder"
 EMBEDDER_MODEL = "nomic-embed-text"
 
-PROFILES = ["l2-investigator", "l2-gemma", "l2-gemma-verifier", "l2-qwen-verifier"]
+PROFILES = ["l2-investigator", "l2-gemma", "l2-gemma-verifier", "l2-qwen-verifier", "l2-eval-investigator"]
 
 # 2026-09-05: was ONE shared path (~/.hermes/mem0_qdrant) across all 4
 # profiles. Real, live bug: Qdrant's local/embedded mode is single-process

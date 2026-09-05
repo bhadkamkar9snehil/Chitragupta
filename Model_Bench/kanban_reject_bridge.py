@@ -63,8 +63,12 @@ MAX_ATTEMPTS_BEFORE_ESCALATION = 3
 # why the two-board split (REVIEW_BOARD/DEFAULT_BOARD) was retired in
 # favor of native --parent gating on one board.
 REVIEWER_PROFILES = {"l2-gemma-verifier", "l2-qwen-verifier"}
+# 2026-09-05: investigator role switched from l2-gemma (gemma-4-e4b-it) to
+# l2-eval-investigator (qwopus3.5-9b-coder) -- see ticket_scout.py's own
+# INVESTIGATOR_PROFILE for why. l2-gemma's gateway is stopped; nothing
+# should route new work to it.
 INVESTIGATOR_BY_REVIEWER = {
-    "l2-gemma-verifier": "l2-gemma",
+    "l2-gemma-verifier": "l2-eval-investigator",
     "l2-qwen-verifier": "l2-investigator",
 }
 
@@ -216,7 +220,7 @@ def main():
             continue
 
         run_id, ticket_id, investigation_task_id = extract_source_ids(t.get("body"))
-        investigator_profile = INVESTIGATOR_BY_REVIEWER.get(reviewer_profile, "l2-gemma")
+        investigator_profile = INVESTIGATOR_BY_REVIEWER.get(reviewer_profile, "l2-eval-investigator")
 
         if ticket_id:
             attempt_count = get_attempt_count(ticket_id)
