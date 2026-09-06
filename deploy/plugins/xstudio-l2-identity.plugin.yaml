@@ -1,0 +1,7 @@
+name: xstudio-l2-identity
+version: "1.0.0"
+description: "Cross-cutting pre-tool guard that binds xstudio_l2 evidence/ledger calls and l2_action plan provenance to the current Kanban task's run_id/ticket_id. Conflicting model-supplied identities are blocked; matching identifiers are replaced by harness-owned values."
+author: Snehil Bhadkamkar, Hermes Agent
+requires_env: []
+provides_hooks:
+  - pre_tool_call
