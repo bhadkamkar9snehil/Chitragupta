@@ -20,17 +20,40 @@ class GBrainSyncTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_check_rejects_missing_or_federated_sources(self):
-        rows = [{"id": "l2-knowledge", "config": {"federated": True}}]
+    def _row(self, source_id: str, *, federated: bool = False, path: Path | None = None):
+        return {
+            "id": source_id,
+            "config": {
+                "federated": federated,
+                "local_path": str(path or (self.vault / mod.SOURCE_DIRS[source_id])),
+            },
+        }
+
+    def test_check_rejects_missing_federated_or_unbound_sources(self):
+        rows = [self._row("l2-knowledge", federated=True)]
         rows.extend(
-            {"id": source_id, "config": {"federated": False}}
+            self._row(source_id)
             for source_id in mod.SOURCE_DIRS
-            if source_id not in {"l2-knowledge", "l2-sessions"}
+            if source_id not in {"l2-knowledge", "l2-sessions", "l2-candidates"}
         )
+        rows.append({"id": "l2-candidates", "config": {"federated": False}})
         with mock.patch.object(mod, "_sources_list", return_value=rows):
             errors = mod._check_sources(self.vault)
         self.assertIn("GBrain source must be non-federated: l2-knowledge", errors)
         self.assertIn("missing GBrain source: l2-sessions", errors)
+        self.assertIn("GBrain source path is not reported for l2-candidates", errors)
+
+    def test_check_rejects_wrong_source_path(self):
+        rows = [self._row(source_id) for source_id in mod.SOURCE_DIRS]
+        rows[0] = self._row("l2-knowledge", path=self.vault / "wrong")
+        with mock.patch.object(mod, "_sources_list", return_value=rows):
+            errors = mod._check_sources(self.vault)
+        self.assertTrue(any("path mismatch for l2-knowledge" in error for error in errors))
+
+    def test_complete_non_federated_topology_passes(self):
+        rows = [self._row(source_id) for source_id in mod.SOURCE_DIRS]
+        with mock.patch.object(mod, "_sources_list", return_value=rows):
+            self.assertEqual(mod._check_sources(self.vault), [])
 
     def test_registration_uses_non_federated_explicit_paths(self):
         calls = []
