@@ -10,7 +10,7 @@ LEARNING_VAULT="${CHITRAGUPTA_L2_LEARNING_VAULT:-$HOME/.hermes/l2-learning}"
 
 mkdir -p "$SCRIPTS_DIR"
 
-# Remove names from retired Chitragupta layers.
+# One-time cleanup of names deployed by retired Chitragupta layers.
 for retired in \
   dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py \
   reconcile_l2_pipeline.py kanban_approval_publisher.py kanban_reject_bridge.py \
@@ -23,33 +23,31 @@ for retired in \
   setup_mem0.py seed_mem0_lessons.py reapply_mem0_patch.py \
   run_coalesced.py drain_l2_trace_log.py drain_and_summarize.py \
   generate_readable_trace_summary.py validate_action_capabilities.py \
-  mine_l2_action_capability_candidates.py l2_action_capability_curator.py
+  mine_l2_action_capability_candidates.py l2_action_capability_curator.py \
+  sync_l2_learning_corpus.py build_l2_historical_retrieval_eval.py \
+  benchmark_l2_learning_retrieval.py
 do
   rm -f "$SCRIPTS_DIR/$retired"
 done
 
-# Chitragupta domain/runtime code only. Hermes owns the general harness.
+# Only files required by the scheduled runtime are copied into the Hermes profile.
 for f in \
-  l2_pipeline_runtime.py kb_retrieval.py ticket_scout.py \
-  xstudio_l2_tool_bridge.py l2_gbrain.py \
-  sync_l2_learning_corpus.py sync_l2_approved_solutions.py sync_l2_outcomes.py \
-  mine_l2_learning_candidates.py l2_learning_curator.py \
+  l2_pipeline_runtime.py ticket_scout.py l2_gbrain.py \
+  sync_l2_outcomes.py mine_l2_learning_candidates.py \
   sync_l2_gbrain.py l2_learning_cycle.py
 do
   cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
 done
 chmod +x "$SCRIPTS_DIR"/*.py
-
 cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
 
-echo "== Learning source material =="
-python3 "$ROOT/Model_Bench/sync_l2_learning_corpus.py" --vault "$LEARNING_VAULT" \
-  || echo "WARNING: canonical learning-corpus sync failed"
+echo "== Governed reusable solutions =="
 python3 "$ROOT/Model_Bench/sync_l2_approved_solutions.py" \
   --vault "$LEARNING_VAULT" --policy "$ROOT/deploy/solution_export_policy.json" \
   || echo "WARNING: governed Solution sync found missing/drifted approvals"
 
-echo "== Outcome learning/GBrain convergence =="
+echo "== Outcome learning / GBrain convergence =="
+CHITRAGUPTA_KNOWLEDGE_PATH="$ROOT/Knowledge" \
 python3 "$ROOT/Model_Bench/l2_learning_cycle.py" --vault "$LEARNING_VAULT" \
   || echo "WARNING: learning cycle reported errors; lifecycle deployment continues"
 
@@ -97,7 +95,7 @@ for profile in "${REVIEWER_PROFILES[@]}"; do
   done
 done
 
-# GBrain sync has one owner: l2_learning_cycle.py.
+# No independent GBrain watcher: ticket_scout -> l2_learning_cycle owns convergence.
 systemctl --user disable --now chitragupta-gbrain-sync.service >/dev/null 2>&1 || true
 rm -f "$HOME/.config/systemd/user/chitragupta-gbrain-sync.service"
 systemctl --user daemon-reload >/dev/null 2>&1 || true
@@ -113,7 +111,7 @@ cat <<'EOF'
 Deployed Chitragupta L2 on Hermes.
   harness:    Hermes
   lifecycle:  l2_pipeline_runtime.py
-  evidence:   xstudio_l2 typed tools
-  retrieval:  isolated GBrain + supplemental l2_recall
-  learning:   reviewed outcomes -> lesson candidates -> GBrain sync
+  evidence:   typed xstudio_l2
+  retrieval:  direct Git Knowledge + reviewed learning lanes in isolated GBrain
+  learning:   reviewed outcomes -> unverified candidates -> human promotion
 EOF

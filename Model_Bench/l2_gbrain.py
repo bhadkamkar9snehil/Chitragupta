@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
-"""Harness-owned GBrain adapter for Chitragupta's L2 retrieval plane.
+"""Small harness-owned adapter around Chitragupta's isolated GBrain.
 
-GBrain is disposable derivative retrieval state. It never owns Helpdesk
-lifecycle state, never writes XStudio, and is never exposed to L2 workers as a
-raw memory API.
-
-Every trust lane is a separate non-federated source. Every read names its
-source(s) explicitly. Chitragupta also gives this adapter a dedicated GBrain
-home so unrelated/default user brains cannot leak into L2 retrieval.
+GBrain is derivative retrieval state, never Helpdesk lifecycle authority. Only
+reviewed/canonical material is indexed automatically; historical cases remain
+explicitly labelled analogies. Raw sessions and unreviewed candidates are kept
+out of the model-facing retrieval plane entirely.
 """
 from __future__ import annotations
 
@@ -20,18 +17,17 @@ from typing import Any
 
 DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
 DEFAULT_GBRAIN_HOME = Path.home() / ".hermes" / "l2-gbrain"
+DEFAULT_KNOWLEDGE = Path("/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Knowledge")
 DEFAULT_TIMEOUT = max(10, int(os.environ.get("L2_GBRAIN_TIMEOUT_SECONDS", "60")))
 
-SOURCE_DIRS: dict[str, str] = {
-    "l2-knowledge": "knowledge",
+VAULT_SOURCE_DIRS: dict[str, str] = {
     "l2-facts": "facts",
     "l2-solutions": "solutions/approved",
     "l2-approved-cases": "cases/approved",
     "l2-rejected-cases": "cases/rejected",
     "l2-reopened-cases": "cases/reopened",
-    "l2-sessions": "sessions",
-    "l2-candidates": "candidates",
 }
+SOURCE_IDS: tuple[str, ...] = ("l2-knowledge", *VAULT_SOURCE_DIRS)
 
 SCOPE_SOURCES: dict[str, tuple[str, ...]] = {
     "trusted": ("l2-knowledge", "l2-facts", "l2-solutions"),
@@ -42,30 +38,31 @@ SCOPE_SOURCES: dict[str, tuple[str, ...]] = {
     "approved_cases": ("l2-approved-cases",),
     "rejected_cases": ("l2-rejected-cases",),
     "reopened_cases": ("l2-reopened-cases",),
-    "sessions": ("l2-sessions",),
-    "candidates": ("l2-candidates",),
-    "all": tuple(SOURCE_DIRS),
 }
-
-SUPPORTED_SEARCH_MODES = frozenset({"hybrid", "deep", "fts", "vector"})
-# Automatic harness retrieval may use trusted guidance or explicitly-labelled
-# historical cases, but must never silently widen into raw sessions/candidates
-# or the mixed all-source scope.
-AUTOMATIC_FORBIDDEN_SCOPES = frozenset({"all", "sessions", "candidates"})
 
 
 def vault_path(value: str | None = None) -> Path:
-    if value:
-        return Path(value).expanduser()
-    raw = os.environ.get("CHITRAGUPTA_L2_LEARNING_VAULT", "").strip()
+    raw = value or os.environ.get("CHITRAGUPTA_L2_LEARNING_VAULT", "").strip()
     return Path(raw).expanduser() if raw else DEFAULT_VAULT
 
 
 def gbrain_home(value: str | None = None) -> Path:
-    if value:
-        return Path(value).expanduser()
-    raw = os.environ.get("CHITRAGUPTA_GBRAIN_HOME", "").strip()
+    raw = value or os.environ.get("CHITRAGUPTA_GBRAIN_HOME", "").strip()
     return Path(raw).expanduser() if raw else DEFAULT_GBRAIN_HOME
+
+
+def knowledge_path(value: str | None = None) -> Path | None:
+    raw = value or os.environ.get("CHITRAGUPTA_KNOWLEDGE_PATH", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    for candidate in (
+        Path.cwd() / "Knowledge",
+        Path(__file__).resolve().parent.parent / "Knowledge",
+        DEFAULT_KNOWLEDGE,
+    ):
+        if candidate.is_dir():
+            return candidate
+    return None
 
 
 def binary() -> str:
@@ -76,15 +73,12 @@ def available() -> bool:
     return shutil.which(binary()) is not None
 
 
-def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT,
-        cwd: Path | None = None) -> tuple[int, str, str]:
-    """Run one GBrain command inside the dedicated Chitragupta brain home."""
+def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT) -> tuple[int, str, str]:
     env = os.environ.copy()
     env["GBRAIN_HOME"] = str(gbrain_home())
     try:
         proc = subprocess.run(
             [binary(), *args],
-            cwd=str(cwd) if cwd else None,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -97,40 +91,15 @@ def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT,
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 
-def parse_json(text: str) -> Any:
-    return json.loads(text or "null")
-
-
 def sources_for_scope(scope: str) -> tuple[str, ...]:
-    if scope not in SCOPE_SOURCES:
-        raise ValueError(f"unknown scope: {scope}")
-    return SCOPE_SOURCES[scope]
+    try:
+        return SCOPE_SOURCES[scope]
+    except KeyError as exc:
+        raise ValueError(f"unknown scope: {scope}") from exc
 
 
-def automatic_scope_allowed(scope: str) -> bool:
-    return scope in SCOPE_SOURCES and scope not in AUTOMATIC_FORBIDDEN_SCOPES
-
-
-def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
-           limit: int = 5, automatic: bool = False) -> dict[str, Any]:
-    """Run one explicit, source-scoped GBrain retrieval-only search.
-
-    ``gbrain query`` is intentionally never invoked. Legacy callers may request
-    ``deep``, ``fts`` or ``vector`` during migration, but all are normalized to
-    the same retrieval-only hybrid ``search`` path.
-
-    When ``automatic=True`` the adapter additionally forbids mixed/raw scopes
-    (`all`, `sessions`, `candidates`). Explicit supplemental recall may still
-    request those scopes with ``automatic=False`` and must preserve their trust
-    labels upstream.
-    """
-    if mode not in SUPPORTED_SEARCH_MODES:
-        return {
-            "ok": False,
-            "error": f"unknown search mode: {mode}",
-            "retry_same_call": False,
-            "backend": "gbrain",
-        }
+def search(query: str, *, scope: str = "trusted", limit: int = 5) -> dict[str, Any]:
+    """Run source-scoped retrieval only. This adapter never calls `gbrain query`."""
     if scope not in SCOPE_SOURCES:
         return {
             "ok": False,
@@ -138,23 +107,11 @@ def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
             "retry_same_call": False,
             "backend": "gbrain",
         }
-    if automatic and not automatic_scope_allowed(scope):
-        return {
-            "ok": False,
-            "error": f"scope {scope!r} is forbidden for automatic harness retrieval",
-            "retry_same_call": False,
-            "backend": "gbrain",
-            "scope": scope,
-        }
-
     sources = sources_for_scope(scope)
-    requested = mode
-    effective = "hybrid"
-    source_arg = ",".join(sources)
     rc, out, err = run([
         "search",
         query,
-        "--source", source_arg,
+        "--source", ",".join(sources),
         "--limit", str(max(1, min(10, int(limit)))),
         "--json",
     ])
@@ -168,12 +125,11 @@ def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
             "source_ids": list(sources),
         }
     try:
-        payload = parse_json(out)
-    except Exception:
+        payload = json.loads(out or "null")
+    except json.JSONDecodeError:
         return {
             "ok": False,
             "error": "gbrain returned non-JSON output",
-            "detail": out.strip()[:1000],
             "retry_same_call": False,
             "backend": "gbrain",
             "scope": scope,
@@ -184,9 +140,6 @@ def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
         "backend": "gbrain",
         "scope": scope,
         "source_ids": list(sources),
-        "requested_mode": requested,
-        "effective_mode": effective,
-        "automatic": automatic,
         "results": payload,
         "deterministic_retrieval": True,
     }

@@ -1,11 +1,11 @@
-"""Chitragupta's Hermes tool boundary.
+"""Chitragupta's single Hermes domain-tool plugin.
 
-Hermes owns the agent harness. This plugin exposes only two domain tools:
+Hermes owns the agent harness. This plugin exposes:
 - xstudio_l2: typed XStudio/Helpdesk evidence and ledger operations;
-- l2_recall: read-only trust-scoped GBrain recall.
+- l2_recall: read-only, trust-scoped GBrain retrieval.
 
-Run/ticket identity is bound from the current Hermes Kanban task before any
-identity-sensitive xstudio_l2 operation reaches the Windows bridge.
+Identity-sensitive XStudio calls are bound to the current Kanban task before
+they cross the Windows/pyodbc bridge.
 """
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ RECALL_TOOL = "l2_recall"
 RECALL_TOOLSET = "l2_learning"
 
 _TASK_ID_RE = re.compile(r"\bt_[0-9a-f]{6,}\b", re.IGNORECASE)
-_CONTEXT_KEYS = {"run_id", "ticket_id"}
 _RUN_OPS = {"select", "query", "read_procedure", "get_run_actions", "save_ledger"}
 _TICKET_OPS = {"get_ticket_context"}
 _CONTEXT_LOCK = threading.Lock()
@@ -46,8 +45,7 @@ from l2_gbrain import SCOPE_SOURCES, available as gbrain_available, search as gb
 
 def _kanban_task_id(task_id: str | None = None) -> str:
     for candidate in (task_id or "", *map(str, sys.argv)):
-        match = _TASK_ID_RE.search(candidate)
-        if match:
+        if match := _TASK_ID_RE.search(candidate):
             return match.group(0)
     return ""
 
@@ -57,29 +55,29 @@ def _task_context(task_id: str | None = None) -> dict[str, str]:
     if not actual:
         return {}
     with _CONTEXT_LOCK:
-        cached = _CONTEXT_CACHE.get(actual)
-        if cached:
-            return dict(cached)
+        if actual in _CONTEXT_CACHE:
+            return dict(_CONTEXT_CACHE[actual])
     try:
         proc = subprocess.run(
             ["hermes", "kanban", "show", actual, "--json"],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True,
+            text=True,
+            timeout=8,
         )
-        if proc.returncode != 0:
+        if proc.returncode:
             return {}
         payload = json.loads(proc.stdout or "{}")
         task = payload.get("task") if isinstance(payload.get("task"), dict) else payload
-        body = str(task.get("body") or "")
     except Exception:
         return {}
 
     context: dict[str, str] = {}
-    for raw in body.splitlines():
+    for raw in str(task.get("body") or "").splitlines():
         if ":" not in raw:
             continue
         key, value = raw.split(":", 1)
         key, value = key.strip().lower(), value.strip()
-        if key in _CONTEXT_KEYS and value:
+        if key in {"run_id", "ticket_id"} and value:
             context[key] = value
     if context.get("run_id") and context.get("ticket_id"):
         with _CONTEXT_LOCK:
@@ -89,23 +87,22 @@ def _task_context(task_id: str | None = None) -> dict[str, str]:
 
 def _bind_identity(params: dict[str, Any], task_id: str | None) -> dict[str, Any]:
     operation = str(params.get("operation") or "")
-    need_run = operation in _RUN_OPS
-    need_ticket = operation in _TICKET_OPS
-    if not need_run and not need_ticket:
+    required = {
+        "run_id": operation in _RUN_OPS,
+        "ticket_id": operation in _TICKET_OPS,
+    }
+    if not any(required.values()):
         return dict(params)
 
     context = _task_context(task_id)
-    if need_run and not context.get("run_id"):
-        raise RuntimeError("current Kanban task run_id could not be resolved")
-    if need_ticket and not context.get("ticket_id"):
-        raise RuntimeError("current Kanban task ticket_id could not be resolved")
-
     bound = dict(params)
-    for key, required in (("run_id", need_run), ("ticket_id", need_ticket)):
-        if not required:
+    for key, needed in required.items():
+        if not needed:
             continue
+        actual = context.get(key)
+        if not actual:
+            raise RuntimeError(f"current Kanban task {key} could not be resolved")
         supplied = str(bound.get(key) or "").strip()
-        actual = context[key]
         if supplied and supplied != actual:
             raise ValueError(f"{key} belongs to a different L2 task")
         bound[key] = actual
@@ -117,23 +114,38 @@ def _invoke_bridge(params: dict[str, Any]) -> str:
         proc = subprocess.run(
             [WINDOWS_PYTHON, BRIDGE_WIN],
             input=json.dumps(params, separators=(",", ":"), default=str),
-            capture_output=True, text=True, timeout=BRIDGE_TIMEOUT_SECONDS,
+            capture_output=True,
+            text=True,
+            timeout=BRIDGE_TIMEOUT_SECONDS,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return json.dumps({"ok": False, "operation": params.get("operation"),
-                           "error": f"bridge transport failed: {type(exc).__name__}: {exc}"})
+        return json.dumps({
+            "ok": False,
+            "operation": params.get("operation"),
+            "error": f"bridge transport failed: {type(exc).__name__}: {exc}",
+        })
     text = (proc.stdout or "").strip()
     if not text:
-        return json.dumps({"ok": False, "operation": params.get("operation"),
-                           "error": (proc.stderr or f"bridge exited {proc.returncode}").strip()[:1000]})
+        return json.dumps({
+            "ok": False,
+            "operation": params.get("operation"),
+            "error": (proc.stderr or f"bridge exited {proc.returncode}").strip()[:1000],
+        })
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        return json.dumps({"ok": False, "operation": params.get("operation"),
-                           "error": "bridge returned non-JSON output"})
-    if proc.returncode != 0 and isinstance(data, dict) and data.get("ok", True):
-        data = {"ok": False, "operation": params.get("operation"),
-                "error": f"bridge exited {proc.returncode}", "detail": data}
+        return json.dumps({
+            "ok": False,
+            "operation": params.get("operation"),
+            "error": "bridge returned non-JSON output",
+        })
+    if proc.returncode and isinstance(data, dict) and data.get("ok", True):
+        data = {
+            "ok": False,
+            "operation": params.get("operation"),
+            "error": f"bridge exited {proc.returncode}",
+            "detail": data,
+        }
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
@@ -141,23 +153,11 @@ def _xstudio(params: dict[str, Any], task_id: str = "", **_: Any) -> str:
     try:
         return _invoke_bridge(_bind_identity(params, task_id))
     except (RuntimeError, ValueError) as exc:
-        return json.dumps({"ok": False, "operation": params.get("operation"),
-                           "error": f"L2 identity guard: {exc}"})
-
-
-_SCOPE_POLICY = {
-    "trusted": "Governed reference only; verify current-ticket claims live.",
-    "knowledge": "Canonical reference only; verify current-ticket state live.",
-    "facts": "Reviewed reusable facts; verify applicability live.",
-    "solutions": "Governed reusable solutions; verify applicability live.",
-    "cases": "Historical outcomes are analogies/counterexamples, not proof.",
-    "approved_cases": "Prior success is not proof for this ticket.",
-    "rejected_cases": "Reviewer-rejected history is a negative example.",
-    "reopened_cases": "Reopened history is a regression warning.",
-    "sessions": "Raw history may contain mistakes; use only as a lead.",
-    "candidates": "Unreviewed candidates are not facts.",
-    "all": "Mixed trust search; classify and verify every result.",
-}
+        return json.dumps({
+            "ok": False,
+            "operation": params.get("operation"),
+            "error": f"L2 identity guard: {exc}",
+        })
 
 
 def _recall(params: dict[str, Any], **_: Any) -> str:
@@ -176,12 +176,17 @@ def _recall(params: dict[str, Any], **_: Any) -> str:
     result = gbrain_search(query[:600], scope=scope, limit=limit)
     if not result.get("ok"):
         return json.dumps(result, ensure_ascii=False, default=str)
+    historical = scope == "cases" or scope.endswith("_cases")
     return json.dumps({
         "ok": True,
         "backend": "gbrain",
         "scope": scope,
         "source_ids": result.get("source_ids") or [],
-        "warning": _SCOPE_POLICY[scope],
+        "warning": (
+            "Historical outcomes are leads/counterexamples, not proof."
+            if historical
+            else "Reusable reference only; verify current-ticket claims live."
+        ),
         "results": result.get("results") or [],
         "live_verification_required": True,
     }, ensure_ascii=False, default=str)
@@ -196,10 +201,10 @@ _XSTUDIO_SCHEMA = {
             "operation": {"type": "string", "enum": [
                 "select", "query", "suggest_tables", "find_objects",
                 "get_definition", "validate_identifiers", "read_procedure",
-                "get_ticket_context", "get_run_actions", "save_ledger"
+                "get_ticket_context", "get_run_actions", "save_ledger",
             ]},
             "database": {"type": "string", "enum": [
-                "XStudio_Helpdesk", "XStudio_Xbatch", "XStudio_Configuration_Xbatch"
+                "XStudio_Helpdesk", "XStudio_Xbatch", "XStudio_Configuration_Xbatch",
             ]},
             "run_id": {"type": "string"},
             "ticket_id": {"type": "string"},
@@ -241,10 +246,16 @@ _RECALL_SCHEMA = {
 
 def register(ctx: Any) -> None:
     ctx.register_tool(
-        name=XSTUDIO_TOOL, toolset=XSTUDIO_TOOLSET, schema=_XSTUDIO_SCHEMA,
-        handler=_xstudio, description="Typed guarded XStudio L2 evidence interface.",
+        name=XSTUDIO_TOOL,
+        toolset=XSTUDIO_TOOLSET,
+        schema=_XSTUDIO_SCHEMA,
+        handler=_xstudio,
+        description="Typed guarded XStudio L2 evidence interface.",
     )
     ctx.register_tool(
-        name=RECALL_TOOL, toolset=RECALL_TOOLSET, schema=_RECALL_SCHEMA,
-        handler=_recall, description="Read-only trust-scoped GBrain recall.",
+        name=RECALL_TOOL,
+        toolset=RECALL_TOOLSET,
+        schema=_RECALL_SCHEMA,
+        handler=_recall,
+        description="Read-only trust-scoped GBrain recall.",
     )

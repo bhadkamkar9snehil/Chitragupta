@@ -6,7 +6,6 @@ cd "$ROOT"
 
 LEARNING_VAULT="${CHITRAGUPTA_L2_LEARNING_VAULT:-$HOME/.hermes/l2-learning}"
 GBRAIN_HOME="${CHITRAGUPTA_GBRAIN_HOME:-$HOME/.hermes/l2-gbrain}"
-HISTORICAL_EVAL="$LEARNING_VAULT/eval/historical_retrieval_cases.jsonl"
 
 PY_FILES=(
   Model_Bench/l2_pipeline_runtime.py
@@ -15,15 +14,12 @@ PY_FILES=(
   Model_Bench/xstudio_l2_tool_bridge.py
   Model_Bench/xstudio_l2_tools_plugin/__init__.py
   Model_Bench/l2_gbrain.py
-  Model_Bench/sync_l2_learning_corpus.py
   Model_Bench/sync_l2_approved_solutions.py
   Model_Bench/sync_l2_outcomes.py
   Model_Bench/mine_l2_learning_candidates.py
   Model_Bench/l2_learning_curator.py
   Model_Bench/sync_l2_gbrain.py
   Model_Bench/l2_learning_cycle.py
-  Model_Bench/build_l2_historical_retrieval_eval.py
-  Model_Bench/benchmark_l2_learning_retrieval.py
   Model_Bench/validate_knowledge_manifest.py
 )
 
@@ -32,12 +28,10 @@ CONTRACT_TESTS=(
   Model_Bench/test_l2_gbrain.py
   Model_Bench/test_sync_l2_gbrain.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
-  Model_Bench/test_sync_l2_learning_corpus.py
   Model_Bench/test_sync_l2_outcomes.py
   Model_Bench/test_sync_l2_approved_solutions.py
   Model_Bench/test_mine_l2_learning_candidates.py
   Model_Bench/test_l2_learning_cycle.py
-  Model_Bench/test_build_l2_historical_retrieval_eval.py
 )
 
 SH_FILES=(
@@ -58,9 +52,6 @@ done
 
 echo "== Domain policy =="
 python3 Model_Bench/validate_knowledge_manifest.py
-
-echo "== Learning material =="
-python3 Model_Bench/sync_l2_learning_corpus.py --vault "$LEARNING_VAULT" --check
 python3 Model_Bench/sync_l2_approved_solutions.py \
   --vault "$LEARNING_VAULT" \
   --policy deploy/solution_export_policy.json \
@@ -70,19 +61,15 @@ echo "== GBrain =="
 command -v gbrain >/dev/null 2>&1 || { echo "FAIL: gbrain missing" >&2; exit 1; }
 GBRAIN_HOME="$GBRAIN_HOME" gbrain --version
 GBRAIN_HOME="$GBRAIN_HOME" gbrain doctor --json
-python3 Model_Bench/sync_l2_gbrain.py --vault "$LEARNING_VAULT" --check
-python3 Model_Bench/benchmark_l2_learning_retrieval.py --min-hit-rate 0.80
+CHITRAGUPTA_KNOWLEDGE_PATH="$ROOT/Knowledge" \
+python3 Model_Bench/sync_l2_gbrain.py \
+  --vault "$LEARNING_VAULT" \
+  --knowledge "$ROOT/Knowledge" \
+  --check
 
 echo "== Learning cycle =="
+CHITRAGUPTA_KNOWLEDGE_PATH="$ROOT/Knowledge" \
 python3 Model_Bench/l2_learning_cycle.py --vault "$LEARNING_VAULT" --dry-run
-
-echo "== Historical replay =="
-python3 Model_Bench/build_l2_historical_retrieval_eval.py --vault "$LEARNING_VAULT"
-if [[ -s "$HISTORICAL_EVAL" ]]; then
-  python3 Model_Bench/benchmark_l2_learning_retrieval.py --cases "$HISTORICAL_EVAL" --min-hit-rate 0.60
-else
-  echo "INFO: no correlated historical cases yet; replay benchmark skipped"
-fi
 
 echo "== Retired deployment guard =="
 DEPLOYED_SCRIPTS="$HOME/.hermes/profiles/l2-investigator/scripts"
@@ -98,7 +85,9 @@ for retired in \
   setup_mem0.py seed_mem0_lessons.py reapply_mem0_patch.py \
   run_coalesced.py drain_l2_trace_log.py drain_and_summarize.py \
   generate_readable_trace_summary.py validate_action_capabilities.py \
-  mine_l2_action_capability_candidates.py l2_action_capability_curator.py
+  mine_l2_action_capability_candidates.py l2_action_capability_curator.py \
+  sync_l2_learning_corpus.py build_l2_historical_retrieval_eval.py \
+  benchmark_l2_learning_retrieval.py
 do
   [[ ! -e "$DEPLOYED_SCRIPTS/$retired" ]] || {
     echo "FAIL: retired script still deployed: $retired" >&2
@@ -115,11 +104,11 @@ python3 Model_Bench/configure_helpdesk_workflow.py
 python3 Model_Bench/l2_pipeline_runtime.py status
 python3 Model_Bench/l2_pipeline_runtime.py reconcile --dry-run
 
-echo
 cat <<'EOF'
+
 LOCAL VALIDATION COMPLETE
 
 Hermes owns the agent harness and durable sessions.
-Chitragupta owns the L2 lifecycle, typed XStudio domain tools, governed reusable
-knowledge, outcome learning and the isolated GBrain retrieval substrate.
+Chitragupta owns the Helpdesk lifecycle, typed XStudio domain boundary,
+review-governed reusable learning, and isolated derivative GBrain retrieval.
 EOF
