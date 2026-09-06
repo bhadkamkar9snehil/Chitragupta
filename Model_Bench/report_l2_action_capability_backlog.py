@@ -48,7 +48,7 @@ def _load_candidate(path: Path) -> dict[str, Any] | None:
 def backlog(vault: Path, *, include_terminal: bool = False) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     root = vault / "actions" / "candidates"
-    for path in root.glob("*.json") if root.exists() else []:
+    for path in sorted(root.glob("*.json")) if root.exists() else []:
         data = _load_candidate(path)
         if data is None:
             continue
@@ -56,6 +56,8 @@ def backlog(vault: Path, *, include_terminal: bool = False) -> list[dict[str, An
         if not include_terminal and status not in ACTIVE_RESEARCH_STATES:
             continue
         design = data.get("design_requirements") if isinstance(data.get("design_requirements"), dict) else {}
+        draft = data.get("draft_contract") if isinstance(data.get("draft_contract"), dict) else {}
+        draft_capability_id = design.get("capability_id") or draft.get("id")
         rows.append({
             "candidate": path.name,
             "candidate_id": data.get("candidate_id"),
@@ -65,7 +67,7 @@ def backlog(vault: Path, *, include_terminal: bool = False) -> list[dict[str, An
             "representative_human_action": data.get("representative_human_action"),
             "normalized_action": data.get("normalized_action"),
             "risk": design.get("risk") or "unclassified",
-            "draft_capability_id": design.get("capability_id") or (data.get("draft_contract") or {}).get("id") if isinstance(data.get("draft_contract"), dict) else design.get("capability_id"),
+            "draft_capability_id": draft_capability_id,
             "source_cases": data.get("source_cases") if isinstance(data.get("source_cases"), list) else [],
             "ticket_ids": data.get("ticket_ids") if isinstance(data.get("ticket_ids"), list) else [],
             "first_seen_at": data.get("first_seen_at"),
