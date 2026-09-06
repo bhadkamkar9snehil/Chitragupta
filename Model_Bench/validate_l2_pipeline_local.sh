@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 LEARNING_VAULT="${CHITRAGUPTA_L2_LEARNING_VAULT:-$HOME/.hermes/l2-learning}"
+HISTORICAL_EVAL="$LEARNING_VAULT/eval/historical_retrieval_cases.jsonl"
 
 PY_FILES=(
   Model_Bench/l2_pipeline_runtime.py
@@ -19,18 +20,26 @@ PY_FILES=(
   Model_Bench/patch_tool_search_off.py
   Model_Bench/xstudio_l2_orchestrator_plugin/__init__.py
   Model_Bench/xstudio_l2_tools_plugin/__init__.py
+  Model_Bench/xstudio_l2_identity_plugin/__init__.py
   Model_Bench/xstudio_l2_learning_plugin/__init__.py
   Model_Bench/xstudio_l2_actions_plugin/__init__.py
   Model_Bench/xstudio_l2_tool_bridge.py
   Model_Bench/sync_l2_learning_corpus.py
   Model_Bench/sync_l2_outcomes.py
+  Model_Bench/mine_l2_learning_candidates.py
+  Model_Bench/l2_learning_cycle.py
+  Model_Bench/build_l2_historical_retrieval_eval.py
   Model_Bench/l2_learning_curator.py
   Model_Bench/benchmark_l2_learning_retrieval.py
   Model_Bench/validate_action_capabilities.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
+  Model_Bench/test_xstudio_l2_identity_plugin.py
   Model_Bench/test_xstudio_l2_learning_plugin.py
   Model_Bench/test_xstudio_l2_actions_plugin.py
   Model_Bench/test_sync_l2_outcomes.py
+  Model_Bench/test_mine_l2_learning_candidates.py
+  Model_Bench/test_build_l2_historical_retrieval_eval.py
+  Model_Bench/test_validate_action_capabilities.py
   Model_Bench/test_patch_profile_config.py
 )
 SH_FILES=(
@@ -48,12 +57,20 @@ echo "== Deterministic lifecycle contract tests =="
 python3 Model_Bench/test_l2_pipeline_runtime.py
 echo "== Typed investigation-tool contract tests =="
 python3 Model_Bench/test_xstudio_l2_tools_plugin.py
+echo "== Harness-owned identity contract tests =="
+python3 Model_Bench/test_xstudio_l2_identity_plugin.py
 echo "== Adaptive learning contract tests =="
 python3 Model_Bench/test_xstudio_l2_learning_plugin.py
 echo "== Outcome-conditioned learning contract tests =="
 python3 Model_Bench/test_sync_l2_outcomes.py
+echo "== Outcome-to-candidate mining contract tests =="
+python3 Model_Bench/test_mine_l2_learning_candidates.py
+echo "== Historical retrieval replay builder tests =="
+python3 Model_Bench/test_build_l2_historical_retrieval_eval.py
 echo "== Non-executing action-planner contract tests =="
 python3 Model_Bench/test_xstudio_l2_actions_plugin.py
+echo "== Corrective-action promotion policy tests =="
+python3 Model_Bench/test_validate_action_capabilities.py
 echo "== Profile/root config patcher contract tests =="
 python3 Model_Bench/test_patch_profile_config.py
 echo "== Corrective-action registry =="
@@ -70,11 +87,20 @@ fi
 python3 Model_Bench/sync_l2_learning_corpus.py --vault "$LEARNING_VAULT" --check
 zg status "$LEARNING_VAULT" --check-ready
 
-echo "== Learning retrieval smoke benchmark =="
+echo "== Static learning retrieval smoke benchmark =="
 python3 Model_Bench/benchmark_l2_learning_retrieval.py --min-hit-rate 0.80
 
-echo "== Outcome case sync preview (read-only) =="
-python3 Model_Bench/sync_l2_outcomes.py --vault "$LEARNING_VAULT" --dry-run || true
+echo "== Learning sidecar preview =="
+python3 Model_Bench/l2_learning_cycle.py --vault "$LEARNING_VAULT" --dry-run
+
+echo "== Historical outcome-retrieval replay set =="
+python3 Model_Bench/build_l2_historical_retrieval_eval.py --vault "$LEARNING_VAULT"
+if [[ -s "$HISTORICAL_EVAL" ]]; then
+  echo "== Historical outcome-retrieval benchmark =="
+  python3 Model_Bench/benchmark_l2_learning_retrieval.py --cases "$HISTORICAL_EVAL" --min-hit-rate 0.60
+else
+  echo "INFO: no correlated historical session/outcome cases yet; replay benchmark skipped"
+fi
 
 echo "== Live profile plugin/toolset config =="
 for profile in l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback; do
@@ -116,27 +142,23 @@ LOCAL VALIDATION COMPLETE.
 Control plane:
   lifecycle:           claim -> investigate -> normalize -> frozen review -> publish/rework
   typed evidence:      xstudio_l2
+  identity:            run/ticket bound by xstudio-l2-identity before sensitive tool calls
 
 Learning plane:
   shared vault:        $LEARNING_VAULT
   session recording:   ON (redacted, unverified episodic)
   automatic prefetch:  OFF by design
   outcome cases:       approved/rejected/reopened historical case classes
+  candidate mining:    deterministic and unverified; no automatic promotion
   explicit recall:     trusted/case/session scopes with trust labels
-  candidate learning:  l2_lesson -> candidates only; separate promotion required
+  historical replay:   real session query -> corresponding outcome-case retrieval
   mem0 provider:       unchanged
 
 Action plane:
   registry:            deploy/xstudio_action_capabilities.json
   direct toolset:      l2_actions
   operations:          list/describe/plan/plans/validate_plan
+  plan provenance:     harness-bound to current run/ticket
   execution:           intentionally unavailable
-  global registry mode: observe until deliberately promoted
-
-For the next natural ticket verify:
-  - current evidence uses xstudio_l2;
-  - historical recall is explicit and trust-scoped;
-  - sessions are recorded and outcome cases appear after review/publication;
-  - l2_action cannot execute anything and rejects planning while global_mode=observe;
-  - no terminal Python/pyodbc/sqlcmd/package-install SQL transport reappears.
+  autonomy:            capability-specific promotion only
 EOF
