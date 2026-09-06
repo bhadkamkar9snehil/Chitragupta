@@ -91,16 +91,21 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
   deploy_plugin "$profile"
 done
 
+# Only task-pinned procedural skills are deployed. Domain reference knowledge lives
+# in Knowledge/ and GBrain, not in a second copy under every Hermes profile.
 for profile in "${INVESTIGATOR_PROFILES[@]}"; do
-  for skill in xstudio-l2-ticket-workflow xstudio-sql-write-discipline \
-               xstudio-sap-api-investigation xstudio-sohar-heat-execution \
-               xstudio-quality-delay-workorder; do
-    copy_skill "$profile" "$skill"
-  done
+  copy_skill "$profile" xstudio-l2-ticket-workflow
+  copy_skill "$profile" xstudio-sql-write-discipline
 done
+copy_skill l2-reviewer-primary xstudio-l2-draft-verifier
+copy_skill l2-reviewer-primary xstudio-sql-write-discipline
 
-for skill in xstudio-l2-draft-verifier xstudio-sql-write-discipline; do
-  copy_skill l2-reviewer-primary "$skill"
+# Remove retired/unpinned domain-skill copies from live profiles.
+for profile in "${INVESTIGATOR_PROFILES[@]}"; do
+  rm -rf \
+    "$HOME/.hermes/profiles/$profile/skills/xstudio/xstudio-sap-api-investigation" \
+    "$HOME/.hermes/profiles/$profile/skills/xstudio/xstudio-sohar-heat-execution" \
+    "$HOME/.hermes/profiles/$profile/skills/xstudio/xstudio-quality-delay-workorder"
 done
 
 # Retire the duplicate reviewer gateway/profile. The lifecycle still recognizes
@@ -125,7 +130,7 @@ Deployed Chitragupta L2 on Hermes.
   harness:    Hermes
   lifecycle:  l2_pipeline_runtime.py
   evidence:   typed xstudio_l2
-  retrieval:  direct Git Knowledge + reviewed learning lanes in isolated GBrain
+  retrieval:  canonical Knowledge + reviewed learning lanes in isolated GBrain
   learning:   reviewed outcomes -> unverified candidates -> human promotion
-  profiles:   dispatcher/legacy investigator + investigator worker + reviewer worker
+  profiles:   dispatcher + investigator worker + reviewer worker
 EOF
