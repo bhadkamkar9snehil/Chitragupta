@@ -60,8 +60,8 @@ done
 echo "== Static policy validation =="
 python3 Model_Bench/validate_action_capabilities.py
 python3 Model_Bench/validate_knowledge_manifest.py
-python3 - <<'PY'
-from Model_Bench.l2_context_delivery import load_context_policy
+PYTHONPATH="$ROOT/Model_Bench${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
+from l2_context_delivery import load_context_policy
 policy = load_context_policy()
 print(f"L2 context policy schema={policy['schema_version']} max_chars={policy['maximum_total_rendered_context_characters']}")
 PY
