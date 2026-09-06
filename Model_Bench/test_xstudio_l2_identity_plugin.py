@@ -72,7 +72,8 @@ class IdentityGuardTests(unittest.TestCase):
             )
         self.assertEqual(result["action"], "block")
         self.assertIn("harness-owned", result["message"])
-        self.assertIn("different", result["message"].lower() if "different" in result["message"].lower() else "different")
+        self.assertIn("model supplied run_id='OTHER'", result["message"])
+        self.assertIn("current Kanban task is bound to 'RUN-1'", result["message"])
 
     def test_matching_model_identity_is_replaced_with_bound_value(self):
         with self._mock_context():
@@ -109,6 +110,7 @@ class IdentityGuardTests(unittest.TestCase):
                 task_id="t_abcdef12",
             )
         self.assertEqual(result["action"], "block")
+        self.assertIn("model supplied ticket_id='OTHER'", result["message"])
 
     def test_validate_plan_blocks_cross_run_plan(self):
         with tempfile.TemporaryDirectory() as tmp, self._mock_context(), mock.patch.dict(
