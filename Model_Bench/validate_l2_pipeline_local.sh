@@ -44,6 +44,7 @@ PY_FILES=(
   Model_Bench/test_build_l2_historical_retrieval_eval.py
   Model_Bench/test_validate_action_capabilities.py
   Model_Bench/test_patch_profile_config.py
+  Model_Bench/test_adaptive_deploy_contract.py
 )
 SH_FILES=(
   Model_Bench/deploy_l2_pipeline_runtime.sh
@@ -80,6 +81,8 @@ echo "== Corrective-action promotion policy tests =="
 python3 Model_Bench/test_validate_action_capabilities.py
 echo "== Profile/root config patcher contract tests =="
 python3 Model_Bench/test_patch_profile_config.py
+echo "== Adaptive deploy drift contract =="
+python3 Model_Bench/test_adaptive_deploy_contract.py
 echo "== Corrective-action registry =="
 python3 Model_Bench/validate_action_capabilities.py
 echo "== Knowledge/skill validation =="
