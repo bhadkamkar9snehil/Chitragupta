@@ -3,12 +3,16 @@
 
 `Hermes_Solution_Article_Mst_Tbl.IsActive` is not enough to make an article
 trusted. The Git-tracked policy must explicitly approve a SolutionID and the
-exact content hash reviewed by an operator. Live content drift therefore fails
-closed rather than silently changing trusted retrieval material.
+exact semantic content hash reviewed by an operator. Live semantic content drift
+therefore fails closed rather than silently changing trusted retrieval material.
+
+Operational counters such as UsageCount are deliberately excluded from the
+approval hash: usage can change without changing the reviewed guidance. They may
+still be emitted as informational snapshots.
 
 This sidecar is read-only to SQL. It writes only the derived local learning-vault
 mirror under solutions/approved and archives previously managed exports when
-approval is removed.
+approval is removed or the approved live content drifts.
 """
 from __future__ import annotations
 
@@ -29,9 +33,14 @@ DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
 DEFAULT_POLICY = ROOT / "deploy" / "solution_export_policy.json"
 MANIFEST = "solutions/solution_export_manifest.json"
 
-FIELDS = (
+SELECT_FIELDS = (
     "ID", "Title", "ProblemSummary", "RootCause", "ResolutionSteps",
     "RootCauseCategoryID", "Route", "RelatedViewsJson", "Tags", "UsageCount",
+)
+# Governance hash = reviewed reusable content, not mutable runtime telemetry.
+HASH_FIELDS = (
+    "ID", "Title", "ProblemSummary", "RootCause", "ResolutionSteps",
+    "RootCauseCategoryID", "Route", "RelatedViewsJson", "Tags",
 )
 
 
@@ -54,7 +63,7 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _canonical_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {field: row.get(field) for field in FIELDS}
+    return {field: row.get(field) for field in HASH_FIELDS}
 
 
 def content_sha256(row: dict[str, Any]) -> str:
@@ -115,6 +124,9 @@ def _safe_id(value: str) -> str:
 
 def _render_solution(row: dict[str, Any], approval: dict[str, Any]) -> str:
     digest = content_sha256(row)
+    # Deliberately no generated-at/exported-at field here. The trusted article is
+    # byte-stable while its reviewed semantics and approval metadata are stable.
+    # Sync timestamps belong in the disposable export manifest instead.
     meta = {
         "kind": "l2_governed_solution_export",
         "trust": "governed_reusable_solution",
@@ -125,8 +137,6 @@ def _render_solution(row: dict[str, Any], approval: dict[str, Any]) -> str:
         "review_evidence": approval.get("review_evidence"),
         "route": row.get("Route"),
         "tags": row.get("Tags"),
-        "usage_count_snapshot": row.get("UsageCount"),
-        "exported_at": _now(),
     }
     fm = "\n".join(f"{k}: {json.dumps(v, ensure_ascii=False, default=str)}" for k, v in meta.items())
     related = row.get("RelatedViewsJson")
@@ -138,7 +148,17 @@ def _render_solution(row: dict[str, Any], approval: dict[str, Any]) -> str:
         f"## Root cause\n\n{row.get('RootCause') or '_Not recorded._'}\n\n"
         f"## Resolution steps\n\n{row.get('ResolutionSteps') or '_Not recorded._'}\n\n"
         f"## Related views / objects\n\n{related_text or '_Not recorded._'}\n\n"
+        f"## Operational usage snapshot\n\nUsageCount at this sync: {row.get('UsageCount') if row.get('UsageCount') is not None else '_Not recorded._'}\n\n"
         "> This is governed reusable guidance, not current-ticket proof. Verify applicability and live state before using it.\n"
+    )
+
+
+def _semantic_render_for_compare(text: str) -> str:
+    """Ignore only the non-governance usage snapshot when checking byte stability."""
+    return re.sub(
+        r"(?ms)^## Operational usage snapshot\n\nUsageCount at this sync: .*?\n\n(?=> )",
+        "## Operational usage snapshot\n\nUsageCount at this sync: <runtime-counter>\n\n",
+        text,
     )
 
 
@@ -210,17 +230,30 @@ def sync_approved_solutions(*, vault: Path | None = None, policy_path: Path = DE
             "content_sha256": actual_hash,
             "approved_by": approval.get("approved_by"),
             "approved_at": approval.get("approved_at"),
+            "usage_count_snapshot": row.get("UsageCount"),
         }
-        if path.exists() and path.read_text(encoding="utf-8") == rendered:
-            skipped += 1
-            continue
+        if path.exists():
+            existing_text = path.read_text(encoding="utf-8")
+            if existing_text == rendered:
+                skipped += 1
+                continue
+            # UsageCount is informational. A counter-only change updates the
+            # generated mirror without requiring re-approval, while the semantic
+            # hash remains pinned.
+            if _semantic_render_for_compare(existing_text) == _semantic_render_for_compare(rendered):
+                if not dry_run:
+                    path.write_text(rendered, encoding="utf-8")
+                skipped += 1
+                continue
         if not dry_run:
             approved_dir.mkdir(parents=True, exist_ok=True)
             path.write_text(rendered, encoding="utf-8")
         exported += 1
 
     # Only exports recorded in our previous manifest are eligible for archival.
-    # Hand-authored files are never swept by this sidecar.
+    # Hand-authored files are never swept by this sidecar. A still-approved
+    # article whose semantic hash drifted is intentionally omitted from
+    # next_managed, removing stale guidance from trusted recall until re-review.
     for sid, old in prior.items():
         if sid in next_managed:
             continue
@@ -254,6 +287,7 @@ def preview_live(*, args: Any = None) -> list[dict[str, Any]]:
         "solution_id": row.get("ID"),
         "title": row.get("Title"),
         "route": row.get("Route"),
+        "usage_count": row.get("UsageCount"),
         "content_sha256": content_sha256(row),
     } for row in rows]
 
@@ -264,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--policy", default=str(DEFAULT_POLICY))
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--preview-live", action="store_true",
-                    help="print active live Solution IDs and review hashes without trusting/exporting them")
+                    help="print active live Solution IDs and semantic review hashes without trusting/exporting them")
     ns = ap.parse_args(argv)
     if ns.preview_live:
         print(json.dumps({"solutions": preview_live()}, indent=2, ensure_ascii=False)); return 0
