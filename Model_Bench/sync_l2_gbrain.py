@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Synchronize Chitragupta's trust-separated learning corpus into GBrain.
 
-The learning vault remains source material. GBrain is disposable derivative
-state. Each trust lane is a non-federated source and every read names its source.
+The learning vault remains authoritative source material. GBrain is disposable
+derivative state. Each trust lane is a non-federated source and every read names
+its source explicitly.
 
 The vault gets local-only Git checkpoints because GBrain path sources reconcile
 from Git state. No remote is created or pushed. Synchronization is owned by the
@@ -86,8 +87,8 @@ def _ensure_brain() -> bool:
     rc, out, err = run(["init", "--pglite"], timeout=300)
     if rc != 0:
         raise RuntimeError((err or out).strip() or "failed to initialize isolated GBrain")
-    # Keep retrieval budgeting conservative. Failure here is non-fatal because
-    # source isolation and explicit source IDs are the real trust boundary.
+    # Retrieval tuning failure is non-fatal. Explicit source topology is the
+    # trust boundary; search tuning is derivative performance configuration.
     run(["config", "set", "search.mode", "conservative"])
     return True
 
@@ -97,7 +98,10 @@ def _sources_list() -> list[dict[str, Any]]:
     if rc != 0:
         raise RuntimeError((err or out).strip() or "gbrain sources list failed")
     data = json.loads(out or "[]")
-    rows = data.get("sources") or data.get("results") or [] if isinstance(data, dict) else data
+    if isinstance(data, dict):
+        rows = data.get("sources") or data.get("results") or []
+    else:
+        rows = data
     return [row for row in rows if isinstance(row, dict)]
 
 
@@ -125,7 +129,14 @@ def _is_federated(row: dict[str, Any]) -> bool:
 
 
 def _registered_path(row: dict[str, Any]) -> str:
-    return str(row.get("local_path") or row.get("path") or _source_config(row).get("local_path") or "")
+    config = _source_config(row)
+    return str(
+        row.get("local_path")
+        or row.get("path")
+        or config.get("local_path")
+        or config.get("path")
+        or ""
+    )
 
 
 def _register_missing(vault: Path, existing: dict[str, dict[str, Any]]) -> list[str]:
@@ -158,6 +169,7 @@ def _sync_sources() -> list[str]:
 
 
 def _check_sources(vault: Path) -> list[str]:
+    """Fail closed when any declared source is missing, federated or misbound."""
     rows = _sources_list()
     by_id = {_source_id(row): row for row in rows}
     errors: list[str] = []
@@ -170,10 +182,13 @@ def _check_sources(vault: Path) -> list[str]:
         if _is_federated(row):
             errors.append(f"GBrain source must be non-federated: {source_id}")
         registered = _registered_path(row)
-        if registered:
+        if not registered:
+            errors.append(f"GBrain source path is not reported for {source_id}")
+        else:
             try:
-                if Path(registered).expanduser().resolve() != expected:
-                    errors.append(f"GBrain source path mismatch for {source_id}: {registered} != {expected}")
+                actual = Path(registered).expanduser().resolve()
+                if actual != expected:
+                    errors.append(f"GBrain source path mismatch for {source_id}: {actual} != {expected}")
             except Exception:
                 errors.append(f"invalid GBrain source path for {source_id}: {registered}")
         if not expected.is_dir():
@@ -182,9 +197,9 @@ def _check_sources(vault: Path) -> list[str]:
 
 
 def _embed_stale() -> None:
-    # On a keyless brain this is allowed to preserve keyword retrieval. If the
-    # configured embedding provider is unavailable, surface the failure so the
-    # harness knows vector freshness is degraded rather than silently guessing.
+    # If the configured embedding provider is unavailable, surface degradation
+    # instead of pretending vector state is current. Keyword retrieval may still
+    # work, but the harness should know derivative state is unhealthy.
     rc, out, err = run(["embed", "--stale"], timeout=300)
     if rc != 0:
         raise RuntimeError((err or out).strip() or "gbrain embed --stale failed")
