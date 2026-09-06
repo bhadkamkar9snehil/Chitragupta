@@ -54,13 +54,16 @@ command -v gbrain >/dev/null 2>&1 || { echo "FAIL: gbrain missing" >&2; exit 1; 
 GBRAIN_HOME="$GBRAIN_HOME" gbrain --version
 GBRAIN_HOME="$GBRAIN_HOME" gbrain doctor --json
 CHITRAGUPTA_KNOWLEDGE_PATH="$ROOT/Knowledge" \
+CHITRAGUPTA_REFERENCE_PATH="$ROOT/Reference Documents" \
 python3 Model_Bench/sync_l2_gbrain.py \
   --vault "$LEARNING_VAULT" \
   --knowledge "$ROOT/Knowledge" \
+  --reference "$ROOT/Reference Documents" \
   --check
 
 echo "== Learning cycle =="
 CHITRAGUPTA_KNOWLEDGE_PATH="$ROOT/Knowledge" \
+CHITRAGUPTA_REFERENCE_PATH="$ROOT/Reference Documents" \
 python3 Model_Bench/l2_learning_cycle.py --vault "$LEARNING_VAULT" --dry-run
 
 echo "== Retired deployment guard =="

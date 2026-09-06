@@ -18,6 +18,7 @@ from typing import Any
 DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
 DEFAULT_GBRAIN_HOME = Path.home() / ".hermes" / "l2-gbrain"
 DEFAULT_KNOWLEDGE = Path("/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Knowledge")
+DEFAULT_REFERENCE = Path("/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Reference Documents")
 DEFAULT_TIMEOUT = max(10, int(os.environ.get("L2_GBRAIN_TIMEOUT_SECONDS", "60")))
 
 VAULT_SOURCE_DIRS: dict[str, str] = {
@@ -27,11 +28,12 @@ VAULT_SOURCE_DIRS: dict[str, str] = {
     "l2-rejected-cases": "cases/rejected",
     "l2-reopened-cases": "cases/reopened",
 }
-SOURCE_IDS: tuple[str, ...] = ("l2-knowledge", *VAULT_SOURCE_DIRS)
+SOURCE_IDS: tuple[str, ...] = ("l2-knowledge", "l2-reference", *VAULT_SOURCE_DIRS)
 
 SCOPE_SOURCES: dict[str, tuple[str, ...]] = {
-    "trusted": ("l2-knowledge", "l2-facts", "l2-solutions"),
-    "knowledge": ("l2-knowledge",),
+    "trusted": ("l2-knowledge", "l2-reference", "l2-facts", "l2-solutions"),
+    "knowledge": ("l2-knowledge", "l2-reference"),
+    "reference": ("l2-reference",),
     "facts": ("l2-facts",),
     "solutions": ("l2-solutions",),
     "cases": ("l2-approved-cases", "l2-rejected-cases", "l2-reopened-cases"),
@@ -51,18 +53,26 @@ def gbrain_home(value: str | None = None) -> Path:
     return Path(raw).expanduser() if raw else DEFAULT_GBRAIN_HOME
 
 
-def knowledge_path(value: str | None = None) -> Path | None:
-    raw = value or os.environ.get("CHITRAGUPTA_KNOWLEDGE_PATH", "").strip()
+def _repo_subdir(value: str | None, env_name: str, folder: str, fallback: Path) -> Path | None:
+    raw = value or os.environ.get(env_name, "").strip()
     if raw:
         return Path(raw).expanduser()
     for candidate in (
-        Path.cwd() / "Knowledge",
-        Path(__file__).resolve().parent.parent / "Knowledge",
-        DEFAULT_KNOWLEDGE,
+        Path.cwd() / folder,
+        Path(__file__).resolve().parent.parent / folder,
+        fallback,
     ):
         if candidate.is_dir():
             return candidate
     return None
+
+
+def knowledge_path(value: str | None = None) -> Path | None:
+    return _repo_subdir(value, "CHITRAGUPTA_KNOWLEDGE_PATH", "Knowledge", DEFAULT_KNOWLEDGE)
+
+
+def reference_path(value: str | None = None) -> Path | None:
+    return _repo_subdir(value, "CHITRAGUPTA_REFERENCE_PATH", "Reference Documents", DEFAULT_REFERENCE)
 
 
 def binary() -> str:
@@ -85,7 +95,7 @@ def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT) -> tuple[int, str, s
             env=env,
         )
     except FileNotFoundError:
-        return 127, "", "gbrain not found; run Model_Bench/install_l2_learning_prereqs.sh"
+        return 127, "", "gbrain not found; install the pinned Chitragupta GBrain prerequisite"
     except subprocess.TimeoutExpired:
         return 124, "", "gbrain command timed out"
     return proc.returncode, proc.stdout or "", proc.stderr or ""

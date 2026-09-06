@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Synchronize the small trust-separated GBrain source set.
 
-Canonical Knowledge is indexed directly from the Chitragupta Git checkout.
-Only runtime-derived facts/solutions/cases live in the local learning-vault Git
-repo. GBrain remains disposable derivative state and has no independent
-scheduler.
+Canonical Knowledge and repository Reference Documents are indexed directly from
+the Chitragupta Git checkout. Only runtime-derived facts/solutions/cases live in
+the local learning-vault Git repo. GBrain remains disposable derivative state
+and has no independent scheduler.
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from l2_gbrain import (
     VAULT_SOURCE_DIRS,
     available,
     knowledge_path,
+    reference_path,
     run,
     vault_path,
 )
@@ -139,8 +140,15 @@ def _registered_path(row: dict[str, Any]) -> str:
     return str(row.get("local_path") or row.get("path") or config.get("local_path") or config.get("path") or "")
 
 
-def _expected_paths(vault: Path, knowledge: Path | None) -> dict[str, Path | None]:
-    paths: dict[str, Path | None] = {"l2-knowledge": knowledge}
+def _expected_paths(
+    vault: Path,
+    knowledge: Path | None,
+    reference: Path | None,
+) -> dict[str, Path | None]:
+    paths: dict[str, Path | None] = {
+        "l2-knowledge": knowledge,
+        "l2-reference": reference,
+    }
     paths.update({source: vault / rel for source, rel in VAULT_SOURCE_DIRS.items()})
     return paths
 
@@ -149,9 +157,10 @@ def _register_missing(
     vault: Path,
     existing: dict[str, dict[str, Any]],
     knowledge: Path | None,
+    reference: Path | None,
 ) -> list[str]:
     created: list[str] = []
-    for source_id, path in _expected_paths(vault, knowledge).items():
+    for source_id, path in _expected_paths(vault, knowledge, reference).items():
         if source_id in existing:
             continue
         if path is None or not path.is_dir():
@@ -159,7 +168,7 @@ def _register_missing(
         args = ["sources", "add", source_id, "--path", str(path), "--no-federated"]
         # Dynamic lanes may be empty on first deployment. They live inside the
         # checkpointed vault repo but have no tracked file until their first item.
-        if source_id != "l2-knowledge":
+        if source_id in VAULT_SOURCE_DIRS:
             args.append("--force")
         rc, out, err = run(args)
         if rc:
@@ -168,10 +177,14 @@ def _register_missing(
     return created
 
 
-def _check_sources(vault: Path, knowledge: Path | None) -> list[str]:
+def _check_sources(
+    vault: Path,
+    knowledge: Path | None,
+    reference: Path | None,
+) -> list[str]:
     rows = {_source_id(row): row for row in _sources_list()}
     errors: list[str] = []
-    for source_id, expected in _expected_paths(vault, knowledge).items():
+    for source_id, expected in _expected_paths(vault, knowledge, reference).items():
         row = rows.get(source_id)
         if row is None:
             errors.append(f"missing GBrain source: {source_id}")
@@ -214,16 +227,19 @@ def sync_gbrain(
     vault: Path,
     *,
     knowledge: Path | None = None,
+    reference: Path | None = None,
     embed: bool = True,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     knowledge = knowledge if knowledge is not None else knowledge_path()
+    reference = reference if reference is not None else reference_path()
     if dry_run:
         return {
             "ok": True,
             "dry_run": True,
             "vault": str(vault),
             "knowledge": str(knowledge) if knowledge else None,
+            "reference": str(reference) if reference else None,
             "sources": list(SOURCE_IDS),
             "errors": [],
         }
@@ -237,8 +253,8 @@ def sync_gbrain(
         initialized = _ensure_brain()
         checkpointed = _checkpoint(vault)
         existing = {_source_id(row): row for row in _sources_list()}
-        created = _register_missing(vault, existing, knowledge)
-        errors = _check_sources(vault, knowledge)
+        created = _register_missing(vault, existing, knowledge, reference)
+        errors = _check_sources(vault, knowledge, reference)
         if errors:
             return {
                 "ok": False,
@@ -265,22 +281,25 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--vault", default=None)
     ap.add_argument("--knowledge", default=None)
+    ap.add_argument("--reference", default=None)
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--no-embed", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ns = ap.parse_args(argv)
     vault = vault_path(ns.vault)
     knowledge = knowledge_path(ns.knowledge)
+    reference = reference_path(ns.reference)
     if ns.check:
         rc, _, _ = run(["doctor", "--json"])
         errors = [] if rc == 0 else ["isolated GBrain is not initialized/healthy"]
         if not errors:
-            errors.extend(_check_sources(vault, knowledge))
+            errors.extend(_check_sources(vault, knowledge, reference))
         result = {"ok": not errors, "errors": errors, "sources": list(SOURCE_IDS)}
     else:
         result = sync_gbrain(
             vault,
             knowledge=knowledge,
+            reference=reference,
             embed=not ns.no_embed,
             dry_run=ns.dry_run,
         )

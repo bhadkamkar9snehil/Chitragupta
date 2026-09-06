@@ -47,6 +47,7 @@ python3 "$ROOT/Model_Bench/sync_l2_approved_solutions.py" \
 
 echo "== Outcome learning / GBrain convergence =="
 CHITRAGUPTA_KNOWLEDGE_PATH="$ROOT/Knowledge" \
+CHITRAGUPTA_REFERENCE_PATH="$ROOT/Reference Documents" \
 python3 "$ROOT/Model_Bench/l2_learning_cycle.py" --vault "$LEARNING_VAULT" \
   || echo "WARNING: learning cycle reported errors; lifecycle deployment continues"
 
@@ -92,7 +93,7 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
 done
 
 # Only task-pinned procedural skills are deployed. Domain reference knowledge lives
-# in Knowledge/ and GBrain, not in a second copy under every Hermes profile.
+# in Git-backed Knowledge/Reference Documents and GBrain, not under every profile.
 for profile in "${INVESTIGATOR_PROFILES[@]}"; do
   copy_skill "$profile" xstudio-l2-ticket-workflow
   copy_skill "$profile" xstudio-sql-write-discipline
@@ -130,7 +131,7 @@ Deployed Chitragupta L2 on Hermes.
   harness:    Hermes
   lifecycle:  l2_pipeline_runtime.py
   evidence:   typed xstudio_l2
-  retrieval:  canonical Knowledge + reviewed learning lanes in isolated GBrain
+  retrieval:  Knowledge + full reference Markdown + reviewed learning lanes in isolated GBrain
   learning:   reviewed outcomes -> unverified candidates -> human promotion
   profiles:   dispatcher + investigator worker + reviewer worker
 EOF

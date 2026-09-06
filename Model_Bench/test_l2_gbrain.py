@@ -13,21 +13,28 @@ import l2_gbrain as mod
 class GBrainAdapterTests(unittest.TestCase):
     def test_only_real_model_facing_source_lanes_exist(self):
         self.assertEqual(set(mod.SOURCE_IDS), {
-            "l2-knowledge", "l2-facts", "l2-solutions",
+            "l2-knowledge", "l2-reference", "l2-facts", "l2-solutions",
             "l2-approved-cases", "l2-rejected-cases", "l2-reopened-cases",
         })
         self.assertNotIn("sessions", mod.SCOPE_SOURCES)
         self.assertNotIn("candidates", mod.SCOPE_SOURCES)
         self.assertNotIn("all", mod.SCOPE_SOURCES)
 
-    def test_trusted_scope_excludes_historical_cases(self):
+    def test_trusted_scope_includes_reference_but_excludes_cases(self):
         self.assertEqual(
             set(mod.sources_for_scope("trusted")),
-            {"l2-knowledge", "l2-facts", "l2-solutions"},
+            {"l2-knowledge", "l2-reference", "l2-facts", "l2-solutions"},
         )
         self.assertTrue(
             set(mod.sources_for_scope("trusted")).isdisjoint(mod.sources_for_scope("cases"))
         )
+
+    def test_knowledge_scope_includes_canonical_and_reference_docs(self):
+        self.assertEqual(
+            mod.sources_for_scope("knowledge"),
+            ("l2-knowledge", "l2-reference"),
+        )
+        self.assertEqual(mod.sources_for_scope("reference"), ("l2-reference",))
 
     def test_search_is_always_explicit_retrieval_only(self):
         with mock.patch.object(mod, "run", return_value=(0, '[{"slug":"x"}]', "")) as run:
@@ -38,7 +45,7 @@ class GBrainAdapterTests(unittest.TestCase):
         self.assertNotIn("query", args)
         self.assertEqual(
             args[args.index("--source") + 1],
-            "l2-knowledge,l2-facts,l2-solutions",
+            "l2-knowledge,l2-reference,l2-facts,l2-solutions",
         )
 
     def test_unknown_scope_fails_before_process_call(self):
@@ -57,9 +64,13 @@ class GBrainAdapterTests(unittest.TestCase):
             "/tmp/chitragupta-brain",
         )
 
-    def test_knowledge_path_can_be_bound_explicitly(self):
-        with mock.patch.dict(os.environ, {"CHITRAGUPTA_KNOWLEDGE_PATH": "/tmp/repo/Knowledge"}, clear=False):
+    def test_static_repo_paths_can_be_bound_explicitly(self):
+        with mock.patch.dict(os.environ, {
+            "CHITRAGUPTA_KNOWLEDGE_PATH": "/tmp/repo/Knowledge",
+            "CHITRAGUPTA_REFERENCE_PATH": "/tmp/repo/Reference Documents",
+        }, clear=False):
             self.assertEqual(mod.knowledge_path(), Path("/tmp/repo/Knowledge"))
+            self.assertEqual(mod.reference_path(), Path("/tmp/repo/Reference Documents"))
 
     def test_non_json_output_fails_closed(self):
         with mock.patch.object(mod, "run", return_value=(0, "not json", "")):
