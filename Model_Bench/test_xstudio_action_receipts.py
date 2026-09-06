@@ -2,7 +2,9 @@
 """Contract tests for future deterministic action execution receipts."""
 from __future__ import annotations
 
+import copy
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -36,12 +38,23 @@ class ActionReceiptTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def _path(self, receipt_id):
+        return self.vault / "actions" / "receipts" / f"{receipt_id}.json"
+
     def test_begin_is_idempotent_for_same_plan_attempt(self):
         first = mod.begin_receipt(plan(), vault=self.vault, actor="executor", evidence="validated plan accepted")
         second = mod.begin_receipt(plan(), vault=self.vault, actor="executor", evidence="ignored duplicate begin")
         self.assertEqual(first["receipt_id"], second["receipt_id"])
         self.assertEqual(len(second["events"]), 1)
         self.assertEqual(second["state"], "planned")
+
+    def test_same_attempt_cannot_silently_rebind_to_changed_plan_content(self):
+        original = plan()
+        mod.begin_receipt(original, vault=self.vault, actor="executor", evidence="plan accepted")
+        changed = copy.deepcopy(original)
+        changed["parameters"]["transaction_id"] = "TX-CHANGED"
+        with self.assertRaisesRegex(ValueError, "different plan content"):
+            mod.begin_receipt(changed, vault=self.vault, actor="executor", evidence="same identity, edited content")
 
     def test_happy_path_is_append_only_and_requires_verified_postconditions(self):
         receipt = mod.begin_receipt(plan(), vault=self.vault, actor="executor", evidence="plan loaded")
@@ -87,6 +100,31 @@ class ActionReceiptTests(unittest.TestCase):
                                details={"postconditions_verified": True})
         with self.assertRaisesRegex(ValueError, "invalid action receipt transition"):
             mod.transition_receipt(rid, "failed", vault=self.vault, actor="executor", evidence="late mutation")
+
+    def test_identity_tamper_is_detected_and_blocks_future_transition(self):
+        receipt = mod.begin_receipt(plan(), vault=self.vault, actor="executor", evidence="plan loaded")
+        path = self._path(receipt["receipt_id"])
+        tampered = json.loads(path.read_text(encoding="utf-8"))
+        tampered["ticket_id"] = "OTHER-TICKET"
+        path.write_text(json.dumps(tampered), encoding="utf-8")
+        errors = mod.validate_receipt(tampered)
+        self.assertTrue(any("identity does not match" in e or "receipt_id does not match" in e for e in errors))
+        with self.assertRaisesRegex(ValueError, "invalid receipt"):
+            mod.transition_receipt(receipt["receipt_id"], "approved", vault=self.vault,
+                                   actor="policy", evidence="should be refused")
+
+    def test_history_from_state_tamper_is_detected(self):
+        receipt = mod.begin_receipt(plan(), vault=self.vault, actor="executor", evidence="plan loaded")
+        rid = receipt["receipt_id"]
+        approved = mod.transition_receipt(rid, "approved", vault=self.vault, actor="policy", evidence="approval")
+        approved["events"][1]["from_state"] = "executed"
+        errors = mod.validate_receipt(approved)
+        self.assertTrue(any("from_state" in e for e in errors))
+
+    def test_plan_and_registry_hashes_must_be_well_formed(self):
+        broken = plan(); broken["registry_sha256"] = "short"
+        with self.assertRaisesRegex(ValueError, "registry_sha256"):
+            mod.begin_receipt(broken, vault=self.vault, actor="executor", evidence="bad plan")
 
 
 if __name__ == "__main__":
