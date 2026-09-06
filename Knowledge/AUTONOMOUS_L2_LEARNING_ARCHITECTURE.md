@@ -2,234 +2,292 @@
 
 Status: **experimental branch contract**  
 Branch: `development/autonomous-l2-learning-runtime`  
-North star: **an autonomous, AI-driven, deterministic L2 Helpdesk that gets measurably better from experience and can progressively earn the ability to solve XBatch issues itself.**
+North star: **an autonomous, AI-driven, deterministic L2 Helpdesk that gets measurably better from experience and progressively earns the ability to solve XBatch issues itself.**
 
 ## 1. The one rule
 
 Everything in this branch is subordinate to one product rule:
 
-> Chitragupta must become an autonomous L2 Helpdesk system whose reasoning can improve continuously while workflow, evidence, side effects, and correctness remain deterministic enough to trust in production.
+> Chitragupta must become an autonomous L2 Helpdesk system whose reasoning improves continuously while workflow, evidence attribution, side effects and outcome verification remain deterministic enough to trust in production.
 
-The existing rules are not discarded because determinism is valuable; they are reclassified as current implementation constraints. Anything may evolve if the replacement gives us a better path to the north star.
+Existing production rules are useful implementation constraints, not sacred architecture. Keep a rule when it protects the north star; replace it when a better mechanism preserves correctness with more capability.
 
-## 2. Storage is not authority
+## 2. Four planes, not one monolithic agent
 
-The most important architectural distinction in the learning system is:
+```text
+                         CHITRAGUPTA
+
+ ┌──────────────────── CONTROL PLANE ────────────────────┐
+ │ claim -> investigate -> normalize -> independent      │
+ │ frozen review -> deterministic publish/rework         │
+ │                                                       │
+ │ owns WIP, idempotency, review cycles, workflow state  │
+ └──────────────────────────┬────────────────────────────┘
+                            │
+ ┌──────────────────── EVIDENCE PLANE ───────────────────┐
+ │ xstudio_l2 typed reads                                │
+ │ schema/object discovery                               │
+ │ run ledger + SQL action history                       │
+ │ xstudio-l2-identity binds current run/ticket           │
+ └──────────────────────────┬────────────────────────────┘
+                            │
+ ┌──────────────── EXPERIENCE / LEARNING PLANE ──────────┐
+ │ sessions -> outcome cases -> candidate lessons        │
+ │ Git/facts/solutions -> zvec hybrid retrieval          │
+ │ historical replay + retrieval measurement             │
+ │ repeated human actions -> capability-design backlog   │
+ └──────────────────────────┬────────────────────────────┘
+                            │
+ ┌───────────────────── ACTION PLANE ────────────────────┐
+ │ typed capability registry                             │
+ │ validated recommendation/shadow plans                 │
+ │ future supervised/autonomous deterministic executor   │
+ │ postcondition verification + rollback/compensation    │
+ └───────────────────────────────────────────────────────┘
+```
+
+The model reasons. Deterministic code owns identity, lifecycle transitions, action contracts and irreversible side-effect boundaries.
+
+## 3. Storage is not authority
+
+The core epistemic rule is:
 
 ```text
 recording experience != believing experience
-retrieving experience != proving a ticket claim
+retrieving experience != proving a current ticket
+review approval != universal truth
 reasoning about an action != permission to execute it
 ```
 
-This is why this branch records sessions **on** but keeps generic automatic memory prefetch **off**.
+### Session recording is ON
 
-### Why session recording stays on
-
-Raw sessions are valuable because they preserve the experience needed to improve the system:
+Every completed investigator/reviewer turn is valuable experience:
 
 - successful diagnostic paths;
 - dead ends and repeated failures;
-- rejected reviewer hypotheses;
+- reviewer corrections;
+- hallucinated hypotheses;
 - tool-call ergonomics problems;
 - token/context waste patterns;
 - model-specific behavior;
-- user/operator corrections;
-- evidence-selection strategy;
-- the exact language that preceded a good or bad outcome.
+- operator corrections;
+- evidence-selection strategies.
 
-If we throw sessions away, we throw away the dataset needed for replay, evaluation, failure mining, retrieval experiments, policy tuning, and eventually self-improvement.
-
-Sessions are therefore recorded as **unverified episodic experience** with provenance and secret redaction.
-
-### Why generic automatic prefetch stays off
-
-A conventional memory provider performs:
+The learning plugin records completed turns as redacted Markdown with:
 
 ```text
-new prompt
-  -> semantic search over everything remembered
-  -> top-k results injected into model context
+trust: unverified_episodic
+profile / model / session
+Kanban task when resolvable
+run_id / ticket_id / stage / review_cycle when resolvable
+user text
+assistant text
 ```
 
-That is dangerous for an autonomous support agent because retrieval silently becomes epistemic privilege. An old assistant statement, a rejected hypothesis, a stale workflow fact, and a verified operating rule can all arrive in the same context before the model has classified their source.
+One file per turn avoids multi-process append contention.
 
-Example:
+### Generic automatic prefetch is OFF
+
+A relevance engine answers "what text is similar?" It does not answer "what is true?"
+
+If an investigator once says:
 
 ```text
-Ticket A investigator incorrectly says "database access is unavailable"
-        |
-        v
-session is recorded
-        |
-        v
-future ticket automatically prefetches that sentence
-        |
-        v
-model receives its own prior mistake as context before live verification
+"database access is unavailable"
 ```
 
-The problem is not recording the mistake. The mistake is useful training data. The problem is **injecting it automatically as if relevance implied trust**.
+and the reviewer later proves that statement false, the session should absolutely be preserved. It is excellent failure data. It should **not** be injected into a future ticket merely because the new prompt sounds similar.
 
-Chitragupta therefore uses explicit or stage-aware retrieval:
+Therefore the normal path is:
 
 ```text
-query
-  -> choose source class/scope
-  -> retrieve candidates
-  -> show trust/provenance
-  -> reason about applicability
-  -> verify ticket-specific claims live
+choose retrieval scope
+-> retrieve candidates
+-> expose trust/provenance
+-> reason about applicability
+-> verify ticket-specific claims live
 ```
 
-Future deterministic stage-aware retrieval may automatically build an investigation packet, but it must choose source classes deliberately. It is not generic top-k memory injection.
+A future automatic context builder may become stage-aware and source-aware, but it must never degrade into generic top-k injection from mixed memory.
 
-## 3. Expand zvec's role: Experience & Retrieval Plane
+## 4. Shared learning vault
 
-`zvec-grep` is not treated merely as a replacement for mem0. Its role is expanded into a local **Experience & Retrieval Plane**.
-
-```text
-                    CHITRAGUPTA LEARNING VAULT
-
- sessions/                facts/                 knowledge/
- unverified experience    reviewed heuristics    mirrored Git/skills
-        |                    |                      |
-        +--------------------+----------------------+
-                             |
-                      zvec-grep index
-                    BM25 + vector + RRF
-                             |
-                   explicit l2_recall tool
-                             |
-                    trust-scoped results
-```
-
-The shared default vault is:
+Default:
 
 ```text
 ~/.hermes/l2-learning/
 ```
 
-It is shared across investigator/reviewer profiles so experience does not fragment by process identity.
+Current structure:
 
-### Source classes
+```text
+sessions/                    raw redacted L2 turns
+cases/
+  approved/                  review approved + publisher postconditions observed
+  rejected/                  reviewer-rejected frozen proposals
+  reopened/                  published RESOLUTION later leaves terminal state
+facts/                       explicitly promoted operational lessons
+candidates/                  unverified lesson candidates
+knowledge/                   disposable mirror of Git + deployable skills
+solutions/approved/          governed reusable Solution export target
+actions/
+  plans/                     durable non-executing action plans
+  candidates/                repeated human-action capability design backlog
+eval/                        runtime-generated historical retrieval replay sets
+archive/                     rejected/superseded learning artifacts
+.zvec-grep/                  disposable hybrid index
+```
 
-| Vault scope | Meaning | Trust |
+The zvec index is not a source of truth.
+
+## 5. Explicit retrieval and trust scopes
+
+`l2_recall` exposes deliberate source classes:
+
+| Scope | Meaning | Authority |
 |---|---|---|
-| `knowledge/**` | Mirrored Git reference and deployed skills | Canonical reference lead |
-| `facts/**` | Explicitly promoted operational lessons | Reviewed operational heuristic |
-| `solutions/approved/**` | Future export of governed approved Solution articles | Governed reusable guidance |
-| `sessions/**` | Every completed user/assistant turn | Unverified episodic experience |
-| `candidates/**` | Model-proposed lessons awaiting promotion | Unverified candidate |
-| `archive/**` | Rejected/superseded learning artifacts | Historical only |
+| `trusted` | Git reference + promoted facts + approved reusable solutions | Governed prior guidance; still not ticket proof |
+| `knowledge` | Git/skill mirror | Canonical documented behavior |
+| `facts` | promoted operational lessons | Reviewed heuristic |
+| `solutions` | governed reusable solutions | Approved reusable guidance |
+| `approved_cases` | historical proposal passed review + publisher postconditions | Strong historical analogy |
+| `rejected_cases` | reviewer-rejected proposal | Negative/counterexample signal |
+| `reopened_cases` | prior resolution later regressed/reopened | Regression signal |
+| `cases` | all outcome-labelled historical cases | Mixed historical evidence |
+| `sessions` | raw model/user history | Unverified episodic |
+| `candidates` | proposed lessons | Unverified candidate |
+| `all` | mixed corpus | Explicitly mixed/untrusted |
 
-The zvec index is disposable. It does not become a source of truth.
+`trusted` deliberately excludes historical cases. Even a successful old incident is not automatically a reusable rule.
 
-## 4. Keep mem0, but narrow its meaning
+## 6. Outcome-conditioned learning
 
-This branch does not replace mem0 just because another retrieval engine exists.
+Raw sessions preserve experience; lifecycle outcomes add stronger labels.
 
-A useful target separation is:
-
-```text
-mem0
-  = compact, high-value operational memory intended to influence routine behavior
-
-zvec learning vault
-  = high-recall experience corpus + hybrid search + replay/evaluation substrate
-
-Git / SQL Solution KB
-  = governed reusable knowledge
-
-live SQL
-  = current-ticket evidence
-
-run ledger / trace
-  = authoritative incident execution history
-```
-
-This lets us compare mechanisms empirically instead of collapsing all memory into one store.
-
-## 5. Explicit learning tools
-
-The `xstudio-l2-learning` plugin contributes two direct tools.
-
-### `l2_recall`
-
-Searches the local zvec corpus with an explicit scope:
+`sync_l2_outcomes.py` materializes:
 
 ```text
-trusted
-knowledge
-facts
-solutions
-sessions
-candidates
-all
+reviewer blocked
+    -> cases/rejected
+
+reviewer done + deterministic publisher postconditions succeed
+    -> cases/approved
+
+published RESOLUTION later leaves recorded terminal ticket status
+    -> cases/reopened
 ```
 
-Every result includes a trust label and warning. `sessions` and `candidates` are never silently treated as facts.
+This turns the deterministic Helpdesk itself into a source of labels.
 
-Normal investigation should begin with `trusted` when prior knowledge may help. `sessions` is for questions such as:
+The outcome sidecar is independent of lifecycle correctness. Learning failure must never stop a ticket from reconciling, reviewing or publishing.
 
-- have we seen this failure shape before?
-- what dead end did another run hit?
-- did an earlier model/tool combination repeatedly fail this way?
-- what evidence path worked on a similar incident?
+### Conservative automatic lesson mining
 
-It is not current-ticket proof.
+`mine_l2_learning_candidates.py` converts high-value outcomes into **unverified** candidates:
 
-### `l2_lesson`
+- reviewer rejection -> failure-pattern candidate;
+- reopened resolution -> regression-pattern candidate;
+- same lexically normalized approved root cause on at least two distinct tickets -> repeated-root-cause candidate.
 
-Allows a worker to propose a reusable lesson with explicit provenance.
+The miner is intentionally conservative. It does not use an LLM to decide semantic equivalence in the background and it never promotes its own output.
 
-The tool writes only to:
+### Central learning cycle
+
+`l2_learning_cycle.py` is the one sidecar coordinator:
 
 ```text
-candidates/**
+sync outcomes
+-> mine lesson candidates
+-> mine action-capability candidates
 ```
 
-and labels the result `unverified_candidate`.
+`ticket_scout.py` calls this single boundary best-effort after deterministic reconciliation. This prevents learning features from becoming a ponytail of independent lifecycle-like schedulers.
 
-The model cannot promote its own lesson into trusted memory. Promotion is a separate control-plane operation.
+## 7. From repeated human work to an action-capability backlog
 
-## 6. Learning lifecycle
+A system that eventually solves XBatch issues should notice when humans repeatedly perform the same reviewed corrective action.
 
-The durable learning loop should become:
+`mine_l2_action_capability_candidates.py` looks only at **approved** historical `NEEDS_HUMAN_ACTION` cases. When the same normalized corrective action occurs on at least two distinct tickets it creates/updates:
 
 ```text
-real ticket
-  -> investigation
-  -> review
-  -> publication / human action / escalation
-  -> observed outcome
-  -> experience record
-  -> candidate lesson(s)
-  -> replay / independent evidence / reviewer or policy gate
-  -> promote, update, reject, or leave episodic
-  -> future retrieval
-  -> better next investigation
+actions/candidates/<id>.json
 ```
 
-The key is **outcome-conditioned learning**. We should learn more from:
+with:
 
-- proposals the reviewer rejected;
-- resolutions that remained resolved;
-- tickets that reopened;
-- diagnostic paths that reached proof quickly;
-- tool sequences that caused context blowouts;
-- human corrections;
-- repeated independent incidents with the same verified root cause.
+```text
+trust: unverified_capability_candidate
+status: needs_executor_design
+source historical cases
+source ticket/run count
+representative human action
+unclassified risk
+unknown parameter schema
+unknown execution binding
+empty precondition/verification/rollback design fields
+```
 
-We should learn less from confident prose.
+This is a development/control-plane backlog, not an executable capability. It answers:
 
-## 7. Evaluation Plane
+> Which human actions are repeated enough that automating them would materially improve L2?
 
-A system that "keeps getting better" needs measurements, not vibes.
+It deliberately does **not** invent a stored procedure signature, API endpoint, risk level or parameter contract.
 
-Build a replay corpus from historical sessions/tickets and continuously measure candidate changes against it.
+## 8. Harness-owned run/ticket identity
 
-Minimum metrics:
+Transport ownership was not enough. Evidence must also be attached to the correct incident.
+
+`xstudio-l2-identity` is a cross-cutting `pre_tool_call` guard. Hermes supports modifying tool arguments before dispatch, so the guard resolves the actual Kanban card and shallow-merges authoritative identifiers into sensitive calls.
+
+It binds:
+
+```text
+xstudio_l2:
+  select/query/read_procedure/get_run_actions/save_ledger -> current run_id
+  get_ticket_context                                      -> current ticket_id
+
+l2_action:
+  plan/plans                                               -> current run_id + ticket_id
+  validate_plan                                            -> rejects cross-run/cross-ticket plan
+```
+
+Conflicting model-supplied identifiers are blocked. Pure schema discovery remains independent because discovering an object does not attach evidence to a different ticket.
+
+The long-term rule is:
+
+```text
+model chooses investigation/action semantics
+harness chooses identity and side-effect authority
+```
+
+## 9. Historical replay and measurable improvement
+
+A system that "keeps getting better" needs regression tests built from its own history.
+
+There are two retrieval gates:
+
+1. `l2_learning_eval_cases.jsonl` — static policy/architecture smoke cases.
+2. `build_l2_historical_retrieval_eval.py` — runtime-derived real-history replay cases.
+
+The historical builder correlates:
+
+```text
+earliest recorded user/task text for a run
+        -> expected outcome-labelled historical case for that run
+```
+
+and emits JSONL consumed by the deterministic retrieval benchmark.
+
+Metrics already available include:
+
+```text
+hit rate
+p50/p95 latency
+retrieved context characters
+explicit forbidden-result checks
+```
+
+The evaluation plane should grow toward:
 
 ```text
 resolution correctness
@@ -237,172 +295,207 @@ review reject rate
 reopen rate
 false-resolution rate
 L3/human-action precision
-mean/median tool calls
-input tokens per ticket
-wall time per ticket
+tool calls per ticket
+input/output tokens per ticket
+wall time
 context-overflow rate
-retrieval hit@k
+retrieval hit@k / MRR
 false-positive retrieval@1
 abstention correctness
 live-evidence coverage
-unnecessary-query rate
+shadow-action agreement with human action
+supervised-action success/rollback rate
 ```
 
-For retrieval, adversarial pairs matter more than easy keyword recall:
+Adversarial cases matter more than easy recall: same symptom, different cause; same historic fix, now invalid; same identifier shape, different entity.
+
+## 10. mem0 remains narrow
+
+This branch does not collapse all memory into zvec.
 
 ```text
-same symptom, different root cause
-same table, different business state
-same historical fix, now invalid
-same identifier shape, different entity
+mem0
+  = compact high-value operational behavior
+
+zvec learning vault
+  = high-recall experience, cases, replay and hybrid retrieval
+
+Git / SQL Solution KB
+  = governed reusable knowledge
+
+live SQL
+  = current-ticket truth
+
+run ledger / trace
+  = incident execution evidence
 ```
 
-A learning change should be promoted because replay/live outcomes improve, not because its author/model thinks it is clever.
+These stores have different trust/lifetime semantics. Component count is less important than preserving epistemic meaning.
 
-## 8. Control Plane remains deterministic
+## 11. Action plane and autonomy ladder
 
-The existing lifecycle remains useful:
+Read-only diagnosis is A0, not the destination.
 
 ```text
-claim
--> investigate
--> normalize
--> independent review of frozen proposal
--> publish OR rework
+A0 OBSERVE
+   read-only diagnosis
+        ↓
+A1 RECOMMEND
+   known action; human performs it
+        ↓
+A2 SHADOW
+   registered capability + parameters + evidence validated;
+   durable plan generated; no execution
+        ↓
+A3 SUPERVISED EXECUTE
+   deterministic executor revalidates plan;
+   explicit human approval; execute + verify
+        ↓
+A4 AUTONOMOUS LOW-RISK
+   proven allowlisted capability executes automatically
+        ↓
+A5 BROADER AUTONOMY
+   progressively larger domain/risk after measured promotion
 ```
 
-But it is now one plane, not the whole product.
+Autonomy is granted per capability, never as global raw SQL permission.
 
-The model may become much more capable without taking ownership of atomic claiming, idempotency, workflow binding, proposal freezing, retry limits, or publication correctness.
+## 12. Current action registry and planner
 
-Determinism is especially valuable at boundaries where probabilistic reasoning should not decide whether an irreversible state transition happened twice.
+`deploy/xstudio_action_capabilities.json` is the machine-readable capability registry.
 
-## 9. Future Action Plane: from diagnosis to solving XBatch
-
-The long-term system should not stop at `NEEDS_HUMAN_ACTION` forever.
-
-The correct evolution is not to hand the model arbitrary UPDATE/EXEC access. It is to grow a typed capability registry.
+A capability contract requires:
 
 ```text
-investigator proves cause
-        |
-        v
-candidate corrective action
-        |
-        v
-ACTION CAPABILITY REGISTRY
-  - exact target
-  - risk class
-  - preconditions
-  - parameter schema
-  - supported execution path
-  - idempotency key
-  - expected postconditions
-  - verification reads
-  - rollback/compensation
-  - approval policy
-        |
-        v
-shadow plan / supervised execute / autonomous execute
-        |
-        v
-postcondition verification
-        |
-        v
-outcome + learning feedback
+id
+description
+risk
+mode
+parameter_schema
+preconditions
+execution
+idempotency
+verification
+rollback
+required_evidence
+approval_policy
 ```
 
-### Autonomy ladder
+`validate_action_capabilities.py` enforces increasingly strict requirements as a capability moves toward supervised/autonomous execution. Critical-risk capabilities cannot be autonomous under the current policy.
 
-**A0 — Observe**  
-Read-only diagnosis. Current baseline.
-
-**A1 — Recommend**  
-Cause and exact action are known; human executes.
-
-**A2 — Shadow-plan**  
-Agent selects a registered action and parameters; harness validates everything but does not execute. Compare plan with the human's eventual action.
-
-**A3 — Supervised execute**  
-Harness presents the validated action for one-click/operator approval, then executes and verifies.
-
-**A4 — Autonomous low-risk execute**  
-Allowlisted, reversible/idempotent actions with strong preconditions execute automatically.
-
-**A5 — Broader autonomous remediation**  
-Higher-impact actions become eligible only after evidence from shadow/supervised operation demonstrates acceptable safety and recovery.
-
-Autonomy is earned **per capability**, not granted as one giant database permission.
-
-## 10. Action capability contract
-
-A future executable action should be declarative enough to audit:
-
-```json
-{
-  "id": "xbatch.retry_sap_posting",
-  "risk": "low",
-  "mode": "shadow|supervised|autonomous",
-  "parameters": {},
-  "preconditions": [],
-  "execution": {
-    "type": "stored_procedure|api|service_action|script",
-    "target": "..."
-  },
-  "idempotency": {},
-  "verification": [],
-  "rollback": {},
-  "required_evidence": [],
-  "approval_policy": {}
-}
-```
-
-No action enters autonomous mode because a prompt says it is safe. It moves up the ladder because deterministic tests, replay, live telemetry, and observed outcomes support that promotion.
-
-## 11. Why this is bigger than a memory plugin
-
-The useful idea from `hermes-zvec-memory` is not "replace mem0 with Markdown."
-
-The larger opportunity is:
+`xstudio-l2-actions` currently exposes:
 
 ```text
-record everything useful
-classify its authority
-search it cheaply and locally
-learn from outcomes
-promote only what earns trust
-replay changes against history
-then turn verified knowledge into typed corrective capability
+list
+describe
+plan
+plans
+validate_plan
 ```
 
-That is the path from an L2 chatbot to an adaptive autonomous support system.
+There is deliberately no `execute` operation.
 
-## 12. Current branch implementation
+A plan contains capability/registry hashes, validated parameters, declared evidence, current run/ticket identity, required preconditions, verification/rollback contract and:
 
-This branch introduces the first concrete pieces:
+```text
+execution_authorized: false
+execution_tool_available: false
+```
 
-- `Model_Bench/xstudio_l2_learning_plugin/`
-  - records every completed L2 turn;
-  - redacts common secret shapes before disk;
-  - provides explicit `l2_recall` hybrid search;
-  - provides `l2_lesson` candidate capture;
-  - has **no automatic prefetch hook**.
-- `Model_Bench/sync_l2_learning_corpus.py`
-  - mirrors current Git/skill reference material into the shared vault;
-  - builds/updates the disposable zvec index.
-- `Model_Bench/l2_learning_curator.py`
-  - promotes/rejects candidates deterministically;
-  - keeps promotion provenance.
-- deployment/profile wiring
-  - makes `l2_learning` a directly available toolset alongside `xstudio_l2`;
-  - keeps mem0 independent;
-  - shares one learning vault across the active L2 profiles.
+This lets Chitragupta begin measuring whether it would choose the correct corrective action before we allow it to execute anything.
 
-The next large increments should be:
+## 13. What must be true before the first real executor
 
-1. outcome receipts from the deterministic lifecycle into the experience vault;
-2. approved SQL Solution export into `solutions/approved/`;
-3. replay/evaluation harness using real historical incidents;
-4. automatic candidate mining from reviewer rejection + successful terminal outcomes;
-5. capability registry in shadow mode;
-6. first low-risk XBatch remediation capability with pre/post verification.
+Do not promote an action because its name sounds safe.
+
+For the first real XBatch capability we need to verify:
+
+1. the actual supported SP/API/service operation;
+2. exact current parameter signature;
+3. real business preconditions;
+4. an idempotency strategy;
+5. required live evidence;
+6. deterministic postcondition reads;
+7. rollback or compensation behavior;
+8. risk classification;
+9. approval policy;
+10. replay/shadow evidence showing that the planner selects it correctly.
+
+The capability backlog tells us *what is worth automating*. Live discovery and source inspection tell us *how to automate it safely*.
+
+## 14. Knowledge promotion is outcome-gated
+
+`l2_lesson` writes only to `candidates/**`. Automatic miners also write only untrusted candidates.
+
+`l2_learning_curator.py` is the separate promotion boundary. Over time this should become stricter, using independent evidence, repetition across incidents, regression/reopen outcomes and retrieval replay before a lesson is admitted to `facts/**` or a governed Solution lifecycle.
+
+The rule is:
+
+```text
+model says it learned something
+        !=
+system learned something
+```
+
+## 15. Implemented branch components
+
+```text
+Model_Bench/xstudio_l2_identity_plugin/
+    harness-owned run/ticket binding for sensitive tools
+
+Model_Bench/xstudio_l2_learning_plugin/
+    session recording + explicit trust-scoped zvec recall + candidate proposal
+
+Model_Bench/sync_l2_outcomes.py
+    approved/rejected/reopened historical case labels
+
+Model_Bench/mine_l2_learning_candidates.py
+    conservative outcome -> lesson candidate mining
+
+Model_Bench/mine_l2_action_capability_candidates.py
+    repeated approved human actions -> capability design backlog
+
+Model_Bench/l2_learning_cycle.py
+    one lifecycle-independent learning sidecar coordinator
+
+Model_Bench/build_l2_historical_retrieval_eval.py
+    real session/outcome replay-set generation
+
+Model_Bench/benchmark_l2_learning_retrieval.py
+    deterministic retrieval measurement
+
+Model_Bench/xstudio_l2_actions_plugin/
+    non-executing registered action planner
+
+Model_Bench/validate_action_capabilities.py
+    structural autonomy/promotion policy gate
+```
+
+## 16. Next major increments
+
+The branch should now move in this order:
+
+1. **Governed Solution export into `solutions/approved/**`.** Make existing reusable support knowledge searchable with the same provenance model.
+2. **Candidate promotion evidence.** Require repeated independent support, no contradictory/reopen signal, and replay performance before promoting operational lessons.
+3. **Capability-design workflow.** Turn `actions/candidates/**` into a queue for inspecting the real XBatch/SP/API implementation and producing reviewed registry entries.
+4. **First real shadow capability.** Choose a repeated low-risk human action only after its exact execution path/signature is verified; add it in `shadow`, not supervised/autonomous.
+5. **Shadow agreement metrics.** Compare planned capability/parameters with what the human actually does and whether the issue resolves.
+6. **Supervised executor.** Separate from the planner; revalidate identity, capability hash, current evidence, preconditions, approval, idempotency and postconditions immediately before mutation.
+7. **Action receipts as learning data.** Record planned/executed/verified/rolled-back outcomes and use them to promote or demote capability autonomy.
+8. **Stage-aware context assembly.** If automatic retrieval is introduced, make it deterministic by stage/source/trust budget rather than generic memory prefetch.
+
+The direction is no longer "better memory." It is a closed improvement loop:
+
+```text
+observe
+-> reason
+-> independently review
+-> act only through typed deterministic capability
+-> verify outcome
+-> record experience
+-> label outcome
+-> mine lessons and repeated human work
+-> replay/evaluate
+-> promote what earns trust
+-> expand safe autonomous capability
+```
