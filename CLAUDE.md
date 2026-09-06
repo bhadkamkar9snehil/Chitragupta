@@ -1,116 +1,51 @@
-# Claude Entry Point — Chitragupta Adaptive L2 Branch
+# Claude Entry Point — Chitragupta
 
-Branch:
+Read `AGENTS.md` first, then `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` when changing architecture.
 
-```text
-development/autonomous-l2-learning-runtime
-```
+## Current system
 
-Product rule:
+Hermes owns model/session lifecycle, Kanban dispatch, gateway scheduling and plugin loading.
 
-> Build an autonomous, AI-driven, deterministic L2 Helpdesk that gets measurably better from experience and progressively earns the ability to solve XBatch issues itself.
+Chitragupta owns only:
 
-Read, in order:
+- deterministic Helpdesk claim/review/rework/publication semantics;
+- the typed XStudio evidence boundary;
+- governed reusable learning and Solution export;
+- isolated trust-scoped GBrain retrieval.
 
-1. `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md`
-2. `AGENTS.md`
-3. `Knowledge/L2_PIPELINE_STATE_MACHINE.md` when changing lifecycle behavior
+`Model_Bench/l2_pipeline_runtime.py` is the lifecycle authority.
 
-Do not treat `Plans/`, `Agent_Comms/`, old commits, or dated incident notes as current runtime instructions.
-
-## Current authority split
-
-```text
-l2_pipeline_runtime.py
-    lifecycle / WIP / review / publish / recovery
-
-xstudio_l2
-    typed read-only evidence
-
-xstudio-l2-identity
-    harness-owned run/ticket attribution
-
-l2_learning
-    session recording + explicit trust-scoped recall + lesson proposal
-
-l2_gbrain.py / sync_l2_gbrain.py
-    derivative GBrain retrieval/index with non-federated trust sources
-
-l2_learning_cycle.py
-    outcome labels + conservative candidate mining
-
-sync_l2_approved_solutions.py
-    explicit semantic-hash governance bridge for SQL Solutions
-
-l2_actions
-    non-executing capability list/describe/plan/plans/validate_plan
-
-l2_action_capability_curator.py
-    observed candidate -> reviewed shadow registry entry
-```
+The only Chitragupta Hermes plugin is `xstudio-l2-tools`, exposing `xstudio_l2` and read-only `l2_recall`.
 
 ## Preserve these invariants
 
-- One deterministic lifecycle authority.
-- Global SQL WIP currently 1.
-- Priorities: review 30, rework 20, new investigation 10.
-- Reviewer creation is deferred until completion is normalized/reviewable.
-- Reviewer receives frozen `proposal_json`; publisher publishes that exact proposal.
-- Live evidence wins over memory/history.
-- Model-driven raw SQL mutation/transport remains unavailable.
-- Identity-sensitive evidence and action plans are bound to the actual Kanban task.
-- Sessions are recorded as unverified episodic history.
-- Generic automatic prefetch stays off, including GBrain push/reflex context.
-- Every GBrain L2 source is non-federated and retrieval names its source(s) explicitly.
-- Raw GBrain MCP tools are not a second model-facing memory surface.
-- Historical cases do not enter `trusted` automatically.
-- Active SQL Solutions are not trusted unless explicitly hash-approved.
-- Action candidates are evidence backlogs, not executable capabilities.
-- `l2_actions` has no execute operation.
-- Capability curation may add `mode=shadow` only and never raises registry `global_mode`.
-- No GitHub Actions workflow is the validation authority.
+- One lifecycle mutation authority.
+- Global SQL WIP is 1.
+- Review 30 > rework 20 > new investigation 10.
+- Reviewer creation happens only after a reviewable frozen proposal exists.
+- Reviewer and publisher operate on the same frozen proposal.
+- Current-ticket claims require live `xstudio_l2` evidence.
+- Model-built database transport, arbitrary SQL writes/DDL/EXEC and package-install fallbacks remain unavailable.
+- Run/ticket identity is harness-bound.
+- `trusted` GBrain recall contains only canonical Knowledge, reviewed facts and governed Solutions.
+- Historical approved/rejected/reopened cases are analogies/counterexamples, not current proof.
+- Workers do not promote their own durable lessons.
+- Learning/GBrain convergence is best-effort and cannot own ticket correctness.
+- Helpdesk Solution rows enter trusted retrieval only through semantic-hash approval policy.
+- Do not add speculative action/execution frameworks without a real supported corrective operation and measured need.
 
-## Adaptive learning rule
+## Repository discipline
 
-```text
-record != trust
-retrieve != prove
-reviewed old case != current-ticket truth
-plan != execute
-```
+Delete obsolete paths instead of documenting them forever. Do not retain benchmark harnesses, generated duplicate indexes, one-time migration/repair scripts, alternate policy registries, duplicate profile variants, or unpinned copies of Knowledge.
 
-Use explicit `l2_recall` scopes and verify ticket-specific claims live.
-
-GBrain is derivative search/graph state. `trusted` maps only to `l2-knowledge`, `l2-facts`, and `l2-solutions`; sessions, historical outcomes, and candidates require explicit scopes.
-
-`solutions/approved/` is generated output owned only by `sync_l2_approved_solutions.py`. Human-authored durable knowledge belongs in Git or promoted facts.
-
-## Capability design rule
-
-The capability miner records only repeated reviewed human work. It must not invent risk, parameter schema, SP/API/service target, preconditions, idempotency, verification, rollback/compensation, or approval policy.
-
-The curator stores at most one reviewed `draft_contract` on the candidate:
-
-```text
-needs_executor_design
--> shadow_ready
--> registry_entry
-```
-
-Before `shadow_ready`, inspect the real supported XBatch operation and verify the complete contract.
-
-## Future execution
-
-Do not add an executor merely because the architecture anticipates one.
-
-The first supervised executor should be built only after a real shadow capability and measured shadow evidence justify it. Its deterministic outcome/audit record should be designed with the executor and its actual failure/rollback semantics.
+Any surviving subsystem should have an active caller and one clear owner.
 
 ## Validation
 
-Use:
+Run:
 
 ```bash
 bash Model_Bench/validate_l2_pipeline_local.sh
 ```
 
-Keep validation local. When adding or deleting an adaptive component, update the aggregate validator in the same change.
+Update deployment and validation whenever runtime components are added, removed, or consolidated.
