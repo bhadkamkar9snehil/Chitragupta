@@ -28,6 +28,9 @@ for retired in "${RETIRED_DEPLOYED_SCRIPTS[@]}"; do
   fi
 done
 
+# Only copy scripts that are valid from the deployed profile location. Corpus
+# sync/benchmark/registry validation intentionally stay repo-side because their
+# source-of-truth inputs live in the Git checkout.
 for f in \
   l2_pipeline_runtime.py \
   ticket_scout.py \
@@ -39,7 +42,6 @@ for f in \
   enforce_publish_safety_net.py \
   run_coalesced.py \
   drain_and_summarize.py \
-  sync_l2_learning_corpus.py \
   l2_learning_curator.py
  do
   cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
@@ -52,14 +54,15 @@ test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
   || { echo "FATAL: Model_Bench/xstudio_l2_tool_bridge.py is missing" >&2; exit 1; }
 
 cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
+cp "$ROOT/deploy/xstudio_action_capabilities.json" "$SCRIPTS_DIR/xstudio_action_capabilities.json"
 
 # zvec is a deliberate local dependency. Do not let the LLM install it during a
-# ticket; operators install it once and deployment verifies it.
+# ticket; operators install the pinned prerequisite once and deployment verifies it.
 if ! command -v zg >/dev/null 2>&1; then
   cat >&2 <<'EOF'
 FATAL: zvec-grep (`zg`) is required by the adaptive-learning branch but is not on PATH.
-Install Node.js 22+ and then, outside an agent investigation:
-  npm install -g @zvec/zvec-grep
+Run the explicit operator prerequisite installer:
+  bash Model_Bench/install_l2_learning_prereqs.sh
 Then rerun this deployment.
 EOF
   exit 1
@@ -143,18 +146,15 @@ install_shared_plugin_for_discovery xstudio-l2-learning "$ROOT/Model_Bench/xstud
 echo "== Profile config (idempotent, additive) =="
 for profile in "${ACTIVE_PROFILES[@]}"; do
   config="$HOME/.hermes/profiles/$profile/config.yaml"
-  if [[ -f "$config" ]]; then
-    python3 "$ROOT/Model_Bench/patch_profile_config.py" "$config"
-    # Small local models get both typed toolsets directly. Do not make them
-    # discover the tools through deferred tool_search.
-    python3 "$ROOT/Model_Bench/patch_tool_search_off.py" "$config"
-  else
-    echo "WARNING: $config not found; skipped"
-  fi
+  python3 "$ROOT/Model_Bench/patch_profile_config.py" "$config"
+  # Small local models get both typed toolsets directly. Do not make them
+  # discover the tools through deferred tool_search.
+  python3 "$ROOT/Model_Bench/patch_tool_search_off.py" "$config"
 done
 
-# Root config controls plugin discovery and therefore recognition of plugin
-# toolset names. Add both plugins; do not change memory.provider.
+# Root config controls shared plugin discovery. The patcher can bootstrap a
+# missing root plugins.enabled block without YAML round-tripping comments. It
+# never changes memory.provider.
 echo "== Root config (plugin discovery) =="
 python3 "$ROOT/Model_Bench/patch_profile_config.py" --enable-plugin-only "$HOME/.hermes/config.yaml"
 
@@ -172,4 +172,5 @@ echo "  learning vault:   $LEARNING_VAULT"
 echo "  session record:   ON (redacted, unverified episodic)"
 echo "  auto prefetch:    OFF by design"
 echo "  mem0 provider:    unchanged"
+echo "  action registry:  observe-only unless individual capabilities are added/promoted"
 echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"

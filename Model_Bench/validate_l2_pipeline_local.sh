@@ -23,11 +23,22 @@ PY_FILES=(
   Model_Bench/xstudio_l2_tool_bridge.py
   Model_Bench/sync_l2_learning_corpus.py
   Model_Bench/l2_learning_curator.py
+  Model_Bench/benchmark_l2_learning_retrieval.py
   Model_Bench/validate_action_capabilities.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
   Model_Bench/test_xstudio_l2_learning_plugin.py
   Model_Bench/test_patch_profile_config.py
 )
+
+SH_FILES=(
+  Model_Bench/deploy_l2_pipeline_runtime.sh
+  Model_Bench/install_l2_learning_prereqs.sh
+  Model_Bench/mirror_wsl_artifacts.sh
+  Model_Bench/validate_l2_pipeline_local.sh
+)
+
+echo "== Shell syntax =="
+bash -n "${SH_FILES[@]}"
 
 echo "== Python syntax =="
 python3 -m py_compile "${PY_FILES[@]}"
@@ -53,11 +64,14 @@ python3 Model_Bench/test_kb_retrieval.py
 
 echo "== zvec learning substrate =="
 if ! command -v zg >/dev/null 2>&1; then
-  echo "FAIL: zg missing. Install Node.js 22+ and: npm install -g @zvec/zvec-grep" >&2
+  echo "FAIL: zg missing. Run: bash Model_Bench/install_l2_learning_prereqs.sh" >&2
   exit 1
 fi
 python3 Model_Bench/sync_l2_learning_corpus.py --vault "$LEARNING_VAULT" --check
 zg status "$LEARNING_VAULT" --check-ready
+
+echo "== Learning retrieval smoke benchmark =="
+python3 Model_Bench/benchmark_l2_learning_retrieval.py --min-hit-rate 0.80
 
 echo "== Live profile plugin/toolset config =="
 for profile in l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback; do
@@ -104,6 +118,7 @@ Adaptive learning plane:
   automatic prefetch: OFF by design
   explicit recall:    l2_recall with trust-scoped zvec hybrid search
   candidate learning: l2_lesson -> candidates only; separate promotion required
+  retrieval eval:     Model_Bench/l2_learning_eval_cases.jsonl
   mem0 provider:      unchanged
 
 Future action plane:
@@ -124,7 +139,7 @@ After deploying/regenerating the SQL bundle, run:
 For the next naturally arriving fresh ticket, verify:
   - database evidence uses xstudio_l2;
   - prior experience, when useful, uses explicit l2_recall rather than prompt injection;
-  - a session file is written under the shared learning vault;
+  - a session file is written under the shared learning vault with run/ticket correlation when available;
   - no generic zvec-memory prefetch block appears in the model context;
   - no terminal/interpreter/pyodbc/sqlcmd/package-install SQL transport reappears.
 EOF

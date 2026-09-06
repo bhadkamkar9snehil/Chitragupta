@@ -40,9 +40,6 @@ PROFILE_SECTIONS: list[tuple[list[str], list[str], bool]] = [
     (["platform_toolsets", "cli"], TOOLSET_ENTRIES, True),
     (["known_plugin_toolsets", "cli"], TOOLSET_ENTRIES, False),
 ]
-ROOT_PLUGIN_SECTIONS: list[tuple[list[str], list[str], bool]] = [
-    (["plugins", "enabled"], PLUGIN_ENTRIES, True),
-]
 
 
 def _indent_of(line: str) -> int:
@@ -124,13 +121,7 @@ def ensure_entries(text: str, key_path: list[str], entries: list[str]) -> tuple[
 
 
 def _ensure_root_plugins_enabled(text: str) -> tuple[str, list[str]]:
-    """Create plugins.enabled when the root config has never had a plugin block.
-
-    Profile configs already carry all required sections and should fail visibly if
-    their structure drifts. The root config is different: a fresh Hermes install
-    may legitimately have no plugins section yet, so deployment must be able to
-    bootstrap shared toolset discovery without a YAML round-trip.
-    """
+    """Create plugins.enabled when the root config has never had a plugin block."""
     updated, added, found = ensure_entries(text, ["plugins", "enabled"], PLUGIN_ENTRIES)
     if found:
         return updated, added
@@ -138,6 +129,11 @@ def _ensure_root_plugins_enabled(text: str) -> tuple[str, list[str]]:
     lines = text.splitlines()
     plugins_idx = _find_key_line(lines, "plugins", 0, len(lines), 0)
     if plugins_idx >= 0:
+        # Only bootstrap a normal block-style `plugins:` mapping. An inline
+        # mapping such as `plugins: {}` must be changed deliberately rather than
+        # producing invalid YAML by nesting under an inline value.
+        if lines[plugins_idx].split(":", 1)[1].strip():
+            raise ValueError("root plugins key uses inline/scalar form; cannot safely patch comment-preserving text")
         insert_at = plugins_idx + 1
         block = ["  enabled:", *[f"    - {entry}" for entry in PLUGIN_ENTRIES]]
         lines[insert_at:insert_at] = block
@@ -153,31 +149,29 @@ def patch_file(
     path: Path,
     *,
     check_only: bool = False,
-    sections: list[tuple[list[str], list[str], bool]] | None = None,
     bootstrap_root_plugins: bool = False,
 ) -> tuple[bool, list[str], list[str]]:
     text = path.read_text(encoding="utf-8")
     original = text
     added_all: list[str] = []
-    warnings: list[str] = []
+    errors: list[str] = []
 
     if bootstrap_root_plugins:
         text, added = _ensure_root_plugins_enabled(text)
         added_all.extend(f"plugins.enabled: {a}" for a in added)
     else:
-        for key_path, entries, required in (sections or PROFILE_SECTIONS):
+        for key_path, entries, required in PROFILE_SECTIONS:
             text, added, found = ensure_entries(text, key_path, entries)
             if not found:
-                message = f"section {'.'.join(key_path)} not found in {path}"
                 if required:
-                    warnings.append("WARNING: " + message + " (skipped; plugin hook still enforces its own safety contract)")
+                    errors.append(f"required section {'.'.join(key_path)} not found in {path}")
                 continue
             added_all.extend(f"{'.'.join(key_path)}: {a}" for a in added)
 
     changed = text != original
-    if changed and not check_only:
+    if changed and not check_only and not errors:
         path.write_text(text, encoding="utf-8")
-    return changed, added_all, warnings
+    return changed, added_all, errors
 
 
 def main(argv: list[str]) -> int:
@@ -191,21 +185,28 @@ def main(argv: list[str]) -> int:
     exit_code = 0
     for path in paths:
         if not path.exists():
-            print(f"SKIP (absent): {path}")
-            continue
+            if plugin_only and not check_only:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("", encoding="utf-8")
+            else:
+                print(f"ERROR: missing required config: {path}")
+                exit_code = 1
+                continue
         try:
-            changed, added, warnings = patch_file(
+            changed, added, errors = patch_file(
                 path,
                 check_only=check_only,
-                sections=ROOT_PLUGIN_SECTIONS if plugin_only else PROFILE_SECTIONS,
                 bootstrap_root_plugins=plugin_only,
             )
         except Exception as exc:
             print(f"ERROR patching {path}: {type(exc).__name__}: {exc}")
             exit_code = 1
             continue
-        for warning in warnings:
-            print(warning)
+        for error in errors:
+            print("ERROR:", error)
+        if errors:
+            exit_code = 1
+            continue
         if added:
             verb = "would add" if check_only else "added"
             print(f"{path}: {verb} {len(added)} entr{'y' if len(added) == 1 else 'ies'}")
