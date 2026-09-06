@@ -37,9 +37,7 @@ class LearningCorpusSyncTests(unittest.TestCase):
             "solutions/approved/x.md": "governed solution",
             "actions/plans/x.json": "{}",
             "actions/candidates/x.json": "{}",
-            "actions/receipts/x.json": "{}",
             "eval/x.jsonl": "{}\n",
-            "archive/solutions/x.md": "old governed solution",
         }
         for rel, content in runtime_files.items():
             path = self.vault / rel
@@ -48,35 +46,24 @@ class LearningCorpusSyncTests(unittest.TestCase):
 
         source = Path(self.tmp.name) / "source.md"
         source.write_text("current canonical reference", encoding="utf-8")
-        items = [(source, Path("knowledge/git/current.md"))]
-        manifest = {"schema_version": 1, "files": []}
-        mod._sync(self.vault, items, manifest)
+        mod._sync(
+            self.vault,
+            [(source, Path("knowledge/git/current.md"))],
+            {"schema_version": 1, "files": []},
+        )
 
         self.assertFalse(old_knowledge.exists())
-        self.assertEqual((self.vault / "knowledge/git/current.md").read_text(encoding="utf-8"),
-                         "current canonical reference")
+        self.assertEqual(
+            (self.vault / "knowledge/git/current.md").read_text(encoding="utf-8"),
+            "current canonical reference",
+        )
         for rel, content in runtime_files.items():
             with self.subTest(rel=rel):
                 self.assertEqual((self.vault / rel).read_text(encoding="utf-8"), content)
 
-    def test_sync_creates_all_runtime_directories_without_populating_them(self):
+    def test_sync_creates_runtime_directories_without_populating_them(self):
         mod._sync(self.vault, [], {"schema_version": 1, "files": []})
-        for rel in (
-            "sessions",
-            "cases/approved",
-            "cases/rejected",
-            "cases/reopened",
-            "facts",
-            "candidates",
-            "solutions/approved",
-            "actions/plans",
-            "actions/candidates",
-            "actions/receipts",
-            "eval",
-            "archive/candidates/promoted",
-            "archive/candidates/rejected",
-            "archive/solutions",
-        ):
+        for rel in mod.RUNTIME_DIRS:
             with self.subTest(rel=rel):
                 self.assertTrue((self.vault / rel).is_dir())
 

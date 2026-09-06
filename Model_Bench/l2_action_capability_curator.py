@@ -1,20 +1,11 @@
 #!/usr/bin/env python3
-"""Govern repeated-human-action candidates into typed XBatch capabilities.
+"""Govern repeated human-action candidates into reviewed shadow capabilities.
 
-This is an operator/control-plane workflow, never a model execution surface.
-Candidates discovered from reviewed NEEDS_HUMAN_ACTION outcomes move through:
+A candidate contains observed evidence plus, at most, one operator-reviewed
+`draft_contract`. There is no persisted "research workflow". A valid draft can
+be marked shadow-ready and then added to the registry at mode=shadow.
 
-    needs_executor_design
-      -> researching_executor
-      -> contract_drafted
-      -> shadow_ready
-      -> registry_entry
-
-A registry promotion never raises deploy/xstudio_action_capabilities.json's
-`global_mode`. The promoted capability is written at mode=shadow, so with the
-current global_mode=observe it remains inactive even after its contract is
-accepted. Enabling shadow/supervised/autonomous operation is a separate policy
-change backed by replay/live evidence.
+This tool never raises registry global_mode and never executes an XBatch action.
 """
 from __future__ import annotations
 
@@ -33,19 +24,11 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
 DEFAULT_REGISTRY = ROOT / "deploy" / "xstudio_action_capabilities.json"
 
-STATES = (
-    "needs_executor_design",
-    "researching_executor",
-    "contract_drafted",
-    "shadow_ready",
-    "registry_entry",
-    "rejected",
-)
+DEFAULT_STATUS = "needs_executor_design"
+STATES = {DEFAULT_STATUS, "shadow_ready", "registry_entry", "rejected"}
 TRANSITIONS = {
-    "needs_executor_design": {"researching_executor", "rejected"},
-    "researching_executor": {"contract_drafted", "rejected"},
-    "contract_drafted": {"researching_executor", "shadow_ready", "rejected"},
-    "shadow_ready": {"contract_drafted", "registry_entry", "rejected"},
+    DEFAULT_STATUS: {"shadow_ready", "rejected"},
+    "shadow_ready": {"registry_entry", "rejected"},
     "registry_entry": set(),
     "rejected": set(),
 }
@@ -89,27 +72,6 @@ def _save_json(path: Path, data: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def _history(candidate: dict[str, Any]) -> list[dict[str, Any]]:
-    value = candidate.setdefault("governance_history", [])
-    if not isinstance(value, list):
-        value = []
-        candidate["governance_history"] = value
-    return value
-
-
-def _record(candidate: dict[str, Any], *, event: str, reviewed_by: str, evidence: str,
-            from_status: str | None = None, to_status: str | None = None) -> None:
-    _history(candidate).append({
-        "event": event,
-        "at": _now(),
-        "reviewed_by": reviewed_by,
-        "evidence": evidence,
-        "from_status": from_status,
-        "to_status": to_status,
-    })
-    candidate["updated_at"] = _now()
-
-
 def _require_review(reviewed_by: str, evidence: str) -> None:
     if not reviewed_by.strip():
         raise ValueError("reviewed_by is required")
@@ -117,190 +79,216 @@ def _require_review(reviewed_by: str, evidence: str) -> None:
         raise ValueError("evidence is required")
 
 
-def _transition(candidate: dict[str, Any], target: str, *, reviewed_by: str, evidence: str) -> None:
+def _status(candidate: dict[str, Any]) -> str:
+    status = str(candidate.get("status") or DEFAULT_STATUS)
+    if status not in STATES:
+        raise ValueError(f"unknown capability-candidate status: {status}")
+    return status
+
+
+def _record(candidate: dict[str, Any], *, event: str, reviewed_by: str,
+            evidence: str, status: str | None = None) -> None:
+    history = candidate.setdefault("governance_history", [])
+    if not isinstance(history, list):
+        raise ValueError("governance_history must be an array")
+    history.append({
+        "event": event,
+        "at": _now(),
+        "reviewed_by": reviewed_by,
+        "evidence": evidence,
+        "status": status,
+    })
+    candidate["updated_at"] = _now()
+
+
+def _transition(candidate: dict[str, Any], target: str, *, reviewed_by: str,
+                evidence: str) -> None:
     _require_review(reviewed_by, evidence)
-    if target not in STATES:
-        raise ValueError(f"unknown target status: {target}")
-    current = str(candidate.get("status") or "needs_executor_design")
-    if target == current:
-        return
-    if target not in TRANSITIONS.get(current, set()):
+    current = _status(candidate)
+    if target not in TRANSITIONS[current]:
         raise ValueError(f"invalid capability-candidate transition: {current} -> {target}")
     candidate["status"] = target
-    _record(candidate, event="status_transition", reviewed_by=reviewed_by, evidence=evidence,
-            from_status=current, to_status=target)
+    _record(
+        candidate,
+        event="status_transition",
+        reviewed_by=reviewed_by,
+        evidence=evidence,
+        status=target,
+    )
 
 
 def _read_contract(path: Path) -> dict[str, Any]:
     contract = _load_json(path)
     if str(contract.get("mode") or "") not in {"observe", "recommend", "shadow"}:
-        raise ValueError("candidate design may target only observe/recommend/shadow; supervised/autonomous promotion is separate")
-    # Candidate promotion itself always lands at shadow. This prevents a contract
-    # file from quietly asking the curator for a stronger execution mode.
+        raise ValueError("candidate contract may target only observe/recommend/shadow")
     contract = dict(contract)
     contract["mode"] = "shadow"
     return contract
 
 
-def _validate_contract_against_registry(contract: dict[str, Any], registry: dict[str, Any]) -> list[str]:
+def _capabilities_without(registry: dict[str, Any], capability_id: str) -> list[dict[str, Any]]:
+    return [
+        dict(item)
+        for item in registry.get("capabilities", [])
+        if isinstance(item, dict) and str(item.get("id") or "") != capability_id
+    ]
+
+
+def _registry_probe(registry: dict[str, Any], contract: dict[str, Any]) -> dict[str, Any]:
     probe = dict(registry)
-    caps = [dict(x) for x in registry.get("capabilities", []) if isinstance(x, dict)]
-    cid = str(contract.get("id") or "")
-    caps = [x for x in caps if str(x.get("id") or "") != cid]
-    caps.append(contract)
-    probe["capabilities"] = caps
+    capability_id = str(contract.get("id") or "")
+    probe["capabilities"] = _capabilities_without(registry, capability_id) + [contract]
+    return probe
+
+
+def _validate_contract(contract: dict[str, Any], registry: dict[str, Any]) -> list[str]:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "registry.json"
-        path.write_text(json.dumps(probe), encoding="utf-8")
+        path.write_text(json.dumps(_registry_probe(registry, contract)), encoding="utf-8")
         return validate_registry(path)
 
 
-def _shadow_readiness_errors(contract: dict[str, Any]) -> list[str]:
+def _required_nonempty(contract: dict[str, Any], fields: tuple[str, ...]) -> list[str]:
+    return [f"{field} must be non-empty" for field in fields if not contract.get(field)]
+
+
+def _required_objects(contract: dict[str, Any], fields: tuple[str, ...]) -> list[str]:
     errors: list[str] = []
-    execution = contract.get("execution") if isinstance(contract.get("execution"), dict) else {}
-    if execution.get("type") in {None, "", "none"}:
-        errors.append("execution.type must identify the verified future executor path before shadow_ready")
-    if not str(execution.get("target") or "").strip():
-        errors.append("execution.target is required before shadow_ready")
-    for field in ("preconditions", "verification", "required_evidence"):
-        if not contract.get(field):
-            errors.append(f"{field} must be non-empty before shadow_ready")
-    if not isinstance(contract.get("idempotency"), dict) or not contract.get("idempotency"):
-        errors.append("idempotency must be non-empty before shadow_ready")
-    if not isinstance(contract.get("approval_policy"), dict) or not contract.get("approval_policy"):
-        errors.append("approval_policy must be non-empty before shadow_ready")
-    rollback = contract.get("rollback")
-    if not isinstance(rollback, dict) or not rollback:
-        errors.append("rollback/compensation contract must be explicit before shadow_ready")
+    for field in fields:
+        value = contract.get(field)
+        if not isinstance(value, dict) or not value:
+            errors.append(f"{field} must be a non-empty object")
     return errors
 
 
+def _shadow_readiness_errors(contract: dict[str, Any]) -> list[str]:
+    execution = contract.get("execution") if isinstance(contract.get("execution"), dict) else {}
+    errors = _required_nonempty(contract, ("preconditions", "verification", "required_evidence"))
+    errors += _required_objects(contract, ("idempotency", "approval_policy", "rollback"))
+    if execution.get("type") in {None, "", "none"}:
+        errors.append("execution.type must identify the supported future executor")
+    if not str(execution.get("target") or "").strip():
+        errors.append("execution.target is required")
+    return errors
+
+
+def _candidate_row(path: Path) -> dict[str, Any] | None:
+    data = _load_json(path)
+    if data.get("kind") != "xstudio_action_capability_candidate":
+        return None
+    draft = data.get("draft_contract") if isinstance(data.get("draft_contract"), dict) else {}
+    return {
+        "candidate": path.name,
+        "candidate_id": data.get("candidate_id"),
+        "status": _status(data),
+        "distinct_ticket_count": int(data.get("distinct_ticket_count") or 0),
+        "observation_count": int(data.get("observation_count") or 0),
+        "risk": draft.get("risk") or "unclassified",
+        "draft_capability_id": draft.get("id"),
+        "representative_human_action": data.get("representative_human_action"),
+        "first_seen_at": data.get("first_seen_at"),
+    }
+
+
+def _rank_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        -int(row["distinct_ticket_count"]),
+        -int(row["observation_count"]),
+        str(row.get("first_seen_at") or ""),
+        str(row.get("candidate_id") or ""),
+    )
+
+
 def list_candidates(vault: Path) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
+    valid: list[dict[str, Any]] = []
+    invalid: list[dict[str, Any]] = []
     root = vault / "actions" / "candidates"
     for path in sorted(root.glob("*.json")) if root.exists() else []:
         try:
-            data = _load_json(path)
-            out.append({
-                "candidate": path.name,
-                "status": data.get("status"),
-                "distinct_ticket_count": data.get("distinct_ticket_count"),
-                "representative_human_action": data.get("representative_human_action"),
-                "draft_capability_id": (data.get("draft_contract") or {}).get("id") if isinstance(data.get("draft_contract"), dict) else None,
-            })
-        except Exception:
-            out.append({"candidate": path.name, "status": "invalid"})
-    return out
-
-
-def start_research(candidate_path: Path, *, reviewed_by: str, evidence: str) -> dict[str, Any]:
-    candidate = _load_json(candidate_path)
-    _transition(candidate, "researching_executor", reviewed_by=reviewed_by, evidence=evidence)
-    _save_json(candidate_path, candidate)
-    return candidate
+            row = _candidate_row(path)
+            if row:
+                valid.append(row)
+        except Exception as exc:
+            invalid.append({"candidate": path.name, "status": "invalid", "error": str(exc)[:500]})
+    valid.sort(key=_rank_key)
+    return valid + invalid
 
 
 def apply_contract(candidate_path: Path, contract_path: Path, registry_path: Path, *,
                    reviewed_by: str, evidence: str) -> dict[str, Any]:
     _require_review(reviewed_by, evidence)
     candidate = _load_json(candidate_path)
-    if str(candidate.get("status") or "needs_executor_design") not in {"researching_executor", "contract_drafted"}:
-        raise ValueError("contract can be drafted only while researching_executor or contract_drafted")
+    if _status(candidate) != DEFAULT_STATUS:
+        raise ValueError("contract can be drafted only while candidate needs executor design")
     contract = _read_contract(contract_path)
     registry = _load_json(registry_path)
-    errors = _validate_contract_against_registry(contract, registry)
+    errors = _validate_contract(contract, registry)
     if errors:
         raise ValueError("capability contract failed registry validation: " + "; ".join(errors))
     candidate["draft_contract"] = contract
-    candidate["design_requirements"] = {
-        "capability_id": contract.get("id"),
-        "risk": contract.get("risk"),
-        "parameter_schema": contract.get("parameter_schema"),
-        "preconditions": contract.get("preconditions"),
-        "execution": contract.get("execution"),
-        "idempotency": contract.get("idempotency"),
-        "verification": contract.get("verification"),
-        "rollback": contract.get("rollback"),
-        "required_evidence": contract.get("required_evidence"),
-        "approval_policy": contract.get("approval_policy"),
-    }
-    current = str(candidate.get("status") or "needs_executor_design")
-    if current != "contract_drafted":
-        _transition(candidate, "contract_drafted", reviewed_by=reviewed_by, evidence=evidence)
-    else:
-        _record(candidate, event="contract_revised", reviewed_by=reviewed_by, evidence=evidence)
+    _record(candidate, event="contract_drafted", reviewed_by=reviewed_by, evidence=evidence)
     _save_json(candidate_path, candidate)
     return candidate
 
 
-def mark_shadow_ready(candidate_path: Path, registry_path: Path, *, reviewed_by: str, evidence: str) -> dict[str, Any]:
-    _require_review(reviewed_by, evidence)
+def mark_shadow_ready(candidate_path: Path, registry_path: Path, *,
+                      reviewed_by: str, evidence: str) -> dict[str, Any]:
     candidate = _load_json(candidate_path)
-    if str(candidate.get("status") or "") != "contract_drafted":
-        raise ValueError("candidate must be contract_drafted before shadow_ready")
+    if _status(candidate) != DEFAULT_STATUS:
+        raise ValueError("candidate must need executor design before shadow_ready")
     contract = candidate.get("draft_contract")
     if not isinstance(contract, dict):
         raise ValueError("draft_contract is missing")
     registry = _load_json(registry_path)
-    errors = _validate_contract_against_registry(contract, registry) + _shadow_readiness_errors(contract)
+    errors = _validate_contract(contract, registry) + _shadow_readiness_errors(contract)
     if errors:
         raise ValueError("candidate is not shadow-ready: " + "; ".join(errors))
     _transition(candidate, "shadow_ready", reviewed_by=reviewed_by, evidence=evidence)
-    candidate["shadow_readiness"] = {
-        "reviewed_at": _now(),
-        "reviewed_by": reviewed_by,
-        "evidence": evidence,
-        "note": "Contract is eligible for registry inclusion only. No execution permission is granted.",
-    }
     _save_json(candidate_path, candidate)
     return candidate
 
 
-def promote_to_registry(candidate_path: Path, registry_path: Path, *, reviewed_by: str, evidence: str) -> dict[str, Any]:
-    _require_review(reviewed_by, evidence)
+def _existing_capability(registry: dict[str, Any], capability_id: str) -> dict[str, Any] | None:
+    for item in registry.get("capabilities", []):
+        if isinstance(item, dict) and str(item.get("id") or "") == capability_id:
+            return item
+    return None
+
+
+def _promoted_registry(registry: dict[str, Any], contract: dict[str, Any]) -> dict[str, Any]:
+    capability_id = str(contract.get("id") or "")
+    existing = _existing_capability(registry, capability_id)
+    if existing and existing != contract:
+        raise ValueError(f"registry already contains a different capability with id={capability_id}")
+    if existing:
+        return registry
+    updated = dict(registry)
+    updated["capabilities"] = [
+        dict(item) for item in registry.get("capabilities", []) if isinstance(item, dict)
+    ] + [contract]
+    return updated
+
+
+def promote_to_registry(candidate_path: Path, registry_path: Path, *,
+                        reviewed_by: str, evidence: str) -> dict[str, Any]:
     candidate = _load_json(candidate_path)
-    if str(candidate.get("status") or "") != "shadow_ready":
+    if _status(candidate) != "shadow_ready":
         raise ValueError("candidate must be shadow_ready before registry promotion")
     contract = candidate.get("draft_contract")
     if not isinstance(contract, dict):
         raise ValueError("draft_contract is missing")
-    contract = dict(contract)
-    contract["mode"] = "shadow"
+
     registry = _load_json(registry_path)
-    errors = _validate_contract_against_registry(contract, registry) + _shadow_readiness_errors(contract)
+    errors = _validate_contract(contract, registry) + _shadow_readiness_errors(contract)
     if errors:
         raise ValueError("registry promotion refused: " + "; ".join(errors))
-    caps = [dict(x) for x in registry.get("capabilities", []) if isinstance(x, dict)]
-    cid = str(contract.get("id") or "")
-    existing = next((x for x in caps if str(x.get("id") or "") == cid), None)
-    if existing and existing != contract:
-        raise ValueError(f"registry already contains a different capability with id={cid}")
-    if not existing:
-        caps.append(contract)
-    # Critical invariant: this workflow never raises global mode.
-    prior_global = registry.get("global_mode")
-    registry["capabilities"] = caps
-    registry["global_mode"] = prior_global
-    with tempfile.TemporaryDirectory() as tmp:
-        probe = Path(tmp) / "registry.json"
-        probe.write_text(json.dumps(registry), encoding="utf-8")
-        final_errors = validate_registry(probe)
-    if final_errors:
-        raise ValueError("final registry validation failed: " + "; ".join(final_errors))
-    _save_json(registry_path, registry)
-    digest = hashlib.sha256(registry_path.read_bytes()).hexdigest()
+
+    updated_registry = _promoted_registry(registry, contract)
+    _save_json(registry_path, updated_registry)
+
     _transition(candidate, "registry_entry", reviewed_by=reviewed_by, evidence=evidence)
-    candidate["registry_entry"] = {
-        "capability_id": cid,
-        "mode": "shadow",
-        "registry": str(registry_path),
-        "registry_sha256": digest,
-        "global_mode_at_promotion": prior_global,
-        "promoted_at": _now(),
-        "reviewed_by": reviewed_by,
-        "evidence": evidence,
-        "execution_authorized": False,
-    }
+    candidate["registered_capability_id"] = str(contract.get("id") or "")
+    candidate["registry_sha256"] = hashlib.sha256(registry_path.read_bytes()).hexdigest()
     _save_json(candidate_path, candidate)
     return candidate
 
@@ -312,40 +300,49 @@ def reject(candidate_path: Path, *, reviewed_by: str, evidence: str) -> dict[str
     return candidate
 
 
+def _reviewed_parser(sub: argparse._SubParsersAction, name: str) -> argparse.ArgumentParser:
+    parser = sub.add_parser(name)
+    parser.add_argument("candidate")
+    parser.add_argument("--reviewed-by", required=True)
+    parser.add_argument("--evidence", required=True)
+    return parser
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--vault", default=None)
     ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
     sub = ap.add_subparsers(dest="command", required=True)
     sub.add_parser("list")
-
-    def reviewed_parser(name: str) -> argparse.ArgumentParser:
-        p = sub.add_parser(name)
-        p.add_argument("candidate")
-        p.add_argument("--reviewed-by", required=True)
-        p.add_argument("--evidence", required=True)
-        return p
-
-    reviewed_parser("research")
-    d = reviewed_parser("draft-contract")
-    d.add_argument("--contract", required=True)
-    reviewed_parser("shadow-ready")
-    reviewed_parser("promote")
-    reviewed_parser("reject")
-
+    draft = _reviewed_parser(sub, "draft-contract")
+    draft.add_argument("--contract", required=True)
+    _reviewed_parser(sub, "shadow-ready")
+    _reviewed_parser(sub, "promote")
+    _reviewed_parser(sub, "reject")
     ns = ap.parse_args(argv)
+
     vault = _vault(ns.vault)
     registry = Path(ns.registry).expanduser()
     if ns.command == "list":
-        print(json.dumps({"candidates": list_candidates(vault)}, indent=2, ensure_ascii=False)); return 0
+        print(json.dumps({"candidates": list_candidates(vault)}, indent=2, ensure_ascii=False))
+        return 0
+
     candidate_path = _candidate_path(vault, ns.candidate)
     kwargs = {"reviewed_by": ns.reviewed_by, "evidence": ns.evidence}
-    if ns.command == "research": result = start_research(candidate_path, **kwargs)
-    elif ns.command == "draft-contract": result = apply_contract(candidate_path, Path(ns.contract).expanduser(), registry, **kwargs)
-    elif ns.command == "shadow-ready": result = mark_shadow_ready(candidate_path, registry, **kwargs)
-    elif ns.command == "promote": result = promote_to_registry(candidate_path, registry, **kwargs)
-    else: result = reject(candidate_path, **kwargs)
-    print(json.dumps({"ok": True, "candidate": candidate_path.name, "status": result.get("status")}, indent=2))
+    handlers = {
+        "draft-contract": lambda: apply_contract(
+            candidate_path, Path(ns.contract).expanduser(), registry, **kwargs
+        ),
+        "shadow-ready": lambda: mark_shadow_ready(candidate_path, registry, **kwargs),
+        "promote": lambda: promote_to_registry(candidate_path, registry, **kwargs),
+        "reject": lambda: reject(candidate_path, **kwargs),
+    }
+    result = handlers[ns.command]()
+    print(json.dumps({
+        "ok": True,
+        "candidate": candidate_path.name,
+        "status": result.get("status"),
+    }, indent=2))
     return 0
 
 

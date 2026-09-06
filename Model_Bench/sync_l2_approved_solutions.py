@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
-"""Export explicitly governed SQL Solution articles into trusted zvec scope.
+"""Export explicitly approved SQL Solution articles into trusted zvec scope.
 
-`Hermes_Solution_Article_Mst_Tbl.IsActive` is not enough to make an article
-trusted. The Git-tracked policy must explicitly approve a SolutionID and the
-exact semantic content hash reviewed by an operator. Live semantic content drift
-therefore fails closed rather than silently changing trusted retrieval material.
+`solutions/approved/` has one owner: this exporter. Git-authored knowledge lives
+elsewhere. Trust requires an explicit SolutionID + semantic content hash in the
+Git-tracked policy. Drift is checked when synchronization runs.
 
-Operational counters such as UsageCount are deliberately excluded from the
-approval hash: usage can change without changing the reviewed guidance. They may
-still be emitted as informational snapshots.
-
-This sidecar is read-only to SQL. It writes only the derived local learning-vault
-mirror under solutions/approved and archives previously managed exports when
-approval is removed or the approved live content drifts.
+The exporter is read-only to SQL and does not mutate Helpdesk/KB tables.
 """
 from __future__ import annotations
 
@@ -21,8 +14,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -31,21 +22,12 @@ from l2_pipeline_runtime import default_args, run_orchestrator
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
 DEFAULT_POLICY = ROOT / "deploy" / "solution_export_policy.json"
-MANIFEST = "solutions/solution_export_manifest.json"
 
-SELECT_FIELDS = (
-    "ID", "Title", "ProblemSummary", "RootCause", "ResolutionSteps",
-    "RootCauseCategoryID", "Route", "RelatedViewsJson", "Tags", "UsageCount",
-)
-# Governance hash = reviewed reusable content, not mutable runtime telemetry.
 HASH_FIELDS = (
     "ID", "Title", "ProblemSummary", "RootCause", "ResolutionSteps",
     "RootCauseCategoryID", "Route", "RelatedViewsJson", "Tags",
 )
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+APPROVAL_FIELDS = ("approved_by", "approved_at", "review_evidence")
 
 
 def _vault(raw: str | None = None) -> Path:
@@ -62,42 +44,55 @@ def _load_json(path: Path) -> dict[str, Any]:
     return data
 
 
-def _canonical_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {field: row.get(field) for field in HASH_FIELDS}
-
-
 def content_sha256(row: dict[str, Any]) -> str:
-    payload = json.dumps(_canonical_row(row), sort_keys=True, separators=(",", ":"),
-                         ensure_ascii=False, default=str)
+    governed = {field: row.get(field) for field in HASH_FIELDS}
+    payload = json.dumps(
+        governed,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _policy_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def _solution_id_errors(item: dict[str, Any], label: str, seen: set[str]) -> list[str]:
+    solution_id = str(item.get("solution_id") or "").strip()
+    if not solution_id:
+        return [f"{label}.solution_id is required"]
+    if solution_id in seen:
+        return [f"duplicate solution_id: {solution_id}"]
+    seen.add(solution_id)
+    return []
+
+
+def _approval_errors(item: Any, index: int, seen: set[str]) -> list[str]:
+    label = f"approved[{index}]"
+    if not isinstance(item, dict):
+        return [f"{label} must be an object"]
+    errors = _solution_id_errors(item, label, seen)
+    digest = str(item.get("content_sha256") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        errors.append(f"{label}.content_sha256 must be 64 lowercase hex characters")
+    missing = [
+        f"{label}.{field} is required"
+        for field in APPROVAL_FIELDS
+        if not str(item.get(field) or "").strip()
+    ]
+    return errors + missing
 
 
 def _validate_policy(policy: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
-    if policy.get("schema_version") != 1:
-        errors.append("solution export policy schema_version must be 1")
+    errors = [] if policy.get("schema_version") == 1 else [
+        "solution export policy schema_version must be 1"
+    ]
     approved = policy.get("approved")
     if not isinstance(approved, list):
         return errors + ["solution export policy approved must be an array"]
+
     seen: set[str] = set()
-    for i, item in enumerate(approved):
-        label = f"approved[{i}]"
-        if not isinstance(item, dict):
-            errors.append(f"{label} must be an object"); continue
-        sid = str(item.get("solution_id") or "").strip()
-        digest = str(item.get("content_sha256") or "").strip().lower()
-        if not sid: errors.append(f"{label}.solution_id is required")
-        elif sid in seen: errors.append(f"duplicate solution_id: {sid}")
-        seen.add(sid)
-        if not re.fullmatch(r"[0-9a-f]{64}", digest):
-            errors.append(f"{label}.content_sha256 must be 64 lowercase hex characters")
-        for field in ("approved_by", "approved_at", "review_evidence"):
-            if not str(item.get(field) or "").strip():
-                errors.append(f"{label}.{field} is required")
+    for index, item in enumerate(approved):
+        errors.extend(_approval_errors(item, index, seen))
     return errors
 
 
@@ -105,7 +100,7 @@ def _query_live_solutions(args: Any = None) -> list[dict[str, Any]]:
     args = args or default_args()
     sql = (
         "SELECT ID, Title, ProblemSummary, RootCause, ResolutionSteps, "
-        "RootCauseCategoryID, Route, RelatedViewsJson, Tags, UsageCount "
+        "RootCauseCategoryID, Route, RelatedViewsJson, Tags "
         "FROM dbo.Hermes_Solution_Article_Mst_Tbl "
         "WHERE IsActive = 1 AND IsDeleted = 0 ORDER BY ID;"
     )
@@ -114,182 +109,173 @@ def _query_live_solutions(args: Any = None) -> list[dict[str, Any]]:
         return []
     if not isinstance(result, list):
         raise RuntimeError("Solution query returned a non-list payload")
-    return [x for x in result if isinstance(x, dict)]
+    return [row for row in result if isinstance(row, dict)]
 
 
 def _safe_id(value: str) -> str:
     clean = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-").lower()
-    return clean[:120] or hashlib.sha256(value.encode()).hexdigest()[:16]
+    return clean[:120] or hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def _display(value: Any, default: str = "_Not recorded._") -> str:
+    if value in (None, ""):
+        return default
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, default=str)
 
 
 def _render_solution(row: dict[str, Any], approval: dict[str, Any]) -> str:
-    digest = content_sha256(row)
-    # Deliberately no generated-at/exported-at field here. The trusted article is
-    # byte-stable while its reviewed semantics and approval metadata are stable.
-    # Sync timestamps belong in the disposable export manifest instead.
     meta = {
         "kind": "l2_governed_solution_export",
         "trust": "governed_reusable_solution",
         "solution_id": str(row.get("ID") or ""),
-        "content_sha256": digest,
+        "content_sha256": content_sha256(row),
         "approved_by": approval.get("approved_by"),
         "approved_at": approval.get("approved_at"),
         "review_evidence": approval.get("review_evidence"),
         "route": row.get("Route"),
         "tags": row.get("Tags"),
     }
-    fm = "\n".join(f"{k}: {json.dumps(v, ensure_ascii=False, default=str)}" for k, v in meta.items())
-    related = row.get("RelatedViewsJson")
-    related_text = related if isinstance(related, str) else json.dumps(related, ensure_ascii=False, default=str)
+    frontmatter = "\n".join(
+        f"{key}: {json.dumps(value, ensure_ascii=False, default=str)}"
+        for key, value in meta.items()
+    )
     return (
-        f"---\n{fm}\n---\n\n"
-        f"# {row.get('Title') or 'Approved Solution'}\n\n"
-        f"## Problem summary\n\n{row.get('ProblemSummary') or '_Not recorded._'}\n\n"
-        f"## Root cause\n\n{row.get('RootCause') or '_Not recorded._'}\n\n"
-        f"## Resolution steps\n\n{row.get('ResolutionSteps') or '_Not recorded._'}\n\n"
-        f"## Related views / objects\n\n{related_text or '_Not recorded._'}\n\n"
-        f"## Operational usage snapshot\n\nUsageCount at this sync: {row.get('UsageCount') if row.get('UsageCount') is not None else '_Not recorded._'}\n\n"
-        "> This is governed reusable guidance, not current-ticket proof. Verify applicability and live state before using it.\n"
+        f"---\n{frontmatter}\n---\n\n"
+        f"# {_display(row.get('Title'), 'Approved Solution')}\n\n"
+        f"## Problem summary\n\n{_display(row.get('ProblemSummary'))}\n\n"
+        f"## Root cause\n\n{_display(row.get('RootCause'))}\n\n"
+        f"## Resolution steps\n\n{_display(row.get('ResolutionSteps'))}\n\n"
+        f"## Related views / objects\n\n{_display(row.get('RelatedViewsJson'))}\n\n"
+        "> Governed reusable guidance is not current-ticket proof. "
+        "Verify applicability and live state before using it.\n"
     )
 
 
-def _semantic_render_for_compare(text: str) -> str:
-    """Ignore only the non-governance usage snapshot when checking byte stability."""
-    return re.sub(
-        r"(?ms)^## Operational usage snapshot\n\nUsageCount at this sync: .*?\n\n(?=> )",
-        "## Operational usage snapshot\n\nUsageCount at this sync: <runtime-counter>\n\n",
-        text,
-    )
+def _approved_map(policy: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(item["solution_id"]): item
+        for item in policy.get("approved", [])
+        if isinstance(item, dict) and item.get("solution_id")
+    }
 
 
-def _manifest_path(vault: Path) -> Path:
-    return vault / MANIFEST
+def _live_map(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        str(row["ID"]): row
+        for row in rows
+        if isinstance(row, dict) and row.get("ID")
+    }
 
 
-def _load_manifest(vault: Path) -> dict[str, Any]:
-    path = _manifest_path(vault)
-    if not path.exists():
-        return {"schema_version": 1, "managed_exports": {}}
-    try:
-        data = _load_json(path)
-    except Exception:
-        return {"schema_version": 1, "managed_exports": {}}
-    if not isinstance(data.get("managed_exports"), dict):
-        data["managed_exports"] = {}
-    return data
+def _export_one(solution_id: str, approval: dict[str, Any],
+                live: dict[str, dict[str, Any]]) -> tuple[str | None, str | None]:
+    row = live.get(solution_id)
+    if row is None:
+        return None, f"approved Solution {solution_id} is missing/inactive in live SQL"
+    actual = content_sha256(row)
+    expected = str(approval.get("content_sha256") or "").lower()
+    if actual != expected:
+        return None, (
+            f"approved Solution {solution_id} content drift: "
+            f"expected {expected}, live {actual}"
+        )
+    return _render_solution(row, approval), None
 
 
-def _save_manifest(vault: Path, data: dict[str, Any]) -> None:
-    path = _manifest_path(vault)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data["schema_version"] = 1
-    data["updated_at"] = _now()
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    tmp.replace(path)
+def _desired_exports(policy: dict[str, Any],
+                     rows: list[dict[str, Any]]) -> tuple[dict[str, str], list[str]]:
+    desired: dict[str, str] = {}
+    errors: list[str] = []
+    live = _live_map(rows)
+    for solution_id, approval in _approved_map(policy).items():
+        text, error = _export_one(solution_id, approval, live)
+        if error:
+            errors.append(error)
+            continue
+        filename = f"{_safe_id(solution_id)}.md"
+        if filename in desired:
+            errors.append(f"Solution export filename collision: {filename}")
+            continue
+        desired[filename] = text or ""
+    return desired, errors
 
 
-def sync_approved_solutions(*, vault: Path | None = None, policy_path: Path = DEFAULT_POLICY,
-                            rows: list[dict[str, Any]] | None = None, args: Any = None,
+def _directory_diff(directory: Path, desired: dict[str, str]) -> tuple[dict[str, Path], set[str], list[str], int]:
+    existing = {path.name: path for path in directory.glob("*.md")} if directory.exists() else {}
+    remove = set(existing) - set(desired)
+    write = [
+        name for name, text in desired.items()
+        if name not in existing or existing[name].read_text(encoding="utf-8") != text
+    ]
+    unchanged = len(desired) - len(write)
+    return existing, remove, write, unchanged
+
+
+def _apply_directory(directory: Path, desired: dict[str, str],
+                     existing: dict[str, Path], remove: set[str],
+                     write: list[str]) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in remove:
+        existing[name].unlink()
+    for name in write:
+        path = directory / name
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(desired[name], encoding="utf-8")
+        tmp.replace(path)
+
+
+def _reconcile_directory(directory: Path, desired: dict[str, str], *,
+                         dry_run: bool) -> tuple[int, int, int]:
+    existing, remove, write, unchanged = _directory_diff(directory, desired)
+    if not dry_run:
+        _apply_directory(directory, desired, existing, remove, write)
+    return len(write), len(remove), unchanged
+
+
+def sync_approved_solutions(*, vault: Path | None = None,
+                            policy_path: Path = DEFAULT_POLICY,
+                            rows: list[dict[str, Any]] | None = None,
+                            args: Any = None,
                             dry_run: bool = False) -> dict[str, Any]:
     vault = vault or _vault()
     policy = _load_json(policy_path)
     policy_errors = _validate_policy(policy)
     if policy_errors:
-        return {"ok": False, "errors": policy_errors, "exported": 0, "archived": 0, "skipped": 0}
-
-    approvals = {str(x["solution_id"]): x for x in policy.get("approved", [])}
-    # Empty policy intentionally performs no SQL read. First introduction can be
-    # safely deployed before any Solution has completed governance review.
-    live_rows = rows if rows is not None else (_query_live_solutions(args) if approvals else [])
-    by_id = {str(row.get("ID") or ""): row for row in live_rows if row.get("ID")}
-    manifest = _load_manifest(vault)
-    prior = manifest.get("managed_exports", {}) if isinstance(manifest.get("managed_exports"), dict) else {}
-    next_managed: dict[str, Any] = {}
-    errors: list[str] = []
-    exported = archived = skipped = 0
-    approved_dir = vault / "solutions" / "approved"
-    archive_dir = vault / "archive" / "solutions"
-
-    for sid, approval in approvals.items():
-        row = by_id.get(sid)
-        if row is None:
-            errors.append(f"approved Solution {sid} is missing/inactive in live SQL")
-            continue
-        actual_hash = content_sha256(row)
-        expected_hash = str(approval.get("content_sha256") or "").lower()
-        if actual_hash != expected_hash:
-            errors.append(f"approved Solution {sid} content drift: expected {expected_hash}, live {actual_hash}")
-            continue
-        filename = f"{_safe_id(sid)}.md"
-        rel = f"solutions/approved/{filename}"
-        rendered = _render_solution(row, approval)
-        path = vault / rel
-        next_managed[sid] = {
-            "path": rel,
-            "content_sha256": actual_hash,
-            "approved_by": approval.get("approved_by"),
-            "approved_at": approval.get("approved_at"),
-            "usage_count_snapshot": row.get("UsageCount"),
+        return {
+            "ok": False,
+            "errors": policy_errors,
+            "written": 0,
+            "removed": 0,
+            "unchanged": 0,
         }
-        if path.exists():
-            existing_text = path.read_text(encoding="utf-8")
-            if existing_text == rendered:
-                skipped += 1
-                continue
-            # UsageCount is informational. A counter-only change updates the
-            # generated mirror without requiring re-approval, while the semantic
-            # hash remains pinned.
-            if _semantic_render_for_compare(existing_text) == _semantic_render_for_compare(rendered):
-                if not dry_run:
-                    path.write_text(rendered, encoding="utf-8")
-                skipped += 1
-                continue
-        if not dry_run:
-            approved_dir.mkdir(parents=True, exist_ok=True)
-            path.write_text(rendered, encoding="utf-8")
-        exported += 1
 
-    # Only exports recorded in our previous manifest are eligible for archival.
-    # Hand-authored files are never swept by this sidecar. A still-approved
-    # article whose semantic hash drifted is intentionally omitted from
-    # next_managed, removing stale guidance from trusted recall until re-review.
-    for sid, old in prior.items():
-        if sid in next_managed:
-            continue
-        old_rel = str((old or {}).get("path") or "")
-        old_path = vault / old_rel if old_rel else None
-        if old_path and old_path.is_file():
-            if not dry_run:
-                archive_dir.mkdir(parents=True, exist_ok=True)
-                target = archive_dir / f"{_safe_id(sid)}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
-                shutil.move(str(old_path), str(target))
-            archived += 1
-
-    if not dry_run:
-        manifest["managed_exports"] = next_managed
-        manifest["policy_path"] = str(policy_path)
-        manifest["policy_sha256"] = _policy_sha256(policy_path)
-        _save_manifest(vault, manifest)
+    approvals = policy.get("approved") or []
+    live_rows = rows if rows is not None else (_query_live_solutions(args) if approvals else [])
+    desired, errors = _desired_exports(policy, live_rows)
+    written, removed, unchanged = _reconcile_directory(
+        vault / "solutions" / "approved",
+        desired,
+        dry_run=dry_run,
+    )
     return {
         "ok": not errors,
         "errors": errors,
-        "exported": exported,
-        "archived": archived,
-        "skipped": skipped,
         "approved_count": len(approvals),
+        "written": written,
+        "removed": removed,
+        "unchanged": unchanged,
     }
 
 
 def preview_live(*, args: Any = None) -> list[dict[str, Any]]:
-    rows = _query_live_solutions(args)
     return [{
         "solution_id": row.get("ID"),
         "title": row.get("Title"),
         "route": row.get("Route"),
-        "usage_count": row.get("UsageCount"),
         "content_sha256": content_sha256(row),
-    } for row in rows]
+    } for row in _query_live_solutions(args)]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -297,12 +283,21 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--vault", default=None)
     ap.add_argument("--policy", default=str(DEFAULT_POLICY))
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--preview-live", action="store_true",
-                    help="print active live Solution IDs and semantic review hashes without trusting/exporting them")
+    ap.add_argument(
+        "--preview-live",
+        action="store_true",
+        help="print active Solution IDs and semantic review hashes without trusting/exporting them",
+    )
     ns = ap.parse_args(argv)
     if ns.preview_live:
-        print(json.dumps({"solutions": preview_live()}, indent=2, ensure_ascii=False)); return 0
-    result = sync_approved_solutions(vault=_vault(ns.vault), policy_path=Path(ns.policy), dry_run=ns.dry_run)
+        print(json.dumps({"solutions": preview_live()}, indent=2, ensure_ascii=False))
+        return 0
+
+    result = sync_approved_solutions(
+        vault=_vault(ns.vault),
+        policy_path=Path(ns.policy),
+        dry_run=ns.dry_run,
+    )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0 if result["ok"] else 1
 

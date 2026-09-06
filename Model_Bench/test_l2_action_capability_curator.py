@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contract tests for governed capability-candidate promotion."""
+"""Contract tests for the minimal capability-candidate curator."""
 from __future__ import annotations
 
 import copy
@@ -16,12 +16,15 @@ mod = importlib.util.module_from_spec(_spec)
 assert _spec.loader
 _spec.loader.exec_module(mod)
 
-
 BASE_REGISTRY = {
     "schema_version": 1,
     "global_mode": "observe",
     "capability_contract": {
-        "required_fields": ["id", "description", "risk", "mode", "parameter_schema", "preconditions", "execution", "idempotency", "verification", "rollback", "required_evidence", "approval_policy"],
+        "required_fields": [
+            "id", "description", "risk", "mode", "parameter_schema",
+            "preconditions", "execution", "idempotency", "verification",
+            "rollback", "required_evidence", "approval_policy",
+        ],
         "allowed_modes": ["observe", "recommend", "shadow", "supervised", "autonomous"],
         "allowed_risk": ["low", "medium", "high", "critical"],
     },
@@ -29,15 +32,17 @@ BASE_REGISTRY = {
 }
 
 
-def candidate():
+def candidate(candidate_id="abc123", tickets=2, observations=2):
     return {
         "schema_version": 1,
         "kind": "xstudio_action_capability_candidate",
-        "candidate_id": "abc123",
+        "candidate_id": candidate_id,
         "trust": "unverified_capability_candidate",
         "status": "needs_executor_design",
-        "distinct_ticket_count": 2,
-        "representative_human_action": "Retry the failed posting through the supported service path.",
+        "distinct_ticket_count": tickets,
+        "observation_count": observations,
+        "representative_human_action": f"Retry action {candidate_id}.",
+        "first_seen_at": "2026-09-01T00:00:00+00:00",
     }
 
 
@@ -49,16 +54,28 @@ def contract():
         "mode": "shadow",
         "parameter_schema": {
             "type": "object",
-            "properties": {"transaction_id": {"type": "string", "minLength": 1, "maxLength": 100}},
+            "properties": {
+                "transaction_id": {"type": "string", "minLength": 1, "maxLength": 100}
+            },
             "required": ["transaction_id"],
             "additionalProperties": False,
         },
         "preconditions": ["live transaction is failed and retryable"],
         "execution": {"type": "stored_procedure", "target": "dbo.XMES_SAP_Retry_Posting_Usp"},
-        "idempotency": {"key": "transaction_id", "rule": "do not submit while a successful posting exists"},
+        "idempotency": {
+            "key": "transaction_id",
+            "rule": "do not submit while a successful posting exists",
+        },
         "verification": ["re-read transaction and require successful terminal state"],
-        "rollback": {"strategy": "none", "not_required": True, "justification": "retry is idempotent and verification-gated"},
-        "required_evidence": [{"id": "failed_transaction", "description": "Current failed transaction row."}],
+        "rollback": {
+            "strategy": "none",
+            "not_required": True,
+            "justification": "retry is idempotent and verification-gated",
+        },
+        "required_evidence": [{
+            "id": "failed_transaction",
+            "description": "Current failed transaction row.",
+        }],
         "approval_policy": {"requires_human_approval": True},
     }
 
@@ -80,57 +97,75 @@ class CapabilityCuratorTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_invalid_transition_is_rejected(self):
-        data = json.loads(self.candidate_path.read_text())
-        with self.assertRaisesRegex(ValueError, "invalid capability-candidate transition"):
-            mod._transition(data, "shadow_ready", reviewed_by="operator", evidence="no design yet")
+    def _draft(self):
+        return mod.apply_contract(
+            self.candidate_path, self.contract, self.registry,
+            reviewed_by="operator", evidence="supported executor contract reviewed",
+        )
+
+    def test_list_is_the_only_backlog_report_and_ranks_evidence(self):
+        extra = self.candidates / "stronger.json"
+        extra.write_text(json.dumps(candidate("stronger", tickets=4, observations=4)), encoding="utf-8")
+        rows = mod.list_candidates(self.vault)
+        self.assertEqual([row["candidate_id"] for row in rows], ["stronger", "abc123"])
+        self.assertEqual(rows[0]["risk"], "unclassified")
 
     def test_contract_must_be_registry_valid(self):
-        mod.start_research(self.candidate_path, reviewed_by="operator", evidence="research opened")
-        broken = contract(); broken["parameter_schema"]["additionalProperties"] = True
+        broken = contract()
+        broken["parameter_schema"]["additionalProperties"] = True
         self.contract.write_text(json.dumps(broken), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "failed registry validation"):
-            mod.apply_contract(self.candidate_path, self.contract, self.registry,
-                               reviewed_by="operator", evidence="design review")
+            self._draft()
 
-    def test_shadow_ready_requires_concrete_executor_contract(self):
-        mod.start_research(self.candidate_path, reviewed_by="operator", evidence="research opened")
-        weak = contract(); weak["execution"] = {"type": "none", "target": ""}
+    def test_shadow_ready_requires_draft_and_concrete_executor_contract(self):
+        with self.assertRaisesRegex(ValueError, "draft_contract is missing"):
+            mod.mark_shadow_ready(
+                self.candidate_path, self.registry,
+                reviewed_by="operator", evidence="attempted too early",
+            )
+
+        weak = contract()
+        weak["execution"] = {"type": "none", "target": ""}
         self.contract.write_text(json.dumps(weak), encoding="utf-8")
-        mod.apply_contract(self.candidate_path, self.contract, self.registry,
-                           reviewed_by="operator", evidence="drafted planning-only contract")
+        self._draft()
         with self.assertRaisesRegex(ValueError, "not shadow-ready"):
-            mod.mark_shadow_ready(self.candidate_path, self.registry,
-                                  reviewed_by="operator", evidence="executor not verified")
+            mod.mark_shadow_ready(
+                self.candidate_path, self.registry,
+                reviewed_by="operator", evidence="executor still unresolved",
+            )
 
     def test_promotion_adds_shadow_capability_without_raising_global_mode(self):
-        mod.start_research(self.candidate_path, reviewed_by="operator", evidence="supported SP identified")
-        mod.apply_contract(self.candidate_path, self.contract, self.registry,
-                           reviewed_by="operator", evidence="contract reviewed")
-        mod.mark_shadow_ready(self.candidate_path, self.registry,
-                              reviewed_by="operator", evidence="preconditions and verification confirmed")
-        result = mod.promote_to_registry(self.candidate_path, self.registry,
-                                         reviewed_by="operator", evidence="approved for registry inclusion")
+        self._draft()
+        mod.mark_shadow_ready(
+            self.candidate_path, self.registry,
+            reviewed_by="operator", evidence="preconditions and postconditions verified",
+        )
+        result = mod.promote_to_registry(
+            self.candidate_path, self.registry,
+            reviewed_by="operator", evidence="approved for shadow registry inclusion",
+        )
         registry = json.loads(self.registry.read_text())
         self.assertEqual(registry["global_mode"], "observe")
-        self.assertEqual(len(registry["capabilities"]), 1)
-        self.assertEqual(registry["capabilities"][0]["mode"], "shadow")
+        self.assertEqual(registry["capabilities"], [contract()])
         self.assertEqual(result["status"], "registry_entry")
-        self.assertFalse(result["registry_entry"]["execution_authorized"])
+        self.assertEqual(result["registered_capability_id"], contract()["id"])
 
     def test_existing_different_registry_contract_is_not_overwritten(self):
         existing = copy.deepcopy(BASE_REGISTRY)
-        other = contract(); other["description"] = "Different reviewed contract"
+        other = contract()
+        other["description"] = "Different reviewed contract"
         existing["capabilities"] = [other]
         self.registry.write_text(json.dumps(existing), encoding="utf-8")
-        mod.start_research(self.candidate_path, reviewed_by="operator", evidence="research")
-        mod.apply_contract(self.candidate_path, self.contract, self.registry,
-                           reviewed_by="operator", evidence="draft")
-        mod.mark_shadow_ready(self.candidate_path, self.registry,
-                              reviewed_by="operator", evidence="ready")
+        self._draft()
+        mod.mark_shadow_ready(
+            self.candidate_path, self.registry,
+            reviewed_by="operator", evidence="ready",
+        )
         with self.assertRaisesRegex(ValueError, "different capability"):
-            mod.promote_to_registry(self.candidate_path, self.registry,
-                                    reviewed_by="operator", evidence="promote")
+            mod.promote_to_registry(
+                self.candidate_path, self.registry,
+                reviewed_by="operator", evidence="promote",
+            )
 
 
 if __name__ == "__main__":

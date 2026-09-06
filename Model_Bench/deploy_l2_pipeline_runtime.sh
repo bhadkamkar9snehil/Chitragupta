@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploy deterministic lifecycle, typed evidence, harness-owned identity,
-# outcome-conditioned learning, and the non-executing corrective-action planner.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$HOME/.hermes/profiles/l2-investigator/scripts"
 ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
@@ -20,7 +18,6 @@ for retired in "${RETIRED_DEPLOYED_SCRIPTS[@]}"; do
   fi
 done
 
-# Only scripts valid from the deployed profile location are copied here.
 for f in \
   l2_pipeline_runtime.py \
   ticket_scout.py \
@@ -37,48 +34,56 @@ for f in \
   mine_l2_learning_candidates.py \
   mine_l2_action_capability_candidates.py \
   l2_learning_cycle.py
- do
+do
   cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
- done
+done
 chmod +x "$SCRIPTS_DIR"/*.py
 
 test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
   || { echo "FATAL: Model_Bench/xstudio_l2_tool_bridge.py is missing" >&2; exit 1; }
 cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
 cp "$ROOT/deploy/xstudio_action_capabilities.json" "$SCRIPTS_DIR/xstudio_action_capabilities.json"
-cp "$ROOT/deploy/xstudio_action_receipt.schema.json" "$SCRIPTS_DIR/xstudio_action_receipt.schema.json"
 
-# zvec is operator-installed, never model-installed during a ticket.
-if ! command -v zg >/dev/null 2>&1; then
-  cat >&2 <<'EOF'
-FATAL: zvec-grep (`zg`) is required by the adaptive-learning branch but is not on PATH.
-Run:
-  bash Model_Bench/install_l2_learning_prereqs.sh
-Then rerun this deployment.
-EOF
-  exit 1
-fi
+# Learning/KB refresh is intentionally not deployment authority. A missing zvec
+# dependency or governed-Solution drift must not leave the deterministic L2
+# runtime half-deployed. Local validation remains strict.
+refresh_learning_vault() {
+  if ! command -v zg >/dev/null 2>&1; then
+    echo "WARNING: zg missing; skipping learning-vault refresh. Run Model_Bench/install_l2_learning_prereqs.sh."
+    return 0
+  fi
 
-# Build the canonical mirror first without indexing, then materialize only
-# explicitly governed/hash-pinned SQL Solution articles. Index once after both
-# sources are in place so `solutions/approved/**` is immediately searchable.
-echo "== Learning corpus sync =="
-python3 "$ROOT/Model_Bench/sync_l2_learning_corpus.py" --vault "$LEARNING_VAULT" --no-index
+  echo "== Learning corpus sync =="
+  if ! python3 "$ROOT/Model_Bench/sync_l2_learning_corpus.py" \
+      --vault "$LEARNING_VAULT" --no-index; then
+    echo "WARNING: canonical learning-corpus sync failed; continuing runtime deployment"
+    return 0
+  fi
 
-echo "== Governed Solution export =="
-python3 "$ROOT/Model_Bench/sync_l2_approved_solutions.py" \
-  --vault "$LEARNING_VAULT" \
-  --policy "$ROOT/deploy/solution_export_policy.json"
+  echo "== Governed Solution sync =="
+  solution_rc=0
+  python3 "$ROOT/Model_Bench/sync_l2_approved_solutions.py" \
+    --vault "$LEARNING_VAULT" \
+    --policy "$ROOT/deploy/solution_export_policy.json" || solution_rc=$?
 
-echo "== Learning vault index =="
-zg index --embedding "$LEARNING_EMBEDDING" "$LEARNING_VAULT"
-if [[ "${CHITRAGUPTA_ZVEC_SERVER:-1}" != "0" ]]; then
-  zg server on >/dev/null 2>&1 || echo "WARNING: zg server did not start; direct mode remains available"
-fi
+  # Always refresh the index after a Solution sync attempt: a drift failure may
+  # have removed stale trusted files.
+  echo "== Learning vault index =="
+  zg index --embedding "$LEARNING_EMBEDDING" "$LEARNING_VAULT" \
+    || echo "WARNING: learning-vault indexing failed; explicit recall may be unavailable"
 
-# Outcome capture + conservative lesson/capability candidate mining is one
-# sidecar. It creates learning/control-plane evidence only; it never promotes
-# knowledge, changes the executable registry, or performs an XBatch action.
+  if [[ "$solution_rc" -ne 0 ]]; then
+    echo "WARNING: governed Solution sync found missing/drifted approvals; stale trusted exports were removed"
+  fi
+
+  if [[ "${CHITRAGUPTA_ZVEC_SERVER:-1}" != "0" ]]; then
+    zg server on >/dev/null 2>&1 \
+      || echo "WARNING: zg server did not start; direct mode remains available"
+  fi
+}
+
+refresh_learning_vault
+
 echo "== Learning outcome/candidate cycle (best effort) =="
 python3 "$ROOT/Model_Bench/l2_learning_cycle.py" --vault "$LEARNING_VAULT" \
   || echo "WARNING: learning cycle reported errors; lifecycle deployment continues"
@@ -111,6 +116,7 @@ copy_soul() {
   local profile="$1" src="$ROOT/deploy/profiles/$1/SOUL.md"
   [[ -f "$src" ]] && cp "$src" "$HOME/.hermes/profiles/$1/SOUL.md"
 }
+
 copy_skill() {
   local profile="$1" skill="$2"
   local src="$ROOT/deploy/skills/xstudio/$skill/SKILL.md"
@@ -125,6 +131,7 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
   deploy_plugins "$profile"
   copy_soul "$profile"
 done
+
 for profile in "${INVESTIGATOR_PROFILES[@]}"; do
   for skill in xstudio-l2-ticket-workflow xstudio-sql-write-discipline \
                xstudio-sap-api-investigation xstudio-sohar-heat-execution \
@@ -132,6 +139,7 @@ for profile in "${INVESTIGATOR_PROFILES[@]}"; do
     copy_skill "$profile" "$skill"
   done
 done
+
 for profile in "${REVIEWER_PROFILES[@]}"; do
   for skill in xstudio-l2-draft-verifier xstudio-sql-write-discipline; do
     copy_skill "$profile" "$skill"
@@ -162,16 +170,10 @@ fi
 
 echo
 echo "Deployed Chitragupta adaptive L2 runtime."
-echo "  evidence toolset:    xstudio_l2"
-echo "  identity guard:      harness binds run/ticket identity before sensitive tool calls"
-echo "  learning toolset:    l2_learning (explicit recall + candidate lessons)"
-echo "  governed solutions:  hash-pinned SQL approvals -> solutions/approved"
-echo "  action toolset:      l2_actions (list/describe/plan/plans/validate_plan; NO execute)"
-echo "  action receipts:     schema installed for future planned/approved/executed/verified/failed/compensated history"
-echo "  session recording:   ON"
-echo "  outcome learning:    reviewer/publisher cases + conservative lesson mining"
-echo "  capability backlog:  repeated reviewed human actions -> unverified action candidates"
-echo "  automatic prefetch:  OFF by design"
-echo "  mem0 provider:       unchanged"
-echo "  action execution:    unavailable until a separate deterministic executor is deliberately introduced"
+echo "  evidence:          xstudio_l2 + harness-owned incident identity"
+echo "  learning:          sessions ON; explicit l2_recall; generic prefetch OFF"
+echo "  governed solutions: explicit hash-pinned sync; learning failures do not block deployment"
+echo "  actions:           l2_actions planning only; NO execute operation"
+echo "  capability backlog: repeated reviewed human actions -> unverified candidates"
+echo "  mem0 provider:     unchanged"
 echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"

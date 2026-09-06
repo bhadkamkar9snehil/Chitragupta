@@ -14,8 +14,8 @@ assert _spec.loader
 _spec.loader.exec_module(mod)
 
 
-def approved_case(*, case_id: str, ticket_id: str, run_id: str, response_type: str,
-                  action: str) -> str:
+def approved_case(*, case_id: str, ticket_id: str, run_id: str,
+                  response_type: str, action: str) -> str:
     return (
         "---\n"
         f'case_id: "{case_id}"\n'
@@ -38,28 +38,41 @@ class CapabilityCandidateMiningTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _add(self, action: str, ticket: str, index: int):
-        (self.vault / f"cases/approved/{index}.md").write_text(approved_case(
-            case_id=f"c{index}", ticket_id=ticket, run_id=f"R{index}",
-            response_type="NEEDS_HUMAN_ACTION", action=action,
-        ), encoding="utf-8")
+        (self.vault / f"cases/approved/{index}.md").write_text(
+            approved_case(
+                case_id=f"c{index}",
+                ticket_id=ticket,
+                run_id=f"R{index}",
+                response_type="NEEDS_HUMAN_ACTION",
+                action=action,
+            ),
+            encoding="utf-8",
+        )
 
-    def test_two_distinct_human_action_tickets_create_backlog_candidate(self):
-        action = "Retry the SAP posting through the supported posting retry path after confirming the transaction remains pending."
-        self._add(action, "T1", 1); self._add(action, "T2", 2)
+    def test_two_distinct_human_action_tickets_create_unverified_candidate(self):
+        action = (
+            "Retry the SAP posting through the supported posting retry path "
+            "after confirming the transaction remains pending."
+        )
+        self._add(action, "T1", 1)
+        self._add(action, "T2", 2)
         counts = mod.mine_capability_candidates(self.vault)
         self.assertEqual(counts["created"], 1)
-        candidate = json.loads(next((self.vault / "actions/candidates").glob("*.json")).read_text(encoding="utf-8"))
+        candidate = json.loads(
+            next((self.vault / "actions/candidates").glob("*.json")).read_text(encoding="utf-8")
+        )
         self.assertEqual(candidate["trust"], "unverified_capability_candidate")
         self.assertEqual(candidate["status"], "needs_executor_design")
         self.assertEqual(candidate["distinct_ticket_count"], 2)
-        self.assertIsNone(candidate["design_requirements"]["execution"])
-        self.assertIsNone(candidate["design_requirements"]["parameter_schema"])
+        self.assertNotIn("draft_contract", candidate)
+        self.assertNotIn("design_requirements", candidate)
 
     def test_single_ticket_does_not_create_candidate(self):
-        (self.vault / "cases/approved/1.md").write_text(approved_case(
-            case_id="c1", ticket_id="T1", run_id="R1", response_type="NEEDS_HUMAN_ACTION",
-            action="Perform the supported corrective action after validating the live target state.",
-        ), encoding="utf-8")
+        self._add(
+            "Perform the supported corrective action after validating the live target state.",
+            "T1",
+            1,
+        )
         counts = mod.mine_capability_candidates(self.vault)
         self.assertEqual(counts["eligible_groups"], 0)
         self.assertFalse((self.vault / "actions/candidates").exists())
@@ -67,61 +80,74 @@ class CapabilityCandidateMiningTests(unittest.TestCase):
     def test_resolution_cases_are_not_capability_backlog(self):
         action = "No human action is required because the issue is already resolved."
         for i, ticket in enumerate(("T1", "T2"), 1):
-            (self.vault / f"cases/approved/{i}.md").write_text(approved_case(
-                case_id=f"c{i}", ticket_id=ticket, run_id=f"R{i}", response_type="RESOLUTION", action=action,
-            ), encoding="utf-8")
+            (self.vault / f"cases/approved/{i}.md").write_text(
+                approved_case(
+                    case_id=f"c{i}",
+                    ticket_id=ticket,
+                    run_id=f"R{i}",
+                    response_type="RESOLUTION",
+                    action=action,
+                ),
+                encoding="utf-8",
+            )
         counts = mod.mine_capability_candidates(self.vault)
         self.assertEqual(counts["created"], 0)
 
-    def test_third_observation_updates_same_candidate_instead_of_duplicate(self):
-        action = "Reset the supported integration state through the official operator procedure after verifying all preconditions."
-        self._add(action, "T1", 1); self._add(action, "T2", 2)
-        first = mod.mine_capability_candidates(self.vault)
-        self.assertEqual(first["created"], 1)
-        self._add(action, "T3", 3)
-        second = mod.mine_capability_candidates(self.vault)
-        self.assertEqual(second["updated"], 1)
-        files = list((self.vault / "actions/candidates").glob("*.json"))
-        self.assertEqual(len(files), 1)
-        self.assertEqual(json.loads(files[0].read_text(encoding="utf-8"))["distinct_ticket_count"], 3)
-
-    def test_repeated_learning_cycle_does_not_erase_curator_owned_design_state(self):
-        action = "Retry the supported integration transaction after verifying the failed live state and duplicate guards."
-        self._add(action, "T1", 1); self._add(action, "T2", 2)
+    def test_new_evidence_preserves_operator_owned_governance(self):
+        action = (
+            "Retry the supported integration transaction after verifying the failed "
+            "live state and duplicate guards."
+        )
+        self._add(action, "T1", 1)
+        self._add(action, "T2", 2)
         mod.mine_capability_candidates(self.vault)
         path = next((self.vault / "actions/candidates").glob("*.json"))
         governed = json.loads(path.read_text(encoding="utf-8"))
-        governed["status"] = "contract_drafted"
-        governed["design_requirements"] = {
-            "capability_id": "xbatch.integration.retry",
+        governed["status"] = "shadow_ready"
+        governed["draft_contract"] = {
+            "id": "xbatch.integration.retry",
+            "mode": "shadow",
             "risk": "low",
-            "parameter_schema": {"type": "object"},
-            "preconditions": ["failed live state"],
-            "execution": {"type": "stored_procedure", "target": "dbo.RealRetryUsp"},
-            "idempotency": {"key": "transaction_id"},
-            "verification": ["terminal success"],
-            "rollback": {"not_required": True, "justification": "idempotent retry"},
-            "required_evidence": [{"id": "failed_tx"}],
-            "approval_policy": {"requires_human_approval": True},
         }
-        governed["draft_contract"] = {"id": "xbatch.integration.retry", "mode": "shadow"}
-        governed["governance_history"] = [{"event": "contract_drafted", "reviewed_by": "operator"}]
+        governed["governance_history"] = [{
+            "event": "status_transition",
+            "reviewed_by": "operator",
+        }]
         path.write_text(json.dumps(governed, indent=2), encoding="utf-8")
 
-        # New evidence arrives after governance work has already started.
         self._add(action, "T3", 3)
         result = mod.mine_capability_candidates(self.vault)
         self.assertEqual(result["updated"], 1)
         after = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(after["distinct_ticket_count"], 3)
-        self.assertEqual(after["status"], "contract_drafted")
-        self.assertEqual(after["design_requirements"], governed["design_requirements"])
+        self.assertEqual(after["status"], "shadow_ready")
         self.assertEqual(after["draft_contract"], governed["draft_contract"])
         self.assertEqual(after["governance_history"], governed["governance_history"])
 
+    def test_corrupt_existing_candidate_fails_closed_without_overwrite(self):
+        action = (
+            "Reset the supported integration state after verifying the current failed "
+            "state and duplicate-prevention condition."
+        )
+        self._add(action, "T1", 1)
+        self._add(action, "T2", 2)
+        mod.mine_capability_candidates(self.vault)
+        path = next((self.vault / "actions/candidates").glob("*.json"))
+        path.write_text("{broken", encoding="utf-8")
+        before = path.read_bytes()
+
+        self._add(action, "T3", 3)
+        result = mod.mine_capability_candidates(self.vault)
+        self.assertEqual(result["errors"], 1)
+        self.assertEqual(path.read_bytes(), before)
+
     def test_unchanged_rerun_leaves_candidate_byte_stable(self):
-        action = "Perform the supported retry only after verifying the current failure and duplicate-prevention state."
-        self._add(action, "T1", 1); self._add(action, "T2", 2)
+        action = (
+            "Perform the supported retry only after verifying the current failure "
+            "and duplicate-prevention state."
+        )
+        self._add(action, "T1", 1)
+        self._add(action, "T2", 2)
         mod.mine_capability_candidates(self.vault)
         path = next((self.vault / "actions/candidates").glob("*.json"))
         before = path.read_bytes()

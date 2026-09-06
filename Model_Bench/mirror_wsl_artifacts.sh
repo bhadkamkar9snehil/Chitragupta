@@ -1,10 +1,7 @@
 #!/bin/bash
 # Mirror deployable WSL profile artifacts into the repository's deploy/ tree.
-# Runtime learning/action data is deliberately NOT mirrored into Git: sessions,
-# outcome cases, lesson candidates, promoted facts, action plans, action-capability
-# candidates, action receipts, runtime replay sets and outcome manifests remain
-# machine-local runtime data. Git-tracked policy/schema files under deploy/ are
-# authored in the repo and are not sourced back from the runtime vault.
+# Runtime learning/action data is intentionally machine-local: sessions, cases,
+# lesson/action candidates, plans, facts and replay sets are not mirrored into Git.
 set -euo pipefail
 
 SRC_HERMES=~/.hermes/profiles

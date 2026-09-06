@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
 LEARNING_VAULT="${CHITRAGUPTA_L2_LEARNING_VAULT:-$HOME/.hermes/l2-learning}"
 HISTORICAL_EVAL="$LEARNING_VAULT/eval/historical_retrieval_cases.jsonl"
 
@@ -29,32 +30,33 @@ PY_FILES=(
   Model_Bench/sync_l2_approved_solutions.py
   Model_Bench/mine_l2_learning_candidates.py
   Model_Bench/mine_l2_action_capability_candidates.py
-  Model_Bench/report_l2_action_capability_backlog.py
   Model_Bench/l2_learning_cycle.py
   Model_Bench/build_l2_historical_retrieval_eval.py
   Model_Bench/l2_learning_curator.py
   Model_Bench/l2_action_capability_curator.py
-  Model_Bench/xstudio_action_receipts.py
   Model_Bench/benchmark_l2_learning_retrieval.py
   Model_Bench/validate_action_capabilities.py
+)
+
+CONTRACT_TESTS=(
+  Model_Bench/test_l2_pipeline_runtime.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
   Model_Bench/test_xstudio_l2_identity_plugin.py
   Model_Bench/test_xstudio_l2_learning_plugin.py
-  Model_Bench/test_xstudio_l2_actions_plugin.py
   Model_Bench/test_sync_l2_learning_corpus.py
   Model_Bench/test_sync_l2_outcomes.py
   Model_Bench/test_sync_l2_approved_solutions.py
   Model_Bench/test_mine_l2_learning_candidates.py
   Model_Bench/test_mine_l2_action_capability_candidates.py
-  Model_Bench/test_report_l2_action_capability_backlog.py
   Model_Bench/test_l2_learning_cycle.py
   Model_Bench/test_build_l2_historical_retrieval_eval.py
   Model_Bench/test_l2_action_capability_curator.py
-  Model_Bench/test_xstudio_action_receipts.py
+  Model_Bench/test_xstudio_l2_actions_plugin.py
   Model_Bench/test_validate_action_capabilities.py
   Model_Bench/test_patch_profile_config.py
   Model_Bench/test_adaptive_deploy_contract.py
 )
+
 SH_FILES=(
   Model_Bench/deploy_l2_pipeline_runtime.sh
   Model_Bench/install_l2_learning_prereqs.sh
@@ -62,49 +64,18 @@ SH_FILES=(
   Model_Bench/validate_l2_pipeline_local.sh
 )
 
-echo "== Shell syntax =="
+echo "== Syntax =="
 bash -n "${SH_FILES[@]}"
-echo "== Python syntax =="
-python3 -m py_compile "${PY_FILES[@]}"
-echo "== Deterministic lifecycle contract tests =="
-python3 Model_Bench/test_l2_pipeline_runtime.py
-echo "== Typed investigation-tool contract tests =="
-python3 Model_Bench/test_xstudio_l2_tools_plugin.py
-echo "== Harness-owned identity contract tests =="
-python3 Model_Bench/test_xstudio_l2_identity_plugin.py
-echo "== Adaptive learning contract tests =="
-python3 Model_Bench/test_xstudio_l2_learning_plugin.py
-echo "== Learning corpus preservation tests =="
-python3 Model_Bench/test_sync_l2_learning_corpus.py
-echo "== Outcome-conditioned learning contract tests =="
-python3 Model_Bench/test_sync_l2_outcomes.py
-echo "== Governed SQL Solution export tests =="
-python3 Model_Bench/test_sync_l2_approved_solutions.py
-echo "== Outcome-to-lesson-candidate mining tests =="
-python3 Model_Bench/test_mine_l2_learning_candidates.py
-echo "== Repeated-human-action capability backlog tests =="
-python3 Model_Bench/test_mine_l2_action_capability_candidates.py
-echo "== Capability backlog evidence-ranking tests =="
-python3 Model_Bench/test_report_l2_action_capability_backlog.py
-echo "== Central learning-cycle isolation tests =="
-python3 Model_Bench/test_l2_learning_cycle.py
-echo "== Historical retrieval replay builder tests =="
-python3 Model_Bench/test_build_l2_historical_retrieval_eval.py
-echo "== Governed capability design/promotion tests =="
-python3 Model_Bench/test_l2_action_capability_curator.py
-echo "== Future action execution receipt tests =="
-python3 Model_Bench/test_xstudio_action_receipts.py
-echo "== Non-executing action-planner contract tests =="
-python3 Model_Bench/test_xstudio_l2_actions_plugin.py
-echo "== Corrective-action promotion policy tests =="
-python3 Model_Bench/test_validate_action_capabilities.py
-echo "== Profile/root config patcher contract tests =="
-python3 Model_Bench/test_patch_profile_config.py
-echo "== Adaptive deploy drift contract =="
-python3 Model_Bench/test_adaptive_deploy_contract.py
-echo "== Corrective-action registry =="
+python3 -m py_compile "${PY_FILES[@]}" "${CONTRACT_TESTS[@]}"
+
+echo "== Contract tests =="
+for test_file in "${CONTRACT_TESTS[@]}"; do
+  echo "-- $test_file"
+  python3 "$test_file"
+done
+
+echo "== Static policy validation =="
 python3 Model_Bench/validate_action_capabilities.py
-echo "== Knowledge/skill validation =="
 python3 Model_Bench/validate_knowledge_manifest.py
 python3 Model_Bench/test_kb_retrieval.py
 
@@ -116,26 +87,27 @@ fi
 python3 Model_Bench/sync_l2_learning_corpus.py --vault "$LEARNING_VAULT" --check
 zg status "$LEARNING_VAULT" --check-ready
 
-echo "== Governed Solution export preview =="
+echo "== Governed Solution sync preview =="
 python3 Model_Bench/sync_l2_approved_solutions.py \
   --vault "$LEARNING_VAULT" \
   --policy deploy/solution_export_policy.json \
   --dry-run
 
-echo "== Static learning retrieval smoke benchmark =="
+echo "== Retrieval smoke benchmark =="
 python3 Model_Bench/benchmark_l2_learning_retrieval.py --min-hit-rate 0.80
 
 echo "== Learning sidecar preview =="
 python3 Model_Bench/l2_learning_cycle.py --vault "$LEARNING_VAULT" --dry-run
 
-echo "== Real capability backlog ranking (read-only) =="
-python3 Model_Bench/report_l2_action_capability_backlog.py --vault "$LEARNING_VAULT" --top 10
+echo "== Capability backlog =="
+python3 Model_Bench/l2_action_capability_curator.py --vault "$LEARNING_VAULT" list
 
-echo "== Historical outcome-retrieval replay set =="
+echo "== Historical retrieval replay =="
 python3 Model_Bench/build_l2_historical_retrieval_eval.py --vault "$LEARNING_VAULT"
 if [[ -s "$HISTORICAL_EVAL" ]]; then
-  echo "== Historical outcome-retrieval benchmark =="
-  python3 Model_Bench/benchmark_l2_learning_retrieval.py --cases "$HISTORICAL_EVAL" --min-hit-rate 0.60
+  python3 Model_Bench/benchmark_l2_learning_retrieval.py \
+    --cases "$HISTORICAL_EVAL" \
+    --min-hit-rate 0.60
 else
   echo "INFO: no correlated historical session/outcome cases yet; replay benchmark skipped"
 fi
@@ -149,60 +121,44 @@ for profile in l2-investigator l2-investigator-primary l2-reviewer-primary l2-re
   fi
   python3 Model_Bench/patch_profile_config.py --check "$config"
 done
-python3 Model_Bench/patch_profile_config.py --enable-plugin-only --check "$HOME/.hermes/config.yaml"
+python3 Model_Bench/patch_profile_config.py \
+  --enable-plugin-only \
+  --check "$HOME/.hermes/config.yaml"
 
 echo "== Retired live-deployment guard =="
 DEPLOYED_SCRIPTS="$HOME/.hermes/profiles/l2-investigator/scripts"
-retired_found=0
 for retired in dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py; do
   if [[ -e "$DEPLOYED_SCRIPTS/$retired" ]]; then
     echo "FAIL: retired script is still deployed live: $DEPLOYED_SCRIPTS/$retired" >&2
-    retired_found=1
+    exit 1
   fi
 done
-if [[ "$retired_found" -ne 0 ]]; then
-  echo "Run: bash Model_Bench/deploy_l2_pipeline_runtime.sh" >&2
-  exit 1
-fi
-echo "PASS: no known retired lifecycle scripts remain in the live scripts directory"
 
-echo "== Live workflow discovery (read-only) =="
+echo "== Live read-only checks =="
 python3 Model_Bench/configure_helpdesk_workflow.py
-echo "== Pipeline status (read-only) =="
 python3 Model_Bench/l2_pipeline_runtime.py status
-echo "== Reconcile preview (dry-run) =="
 python3 Model_Bench/l2_pipeline_runtime.py reconcile --dry-run
 
-echo
 cat <<EOF
-LOCAL VALIDATION COMPLETE.
+
+LOCAL VALIDATION COMPLETE
 
 Control plane:
-  lifecycle:           claim -> investigate -> normalize -> frozen review -> publish/rework
-  typed evidence:      xstudio_l2
-  identity:            run/ticket bound by xstudio-l2-identity before sensitive tool calls
+  claim -> investigate -> normalize -> frozen review -> publish/rework
+  typed evidence: xstudio_l2
+  run/ticket identity: harness-owned
 
 Learning plane:
-  shared vault:        $LEARNING_VAULT
-  session recording:   ON (redacted, unverified episodic)
-  automatic prefetch:  OFF by design
-  outcome cases:       approved/rejected/reopened historical case classes
-  lesson mining:       deterministic unverified candidates; no automatic promotion
-  governed solutions:  explicit ID + semantic content hash approval only
-  corpus refresh:      canonical mirror rebuild cannot erase runtime learning/action data
-  explicit recall:     trusted/case/session scopes with trust labels
-  historical replay:   real session query -> corresponding outcome-case retrieval
-  mem0 provider:       unchanged
+  sessions: ON, redacted, unverified
+  generic automatic prefetch: OFF
+  governed reusable Solutions: explicit semantic-hash approval
+  historical cases/candidates: not current-ticket proof
+  zvec: retrieval index only; mem0 unchanged
 
 Action plane:
-  registry:            deploy/xstudio_action_capabilities.json
-  capability backlog:  repeated reviewed NEEDS_HUMAN_ACTION patterns under actions/candidates
-  backlog triage:       ranked by real distinct-ticket/observation evidence, never inferred risk
-  curator states:      needs_executor_design -> researching_executor -> contract_drafted -> shadow_ready -> registry_entry
-  direct toolset:      l2_actions
-  operations:          list/describe/plan/plans/validate_plan
-  plan provenance:     harness-bound to current run/ticket
-  receipt lifecycle:   planned -> approved -> executed -> verified | failed -> compensated
-  execution:           intentionally unavailable
-  autonomy:            capability-specific promotion only; curator never raises global_mode
+  registry: deploy/xstudio_action_capabilities.json
+  backlog: repeated reviewed NEEDS_HUMAN_ACTION cases
+  curator: needs_executor_design -> shadow_ready -> registry_entry
+  model-facing l2_actions: list/describe/plan/plans/validate_plan
+  execution: unavailable
 EOF
