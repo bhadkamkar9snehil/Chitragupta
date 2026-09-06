@@ -1,6 +1,6 @@
 # Chitragupta — Autonomous XStudio / Hermes L2 Helpdesk
 
-Chitragupta is an AI-driven L2 support system around the existing XStudio Helpdesk. The model investigates and reasons; deterministic code owns incident identity, ticket lifecycle, independent review, publication and the boundary around any future XBatch side effect.
+Chitragupta is an AI-driven L2 support system around the existing XStudio Helpdesk. The model investigates and reasons; deterministic code owns incident identity, ticket lifecycle, independent review, publication, knowledge promotion, and the boundary around any future XBatch side effect.
 
 This branch is deliberately building beyond a read-only support bot toward a system that:
 
@@ -111,7 +111,9 @@ Shared vault:
   solutions/approved/
   actions/plans/
   actions/candidates/
+  actions/receipts/
   eval/
+  archive/
 ```
 
 `zvec-grep` is the local BM25 + vector + RRF retrieval substrate. The index is disposable.
@@ -136,6 +138,29 @@ Similarity does not imply truth. Old assistant mistakes, rejected hypotheses and
 | `candidates` | unreviewed proposed lessons |
 
 Historical cases are deliberately excluded from `trusted`.
+
+## Governed SQL Solution retrieval
+
+The SQL KB table `dbo.Hermes_Solution_Article_Mst_Tbl` remains a reusable-knowledge source, but `IsActive=1` alone does not make a Solution trusted retrieval material.
+
+`Model_Bench/sync_l2_approved_solutions.py` and `deploy/solution_export_policy.json` require an explicit approval record containing:
+
+```text
+solution_id
+semantic content_sha256
+approved_by
+approved_at
+review_evidence
+```
+
+The exporter re-reads live SQL and exports only exact approved semantics into:
+
+```text
+solutions/approved/<solution-id>.md
+trust: governed_reusable_solution
+```
+
+The hash covers reusable knowledge fields and deliberately excludes mutable telemetry such as `UsageCount`. Governed semantic drift fails closed and archives a stale managed trusted export until the changed content is reviewed. `--preview-live` lists active Solution IDs and review hashes without trusting them.
 
 ## Outcome-conditioned learning
 
@@ -178,6 +203,22 @@ approval policy
 
 The backlog tells us what is worth automating; it does not invent how to automate it.
 
+### Governed capability design
+
+`Model_Bench/l2_action_capability_curator.py` moves a real backlog item through:
+
+```text
+needs_executor_design
+-> researching_executor
+-> contract_drafted
+-> shadow_ready
+-> registry_entry
+```
+
+Every transition requires reviewer/evidence provenance. Before `shadow_ready`, the candidate needs a concrete supported execution target and reviewed parameter/precondition/idempotency/evidence/postcondition/rollback/approval contract.
+
+Promotion adds only a `mode=shadow` capability and never raises registry `global_mode`. The current registry can therefore remain globally `observe` even after the first reviewed shadow contract exists.
+
 ## Action plane
 
 Machine-readable registry:
@@ -212,6 +253,21 @@ execution_tool_available: false
 ```
 
 This lets us measure action-selection quality before granting mutation authority.
+
+### Action receipts already exist as a contract
+
+No executor exists yet, but the outcome semantics do:
+
+```text
+planned -> approved -> executed -> verified
+    \         \          \
+     +-> failed <---------+
+           |
+           v
+      compensated
+```
+
+`deploy/xstudio_action_receipt.schema.json` and `Model_Bench/xstudio_action_receipts.py` define append-only attempt history. `verified` requires deterministic postconditions; `compensated` requires verified rollback/compensation. A receipt records what happened—it does not grant execution authority.
 
 ### Autonomy ladder
 
@@ -249,7 +305,8 @@ Do not collapse all storage into one concept:
 live SQL                  current incident truth
 run ledger / traces       current incident execution evidence
 Git Knowledge/            canonical project/domain reference
-SQL Solution lifecycle    governed reusable support knowledge
+SQL Solution lifecycle    reusable source requiring explicit trust governance
+solutions/approved        hash-pinned governed reusable retrieval guidance
 mem0                      compact durable operational behavior
 zvec learning vault       high-recall experience/cases/replay substrate
 ```
@@ -276,11 +333,18 @@ Model_Bench/xstudio_l2_learning_plugin/
 Model_Bench/sync_l2_outcomes.py
     reviewer/publisher outcome labels
 
+Model_Bench/sync_l2_approved_solutions.py
+deploy/solution_export_policy.json
+    semantic-hash-governed SQL Solution -> trusted retrieval export
+
 Model_Bench/mine_l2_learning_candidates.py
     outcome -> unverified lesson candidates
 
 Model_Bench/mine_l2_action_capability_candidates.py
     repeated reviewed human actions -> action-capability backlog
+
+Model_Bench/l2_action_capability_curator.py
+    reviewed backlog candidate -> shadow registry workflow
 
 Model_Bench/l2_learning_cycle.py
     single learning sidecar coordinator
@@ -294,6 +358,10 @@ Model_Bench/xstudio_l2_actions_plugin/
 
 Model_Bench/validate_action_capabilities.py
     capability promotion/safety policy validator
+
+deploy/xstudio_action_receipt.schema.json
+Model_Bench/xstudio_action_receipts.py
+    future append-only execution outcome contract
 ```
 
 ## Response types
@@ -307,6 +375,19 @@ Model_Bench/validate_action_capabilities.py
 | `L3_ESCALATION` | root cause/safe path still unresolved or beyond L2 |
 
 As the action plane matures, some cases that currently end as `NEEDS_HUMAN_ACTION` should become shadow, then supervised, then autonomous remediation—without weakening evidence or postcondition requirements.
+
+## Immediate next work
+
+The core structural continuation points are now present. The next useful sequence is evidence-driven rather than more framework scaffolding:
+
+1. preview active SQL Solutions and explicitly approve only reusable articles worth entering `trusted` retrieval;
+2. run the real learning cycle and inspect `actions/candidates/**`;
+3. choose the strongest repeated real human action by independent-ticket evidence;
+4. inspect its actual XBatch implementation and classify risk only after understanding the side effect;
+5. move it through the capability curator into the first genuine shadow registry contract;
+6. collect shadow-plan agreement/outcome evidence before introducing a supervised executor.
+
+Synthetic test capability names are not real candidates and must not be promoted.
 
 ## Direction
 
