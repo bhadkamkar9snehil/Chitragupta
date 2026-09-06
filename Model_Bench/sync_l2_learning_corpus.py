@@ -3,7 +3,8 @@
 
 This script copies only governed/reference material. It never deletes or rewrites
 runtime experience: sessions, historical cases, facts, candidates, action plans,
-approved SQL-solution exports, outcome manifests, or archives.
+action-capability candidates, approved SQL-solution exports, replay sets,
+outcome manifests, or archives.
 
 The copied files are a retrieval mirror, not a new source of truth. Git remains
 canonical for project/reference knowledge. The zvec index is disposable.
@@ -89,8 +90,8 @@ def _check(vault: Path, expected: dict) -> int:
 
 
 def _sync(vault: Path, items: list[tuple[Path, Path]], manifest: dict) -> None:
-    # Only the disposable canonical mirror is rebuilt. Runtime learning data is
-    # a separate plane and must survive every knowledge refresh.
+    # Only the disposable canonical mirror is rebuilt. Runtime learning/action
+    # data is a separate plane and must survive every knowledge refresh.
     for rel in ("knowledge/git", "knowledge/skills", "knowledge/contracts"):
         dst = vault / rel
         if dst.exists(): shutil.rmtree(dst)
@@ -101,7 +102,8 @@ def _sync(vault: Path, items: list[tuple[Path, Path]], manifest: dict) -> None:
         shutil.copy2(src, dst)
     for rel in (
         "sessions", "cases/approved", "cases/rejected", "cases/reopened",
-        "facts", "candidates", "solutions/approved", "actions/plans", "archive",
+        "facts", "candidates", "solutions/approved",
+        "actions/plans", "actions/candidates", "eval", "archive",
     ):
         (vault / rel).mkdir(parents=True, exist_ok=True)
     (vault / "corpus_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
