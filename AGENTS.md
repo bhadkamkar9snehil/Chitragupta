@@ -3,7 +3,8 @@
 This file is the stable operating contract for agents working on Chitragupta.
 For the exact lifecycle state machine, read `Knowledge/L2_PIPELINE_STATE_MACHINE.md`.
 For human-facing architecture and deployment, read `README.md`.
-For KB design, read `Knowledge/KB_IMPLEMENTATION_PLAN.md`.
+For the adaptive branch north star, experience plane, evaluation plane, and action-autonomy ladder, read `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md`.
+For KB design and governance concepts, read `Knowledge/KB_IMPLEMENTATION_PLAN.md`.
 
 Do not treat `Plans/`, `Agent_Comms/`, old commit messages, or dated incident notes as current runtime instructions. They are historical evidence only.
 
@@ -22,6 +23,17 @@ Ticket:     dbo.Complaint_Mst_Tbl
 Production/plant evidence primarily lives in `XStudio_Xbatch`.
 
 Chitragupta does not replace the Helpdesk workflow. It claims an existing ticket, investigates it, gets an independent review, and publishes through the audited Hermes SQL path.
+
+On `development/autonomous-l2-learning-runtime`, that production-safe lifecycle is the **control plane**, not the final product boundary. The branch adds separate evidence/identity, experience/learning, evaluation, and corrective-action planes while preserving deterministic authority at workflow and side-effect boundaries.
+
+The branch-wide rule is:
+
+```text
+recording experience != believing experience
+retrieving experience != proving a current-ticket claim
+reasoning about an action != permission to execute it
+an execution attempt != a verified successful outcome
+```
 
 ## 2. Current live L2 lifecycle
 
@@ -104,7 +116,7 @@ The old design launched repair/reject/publisher as independent concurrent proces
 
 `Model_Bench/xstudio_l2_orchestrator_plugin/` triggers the same reconciler immediately after successful `kanban_complete` / `kanban_block`. Event delivery is an optimization, not a correctness dependency.
 
-The 2-minute `ticket_scout.py` job runs reconciliation before every claim attempt and is the durable mutating backstop.
+The 2-minute `ticket_scout.py` job runs reconciliation before every claim attempt and is the durable mutating backstop. It also invokes one best-effort **learning sidecar cycle** after reconciliation. That sidecar may materialize outcomes and mine candidates, but it must never become claim/review/publish authority or block ticket handling.
 
 Current L2 cron policy:
 
@@ -161,7 +173,7 @@ For a `QUESTION`, use the existing waiting-user workflow semantics and `Ask` bin
 
 For an `UPDATE`, `NextEligibleOn` must give the ticket a bounded continuation window rather than making it permanently unclaimable.
 
-A resolved ticket is **not automatically a KB article**. KB promotion is governed separately.
+A resolved ticket is **not automatically a KB article**. KB/Solution promotion is governed separately. `Hermes_Solution_Article_Mst_Tbl.IsActive = 1` also does not by itself make an article trusted retrieval material on the adaptive branch; see §9.
 
 ## 6. Stale/orphan recovery
 
@@ -193,19 +205,22 @@ Do not manually use raw `Hermes_Orchestrator.py --poll` for production testing b
 
 ## 8. Investigator evidence rules
 
-Live evidence wins over retrieved knowledge, prior ledgers, or memory.
+Live evidence wins over retrieved knowledge, prior ledgers, historical cases, sessions, or memory.
 
-Evidence hierarchy:
+Evidence hierarchy for a **current-ticket claim**:
 
-1. current ticket state and live SQL evidence;
-2. verified `Knowledge/` reference material;
-3. approved/retrieved solution articles as hypotheses;
-4. same-ticket prior ledger/attempt history;
-5. mem0 operational hints.
+1. current ticket state and live SQL evidence through `xstudio_l2`;
+2. verified `Knowledge/` reference material and governed reusable Solution articles as guidance;
+3. same-ticket run ledger/attempt history;
+4. outcome-labelled historical cases as explicit analogies/counterexamples;
+5. raw historical sessions as unverified forensic experience;
+6. mem0 operational hints.
 
-Never fabricate a table, view, column, SP, ticket status, or identifier.
+The ordering does not mean a lower source is useless. It means a relevant historical item cannot override contradictory live evidence.
 
-Preferred investigation path, all through the typed `xstudio_l2` tool (see §8a):
+Never fabricate a table, view, column, SP, ticket status, identifier, capability ID, or action result.
+
+Preferred investigation path, all database work through the typed `xstudio_l2` tool (see §8a):
 
 - use the dispatch-time investigation bundle first;
 - `select` when the table/entity is known (identifiers are schema-validated);
@@ -214,6 +229,16 @@ Preferred investigation path, all through the typed `xstudio_l2` tool (see §8a)
 - `query` only for read-only SQL, with `database` specified explicitly;
 - `read_procedure` only for the explicitly allowlisted diagnostics;
 - persist meaningful per-ticket state with `save_ledger`.
+
+Use `l2_recall` deliberately when prior experience can shorten or challenge the investigation:
+
+- `trusted` = governed reference + promoted facts + governed Solution exports;
+- `approved_cases` = historical proposals that passed independent review and publisher postconditions;
+- `rejected_cases` = reviewer-rejected counterexamples;
+- `reopened_cases` = prior published resolutions that later left the recorded terminal state;
+- `sessions` = raw unverified historical turns/dead ends.
+
+`trusted` deliberately excludes historical cases. There is no generic automatic zvec prefetch. Relevance is not authority.
 
 Do not put per-ticket facts into shared mem0.
 
@@ -263,9 +288,59 @@ Rules:
 - Interpreter paths, driver setup, and dependency mechanics are deterministic
   harness concerns. They belong in code and config, never in mem0.
 
-## 9. KB and memory boundaries
+## 8b. Incident identity is harness-owned
 
-The current deterministic KB retriever is an interim conservative layer. It must obey:
+`Model_Bench/xstudio_l2_identity_plugin/` is a cross-cutting guard over identity-sensitive tool calls.
+
+For a Kanban worker, `run_id` and `ticket_id` come from the actual assigned task. They are not free model parameters. Before a sensitive `xstudio_l2` or `l2_action` call, the identity guard:
+
+- resolves the current Kanban task;
+- injects the authoritative run/ticket identity where required;
+- blocks a conflicting model-supplied identity;
+- blocks cross-ticket/cross-run plan access or validation;
+- fails closed if an identity-sensitive task cannot be resolved.
+
+Pure schema/object discovery that does not attach evidence to an incident can remain identity-independent.
+
+This is a correctness boundary. A model must never be able to write a ledger, claim evidence, or construct an action plan for incident B while actually working incident A.
+
+## 9. Knowledge, memory, experience, and Solution governance
+
+Do not collapse different authority classes into one "memory" bucket.
+
+```text
+live SQL / ticket state
+    = current-ticket evidence authority
+
+Git Knowledge/ + deployable skills
+    = canonical reference
+
+Hermes_Solution_Article_Mst_Tbl
+    = SQL knowledge source requiring separate governance before trusted export
+
+solutions/approved/** in the learning vault
+    = hash-pinned governed reusable guidance
+
+facts/**
+    = explicitly promoted operational heuristics
+
+cases/approved|rejected|reopened/**
+    = outcome-labelled historical experience, analogy/counterexample only
+
+sessions/**
+    = redacted unverified episodic experience
+
+candidates/**
+    = unverified lessons awaiting control-plane review
+
+mem0
+    = compact durable operational behavior intended to influence routine work
+
+zvec-grep index
+    = disposable retrieval substrate over the local learning vault, never source of truth
+```
+
+The current deterministic KB retriever remains a conservative layer and must obey:
 
 - route alone cannot retrieve a solution;
 - weak generic overlap must abstain;
@@ -273,26 +348,94 @@ The current deterministic KB retriever is an interim conservative layer. It must
 - live verification remains mandatory;
 - pre-investigation retrieval must not use `SuspectedCause` as a primary signal, avoiding self-confirmation.
 
-`Knowledge/KB_IMPLEMENTATION_PLAN.md` is the implementation contract for the larger KB redesign.
+`Knowledge/KB_IMPLEMENTATION_PLAN.md` remains authoritative for provenance/lifecycle/applicability/abstention concepts. Its historical choice of retrieval substrate is not an immutable branch constraint.
 
-Do not collapse these concepts:
+### Governed SQL Solution export
 
-```text
-live SQL evidence        != KB
-schema discovery         != KB
-same-ticket history      != KB
-mem0                     != KB
-Qdrant                   != source of truth
-solution history         != automatically trusted knowledge
-```
+`Model_Bench/sync_l2_approved_solutions.py` exports SQL Solution articles only when `deploy/solution_export_policy.json` explicitly names the `solution_id`, exact semantic `content_sha256`, reviewer identity/time, and review evidence.
 
-## 10. SQL write discipline
+Rules:
+
+- `IsActive = 1` is not trust approval.
+- Semantic content drift fails closed and removes/archives the stale managed file from trusted recall until re-reviewed.
+- Mutable operational counters such as `UsageCount` do not invalidate the semantic approval hash.
+- Removing an approval archives only the generated vault mirror; it does not mutate the SQL article.
+- `--preview-live` may be used to enumerate active Solution IDs and semantic review hashes before an operator updates policy.
+
+### Outcome-conditioned learning
+
+The learning sidecar records stronger historical signals after workflow outcomes:
+
+- reviewer rejection -> negative historical case;
+- reviewer approval + publisher postconditions -> approved historical case;
+- a later terminal-status change after a published resolution -> reopened/regression case.
+
+`mine_l2_learning_candidates.py` may turn repeated/corrective outcome patterns into **unverified** lesson candidates. `l2_learning_curator.py` performs explicit promotion/rejection. A model cannot promote its own lesson merely by writing confident prose.
+
+Historical retrieval replay is built from real recorded incident context and corresponding outcome cases. Improvement claims should come from replay/live metrics, not intuition.
+
+## 10. SQL write discipline and corrective-action autonomy
 
 Never write directly to `Complaint_Mst_Tbl` from an investigation.
 
-Ticket publication goes through the audited Hermes stored-procedure path exposed by `Hermes_Orchestrator.py`.
+Ticket publication goes through the audited Hermes stored-procedure path exposed by `Hermes_Orchestrator.py` after independent reviewer approval.
 
-For XStudio configuration or operational writes, follow `xstudio-sql-write-discipline`: official stored procedure first; direct writes only for documented exceptions where no supported SP exists and the action is explicitly permitted.
+The **current investigator/reviewer worker surface remains read-only** for arbitrary SQL. Do not interpret older "official SP first/direct write exception" guidance as permission for a model to execute a production mutation directly.
+
+For future XStudio corrective action, use the typed capability architecture:
+
+```text
+verified diagnosis
+  -> repeated NEEDS_HUMAN_ACTION evidence
+  -> actions/candidates backlog
+  -> researching_executor
+  -> contract_drafted
+  -> shadow_ready
+  -> registry_entry (mode=shadow)
+  -> separately promoted policy/global mode
+  -> future deterministic executor
+  -> deterministic postcondition verification
+  -> append-only action receipt
+```
+
+`Model_Bench/mine_l2_action_capability_candidates.py` detects repeated reviewed human-action patterns but deliberately does not invent risk, parameters, executor, preconditions, verification, rollback, or approval policy.
+
+`Model_Bench/l2_action_capability_curator.py` is the operator/control-plane workflow for filling and reviewing that contract. Its promotion path:
+
+- requires reviewer/evidence provenance;
+- validates the contract against `deploy/xstudio_action_capabilities.json`;
+- requires a concrete supported execution target plus preconditions, idempotency, verification, evidence, rollback/compensation, and approval policy before `shadow_ready`;
+- writes only `mode=shadow` registry entries;
+- **never raises `global_mode`**.
+
+The model-facing `l2_actions` plugin remains non-executing and exposes only `list`, `describe`, `plan`, `plans`, and `validate_plan`. `execution_authorized=false` is not a suggestion; it is the current authority boundary.
+
+The old `xstudio-sql-write-discipline` principle remains useful for designing a future capability: prefer a real supported XStudio stored procedure/API/service action over direct table mutation. But execution belongs behind a reviewed deterministic capability, not a model-built write path.
+
+## 10a. Future action-result receipts are defined before execution exists
+
+`deploy/xstudio_action_receipt.schema.json` and `Model_Bench/xstudio_action_receipts.py` define the audit lifecycle a future executor must use:
+
+```text
+planned -> approved -> executed -> verified
+    \         \          \
+     +-> failed <---------+
+           |
+           v
+      compensated
+```
+
+Rules:
+
+- receipt history is append-only;
+- one deterministic receipt identity exists per plan/action attempt;
+- creating a `planned` receipt grants no execution permission;
+- `verified` requires deterministic postconditions to have been checked;
+- `compensated` requires compensation/rollback state to have been verified;
+- a terminal verified receipt cannot later be rewritten into failure;
+- receipts record outcomes; capability registry + approval policy still decide authority.
+
+This contract exists now so eventual execution cannot be introduced without audit/outcome semantics.
 
 ## 11. No scratch files in the project root
 
@@ -314,6 +457,25 @@ l2-reviewer-fallback
 
 Old model-based role names such as `l2-eval-investigator`, `l2-gemma-verifier`, and `l2-qwen-verifier` are historical only.
 
+The four active/compatibility profiles are expected to expose these adaptive branch plugins:
+
+```text
+xstudio-l2-tools
+xstudio-l2-identity
+xstudio-l2-learning
+xstudio-l2-actions
+```
+
+with direct toolsets:
+
+```text
+xstudio_l2
+l2_learning
+l2_actions
+```
+
+`xstudio-l2-orchestrator` remains the event-driven lifecycle reconciler trigger. `xstudio-l2-trace` may remain separately enabled for trace/observability purposes.
+
 Do not hardcode the current LM Studio model into architecture documentation. The loaded model can change. Verify it live at the configured LM Studio endpoint before diagnosing model mismatch.
 
 ## 13. Repository sources of truth
@@ -324,10 +486,15 @@ Use this hierarchy when documents disagree:
 2. `Model_Bench/l2_pipeline_runtime.py` for lifecycle behavior;
 3. `Knowledge/L2_PIPELINE_STATE_MACHINE.md` for the documented lifecycle contract;
 4. `deploy/helpdesk_workflow_binding.json` for workflow status binding;
-5. deployable skills under `deploy/skills/xstudio/` for worker behavior;
-6. `Knowledge/manifest.json` for machine-readable KB routing/catalog;
-7. `README.md` for human-facing architecture;
-8. `Plans/` and `Agent_Comms/` only for history/research.
+5. `deploy/xstudio_action_capabilities.json` for registered corrective-action policy;
+6. `deploy/solution_export_policy.json` for trusted SQL Solution export approvals;
+7. deployable skills under `deploy/skills/xstudio/` for worker behavior;
+8. `Knowledge/manifest.json` for machine-readable KB routing/catalog;
+9. `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` for adaptive-branch product architecture;
+10. `README.md` for human-facing architecture;
+11. `Plans/` and `Agent_Comms/` only for history/research.
+
+The runtime learning vault contains experience and derived retrieval mirrors, not canonical project policy. Its zvec index is disposable.
 
 Conductor is a parallel experiment only. It is **not** the live L2 pipeline until an explicit cutover is performed and documented.
 
@@ -359,32 +526,52 @@ The generated install currently concatenates these nine source files in numeric 
 
 This pipeline depends on the real Windows/WSL/Hermes/Kanban/SQL/LM Studio environment. Validate locally.
 
-Useful commands:
+Primary command:
 
 ```bash
-bash Model_Bench/deploy_l2_pipeline_runtime.sh
 bash Model_Bench/validate_l2_pipeline_local.sh
+```
+
+That script is the aggregate local contract and currently covers lifecycle, typed evidence, identity, adaptive learning, outcome sync/mining, governed Solution export, historical retrieval replay, action planning, action-capability curation, future action receipts, profile patching, deploy drift, KB validation, live workflow discovery/status, and reconcile dry-run.
+
+Useful narrower commands include:
+
+```bash
 python3 Model_Bench/test_xstudio_l2_tools_plugin.py
+python3 Model_Bench/test_xstudio_l2_identity_plugin.py
+python3 Model_Bench/test_xstudio_l2_learning_plugin.py
+python3 Model_Bench/test_sync_l2_approved_solutions.py
+python3 Model_Bench/test_l2_action_capability_curator.py
+python3 Model_Bench/test_xstudio_action_receipts.py
+python3 Model_Bench/test_adaptive_deploy_contract.py
 python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py reconcile --dry-run
 ```
 
-Do not use GitHub Actions as proof that the live pipeline is healthy.
-
-The typed-tool half of the harness is only fully proven by a naturally arriving
-ticket. For the next one, check the trace shows `xstudio_l2` calls and no
-terminal attempt at an interpreter, database driver, `sqlcmd`, or package
-install. Do not manufacture a production claim to test this, and do not raw-poll
-a ticket — that bypasses the scout's WIP/lifecycle gate.
+The typed-tool half of the harness is only fully exercised by a naturally arriving ticket. For the next one, check the trace shows `xstudio_l2` calls and no terminal attempt at an interpreter, database driver, `sqlcmd`, or package install. Do not manufacture a production claim to test this, and do not raw-poll a ticket — that bypasses the scout's WIP/lifecycle gate.
 
 ## 16. Deployment mirror
 
-`deploy/` is the reproducible mirror of artifacts that otherwise live under `~/.hermes/profiles/...`.
+`deploy/` is the reproducible mirror of artifacts that otherwise live under `~/.hermes/profiles/...`, plus Git-tracked adaptive policy/contract artifacts.
 
-After changing profile SOUL/config/skills/plugins or the cron schedule, refresh the mirror with `Model_Bench/mirror_wsl_artifacts.sh` and inspect the diff before committing. The mirror covers both L2 plugins — `xstudio-l2-orchestrator` and `xstudio-l2-tools` — so a fresh install cannot come up without the typed investigation tool and end up rebuilding the retired shell path.
+After changing profile SOUL/config/skills/plugins or the cron schedule, refresh the mirror with `Model_Bench/mirror_wsl_artifacts.sh` and inspect the diff before committing.
 
-`Model_Bench/deploy_l2_pipeline_runtime.sh` installs the lifecycle scripts, both plugins, SOULs, skills, the workflow-binding fallback, and the profile-config entries, then restarts the four active gateways unless `--no-restart` is passed. It is idempotent. Config edits are applied by `Model_Bench/patch_profile_config.py`, which is deliberately a targeted text editor rather than a YAML round-trip: the live configs carry explanatory comments (Security/Tirith, fallback-model providers) that a load-and-dump silently destroys.
+The adaptive profile/plugin contract includes:
+
+```text
+xstudio-l2-orchestrator
+xstudio-l2-tools
+xstudio-l2-identity
+xstudio-l2-learning
+xstudio-l2-actions
+```
+
+`Model_Bench/deploy_l2_pipeline_runtime.sh` installs lifecycle scripts, plugins, SOULs, skills, workflow/action policy fallbacks, and profile-config entries. It synchronizes the canonical learning corpus, materializes only hash-approved SQL Solution articles, indexes the resulting vault, runs the learning outcome/candidate sidecar, and restarts the four active gateways unless `--no-restart` is passed.
+
+Config edits are applied by `Model_Bench/patch_profile_config.py`, which is deliberately a targeted text editor rather than a YAML round-trip: the live configs carry explanatory comments (Security/Tirith, fallback-model providers) that a load-and-dump silently destroys.
+
+`deploy/xstudio_action_receipt.schema.json` is installed as a future-executor contract. No action executor is currently installed or exposed by the model-facing plugin.
 
 ## 17. Security / credentials
 
@@ -392,18 +579,34 @@ Do not commit or print credentials.
 
 Scripts use environment-provided SQL credentials. WSL may not see the same environment as Windows Python, so subprocess construction must omit `--password` when no value is present; never pass Python `None` as an argv element.
 
-## 18. When changing the lifecycle
+Experience/session recording must redact common secret shapes before persistence. Trusted Solution exports must never copy credentials from ticket/session prose. Action plans/receipts should reference evidence, not embed connection secrets.
+
+## 18. When changing lifecycle, learning, or action authority
 
 Any lifecycle change must preserve or deliberately revise these invariants:
 
 - WIP ownership is explicit.
-- Exactly one lifecycle authority performs mutations.
+- Exactly one lifecycle authority performs ticket workflow mutations.
 - Every publishable investigator/rework result gets exactly one reviewer.
 - Reviewers see an immutable proposal.
 - Publication is deterministic and idempotent.
 - Review cycles are bounded.
 - Event loss is recoverable by reconciliation.
-- SQL/Helpdesk postconditions define success.
+- SQL/Helpdesk postconditions define publication success.
 - Knowledge retrieval cannot substitute for live evidence.
 
-If a proposed change violates one of these, update the state-machine contract and tests in the same commit.
+Any adaptive-learning/action change must also preserve or deliberately revise:
+
+- current run/ticket identity is harness-owned for identity-sensitive calls;
+- session recording does not make session text trusted;
+- historical cases remain labelled by outcome and are not current-ticket proof;
+- generic automatic zvec prefetch stays off unless a future deterministic stage-aware design explicitly replaces it;
+- model-proposed lessons remain unverified until separately promoted;
+- SQL Solution trust requires explicit governance and semantic content pinning;
+- action planning does not grant execution permission;
+- capability registry promotion is per-capability and cannot silently raise `global_mode`;
+- arbitrary raw SQL mutation is not introduced as a shortcut around typed capability policy;
+- a future action is not successful merely because execution returned; deterministic postconditions must reach a `verified` receipt state;
+- compensation/rollback, when required, is itself verified and recorded.
+
+If a proposed change violates one of these, update the relevant state-machine/architecture contract and tests in the same commit.
