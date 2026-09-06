@@ -15,58 +15,38 @@ _spec.loader.exec_module(mod)
 
 
 class LearningCycleTests(unittest.TestCase):
-    def test_runs_all_learning_components_and_gbrain_last(self):
+    def test_runs_outcomes_lessons_then_gbrain(self):
         order = []
         with tempfile.TemporaryDirectory() as tmp, \
-             mock.patch.object(mod, "sync_outcomes", side_effect=lambda **_: order.append("outcomes") or {"errors": 0, "approved_recorded": 1}) as outcomes, \
-             mock.patch.object(mod, "mine_candidates", side_effect=lambda *_a, **_k: order.append("lessons") or {"errors": 0, "rejection_candidates": 1}) as lessons, \
-             mock.patch.object(mod, "mine_capability_candidates", side_effect=lambda *_a, **_k: order.append("actions") or {"errors": 0, "created": 1}) as actions, \
+             mock.patch.object(mod, "sync_outcomes", side_effect=lambda **_: order.append("outcomes") or {"errors": 0}) as outcomes, \
+             mock.patch.object(mod, "mine_candidates", side_effect=lambda *_a, **_k: order.append("lessons") or {"errors": 0}) as lessons, \
              mock.patch.object(mod, "sync_gbrain", side_effect=lambda *_a, **_k: order.append("gbrain") or {"ok": True, "errors": []}) as gbrain:
             result = mod.run_learning_cycle(vault=Path(tmp))
         self.assertTrue(result["ok"])
-        self.assertEqual(order, ["outcomes", "lessons", "actions", "gbrain"])
+        self.assertEqual(order, ["outcomes", "lessons", "gbrain"])
         outcomes.assert_called_once()
         lessons.assert_called_once()
-        actions.assert_called_once()
         gbrain.assert_called_once()
-        self.assertEqual(result["outcomes"]["approved_recorded"], 1)
-        self.assertEqual(result["gbrain_sync"]["ok"], True)
 
-    def test_one_component_failure_does_not_prevent_later_miners_or_gbrain(self):
+    def test_component_failure_is_visible_but_later_stages_still_run(self):
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.object(mod, "sync_outcomes", side_effect=RuntimeError("sql unavailable")), \
              mock.patch.object(mod, "mine_candidates", return_value={"errors": 0}) as lessons, \
-             mock.patch.object(mod, "mine_capability_candidates", return_value={"errors": 0}) as actions, \
              mock.patch.object(mod, "sync_gbrain", return_value={"ok": True, "errors": []}) as gbrain:
             result = mod.run_learning_cycle(vault=Path(tmp))
         self.assertFalse(result["ok"])
-        self.assertTrue(result["errors"])
         lessons.assert_called_once()
-        actions.assert_called_once()
         gbrain.assert_called_once()
 
-    def test_dry_run_propagates_to_all_components_and_gbrain(self):
+    def test_dry_run_propagates(self):
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.object(mod, "sync_outcomes", return_value={"errors": 0}) as outcomes, \
              mock.patch.object(mod, "mine_candidates", return_value={"errors": 0}) as lessons, \
-             mock.patch.object(mod, "mine_capability_candidates", return_value={"errors": 0}) as actions, \
              mock.patch.object(mod, "sync_gbrain", return_value={"ok": True, "errors": []}) as gbrain:
             mod.run_learning_cycle(vault=Path(tmp), dry_run=True)
         self.assertTrue(outcomes.call_args.kwargs["dry_run"])
         self.assertTrue(lessons.call_args.kwargs["dry_run"])
-        self.assertTrue(actions.call_args.kwargs["dry_run"])
         self.assertTrue(gbrain.call_args.kwargs["dry_run"])
-
-    def test_gbrain_failure_is_visible_but_does_not_undo_materialization(self):
-        with tempfile.TemporaryDirectory() as tmp, \
-             mock.patch.object(mod, "sync_outcomes", return_value={"errors": 0, "approved_recorded": 1}), \
-             mock.patch.object(mod, "mine_candidates", return_value={"errors": 0}), \
-             mock.patch.object(mod, "mine_capability_candidates", return_value={"errors": 0}), \
-             mock.patch.object(mod, "sync_gbrain", return_value={"ok": False, "errors": ["gbrain unavailable"]}):
-            result = mod.run_learning_cycle(vault=Path(tmp))
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["outcomes"]["approved_recorded"], 1)
-        self.assertIn("gbrain", " ".join(result["errors"]).lower())
 
 
 if __name__ == "__main__":

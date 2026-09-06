@@ -9,6 +9,15 @@ agent:
     - memory
     - session_search
     - skills
+    - terminal
+    - file
+    - web
+    - browser
+    - code_execution
+    - computer_use
+    - cronjob
+    - delegation
+    - todo
 memory:
   provider: ''
   memory_enabled: false
@@ -18,34 +27,15 @@ skills:
   write_approval: true
 approvals:
   deny:
-    - '*sqlcmd*-q*update*'
-    - '*sqlcmd*-q*insert*'
-    - '*sqlcmd*-q*delete*'
-    - '*sqlcmd*update *set*'
-    - '*sqlcmd*insert *into*'
-    - '*sqlcmd*delete *from*'
-    - '*.execute(*update *'
-    - '*.execute(*insert *'
-    - '*.execute(*delete *'
-    - '*cursor.execute*update*'
-    - '*cursor.execute*insert*'
-    - '*cursor.execute*delete*'
     - '*sqlcmd*'
     - '*Hermes_Orchestrator.py*'
-    - '*/mnt/c/Python314/python.exe*'
     - '*python.exe*'
     - '*pip install*'
-    - '*pip3 install*'
-    - '*python -m pip*'
-    - '*python3 -m pip*'
-    - '*uv pip*'
 plugins:
   enabled:
-    - xstudio-l2-trace
     - xstudio-l2-tools
     - xstudio-l2-identity
     - xstudio-l2-learning
-    - xstudio-l2-actions
 kanban:
   dispatch_in_gateway: false
 onboarding:
@@ -58,23 +48,15 @@ platforms:
     port: 8647
 platform_toolsets:
   cli:
-    - clarify
-    - cronjob
-    - delegation
-    - file
     - kanban
-    - terminal
-    - todo
     - xstudio_l2
     - l2_learning
-    - l2_actions
 known_plugin_toolsets:
   cli:
     - a2a
     - spotify
     - xstudio_l2
     - l2_learning
-    - l2_actions
 known_builtin_toolsets:
   cli:
     - browser

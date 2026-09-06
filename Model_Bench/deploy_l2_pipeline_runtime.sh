@@ -10,7 +10,7 @@ LEARNING_VAULT="${CHITRAGUPTA_L2_LEARNING_VAULT:-$HOME/.hermes/l2-learning}"
 
 mkdir -p "$SCRIPTS_DIR"
 
-# Delete runtime names retired by the Hermes-centric architecture.
+# Remove names from retired Chitragupta layers.
 for retired in \
   dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py \
   reconcile_l2_pipeline.py kanban_approval_publisher.py kanban_reject_bridge.py \
@@ -20,7 +20,10 @@ for retired in \
   l2_context_envelope.py l2_context_delivery.py l2_context_delivery_base.py \
   l2_context_delivery_assembly.py l2_context_delivery_receipts.py \
   kb_retrieval_base.py kb_retrieval_cli.py kb_retrieval_corpus.py kb_retrieval_routing.py \
-  setup_mem0.py seed_mem0_lessons.py reapply_mem0_patch.py
+  setup_mem0.py seed_mem0_lessons.py reapply_mem0_patch.py \
+  run_coalesced.py drain_l2_trace_log.py drain_and_summarize.py \
+  generate_readable_trace_summary.py validate_action_capabilities.py \
+  mine_l2_action_capability_candidates.py l2_action_capability_curator.py
 do
   rm -f "$SCRIPTS_DIR/$retired"
 done
@@ -30,8 +33,7 @@ for f in \
   l2_pipeline_runtime.py kb_retrieval.py ticket_scout.py \
   xstudio_l2_tool_bridge.py l2_gbrain.py \
   sync_l2_learning_corpus.py sync_l2_approved_solutions.py sync_l2_outcomes.py \
-  mine_l2_learning_candidates.py mine_l2_action_capability_candidates.py \
-  l2_learning_curator.py l2_action_capability_curator.py \
+  mine_l2_learning_candidates.py l2_learning_curator.py \
   sync_l2_gbrain.py l2_learning_cycle.py
 do
   cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
@@ -39,7 +41,6 @@ done
 chmod +x "$SCRIPTS_DIR"/*.py
 
 cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
-cp "$ROOT/deploy/xstudio_action_capabilities.json" "$SCRIPTS_DIR/xstudio_action_capabilities.json"
 
 echo "== Learning source material =="
 python3 "$ROOT/Model_Bench/sync_l2_learning_corpus.py" --vault "$LEARNING_VAULT" \
@@ -48,18 +49,16 @@ python3 "$ROOT/Model_Bench/sync_l2_approved_solutions.py" \
   --vault "$LEARNING_VAULT" --policy "$ROOT/deploy/solution_export_policy.json" \
   || echo "WARNING: governed Solution sync found missing/drifted approvals"
 
-echo "== Learning/GBrain convergence =="
+echo "== Outcome learning/GBrain convergence =="
 python3 "$ROOT/Model_Bench/l2_learning_cycle.py" --vault "$LEARNING_VAULT" \
   || echo "WARNING: learning cycle reported errors; lifecycle deployment continues"
 
 deploy_plugin() {
   local profile="$1" plugin="$2" src
   case "$plugin" in
-    xstudio-l2-trace)        src="$ROOT/Model_Bench/xstudio_l2_trace_plugin" ;;
-    xstudio-l2-tools)        src="$ROOT/Model_Bench/xstudio_l2_tools_plugin" ;;
-    xstudio-l2-identity)     src="$ROOT/Model_Bench/xstudio_l2_identity_plugin" ;;
-    xstudio-l2-learning)     src="$ROOT/Model_Bench/xstudio_l2_learning_plugin" ;;
-    xstudio-l2-actions)      src="$ROOT/Model_Bench/xstudio_l2_actions_plugin" ;;
+    xstudio-l2-tools)    src="$ROOT/Model_Bench/xstudio_l2_tools_plugin" ;;
+    xstudio-l2-identity) src="$ROOT/Model_Bench/xstudio_l2_identity_plugin" ;;
+    xstudio-l2-learning) src="$ROOT/Model_Bench/xstudio_l2_learning_plugin" ;;
     *) echo "unknown plugin: $plugin" >&2; return 1 ;;
   esac
   local dst="$HOME/.hermes/profiles/$profile/plugins/$plugin"
@@ -80,8 +79,11 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
   mkdir -p "$HOME/.hermes/profiles/$profile"
   cp "$ROOT/deploy/profiles/$profile/config.yaml" "$HOME/.hermes/profiles/$profile/config.yaml"
   cp "$ROOT/deploy/profiles/$profile/SOUL.md" "$HOME/.hermes/profiles/$profile/SOUL.md"
-  rm -rf "$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-orchestrator"
-  for plugin in xstudio-l2-trace xstudio-l2-tools xstudio-l2-identity xstudio-l2-learning xstudio-l2-actions; do
+  rm -rf \
+    "$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-orchestrator" \
+    "$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-trace" \
+    "$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-actions"
+  for plugin in xstudio-l2-tools xstudio-l2-identity xstudio-l2-learning; do
     deploy_plugin "$profile" "$plugin"
   done
 done
@@ -118,6 +120,5 @@ Deployed Chitragupta L2 on Hermes.
   lifecycle:  l2_pipeline_runtime.py
   evidence:   xstudio_l2 typed tools
   retrieval:  isolated GBrain + supplemental l2_recall
-  learning:   outcome materialization -> candidates -> GBrain sync
-  actions:    planning only; no execute operation
+  learning:   reviewed outcomes -> lesson candidates -> GBrain sync
 EOF
