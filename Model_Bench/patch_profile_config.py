@@ -34,11 +34,14 @@ DENY_ENTRIES = [
 PLUGIN_ENTRIES = ["xstudio-l2-tools", "xstudio-l2-learning"]
 TOOLSET_ENTRIES = ["xstudio_l2", "l2_learning"]
 
-SECTIONS: list[tuple[list[str], list[str], bool]] = [
+PROFILE_SECTIONS: list[tuple[list[str], list[str], bool]] = [
     (["approvals", "deny"], DENY_ENTRIES, True),
     (["plugins", "enabled"], PLUGIN_ENTRIES, True),
     (["platform_toolsets", "cli"], TOOLSET_ENTRIES, True),
     (["known_plugin_toolsets", "cli"], TOOLSET_ENTRIES, False),
+]
+ROOT_PLUGIN_SECTIONS: list[tuple[list[str], list[str], bool]] = [
+    (["plugins", "enabled"], PLUGIN_ENTRIES, True),
 ]
 
 
@@ -120,20 +123,56 @@ def ensure_entries(text: str, key_path: list[str], entries: list[str]) -> tuple[
     return "\n".join(lines) + ("\n" if text.endswith("\n") else ""), added, True
 
 
-def patch_file(path: Path, *, check_only: bool = False) -> tuple[bool, list[str], list[str]]:
+def _ensure_root_plugins_enabled(text: str) -> tuple[str, list[str]]:
+    """Create plugins.enabled when the root config has never had a plugin block.
+
+    Profile configs already carry all required sections and should fail visibly if
+    their structure drifts. The root config is different: a fresh Hermes install
+    may legitimately have no plugins section yet, so deployment must be able to
+    bootstrap shared toolset discovery without a YAML round-trip.
+    """
+    updated, added, found = ensure_entries(text, ["plugins", "enabled"], PLUGIN_ENTRIES)
+    if found:
+        return updated, added
+
+    lines = text.splitlines()
+    plugins_idx = _find_key_line(lines, "plugins", 0, len(lines), 0)
+    if plugins_idx >= 0:
+        insert_at = plugins_idx + 1
+        block = ["  enabled:", *[f"    - {entry}" for entry in PLUGIN_ENTRIES]]
+        lines[insert_at:insert_at] = block
+    else:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend(["plugins:", "  enabled:", *[f"    - {entry}" for entry in PLUGIN_ENTRIES]])
+    suffix = "\n" if text.endswith("\n") or not text else ""
+    return "\n".join(lines) + suffix, list(PLUGIN_ENTRIES)
+
+
+def patch_file(
+    path: Path,
+    *,
+    check_only: bool = False,
+    sections: list[tuple[list[str], list[str], bool]] | None = None,
+    bootstrap_root_plugins: bool = False,
+) -> tuple[bool, list[str], list[str]]:
     text = path.read_text(encoding="utf-8")
     original = text
     added_all: list[str] = []
     warnings: list[str] = []
 
-    for key_path, entries, required in SECTIONS:
-        text, added, found = ensure_entries(text, key_path, entries)
-        if not found:
-            message = f"section {'.'.join(key_path)} not found in {path}"
-            if required:
-                warnings.append("WARNING: " + message + " (skipped; plugin hook still enforces its own safety contract)")
-            continue
-        added_all.extend(f"{'.'.join(key_path)}: {a}" for a in added)
+    if bootstrap_root_plugins:
+        text, added = _ensure_root_plugins_enabled(text)
+        added_all.extend(f"plugins.enabled: {a}" for a in added)
+    else:
+        for key_path, entries, required in (sections or PROFILE_SECTIONS):
+            text, added, found = ensure_entries(text, key_path, entries)
+            if not found:
+                message = f"section {'.'.join(key_path)} not found in {path}"
+                if required:
+                    warnings.append("WARNING: " + message + " (skipped; plugin hook still enforces its own safety contract)")
+                continue
+            added_all.extend(f"{'.'.join(key_path)}: {a}" for a in added)
 
     changed = text != original
     if changed and not check_only:
@@ -143,9 +182,7 @@ def patch_file(path: Path, *, check_only: bool = False) -> tuple[bool, list[str]
 
 def main(argv: list[str]) -> int:
     check_only = "--check" in argv
-    if "--enable-plugin-only" in argv:
-        global SECTIONS
-        SECTIONS = [(["plugins", "enabled"], PLUGIN_ENTRIES, True)]
+    plugin_only = "--enable-plugin-only" in argv
     paths = [Path(a) for a in argv if not a.startswith("--")]
     if not paths:
         print(__doc__)
@@ -157,7 +194,12 @@ def main(argv: list[str]) -> int:
             print(f"SKIP (absent): {path}")
             continue
         try:
-            changed, added, warnings = patch_file(path, check_only=check_only)
+            changed, added, warnings = patch_file(
+                path,
+                check_only=check_only,
+                sections=ROOT_PLUGIN_SECTIONS if plugin_only else PROFILE_SECTIONS,
+                bootstrap_root_plugins=plugin_only,
+            )
         except Exception as exc:
             print(f"ERROR patching {path}: {type(exc).__name__}: {exc}")
             exit_code = 1

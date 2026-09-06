@@ -26,6 +26,7 @@ PY_FILES=(
   Model_Bench/validate_action_capabilities.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
   Model_Bench/test_xstudio_l2_learning_plugin.py
+  Model_Bench/test_patch_profile_config.py
 )
 
 echo "== Python syntax =="
@@ -39,6 +40,9 @@ python3 Model_Bench/test_xstudio_l2_tools_plugin.py
 
 echo "== Adaptive learning contract tests =="
 python3 Model_Bench/test_xstudio_l2_learning_plugin.py
+
+echo "== Profile/root config patcher contract tests =="
+python3 Model_Bench/test_patch_profile_config.py
 
 echo "== Future action capability registry =="
 python3 Model_Bench/validate_action_capabilities.py
