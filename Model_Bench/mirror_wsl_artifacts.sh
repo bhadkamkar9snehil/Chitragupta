@@ -1,8 +1,7 @@
 #!/bin/bash
 # Mirror deployable WSL profile artifacts into the repository's deploy/ tree.
-# Run after changing live SOULs/skills/config/plugins and review the diff before commit.
-# The shared l2-learning vault is deliberately NOT mirrored into Git: sessions,
-# candidates, and promoted facts are runtime data, not deploy artifacts.
+# Runtime learning data is deliberately NOT mirrored into Git: sessions, cases,
+# candidates, promoted facts, action plans and outcome manifests are runtime data.
 set -euo pipefail
 
 SRC_HERMES=~/.hermes/profiles
@@ -42,7 +41,7 @@ for s in $SKILLS; do
   [ -n "$mirrored" ] || echo "WARNING: skill $s not found in an owning profile; repo copy left untouched"
 done
 
-for plugin in xstudio-l2-orchestrator xstudio-l2-trace xstudio-l2-tools xstudio-l2-learning; do
+for plugin in xstudio-l2-orchestrator xstudio-l2-trace xstudio-l2-tools xstudio-l2-learning xstudio-l2-actions; do
   cp "$SRC_HERMES/l2-investigator/plugins/$plugin/plugin.yaml" \
     "$DST/plugins/$plugin.plugin.yaml" 2>/dev/null || true
 done
