@@ -3,8 +3,9 @@
   "approved": [],
   "notes": [
     "Hermes_Solution_Article_Mst_Tbl.IsActive is not treated as governance approval by itself.",
-    "A Solution enters the trusted zvec solutions/approved scope only when its ID and exact content_sha256 are explicitly approved here.",
-    "If the live SQL article changes after approval, export fails closed until the new content is reviewed and this policy is updated.",
+    "A Solution enters the trusted zvec solutions/approved scope only when its ID and exact semantic content_sha256 are explicitly approved here.",
+    "The semantic hash covers reusable guidance fields and deliberately excludes mutable operational counters such as UsageCount.",
+    "If governed live SQL content changes after approval, export fails closed and archives the stale managed trusted export until the new content is reviewed and this policy is updated.",
     "Removing an approval archives the previously managed retrieval export; it does not delete or modify the SQL Solution article."
   ]
 }
