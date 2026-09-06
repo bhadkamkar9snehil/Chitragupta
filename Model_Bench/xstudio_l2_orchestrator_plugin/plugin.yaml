@@ -1,7 +1,0 @@
-name: xstudio-l2-orchestrator
-version: "1.2.0"
-description: "Event-driven trigger for the single deterministic L2 reconciler: the moment kanban_complete/kanban_block succeeds, it fires reconcile_l2_pipeline.py (through run_coalesced.py, so overlapping event runs coalesce) plus the trace drain/summarize, instead of waiting for a cron tick. All lifecycle logic — completion normalization, deferred reviewer creation with a frozen proposal_json, reject/rework, approval publication, orphan recovery — lives in l2_pipeline_runtime.py, not here. Event delivery is acceleration only; the 2-minute ticket_scout run is the durable correctness backstop. Single kanban board; the old l2-review board and kanban_forward_bridge.py are retired."
-author: AI Helpdesk / Hermes L2 project
-requires_env: []
-provides_hooks:
-  - post_tool_call

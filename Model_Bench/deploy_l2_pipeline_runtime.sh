@@ -56,7 +56,6 @@ deploy_plugin() {
   local profile="$1" plugin="$2" src
   case "$plugin" in
     xstudio-l2-trace)        src="$ROOT/Model_Bench/xstudio_l2_trace_plugin" ;;
-    xstudio-l2-orchestrator) src="$ROOT/Model_Bench/xstudio_l2_orchestrator_plugin" ;;
     xstudio-l2-tools)        src="$ROOT/Model_Bench/xstudio_l2_tools_plugin" ;;
     xstudio-l2-identity)     src="$ROOT/Model_Bench/xstudio_l2_identity_plugin" ;;
     xstudio-l2-learning)     src="$ROOT/Model_Bench/xstudio_l2_learning_plugin" ;;
@@ -81,7 +80,8 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
   mkdir -p "$HOME/.hermes/profiles/$profile"
   cp "$ROOT/deploy/profiles/$profile/config.yaml" "$HOME/.hermes/profiles/$profile/config.yaml"
   cp "$ROOT/deploy/profiles/$profile/SOUL.md" "$HOME/.hermes/profiles/$profile/SOUL.md"
-  for plugin in xstudio-l2-trace xstudio-l2-orchestrator xstudio-l2-tools xstudio-l2-identity xstudio-l2-learning xstudio-l2-actions; do
+  rm -rf "$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-orchestrator"
+  for plugin in xstudio-l2-trace xstudio-l2-tools xstudio-l2-identity xstudio-l2-learning xstudio-l2-actions; do
     deploy_plugin "$profile" "$plugin"
   done
 done

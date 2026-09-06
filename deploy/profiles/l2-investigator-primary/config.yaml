@@ -42,7 +42,6 @@ approvals:
 plugins:
   enabled:
     - xstudio-l2-trace
-    - xstudio-l2-orchestrator
     - xstudio-l2-tools
     - xstudio-l2-identity
     - xstudio-l2-learning
