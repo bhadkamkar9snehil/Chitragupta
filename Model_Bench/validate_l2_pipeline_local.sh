@@ -29,6 +29,7 @@ PY_FILES=(
   Model_Bench/sync_l2_approved_solutions.py
   Model_Bench/mine_l2_learning_candidates.py
   Model_Bench/mine_l2_action_capability_candidates.py
+  Model_Bench/report_l2_action_capability_backlog.py
   Model_Bench/l2_learning_cycle.py
   Model_Bench/build_l2_historical_retrieval_eval.py
   Model_Bench/l2_learning_curator.py
@@ -44,6 +45,7 @@ PY_FILES=(
   Model_Bench/test_sync_l2_approved_solutions.py
   Model_Bench/test_mine_l2_learning_candidates.py
   Model_Bench/test_mine_l2_action_capability_candidates.py
+  Model_Bench/test_report_l2_action_capability_backlog.py
   Model_Bench/test_l2_learning_cycle.py
   Model_Bench/test_build_l2_historical_retrieval_eval.py
   Model_Bench/test_l2_action_capability_curator.py
@@ -79,6 +81,8 @@ echo "== Outcome-to-lesson-candidate mining tests =="
 python3 Model_Bench/test_mine_l2_learning_candidates.py
 echo "== Repeated-human-action capability backlog tests =="
 python3 Model_Bench/test_mine_l2_action_capability_candidates.py
+echo "== Capability backlog evidence-ranking tests =="
+python3 Model_Bench/test_report_l2_action_capability_backlog.py
 echo "== Central learning-cycle isolation tests =="
 python3 Model_Bench/test_l2_learning_cycle.py
 echo "== Historical retrieval replay builder tests =="
@@ -120,6 +124,9 @@ python3 Model_Bench/benchmark_l2_learning_retrieval.py --min-hit-rate 0.80
 
 echo "== Learning sidecar preview =="
 python3 Model_Bench/l2_learning_cycle.py --vault "$LEARNING_VAULT" --dry-run
+
+echo "== Real capability backlog ranking (read-only) =="
+python3 Model_Bench/report_l2_action_capability_backlog.py --vault "$LEARNING_VAULT" --top 10
 
 echo "== Historical outcome-retrieval replay set =="
 python3 Model_Bench/build_l2_historical_retrieval_eval.py --vault "$LEARNING_VAULT"
@@ -178,7 +185,7 @@ Learning plane:
   automatic prefetch:  OFF by design
   outcome cases:       approved/rejected/reopened historical case classes
   lesson mining:       deterministic unverified candidates; no automatic promotion
-  governed solutions:  explicit ID + content hash approval only
+  governed solutions:  explicit ID + semantic content hash approval only
   explicit recall:     trusted/case/session scopes with trust labels
   historical replay:   real session query -> corresponding outcome-case retrieval
   mem0 provider:       unchanged
@@ -186,6 +193,7 @@ Learning plane:
 Action plane:
   registry:            deploy/xstudio_action_capabilities.json
   capability backlog:  repeated reviewed NEEDS_HUMAN_ACTION patterns under actions/candidates
+  backlog triage:       ranked by real distinct-ticket/observation evidence, never inferred risk
   curator states:      needs_executor_design -> researching_executor -> contract_drafted -> shadow_ready -> registry_entry
   direct toolset:      l2_actions
   operations:          list/describe/plan/plans/validate_plan
