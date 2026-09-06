@@ -1,7 +1,6 @@
 name: xstudio-l2-learning
-version: "0.2.0"
-description: "Supplemental read-only trust-scoped GBrain recall plus redacted unverified L2 session capture. Automatic governed context is harness-owned; workers have no durable lesson/memory write surface."
+version: "0.3.0"
+description: "Thin read-only trust-scoped GBrain recall for Chitragupta L2 workers. Hermes owns sessions, skills and memory-provider plumbing."
 author: Snehil Bhadkamkar, Hermes Agent
 requires_env: []
-provides_hooks:
-  - post_llm_call
+provides_hooks: []
