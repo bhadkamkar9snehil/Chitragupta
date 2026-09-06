@@ -3,8 +3,8 @@
 
 This script copies only governed/reference material. It never deletes or rewrites
 runtime experience: sessions, historical cases, facts, candidates, action plans,
-action-capability candidates, approved SQL-solution exports, replay sets,
-outcome manifests, or archives.
+action-capability candidates, action execution receipts, approved SQL-solution
+exports, replay sets, outcome manifests, or archives.
 
 The copied files are a retrieval mirror, not a new source of truth. Git remains
 canonical for project/reference knowledge. The zvec index is disposable.
@@ -103,7 +103,9 @@ def _sync(vault: Path, items: list[tuple[Path, Path]], manifest: dict) -> None:
     for rel in (
         "sessions", "cases/approved", "cases/rejected", "cases/reopened",
         "facts", "candidates", "solutions/approved",
-        "actions/plans", "actions/candidates", "eval", "archive",
+        "actions/plans", "actions/candidates", "actions/receipts", "eval",
+        "archive/candidates/promoted", "archive/candidates/rejected",
+        "archive/solutions",
     ):
         (vault / rel).mkdir(parents=True, exist_ok=True)
     (vault / "corpus_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
