@@ -9,8 +9,13 @@ GBRAIN_HOME="${CHITRAGUPTA_GBRAIN_HOME:-$HOME/.hermes/l2-gbrain}"
 HISTORICAL_EVAL="$LEARNING_VAULT/eval/historical_retrieval_cases.jsonl"
 
 PY_FILES=(
-  Model_Bench/l2_pipeline_runtime.py Model_Bench/ticket_scout.py
-  Model_Bench/reconcile_l2_pipeline.py Model_Bench/kanban_approval_publisher.py
+  Model_Bench/l2_pipeline_runtime.py Model_Bench/l2_pipeline_runtime_core.py
+  Model_Bench/l2_context_envelope.py Model_Bench/l2_context_delivery.py
+  Model_Bench/l2_context_delivery_base.py Model_Bench/l2_context_delivery_assembly.py Model_Bench/l2_context_delivery_receipts.py
+  Model_Bench/kb_retrieval.py Model_Bench/kb_retrieval_routing.py Model_Bench/kb_retrieval_base.py
+  Model_Bench/kb_retrieval_corpus.py Model_Bench/kb_retrieval_cli.py
+  Model_Bench/l2_pipeline_context_helpers.py Model_Bench/l2_pipeline_context_cards.py Model_Bench/l2_pipeline_context_scout.py
+  Model_Bench/ticket_scout.py Model_Bench/reconcile_l2_pipeline.py Model_Bench/kanban_approval_publisher.py
   Model_Bench/kanban_reject_bridge.py Model_Bench/repair_incomplete_completions.py
   Model_Bench/audit_kanban_completions.py Model_Bench/enforce_publish_safety_net.py
   Model_Bench/configure_helpdesk_workflow.py Model_Bench/patch_profile_config.py
@@ -27,15 +32,17 @@ PY_FILES=(
 )
 
 CONTRACT_TESTS=(
-  Model_Bench/test_l2_pipeline_runtime.py Model_Bench/test_xstudio_l2_tools_plugin.py
-  Model_Bench/test_xstudio_l2_identity_plugin.py Model_Bench/test_l2_gbrain.py
-  Model_Bench/test_sync_l2_gbrain.py Model_Bench/test_xstudio_l2_learning_plugin.py
-  Model_Bench/test_sync_l2_learning_corpus.py Model_Bench/test_sync_l2_outcomes.py
-  Model_Bench/test_sync_l2_approved_solutions.py Model_Bench/test_mine_l2_learning_candidates.py
-  Model_Bench/test_mine_l2_action_capability_candidates.py Model_Bench/test_l2_learning_cycle.py
-  Model_Bench/test_build_l2_historical_retrieval_eval.py Model_Bench/test_l2_action_capability_curator.py
-  Model_Bench/test_xstudio_l2_actions_plugin.py Model_Bench/test_validate_action_capabilities.py
-  Model_Bench/test_patch_profile_config.py Model_Bench/test_adaptive_deploy_contract.py
+  Model_Bench/test_l2_context_envelope.py Model_Bench/test_kb_retrieval.py
+  Model_Bench/test_l2_context_delivery.py Model_Bench/test_l2_pipeline_runtime.py
+  Model_Bench/test_xstudio_l2_tools_plugin.py Model_Bench/test_xstudio_l2_identity_plugin.py
+  Model_Bench/test_l2_gbrain.py Model_Bench/test_sync_l2_gbrain.py
+  Model_Bench/test_xstudio_l2_learning_plugin.py Model_Bench/test_sync_l2_learning_corpus.py
+  Model_Bench/test_sync_l2_outcomes.py Model_Bench/test_sync_l2_approved_solutions.py
+  Model_Bench/test_mine_l2_learning_candidates.py Model_Bench/test_mine_l2_action_capability_candidates.py
+  Model_Bench/test_l2_learning_cycle.py Model_Bench/test_build_l2_historical_retrieval_eval.py
+  Model_Bench/test_l2_action_capability_curator.py Model_Bench/test_xstudio_l2_actions_plugin.py
+  Model_Bench/test_validate_action_capabilities.py Model_Bench/test_patch_profile_config.py
+  Model_Bench/test_adaptive_deploy_contract.py
 )
 
 SH_FILES=(Model_Bench/deploy_l2_pipeline_runtime.sh Model_Bench/install_l2_learning_prereqs.sh Model_Bench/mirror_wsl_artifacts.sh Model_Bench/validate_l2_pipeline_local.sh)
@@ -53,7 +60,11 @@ done
 echo "== Static policy validation =="
 python3 Model_Bench/validate_action_capabilities.py
 python3 Model_Bench/validate_knowledge_manifest.py
-python3 Model_Bench/test_kb_retrieval.py
+python3 - <<'PY'
+from Model_Bench.l2_context_delivery import load_context_policy
+policy = load_context_policy()
+print(f"L2 context policy schema={policy['schema_version']} max_chars={policy['maximum_total_rendered_context_characters']}")
+PY
 
 echo "== Learning vault =="
 python3 Model_Bench/sync_l2_learning_corpus.py --vault "$LEARNING_VAULT" --check
@@ -115,19 +126,21 @@ cat <<'EOF'
 LOCAL VALIDATION COMPLETE
 
 Control plane:
-  claim -> investigate -> normalize -> frozen review -> publish/rework
+  claim -> governed context receipt -> investigate -> normalize -> frozen review -> publish/rework
   typed evidence: xstudio_l2
   run/ticket identity: harness-owned
+  context identity: SHA-256 receipt persisted per pipeline stage
 
-Learning plane:
-  sessions: ON, redacted, unverified
-  generic model-driven prefetch: OFF
-  GBrain: isolated derivative retrieval substrate behind harness contracts
+Learning/retrieval plane:
+  canonical/current governed context: harness-provided automatically
+  GBrain: isolated derivative ranking/retrieval substrate behind explicit source scopes
   trust lanes: separate non-federated GBrain sources
+  raw sessions/candidates: excluded from automatic governed context
   synchronization: owned by one learning sidecar; no independent watcher
   governed reusable Solutions: explicit semantic-hash approval
-  historical cases/candidates: not current-ticket proof
-  mem0: unchanged narrow operational-memory provider
+  historical cases: labelled analogies/counterexamples, never current-ticket proof
+  l2_recall: supplemental only
+  mem0: unchanged in Phase 2; profile-specific memory changes are Phase 3
 
 Action plane:
   registry: deploy/xstudio_action_capabilities.json

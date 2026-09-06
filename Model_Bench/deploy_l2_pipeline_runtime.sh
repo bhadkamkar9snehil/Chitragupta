@@ -19,6 +19,20 @@ done
 
 for f in \
   l2_pipeline_runtime.py \
+  l2_pipeline_runtime_core.py \
+  l2_context_envelope.py \
+  l2_context_delivery.py \
+  l2_context_delivery_base.py \
+  l2_context_delivery_assembly.py \
+  l2_context_delivery_receipts.py \
+  kb_retrieval.py \
+  kb_retrieval_routing.py \
+  kb_retrieval_base.py \
+  kb_retrieval_corpus.py \
+  kb_retrieval_cli.py \
+  l2_pipeline_context_helpers.py \
+  l2_pipeline_context_cards.py \
+  l2_pipeline_context_scout.py \
   ticket_scout.py \
   reconcile_l2_pipeline.py \
   kanban_approval_publisher.py \
@@ -44,6 +58,8 @@ test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
   || { echo "FATAL: Model_Bench/xstudio_l2_tool_bridge.py is missing" >&2; exit 1; }
 cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
 cp "$ROOT/deploy/xstudio_action_capabilities.json" "$SCRIPTS_DIR/xstudio_action_capabilities.json"
+cp "$ROOT/deploy/l2_context_policy.json" "$SCRIPTS_DIR/l2_context_policy.json"
+cp "$ROOT/Knowledge/manifest.json" "$SCRIPTS_DIR/knowledge_manifest.json"
 
 # Learning/KB refresh is not lifecycle authority. Canonical and governed
 # materialization must not depend on GBrain being installed or healthy.
@@ -159,11 +175,12 @@ fi
 echo
 echo "Deployed Chitragupta adaptive L2 runtime."
 echo "  evidence:           xstudio_l2 + harness-owned incident identity"
-echo "  learning:           sessions ON; explicit l2_recall; generic prefetch OFF"
+echo "  context:            deterministic stage-aware governed envelopes + durable context SHA/receipts"
+echo "  retrieval:          harness automatic requester-grounded context; l2_recall remains supplemental"
 echo "  brain:              isolated ~/.hermes/l2-gbrain, explicit non-federated trust sources"
 echo "  brain freshness:    converged by the single learning sidecar; no independent watcher"
 echo "  governed solutions: explicit hash-pinned sync; learning failures do not block deployment"
 echo "  actions:            l2_actions planning only; NO execute operation"
 echo "  capability backlog: repeated reviewed human actions -> unverified candidates"
-echo "  mem0 provider:      unchanged"
+echo "  mem0 provider:      unchanged in Phase 2; profile-specific memory changes are Phase 3"
 echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"

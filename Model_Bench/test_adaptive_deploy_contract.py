@@ -28,7 +28,7 @@ class AdaptiveDeployContractTests(unittest.TestCase):
             path = ROOT / "deploy" / "profiles" / profile / "config.yaml"
             text = path.read_text(encoding="utf-8")
             with self.subTest(profile=profile):
-                self.assertIn("provider: mem0", text)
+                self.assertIn("provider: mem0", text)  # Phase 3 owns profile-specific memory changes.
                 for plugin in PLUGINS:
                     self.assertIn(f"- {plugin}", text)
                 for toolset in TOOLSETS:
@@ -40,11 +40,24 @@ class AdaptiveDeployContractTests(unittest.TestCase):
             with self.subTest(plugin=plugin):
                 self.assertTrue((ROOT / "deploy" / "plugins" / f"{plugin}.plugin.yaml").exists())
 
-    def test_deployer_uses_gbrain_without_exposing_second_agent_memory_surface(self):
+    def test_deployer_installs_phase2_context_runtime_dependencies(self):
         text = (ROOT / "Model_Bench" / "deploy_l2_pipeline_runtime.sh").read_text(encoding="utf-8")
-        for plugin in PLUGINS:
-            self.assertIn(plugin, text)
         for script in (
+            "l2_pipeline_runtime.py",
+            "l2_pipeline_runtime_core.py",
+            "l2_context_envelope.py",
+            "l2_context_delivery.py",
+            "l2_context_delivery_base.py",
+            "l2_context_delivery_assembly.py",
+            "l2_context_delivery_receipts.py",
+            "kb_retrieval.py",
+            "kb_retrieval_routing.py",
+            "kb_retrieval_base.py",
+            "kb_retrieval_corpus.py",
+            "kb_retrieval_cli.py",
+            "l2_pipeline_context_helpers.py",
+            "l2_pipeline_context_cards.py",
+            "l2_pipeline_context_scout.py",
             "l2_gbrain.py",
             "sync_l2_gbrain.py",
             "sync_l2_outcomes.py",
@@ -54,6 +67,8 @@ class AdaptiveDeployContractTests(unittest.TestCase):
             "sync_l2_approved_solutions.py",
         ):
             self.assertIn(script, text)
+        self.assertIn("l2_context_policy.json", text)
+        self.assertIn("knowledge_manifest.json", text)
         self.assertIn("solution_export_policy.json", text)
         self.assertNotIn("command -v zg", text)
         self.assertNotIn("xstudio_action_receipt", text)
@@ -80,6 +95,35 @@ class AdaptiveDeployContractTests(unittest.TestCase):
         self.assertNotIn('command = "query"', text)
         self.assertNotIn('["query",', text)
         self.assertIn('"deterministic_retrieval": True', text)
+
+    def test_phase2_context_facade_owns_stage_card_context_without_lifecycle_duplication(self):
+        facade = (ROOT / "Model_Bench" / "l2_pipeline_runtime.py").read_text(encoding="utf-8")
+        pipeline_context = "\n".join(
+            (ROOT / "Model_Bench" / name).read_text(encoding="utf-8")
+            for name in ("l2_pipeline_context_helpers.py", "l2_pipeline_context_cards.py", "l2_pipeline_context_scout.py")
+        )
+        delivery = "\n".join(
+            (ROOT / "Model_Bench" / name).read_text(encoding="utf-8")
+            for name in ("l2_context_delivery.py", "l2_context_delivery_base.py", "l2_context_delivery_assembly.py", "l2_context_delivery_receipts.py")
+        )
+        self.assertIn("import l2_pipeline_runtime_core as _core", facade)
+        self.assertIn("assemble_stage_context", pipeline_context)
+        self.assertIn("persist_context_receipt", pipeline_context)
+        self.assertIn('stage="investigation"', pipeline_context)
+        self.assertIn('stage="review"', pipeline_context)
+        self.assertIn('stage="rework"', pipeline_context)
+        self.assertIn("source_context_sha256", pipeline_context)
+        self.assertIn("retrieval_query_sha256", delivery)
+        self.assertIn("provenance_header", facade + pipeline_context)
+        self.assertNotIn("Hermes_Solution_Article_Mst_Tbl", facade + pipeline_context)
+
+    def test_context_policy_is_bounded_and_stage_specific(self):
+        policy = json.loads((ROOT / "deploy" / "l2_context_policy.json").read_text(encoding="utf-8"))
+        self.assertEqual(policy["schema_version"], 1)
+        self.assertLessEqual(policy["maximum_total_rendered_context_characters"], 40000)
+        self.assertEqual(policy["investigation"]["facts"], 5)
+        self.assertGreaterEqual(policy["review"]["rejected_cases"], policy["investigation"]["rejected_cases"])
+        self.assertGreaterEqual(policy["review"]["reopened_cases"], policy["investigation"]["reopened_cases"])
 
     def test_governed_solution_policy_starts_fail_closed_and_explicit(self):
         policy = json.loads((ROOT / "deploy" / "solution_export_policy.json").read_text(encoding="utf-8"))

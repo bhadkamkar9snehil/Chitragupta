@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -51,6 +53,8 @@ class RetrievalTests(unittest.TestCase):
         self.knowledge.mkdir(parents=True)
         (self.vault / "facts").mkdir(parents=True)
         (self.vault / "solutions" / "approved").mkdir(parents=True)
+        for rel in ("cases/approved", "cases/rejected", "cases/reopened"):
+            (self.vault / rel).mkdir(parents=True)
         (self.knowledge / "mental-model.md").write_text("# Mental model\n\nAlways verify current state.", encoding="utf-8")
         (self.knowledge / "surfaces.md").write_text(
             "# Other\n\nIgnore this section.\n\n## Delay / OEE\n\nEquipment delay mapping and downtime analysis.\n\n## Next\n\nNot part of delay section.\n",
@@ -125,10 +129,10 @@ class RetrievalTests(unittest.TestCase):
             solution_id="S-2",
             content_sha256="b" * 64,
         )
-        with mock.patch.object(kb, "gbrain_trusted_search", return_value={
+        with mock.patch.object(kb, "gbrain_scope_search", return_value={
             "ok": True,
             "backend": "gbrain",
-            "source_ids": ["l2-knowledge", "l2-facts", "l2-solutions"],
+            "source_ids": [],
             "results": [],
         }):
             result = kb.retrieve(
@@ -143,9 +147,8 @@ class RetrievalTests(unittest.TestCase):
         self.assertTrue(result["retrieval_policy"]["governed_solution_export_required"])
 
     def test_legacy_retrieve_signature_ignores_connection_object(self):
-        with mock.patch.object(kb, "gbrain_trusted_search", return_value={
-            "ok": True, "backend": "gbrain",
-            "source_ids": ["l2-knowledge", "l2-facts", "l2-solutions"], "results": [],
+        with mock.patch.object(kb, "gbrain_scope_search", return_value={
+            "ok": True, "backend": "gbrain", "source_ids": [], "results": [],
         }):
             result = kb.retrieve(
                 object(),
@@ -157,21 +160,91 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(result["route_candidates"][0]["route"], "performance")
         self.assertFalse(result["retrieval_policy"]["live_solution_sql_read_allowed"])
 
-    def test_gbrain_search_is_explicit_trusted_scope_and_automatic_safe(self):
+    def test_gbrain_search_is_explicit_scope_and_automatic_safe(self):
         fake_search = mock.Mock(return_value={
             "ok": True,
-            "source_ids": ["l2-knowledge", "l2-facts", "l2-solutions"],
+            "source_ids": ["l2-facts"],
             "results": [],
         })
         fake_module = mock.Mock()
         fake_module.available.return_value = True
         fake_module.search = fake_search
         with mock.patch.dict("sys.modules", {"l2_gbrain": fake_module}):
-            result = kb.gbrain_trusted_search("equipment delay", limit=4)
+            result = kb.gbrain_scope_search("equipment delay", scope="facts", limit=4)
         self.assertTrue(result["ok"])
         fake_search.assert_called_once_with(
-            "equipment delay", scope="trusted", mode="hybrid", limit=4, automatic=True
+            "equipment delay", scope="facts", mode="hybrid", limit=4, automatic=True
         )
+
+    def test_historical_case_lanes_preserve_trust(self):
+        self._write_md(
+            self.vault / "cases" / "approved" / "a.md",
+            "reviewed_published_historical_case",
+            "# Prior SAP posting\n\nEquipment delay mapping fixed previously.",
+            case_id="A-1",
+        )
+        self._write_md(
+            self.vault / "cases" / "rejected" / "r.md",
+            "reviewed_negative_example",
+            "# Rejected theory\n\nEquipment delay mapping was guessed without evidence.",
+            case_id="R-1",
+        )
+        approved = kb.historical_cases("equipment delay mapping", scope="approved_cases", vault=self.vault)
+        rejected = kb.historical_cases("equipment delay mapping", scope="rejected_cases", vault=self.vault)
+        self.assertEqual(approved[0]["trust_class"], "reviewed_published_historical_case")
+        self.assertEqual(rejected[0]["trust_class"], "reviewed_negative_example")
+
+    def test_gbrain_is_ranking_hint_but_authoritative_file_content_is_delivered(self):
+        self._write_md(
+            self.vault / "facts" / "ranked.md",
+            "reviewed_operational",
+            "# Authoritative fact\n\nEquipment delay mapping authoritative body.",
+        )
+        result = {
+            "ok": True,
+            "results": [{"path": "/brain/facts/ranked.md", "score": 99.0, "content": "GBrain snippet must not replace source"}],
+        }
+        facts = kb.promoted_facts("equipment delay mapping", vault=self.vault, gbrain_result=result)
+        self.assertEqual(len(facts), 1)
+        self.assertIn("authoritative body", facts[0]["content"])
+        self.assertNotIn("GBrain snippet", facts[0]["content"])
+        self.assertEqual(facts[0]["gbrain_rank"], 1)
+
+    def test_deployed_canonical_mirror_requires_corpus_hash_match(self):
+        mirror = self.vault / "knowledge" / "git"
+        mirror.mkdir(parents=True)
+        content = "# Mental model\n\nAlways verify current state."
+        target = mirror / "mental-model.md"
+        target.write_text(content, encoding="utf-8")
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        (self.vault / "corpus_manifest.json").write_text(json.dumps({
+            "schema_version": 1,
+            "files": [{
+                "source": "Knowledge/mental-model.md",
+                "vault_path": "knowledge/git/mental-model.md",
+                "sha256": digest,
+            }],
+        }), encoding="utf-8")
+        missing_repo = self.base / "deployed"
+        value = kb.read_canonical_reference(
+            "Knowledge/mental-model.md", root=missing_repo, vault=self.vault
+        )
+        self.assertTrue(value["ok"])
+        target.write_text(content + " tampered", encoding="utf-8")
+        bad = kb.read_canonical_reference(
+            "Knowledge/mental-model.md", root=missing_repo, vault=self.vault
+        )
+        self.assertFalse(bad["ok"])
+        self.assertIn("hash mismatch", bad["error"])
+
+    def test_deployed_manifest_is_supported_when_repo_manifest_is_absent(self):
+        deployed = self.base / "knowledge_manifest.json"
+        deployed.write_text(json.dumps(MANIFEST), encoding="utf-8")
+        with mock.patch.object(kb, "MANIFEST_PATH", self.base / "missing.json"), \
+             mock.patch.object(kb, "DEPLOYED_MANIFEST_PATH", deployed), \
+             mock.patch.dict("os.environ", {}, clear=False):
+            loaded = kb.load_manifest()
+        self.assertEqual(loaded["routes"][0]["route"], "performance")
 
     def test_source_contains_no_raw_solution_table_or_pyodbc_dependency(self):
         source = Path(kb.__file__).read_text(encoding="utf-8")
