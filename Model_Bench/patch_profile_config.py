@@ -4,6 +4,7 @@
 Why this is a targeted text editor and not a YAML round-trip: the live profile
 configs carry substantial explanatory comments. This patcher owns only:
 - xstudio-l2-tools / xstudio_l2
+- xstudio-l2-identity (cross-cutting harness-owned run/ticket binding)
 - xstudio-l2-learning / l2_learning
 - xstudio-l2-actions / l2_actions
 - terminal-deny backstops for retired SQL transport
@@ -21,7 +22,12 @@ DENY_ENTRIES = [
     "'*python.exe*'", "'*pip install*'", "'*pip3 install*'", "'*python -m pip*'",
     "'*python3 -m pip*'", "'*uv pip*'",
 ]
-PLUGIN_ENTRIES = ["xstudio-l2-tools", "xstudio-l2-learning", "xstudio-l2-actions"]
+PLUGIN_ENTRIES = [
+    "xstudio-l2-tools",
+    "xstudio-l2-identity",
+    "xstudio-l2-learning",
+    "xstudio-l2-actions",
+]
 TOOLSET_ENTRIES = ["xstudio_l2", "l2_learning", "l2_actions"]
 PROFILE_SECTIONS: list[tuple[list[str], list[str], bool]] = [
     (["approvals", "deny"], DENY_ENTRIES, True),
