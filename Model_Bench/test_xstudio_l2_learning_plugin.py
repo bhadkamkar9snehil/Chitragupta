@@ -111,9 +111,16 @@ class LearningPluginTests(unittest.TestCase):
         result = json.loads(mod._propose_lesson({"summary": "maybe useful"}))
         self.assertFalse(result["ok"]); self.assertIn("evidence is required", result["error"])
 
-    def test_layout_includes_outcome_and_action_planes_without_prefetch(self):
+    def test_layout_includes_outcome_action_backlog_and_replay_planes_without_prefetch(self):
         vault = mod._ensure_layout()
-        for rel in ("cases/approved", "cases/rejected", "cases/reopened", "actions/plans"):
+        for rel in (
+            "cases/approved",
+            "cases/rejected",
+            "cases/reopened",
+            "actions/plans",
+            "actions/candidates",
+            "eval",
+        ):
             self.assertTrue((vault / rel).is_dir(), rel)
 
     def test_recall_fails_cleanly_when_index_unavailable(self):
