@@ -21,20 +21,9 @@ memory:
   provider: ''
   memory_enabled: false
   user_profile_enabled: false
-  write_approval: true
-skills:
-  write_approval: true
-approvals:
-  deny:
-    - '*sqlcmd*'
-    - '*Hermes_Orchestrator.py*'
-    - '*python.exe*'
-    - '*pip install*'
 plugins:
   enabled:
     - xstudio-l2-tools
-    - xstudio-l2-identity
-    - xstudio-l2-learning
 kanban:
   dispatch_in_gateway: true
   dispatch_interval_seconds: 30

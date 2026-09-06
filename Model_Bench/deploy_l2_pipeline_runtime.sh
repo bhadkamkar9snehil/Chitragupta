@@ -54,14 +54,9 @@ python3 "$ROOT/Model_Bench/l2_learning_cycle.py" --vault "$LEARNING_VAULT" \
   || echo "WARNING: learning cycle reported errors; lifecycle deployment continues"
 
 deploy_plugin() {
-  local profile="$1" plugin="$2" src
-  case "$plugin" in
-    xstudio-l2-tools)    src="$ROOT/Model_Bench/xstudio_l2_tools_plugin" ;;
-    xstudio-l2-identity) src="$ROOT/Model_Bench/xstudio_l2_identity_plugin" ;;
-    xstudio-l2-learning) src="$ROOT/Model_Bench/xstudio_l2_learning_plugin" ;;
-    *) echo "unknown plugin: $plugin" >&2; return 1 ;;
-  esac
-  local dst="$HOME/.hermes/profiles/$profile/plugins/$plugin"
+  local profile="$1"
+  local src="$ROOT/Model_Bench/xstudio_l2_tools_plugin"
+  local dst="$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-tools"
   mkdir -p "$dst"
   cp "$src/__init__.py" "$dst/__init__.py"
   cp "$src/plugin.yaml" "$dst/plugin.yaml"
@@ -82,10 +77,10 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
   rm -rf \
     "$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-orchestrator" \
     "$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-trace" \
-    "$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-actions"
-  for plugin in xstudio-l2-tools xstudio-l2-identity xstudio-l2-learning; do
-    deploy_plugin "$profile" "$plugin"
-  done
+    "$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-actions" \
+    "$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-identity" \
+    "$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-learning"
+  deploy_plugin "$profile"
 done
 
 for profile in "${INVESTIGATOR_PROFILES[@]}"; do

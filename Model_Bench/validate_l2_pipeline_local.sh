@@ -14,8 +14,6 @@ PY_FILES=(
   Model_Bench/ticket_scout.py
   Model_Bench/xstudio_l2_tool_bridge.py
   Model_Bench/xstudio_l2_tools_plugin/__init__.py
-  Model_Bench/xstudio_l2_identity_plugin/__init__.py
-  Model_Bench/xstudio_l2_learning_plugin/__init__.py
   Model_Bench/l2_gbrain.py
   Model_Bench/sync_l2_learning_corpus.py
   Model_Bench/sync_l2_approved_solutions.py
@@ -34,7 +32,6 @@ CONTRACT_TESTS=(
   Model_Bench/test_l2_gbrain.py
   Model_Bench/test_sync_l2_gbrain.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
-  Model_Bench/test_xstudio_l2_identity_plugin.py
   Model_Bench/test_sync_l2_learning_corpus.py
   Model_Bench/test_sync_l2_outcomes.py
   Model_Bench/test_sync_l2_approved_solutions.py
