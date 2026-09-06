@@ -1,13 +1,13 @@
 ---
 name: xstudio-l2-draft-verifier
-description: "Verify the frozen proposal on a deferred L2 review card against live evidence, using outcome-labelled historical cases only as explicit leads and validating any shadow action plan separately."
-version: 1.2.0
+description: "Verify the frozen proposal against live evidence, outcome-labelled historical cases, and any non-executing action plan without allowing cross-run evidence leakage."
+version: 1.3.0
 author: Snehil Bhadkamkar, Hermes Agent
 license: MIT
 platforms: [linux, windows]
 metadata:
   hermes:
-    tags: [xstudio, helpdesk, l2, reviewer, verification, learning, actions]
+    tags: [xstudio, helpdesk, l2, reviewer, verification, learning, actions, identity]
     related_skills: [xstudio-l2-ticket-workflow, xstudio-sql-write-discipline]
 ---
 
@@ -39,9 +39,11 @@ deterministic publish    deterministic rework scheduling
 
 The reviewer is created only after the source completion is reviewable. There is no pre-created or parent-gated reviewer.
 
-## Reviewer card contract
+## Reviewer card and identity contract
 
 The review card carries exact `run_id`, `ticket_id`, `ticket_no`, `investigation_task_id`, `review_cycle`, `pipeline_stage: review`, and immutable `proposal_json`. Judge that frozen proposal. Do not reconstruct a different answer from comments, memory, or mutable source-card prose.
+
+The card's run/ticket identity is harness authority, not model choice. `xstudio-l2-identity` injects the current card's identity into sensitive `xstudio_l2` and `l2_action` operations, blocks conflicting IDs, and prevents validation of an action plan belonging to another run/ticket.
 
 ## Tool contract
 
@@ -66,7 +68,7 @@ sessions       -> raw unverified historical turns
 
 `trusted` deliberately excludes cases. An approved historical case can show that a diagnostic/action pattern worked before; it cannot prove that this ticket has the same cause. A rejected case can expose a repeated reasoning failure; rejection does not make every statement false. A reopened case is a regression signal, not an automatic diagnosis.
 
-Every completed reviewer turn is automatically recorded as redacted `unverified_episodic` experience. The outcome sidecar later materializes reviewer rejection or successful publication as a stronger historical-case label. Generic automatic prefetch remains off.
+Every completed reviewer turn is automatically recorded as redacted `unverified_episodic` experience. The learning sidecar materializes reviewer rejection or successful publication as a stronger historical-case label and can mine those outcomes into unverified candidates. Generic automatic prefetch remains off and automatic mining is not promotion.
 
 If review uncovers a genuinely reusable systemic lesson, `l2_lesson` may record it with provenance only as an unverified candidate.
 
@@ -75,8 +77,8 @@ If review uncovers a genuinely reusable systemic lesson, `l2_lesson` may record 
 The `l2_actions` toolset is intentionally non-executing. For a proposal that references a registered corrective action, use:
 
 ```text
-plans         -> find durable plans associated with this run/ticket
-validate_plan -> detect capability/policy drift since plan creation
+plans         -> find durable plans for this harness-bound run/ticket
+validate_plan -> detect capability/policy drift and reject cross-run plans
 describe      -> inspect the current capability contract
 ```
 
@@ -86,7 +88,7 @@ Reject any proposal that says a fix/write was performed only because a plan exis
 
 For `NEEDS_HUMAN_ACTION` with a recommend/shadow plan, verify that:
 
-- the plan belongs to the same run/ticket;
+- identity guard accepts the plan for this exact run/ticket;
 - its capability ID is real;
 - its parameters match the verified incident;
 - its required evidence references correspond to real live evidence;
@@ -95,10 +97,10 @@ For `NEEDS_HUMAN_ACTION` with a recommend/shadow plan, verify that:
 
 ## Verification procedure
 
-1. **Read the frozen proposal.** Confirm it contains `run_id`, `ticket_id`, `response_type`, and non-empty `reply_text`.
+1. **Read the frozen proposal.** Confirm it contains the same run/ticket as the review card, a valid `response_type`, and non-empty `reply_text`.
 2. **Identify the core claim.** Review the proposition that makes the proposed response true or false.
-3. **Inspect prior run evidence.** Use `get_run_actions` and ledger/ticket context where useful.
-4. **Optionally consult governed knowledge or historical outcome cases.** Use them to challenge/shorten review, never substitute them for current evidence.
+3. **Inspect prior run evidence.** Use `get_run_actions` and ledger/ticket context; the guard binds them to this review run.
+4. **Optionally consult governed knowledge or historical outcome cases.** Use them to challenge/shorten review, never substitute them for current evidence or identifiers.
 5. **Independently verify live evidence.** Re-read the smallest sufficient current rows/definitions through `xstudio_l2`.
 6. **Check identifiers.** Reject plausible-sounding table/column/object claims that are not real or verified.
 7. **Check action plans when present.** Inspect `plans`, run `validate_plan`, and make sure the proposal does not confuse plan creation with execution.
@@ -108,13 +110,13 @@ For `NEEDS_HUMAN_ACTION` with a recommend/shadow plan, verify that:
 
 ## Approval standard
 
-Approve when the core factual claim is supported by live evidence; the proposed reply accurately represents it; the response type is appropriate; a `RESOLUTION` is actually verified; a `NEEDS_HUMAN_ACTION` clearly identifies a known action outside current execution authority; any referenced plan is valid and clearly non-executed; and no material contradiction remains.
+Approve when the core factual claim is supported by live evidence; the proposed reply accurately represents it; the response type is appropriate; a `RESOLUTION` is actually verified; a `NEEDS_HUMAN_ACTION` clearly identifies a known action outside current execution authority; any referenced plan is valid, identity-bound and clearly non-executed; and no material contradiction remains.
 
 Approve with `kanban_complete`. The deterministic reconciler publishes the frozen proposal. Do not publish it yourself.
 
 ## Rejection standard
 
-Reject with `kanban_block` when evidence is missing/contradictory, identifiers are hallucinated, a `RESOLUTION` is premature, historical material is presented as current proof, a plan is stale/invalid, or the proposal claims a write was executed despite the planner being non-executing.
+Reject with `kanban_block` when evidence is missing/contradictory, identifiers are hallucinated, proposal identity conflicts with the review card, a `RESOLUTION` is premature, historical material is presented as current proof, a plan belongs to another run/ticket or is stale/invalid, or the proposal claims a write was executed despite the planner being non-executing.
 
 The block reason must be specific and actionable. Do not create the rework card yourself; the deterministic reconciler owns that transition.
 
