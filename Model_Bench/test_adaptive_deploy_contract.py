@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Static deployment drift guard for the adaptive L2 branch.
 
-The adaptive architecture spans several Hermes plugins. A missing plugin entry in
-one profile can silently degrade a worker into a different interface, so check the
-checked-in deploy mirror as one contract rather than relying on human diff review.
+The adaptive architecture spans several Hermes plugins plus governed learning and
+action-policy artifacts. A missing entry can silently degrade a worker into a
+different interface, so check the checked-in deploy mirror as one contract rather
+than relying on human diff review.
 """
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 
@@ -53,8 +55,26 @@ class AdaptiveDeployContractTests(unittest.TestCase):
             "mine_l2_learning_candidates.py",
             "mine_l2_action_capability_candidates.py",
             "l2_learning_cycle.py",
+            "sync_l2_approved_solutions.py",
         ):
             self.assertIn(script, text)
+        self.assertIn("solution_export_policy.json", text)
+        self.assertIn("xstudio_action_receipt.schema.json", text)
+
+    def test_governed_solution_policy_starts_fail_closed_and_explicit(self):
+        policy = json.loads((ROOT / "deploy" / "solution_export_policy.json").read_text(encoding="utf-8"))
+        self.assertEqual(policy["schema_version"], 1)
+        self.assertIsInstance(policy["approved"], list)
+        notes = "\n".join(policy.get("notes") or [])
+        self.assertIn("content_sha256", notes)
+        self.assertIn("not treated as governance approval", notes)
+
+    def test_action_receipt_contract_has_no_success_without_verification(self):
+        contract = json.loads((ROOT / "deploy" / "xstudio_action_receipt.schema.json").read_text(encoding="utf-8"))
+        self.assertEqual(contract["schema_version"], 1)
+        self.assertEqual(contract["transitions"]["executed"], ["verified", "failed"])
+        self.assertEqual(contract["transitions"]["verified"], [])
+        self.assertEqual(contract["transitions"]["failed"], ["compensated"])
 
     def test_action_plugin_remains_non_executing(self):
         text = (ROOT / "Model_Bench" / "xstudio_l2_actions_plugin" / "__init__.py").read_text(encoding="utf-8")
