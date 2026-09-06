@@ -9,6 +9,11 @@ executor, parameter schema, risk level, or approval policy. A candidate is only 
 control-plane backlog item saying: multiple independently reviewed/published
 incidents required materially the same human action; investigate whether that
 action can become a real typed capability.
+
+Ownership rule: the miner owns the observed-evidence fields; the capability
+curator owns governance/design fields. Re-running the learning cycle must never
+wipe an operator's research, draft contract, governance history, shadow-readiness
+record, or registry-promotion provenance.
 """
 from __future__ import annotations
 
@@ -23,6 +28,19 @@ from typing import Any
 
 DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
 MIN_DISTINCT_TICKETS = max(2, int(os.environ.get("L2_CAPABILITY_CANDIDATE_MIN_TICKETS", "2")))
+
+DEFAULT_DESIGN_REQUIREMENTS = {
+    "capability_id": None,
+    "risk": "unclassified",
+    "parameter_schema": None,
+    "preconditions": [],
+    "execution": None,
+    "idempotency": None,
+    "verification": [],
+    "rollback": None,
+    "required_evidence": [],
+    "approval_policy": None,
+}
 
 
 def _vault(value: str | None = None) -> Path:
@@ -65,6 +83,11 @@ def _normalize_action(text: str) -> str:
 
 def _id(normalized: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:24]
+
+
+def _default_design_requirements() -> dict[str, Any]:
+    # Round-trip through JSON to avoid sharing nested mutable defaults.
+    return json.loads(json.dumps(DEFAULT_DESIGN_REQUIREMENTS))
 
 
 def mine_capability_candidates(vault: Path | None = None, *, dry_run: bool = False,
@@ -119,14 +142,16 @@ def mine_capability_candidates(vault: Path | None = None, *, dry_run: bool = Fal
             except Exception:
                 existing = {}
 
-        candidate = {
+        # Start from the current governed record so the miner cannot erase fields
+        # it does not own. Then overwrite only evidence/discovery fields.
+        candidate = dict(existing)
+        candidate.update({
             "schema_version": 1,
             "kind": "xstudio_action_capability_candidate",
             "candidate_id": candidate_id,
             "trust": "unverified_capability_candidate",
             "status": existing.get("status") or "needs_executor_design",
             "first_seen_at": existing.get("first_seen_at") or datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
             "observation_count": len(group["source_cases"]),
             "distinct_ticket_count": len(ticket_ids),
             "ticket_ids": ticket_ids,
@@ -134,30 +159,22 @@ def mine_capability_candidates(vault: Path | None = None, *, dry_run: bool = Fal
             "source_cases": sorted(group["source_cases"]),
             "representative_human_action": group["representative_action"],
             "normalized_action": group["normalized_action"],
-            "design_requirements": {
-                "capability_id": None,
-                "risk": "unclassified",
-                "parameter_schema": None,
-                "preconditions": [],
-                "execution": None,
-                "idempotency": None,
-                "verification": [],
-                "rollback": None,
-                "required_evidence": [],
-                "approval_policy": None,
-            },
             "promotion_gate": (
                 "Do not add to the executable registry until the real supported XBatch/SP/API/service path, "
                 "exact parameters, preconditions, idempotency, verification, rollback/compensation and risk policy are verified."
             ),
-        }
+        })
+        if not isinstance(candidate.get("design_requirements"), dict):
+            candidate["design_requirements"] = _default_design_requirements()
 
-        # Ignore volatile updated_at when deciding whether evidence changed.
+        # Ignore volatile timestamps when deciding whether observed evidence
+        # changed. If it did not, leave the file byte-for-byte untouched.
         comparable_new = dict(candidate); comparable_new.pop("updated_at", None)
         comparable_old = dict(existing); comparable_old.pop("updated_at", None)
         if comparable_new == comparable_old:
             counts["unchanged"] += 1
             continue
+        candidate["updated_at"] = datetime.now(timezone.utc).isoformat()
         if dry_run:
             counts["updated" if existing else "created"] += 1
             continue
