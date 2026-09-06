@@ -9,11 +9,12 @@ Current cycle:
   1. materialize reviewer/publisher outcomes as historical cases;
   2. mine conservative unverified lesson candidates from those outcomes;
   3. mine repeated reviewed NEEDS_HUMAN_ACTION patterns into a separate
-     corrective-capability design backlog.
+     corrective-capability design backlog;
+  4. synchronize the derived trust-separated GBrain retrieval substrate.
 
 No step promotes knowledge, changes the executable registry, or performs a
-production action. Each component fails independently and the caller may continue
-ticket handling.
+production action. Each component fails independently and the caller may
+continue ticket handling.
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from typing import Any
 
 from mine_l2_action_capability_candidates import mine_capability_candidates
 from mine_l2_learning_candidates import mine_candidates
+from sync_l2_gbrain import sync_gbrain
 from sync_l2_outcomes import sync_outcomes
 
 DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
@@ -47,6 +49,7 @@ def run_learning_cycle(*, vault: Path | None = None, dry_run: bool = False,
         "outcomes": None,
         "lesson_candidate_mining": None,
         "capability_candidate_mining": None,
+        "gbrain_sync": None,
         "errors": [],
     }
 
@@ -58,7 +61,7 @@ def run_learning_cycle(*, vault: Path | None = None, dry_run: bool = False,
     except Exception as exc:
         result["errors"].append(f"outcome sync failed: {type(exc).__name__}: {exc}"[:1000])
 
-    # Both miners consume local outcome files and remain useful even if this
+    # The miners consume local outcome files and remain useful even if this
     # cycle's SQL backfill had a transient failure.
     try:
         mining = mine_candidates(vault, dry_run=dry_run)
@@ -79,6 +82,18 @@ def run_learning_cycle(*, vault: Path | None = None, dry_run: bool = False,
         result["errors"].append(
             f"capability candidate mining failed: {type(exc).__name__}: {exc}"[:1000]
         )
+
+    # Retrieval synchronization is deliberately last. GBrain only sees the
+    # durable artifacts that the earlier materialization/mining stages have
+    # already written, and it has no independent scheduler of its own.
+    try:
+        gbrain = sync_gbrain(vault, dry_run=dry_run)
+        result["gbrain_sync"] = gbrain
+        if not gbrain.get("ok"):
+            errors = gbrain.get("errors") or [gbrain.get("error") or "unknown error"]
+            result["errors"].append(f"gbrain sync reported: {errors}"[:1000])
+    except Exception as exc:
+        result["errors"].append(f"gbrain sync failed: {type(exc).__name__}: {exc}"[:1000])
 
     result["ok"] = not result["errors"]
     return result

@@ -6,6 +6,7 @@ set -euo pipefail
 # repository; the unrelated npm package named `gbrain` must never be used.
 
 GBRAIN_REF="${CHITRAGUPTA_GBRAIN_REF:-5cfb84f1d3a809c70064c292c23db3d538d5c551}"
+GBRAIN_VERSION="0.48.2.0"
 PACKAGE="github:garrytan/gbrain#${GBRAIN_REF}"
 
 if ! command -v bun >/dev/null 2>&1; then
@@ -15,35 +16,34 @@ fi
 
 echo "Installing pinned GBrain prerequisite: ${PACKAGE}"
 bun install -g "$PACKAGE"
+hash -r
 
 if ! command -v gbrain >/dev/null 2>&1; then
   echo "ERROR: GBrain installation completed but gbrain is not on PATH." >&2
   exit 1
 fi
 
-echo "gbrain path: $(command -v gbrain)"
-gbrain --version
-
-# Chitragupta uses a deliberately tight retrieval shape for small local models.
-# This affects GBrain search budgeting only; it does not enable ambient context.
-if gbrain doctor --json >/dev/null 2>&1; then
-  gbrain config set search.mode conservative >/dev/null
-  echo "GBrain brain already initialized; search.mode=conservative"
-else
-  echo
-  echo "GBrain CLI is installed but no healthy brain is configured yet."
-  echo "Initialize once with one of these supported paths:"
-  echo "  keyword/local baseline: gbrain init --pglite"
-  echo "  LM Studio embeddings:   gbrain init --pglite --embedding-model lmstudio:<model-id> --embedding-dimensions <N>"
-  echo "Then run: gbrain config set search.mode conservative"
+VERSION_OUTPUT="$(gbrain --version 2>&1 || true)"
+if [[ "$VERSION_OUTPUT" != *"$GBRAIN_VERSION"* ]]; then
+  echo "ERROR: expected GBrain ${GBRAIN_VERSION}; got: ${VERSION_OUTPUT:-unknown}" >&2
+  exit 1
 fi
+
+echo "gbrain path: $(command -v gbrain)"
+echo "gbrain version: $VERSION_OUTPUT"
 
 cat <<EOF
 
 Pinned GBrain installed.
   ref: ${GBRAIN_REF}
-  ambient/push context: not enabled by this installer
-  Chitragupta model surface: remains l2_recall/l2_lesson, not raw GBrain MCP
+  version: ${GBRAIN_VERSION}
+  raw GBrain MCP: not exposed to L2 workers
+  ambient/push context: not enabled
+  isolated L2 brain: ~/.hermes/l2-gbrain (initialized by the harness on first sync)
+
+The installer deliberately does not initialize or modify your default personal
+GBrain. Chitragupta owns a separate GBRAIN_HOME and its learning sidecar creates
+and synchronizes that brain deterministically.
 
 Next:
   bash Model_Bench/deploy_l2_pipeline_runtime.sh

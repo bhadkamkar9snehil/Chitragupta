@@ -5,9 +5,8 @@ The learning vault remains source material. GBrain is disposable derivative
 state. Each trust lane is a non-federated source and every read names its source.
 
 The vault gets local-only Git checkpoints because GBrain path sources reconcile
-from Git state. No remote is created or pushed. `--watch` is the single freshness
-loop used by the deployed user service; it does not participate in ticket
-lifecycle correctness.
+from Git state. No remote is created or pushed. Synchronization is owned by the
+single L2 learning sidecar; this module has no independent watch loop.
 """
 from __future__ import annotations
 
@@ -15,7 +14,6 @@ import argparse
 import fcntl
 import json
 import subprocess
-import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,7 +22,6 @@ from typing import Any, Iterator
 from l2_gbrain import SOURCE_DIRS, available, run, vault_path
 
 GIT_TIMEOUT = 30
-DEFAULT_INTERVAL = 900
 
 
 def _git(vault: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -39,7 +36,7 @@ def _git(vault: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
 @contextmanager
 def _sync_lock(vault: Path) -> Iterator[bool]:
     vault.mkdir(parents=True, exist_ok=True)
-    path = vault / ".gbrain-sync.lock"
+    path = vault.parent / f".{vault.name}.gbrain-sync.lock"
     with path.open("a+", encoding="utf-8") as handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -79,6 +76,19 @@ def _checkpoint(vault: Path) -> bool:
     commit = _git(vault, ["commit", "-m", message, "--no-gpg-sign"])
     if commit.returncode != 0:
         raise RuntimeError((commit.stderr or commit.stdout).strip())
+    return True
+
+
+def _ensure_brain() -> bool:
+    rc, _, _ = run(["doctor", "--json"])
+    if rc == 0:
+        return False
+    rc, out, err = run(["init", "--pglite"], timeout=300)
+    if rc != 0:
+        raise RuntimeError((err or out).strip() or "failed to initialize isolated GBrain")
+    # Keep retrieval budgeting conservative. Failure here is non-fatal because
+    # source isolation and explicit source IDs are the real trust boundary.
+    run(["config", "set", "search.mode", "conservative"])
     return True
 
 
@@ -172,31 +182,50 @@ def _check_sources(vault: Path) -> list[str]:
 
 
 def _embed_stale() -> None:
-    # GBrain documents bare `embed --stale` as safe on keyless brains: it exits
-    # cleanly and leaves keyword search available.
+    # On a keyless brain this is allowed to preserve keyword retrieval. If the
+    # configured embedding provider is unavailable, surface the failure so the
+    # harness knows vector freshness is degraded rather than silently guessing.
     rc, out, err = run(["embed", "--stale"], timeout=300)
     if rc != 0:
         raise RuntimeError((err or out).strip() or "gbrain embed --stale failed")
 
 
-def sync_gbrain(vault: Path, *, embed: bool = True) -> dict[str, Any]:
+def sync_gbrain(vault: Path, *, embed: bool = True,
+                dry_run: bool = False) -> dict[str, Any]:
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "vault": str(vault),
+            "sources": list(SOURCE_DIRS),
+            "embedded": embed,
+            "errors": [],
+        }
     if not available():
         return {"ok": False, "errors": ["gbrain is not installed"]}
     with _sync_lock(vault) as acquired:
         if not acquired:
             return {"ok": True, "skipped": "sync_already_running", "errors": []}
+        initialized = _ensure_brain()
         checkpointed = _checkpoint(vault)
         rows = _sources_list()
         existing = {_source_id(row): row for row in rows}
         created = _register_missing(vault, existing)
         errors = _check_sources(vault)
         if errors:
-            return {"ok": False, "checkpointed": checkpointed, "created": created, "errors": errors}
+            return {
+                "ok": False,
+                "initialized": initialized,
+                "checkpointed": checkpointed,
+                "created": created,
+                "errors": errors,
+            }
         synced = _sync_sources()
         if embed:
             _embed_stale()
         return {
             "ok": True,
+            "initialized": initialized,
             "checkpointed": checkpointed,
             "created": created,
             "synced": synced,
@@ -205,32 +234,23 @@ def sync_gbrain(vault: Path, *, embed: bool = True) -> dict[str, Any]:
         }
 
 
-def _watch(vault: Path, interval: int, *, embed: bool) -> int:
-    delay = max(60, interval)
-    while True:
-        try:
-            result = sync_gbrain(vault, embed=embed)
-            print(json.dumps(result, ensure_ascii=False), flush=True)
-        except Exception as exc:
-            print(json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), flush=True)
-        time.sleep(delay)
-
-
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--vault", default=None)
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--no-embed", action="store_true")
-    ap.add_argument("--watch", action="store_true")
-    ap.add_argument("--interval", type=int, default=DEFAULT_INTERVAL)
+    ap.add_argument("--dry-run", action="store_true")
     ns = ap.parse_args(argv)
     vault = vault_path(ns.vault)
-    if ns.watch:
-        return _watch(vault, ns.interval, embed=not ns.no_embed)
-    if not available():
+    if ns.dry_run:
+        result = sync_gbrain(vault, embed=not ns.no_embed, dry_run=True)
+    elif not available():
         result = {"ok": False, "errors": ["gbrain is not installed"]}
     elif ns.check:
-        errors = _check_sources(vault)
+        rc, _, _ = run(["doctor", "--json"])
+        errors = [] if rc == 0 else ["isolated GBrain is not initialized/healthy"]
+        if not errors:
+            errors.extend(_check_sources(vault))
         result = {"ok": not errors, "errors": errors, "sources": list(SOURCE_DIRS)}
     else:
         result = sync_gbrain(vault, embed=not ns.no_embed)

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Small harness-owned GBrain adapter for Chitragupta's learning plane.
+"""Harness-owned GBrain adapter for Chitragupta's L2 learning plane.
 
-GBrain is a derivative retrieval/index substrate. This module never writes to
-XStudio/Helpdesk and never exposes raw GBrain writes to an L2 worker.
+GBrain is derivative retrieval state. It never owns Helpdesk lifecycle state,
+never writes XStudio, and is never exposed to L2 workers as a raw memory API.
 
-Every Chitragupta trust lane is a separate non-federated GBrain source. Reads
-must name their source(s) explicitly so an unqualified brain search cannot
-silently cross trust boundaries.
+Every trust lane is a separate non-federated source. Every read names its
+source(s) explicitly. Chitragupta also gives this adapter a dedicated GBrain
+home so unrelated/default user brains cannot leak into L2 retrieval.
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
+DEFAULT_GBRAIN_HOME = Path.home() / ".hermes" / "l2-gbrain"
 DEFAULT_TIMEOUT = max(10, int(os.environ.get("L2_GBRAIN_TIMEOUT_SECONDS", "60")))
 
 SOURCE_DIRS: dict[str, str] = {
@@ -53,6 +54,13 @@ def vault_path(value: str | None = None) -> Path:
     return Path(raw).expanduser() if raw else DEFAULT_VAULT
 
 
+def gbrain_home(value: str | None = None) -> Path:
+    if value:
+        return Path(value).expanduser()
+    raw = os.environ.get("CHITRAGUPTA_GBRAIN_HOME", "").strip()
+    return Path(raw).expanduser() if raw else DEFAULT_GBRAIN_HOME
+
+
 def binary() -> str:
     return os.environ.get("CHITRAGUPTA_GBRAIN_BIN", "gbrain").strip() or "gbrain"
 
@@ -63,6 +71,8 @@ def available() -> bool:
 
 def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT,
         cwd: Path | None = None) -> tuple[int, str, str]:
+    env = os.environ.copy()
+    env["GBRAIN_HOME"] = str(gbrain_home())
     try:
         proc = subprocess.run(
             [binary(), *args],
@@ -70,7 +80,7 @@ def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT,
             capture_output=True,
             text=True,
             timeout=timeout,
-            env=os.environ.copy(),
+            env=env,
         )
     except FileNotFoundError:
         return 127, "", "gbrain not found; run Model_Bench/install_l2_learning_prereqs.sh"
@@ -80,8 +90,7 @@ def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT,
 
 
 def parse_json(text: str) -> Any:
-    value = json.loads(text or "null")
-    return value
+    return json.loads(text or "null")
 
 
 def sources_for_scope(scope: str) -> tuple[str, ...]:
@@ -92,20 +101,20 @@ def sources_for_scope(scope: str) -> tuple[str, ...]:
 
 def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
            limit: int = 5) -> dict[str, Any]:
-    """Run one explicitly source-scoped GBrain retrieval.
+    """Run one deterministic, explicitly source-scoped GBrain retrieval.
 
-    `gbrain search` is already cheap hybrid retrieval (keyword + vector + RRF)
-    without LLM query expansion. `deep` opts into `gbrain query`. Legacy
-    `fts` maps to the cheap search lane; legacy `vector` maps to deep retrieval
-    because GBrain does not expose a vector-only public query contract here.
+    The harness intentionally uses GBrain's retrieval-only ``search`` command.
+    Legacy callers may still request ``deep``, ``fts`` or ``vector`` while they
+    are migrated, but those modes are normalized to the same hybrid retrieval
+    path. The adapter does not invoke ``gbrain query`` because that would add a
+    second synthesis/reasoning layer between durable evidence and the L2 model.
     """
     sources = sources_for_scope(scope)
     requested = mode
-    effective = "deep" if mode in {"deep", "vector"} else "hybrid"
-    command = "query" if effective == "deep" else "search"
+    effective = "hybrid"
     source_arg = ",".join(sources)
     rc, out, err = run([
-        command,
+        "search",
         query,
         "--source", source_arg,
         "--limit", str(max(1, min(10, int(limit)))),
@@ -114,7 +123,7 @@ def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
     if rc != 0:
         return {
             "ok": False,
-            "error": (err or out).strip()[-1000:] or f"gbrain {command} exited {rc}",
+            "error": (err or out).strip()[-1000:] or f"gbrain search exited {rc}",
             "retry_same_call": False,
             "backend": "gbrain",
         }
@@ -136,4 +145,5 @@ def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
         "requested_mode": requested,
         "effective_mode": effective,
         "results": payload,
+        "deterministic_retrieval": True,
     }

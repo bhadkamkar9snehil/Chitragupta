@@ -2,7 +2,9 @@
 """Contract tests for the harness-owned GBrain adapter."""
 from __future__ import annotations
 
+import os
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import l2_gbrain as mod
@@ -25,15 +27,29 @@ class GBrainAdapterTests(unittest.TestCase):
         source_arg = args[args.index("--source") + 1]
         self.assertEqual(source_arg, "l2-knowledge,l2-facts,l2-solutions")
         self.assertNotIn("l2-sessions", source_arg)
+        self.assertTrue(result["deterministic_retrieval"])
 
-    def test_deep_is_explicit_and_legacy_vector_maps_to_deep(self):
-        for requested in ("deep", "vector"):
+    def test_legacy_modes_never_invoke_gbrain_query(self):
+        for requested in ("deep", "vector", "fts", "hybrid"):
             with self.subTest(requested=requested), \
                  mock.patch.object(mod, "run", return_value=(0, '[]', "")) as run:
                 result = mod.search("root cause", scope="approved_cases", mode=requested)
             self.assertTrue(result["ok"])
-            self.assertEqual(result["effective_mode"], "deep")
-            self.assertEqual(run.call_args.args[0][0], "query")
+            self.assertEqual(result["effective_mode"], "hybrid")
+            self.assertEqual(run.call_args.args[0][0], "search")
+
+    def test_run_forces_isolated_gbrain_home(self):
+        completed = mock.Mock(returncode=0, stdout="[]", stderr="")
+        with mock.patch("subprocess.run", return_value=completed) as subprocess_run, \
+             mock.patch.dict(os.environ, {"CHITRAGUPTA_GBRAIN_HOME": "/tmp/chitragupta-brain"}, clear=False):
+            mod.run(["sources", "list", "--json"])
+        env = subprocess_run.call_args.kwargs["env"]
+        self.assertEqual(env["GBRAIN_HOME"], "/tmp/chitragupta-brain")
+
+    def test_default_gbrain_home_is_not_generic_user_brain(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            home = mod.gbrain_home()
+        self.assertEqual(home, Path.home() / ".hermes" / "l2-gbrain")
 
     def test_non_json_output_fails_closed(self):
         with mock.patch.object(mod, "run", return_value=(0, "not json", "")):

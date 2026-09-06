@@ -38,14 +38,10 @@ class AdaptiveDeployContractTests(unittest.TestCase):
     def test_mirrored_manifests_exist(self):
         for plugin in PLUGINS:
             with self.subTest(plugin=plugin):
-                self.assertTrue(
-                    (ROOT / "deploy" / "plugins" / f"{plugin}.plugin.yaml").exists()
-                )
+                self.assertTrue((ROOT / "deploy" / "plugins" / f"{plugin}.plugin.yaml").exists())
 
-    def test_deployer_uses_gbrain_without_exposing_a_second_agent_memory_surface(self):
-        text = (ROOT / "Model_Bench" / "deploy_l2_pipeline_runtime.sh").read_text(
-            encoding="utf-8"
-        )
+    def test_deployer_uses_gbrain_without_exposing_second_agent_memory_surface(self):
+        text = (ROOT / "Model_Bench" / "deploy_l2_pipeline_runtime.sh").read_text(encoding="utf-8")
         for plugin in PLUGINS:
             self.assertIn(plugin, text)
         for script in (
@@ -59,20 +55,34 @@ class AdaptiveDeployContractTests(unittest.TestCase):
         ):
             self.assertIn(script, text)
         self.assertIn("solution_export_policy.json", text)
-        self.assertIn("command -v gbrain", text)
         self.assertNotIn("command -v zg", text)
         self.assertNotIn("xstudio_action_receipt", text)
         self.assertNotIn("hermes mcp add gbrain", text)
 
-    def test_gbrain_sources_are_non_federated_by_contract(self):
-        text = (ROOT / "Model_Bench" / "sync_l2_gbrain.py").read_text(encoding="utf-8")
-        self.assertIn('"--no-federated"', text)
-        self.assertIn("GBrain source must be non-federated", text)
+    def test_gbrain_is_isolated_and_has_no_independent_scheduler(self):
+        adapter = (ROOT / "Model_Bench" / "l2_gbrain.py").read_text(encoding="utf-8")
+        sync = (ROOT / "Model_Bench" / "sync_l2_gbrain.py").read_text(encoding="utf-8")
+        deploy = (ROOT / "Model_Bench" / "deploy_l2_pipeline_runtime.sh").read_text(encoding="utf-8")
+        cycle = (ROOT / "Model_Bench" / "l2_learning_cycle.py").read_text(encoding="utf-8")
+        self.assertIn('env["GBRAIN_HOME"]', adapter)
+        self.assertIn('".hermes" / "l2-gbrain"', adapter)
+        self.assertIn('"--no-federated"', sync)
+        self.assertIn("GBrain source must be non-federated", sync)
+        self.assertNotIn("--watch", sync)
+        self.assertNotIn("while True", sync)
+        self.assertNotIn("ExecStart=", deploy)
+        self.assertIn("disable --now chitragupta-gbrain-sync.service", deploy)
+        self.assertIn("sync_gbrain", cycle)
+
+    def test_gbrain_adapter_is_retrieval_only(self):
+        text = (ROOT / "Model_Bench" / "l2_gbrain.py").read_text(encoding="utf-8")
+        self.assertIn('"search",', text)
+        self.assertNotIn('command = "query"', text)
+        self.assertNotIn('["query",', text)
+        self.assertIn('"deterministic_retrieval": True', text)
 
     def test_governed_solution_policy_starts_fail_closed_and_explicit(self):
-        policy = json.loads(
-            (ROOT / "deploy" / "solution_export_policy.json").read_text(encoding="utf-8")
-        )
+        policy = json.loads((ROOT / "deploy" / "solution_export_policy.json").read_text(encoding="utf-8"))
         self.assertEqual(policy["schema_version"], 1)
         self.assertIsInstance(policy["approved"], list)
         notes = "\n".join(policy.get("notes") or [])
@@ -81,9 +91,7 @@ class AdaptiveDeployContractTests(unittest.TestCase):
         self.assertIn("when synchronization runs", notes)
 
     def test_action_plugin_remains_non_executing(self):
-        text = (
-            ROOT / "Model_Bench" / "xstudio_l2_actions_plugin" / "__init__.py"
-        ).read_text(encoding="utf-8")
+        text = (ROOT / "Model_Bench" / "xstudio_l2_actions_plugin" / "__init__.py").read_text(encoding="utf-8")
         self.assertIn('"validate_plan"', text)
         self.assertNotIn('"execute"', text.split("_SCHEMA", 1)[-1])
         self.assertIn('"execution_authorized": False', text)

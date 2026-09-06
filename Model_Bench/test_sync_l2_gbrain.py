@@ -57,6 +57,36 @@ class GBrainSyncTests(unittest.TestCase):
         self.assertEqual(synced, list(mod.SOURCE_DIRS))
         self.assertEqual(calls, [["sync", "--source", source] for source in mod.SOURCE_DIRS])
 
+    def test_dry_run_has_no_git_or_gbrain_side_effects(self):
+        with mock.patch.object(mod, "available") as available, \
+             mock.patch.object(mod, "_checkpoint") as checkpoint, \
+             mock.patch.object(mod, "run") as run:
+            result = mod.sync_gbrain(self.vault, dry_run=True)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["dry_run"])
+        available.assert_not_called()
+        checkpoint.assert_not_called()
+        run.assert_not_called()
+
+    def test_isolated_brain_is_initialized_when_missing(self):
+        calls = []
+        def fake_run(args, **kwargs):
+            calls.append(args)
+            if args[:2] == ["doctor", "--json"]:
+                return 1, "", "missing"
+            return 0, "", ""
+        with mock.patch.object(mod, "run", side_effect=fake_run):
+            initialized = mod._ensure_brain()
+        self.assertTrue(initialized)
+        self.assertIn(["init", "--pglite"], calls)
+
+    def test_lockfile_lives_outside_vault(self):
+        lock = self.vault.parent / f".{self.vault.name}.gbrain-sync.lock"
+        with mod._sync_lock(self.vault) as acquired:
+            self.assertTrue(acquired)
+            self.assertTrue(lock.exists())
+            self.assertFalse((self.vault / ".gbrain-sync.lock").exists())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
