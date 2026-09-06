@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 """Compatibility entrypoint for the deterministic L2 pipeline scout.
 
-Every scout tick first reconciles work already in flight. The learning sidecar
-then materializes reviewer/publisher outcomes best-effort. New Helpdesk claims
-remain gated only by deterministic workflow binding and WIP state: learning must
-never become lifecycle authority or block ticket processing.
+Every scout tick first reconciles work already in flight. One best-effort
+learning sidecar cycle then materializes reviewer/publisher outcomes and mines
+conservative learning candidates. New Helpdesk claims remain gated only by
+deterministic workflow binding and WIP state: learning must never become
+lifecycle authority or block ticket processing.
 """
 import json
 import sys
 from l2_pipeline_runtime import cli, load_workflow_binding
 
 
-def _sync_learning_outcomes_best_effort() -> None:
+def _run_learning_cycle_best_effort() -> None:
     try:
-        from sync_l2_outcomes import sync_outcomes
-        counts = sync_outcomes()
-        print(json.dumps({"learning_outcomes": counts}, separators=(",", ":")))
+        from l2_learning_cycle import run_learning_cycle
+        result = run_learning_cycle()
+        print(json.dumps({"learning_cycle": result}, separators=(",", ":"), default=str))
     except Exception as exc:
         print(json.dumps({
-            "warning": "learning outcome sync failed; lifecycle continues",
+            "warning": "learning cycle failed; lifecycle continues",
             "error": f"{type(exc).__name__}: {exc}"[:500],
         }, separators=(",", ":")))
 
@@ -30,10 +31,11 @@ if __name__ == "__main__":
     if rc != 0:
         raise SystemExit(rc)
 
-    # Reviewer rejection/approval and publisher postconditions are stronger
-    # learning signals than raw sessions. Capture them after reconcile, but never
-    # let zvec/vault/learning failures affect lifecycle correctness.
-    _sync_learning_outcomes_best_effort()
+    # Learning is one sidecar boundary, not a growing list of scout-owned
+    # mechanisms. Rejection/approval/publication outcomes are captured first;
+    # the miner then derives unverified candidates from the resulting case
+    # corpus. Any failure here is deliberately non-fatal to ticket processing.
+    _run_learning_cycle_best_effort()
 
     binding = load_workflow_binding()
     if binding.get("strict_resolution_status_binding", True) and not binding.get("resolved_ticket_status"):
