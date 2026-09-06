@@ -20,16 +20,19 @@ PY_FILES=(
   Model_Bench/xstudio_l2_orchestrator_plugin/__init__.py
   Model_Bench/xstudio_l2_tools_plugin/__init__.py
   Model_Bench/xstudio_l2_learning_plugin/__init__.py
+  Model_Bench/xstudio_l2_actions_plugin/__init__.py
   Model_Bench/xstudio_l2_tool_bridge.py
   Model_Bench/sync_l2_learning_corpus.py
+  Model_Bench/sync_l2_outcomes.py
   Model_Bench/l2_learning_curator.py
   Model_Bench/benchmark_l2_learning_retrieval.py
   Model_Bench/validate_action_capabilities.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
   Model_Bench/test_xstudio_l2_learning_plugin.py
+  Model_Bench/test_xstudio_l2_actions_plugin.py
+  Model_Bench/test_sync_l2_outcomes.py
   Model_Bench/test_patch_profile_config.py
 )
-
 SH_FILES=(
   Model_Bench/deploy_l2_pipeline_runtime.sh
   Model_Bench/install_l2_learning_prereqs.sh
@@ -39,25 +42,22 @@ SH_FILES=(
 
 echo "== Shell syntax =="
 bash -n "${SH_FILES[@]}"
-
 echo "== Python syntax =="
 python3 -m py_compile "${PY_FILES[@]}"
-
 echo "== Deterministic lifecycle contract tests =="
 python3 Model_Bench/test_l2_pipeline_runtime.py
-
 echo "== Typed investigation-tool contract tests =="
 python3 Model_Bench/test_xstudio_l2_tools_plugin.py
-
 echo "== Adaptive learning contract tests =="
 python3 Model_Bench/test_xstudio_l2_learning_plugin.py
-
+echo "== Outcome-conditioned learning contract tests =="
+python3 Model_Bench/test_sync_l2_outcomes.py
+echo "== Non-executing action-planner contract tests =="
+python3 Model_Bench/test_xstudio_l2_actions_plugin.py
 echo "== Profile/root config patcher contract tests =="
 python3 Model_Bench/test_patch_profile_config.py
-
-echo "== Future action capability registry =="
+echo "== Corrective-action registry =="
 python3 Model_Bench/validate_action_capabilities.py
-
 echo "== Knowledge/skill validation =="
 python3 Model_Bench/validate_knowledge_manifest.py
 python3 Model_Bench/test_kb_retrieval.py
@@ -72,6 +72,9 @@ zg status "$LEARNING_VAULT" --check-ready
 
 echo "== Learning retrieval smoke benchmark =="
 python3 Model_Bench/benchmark_l2_learning_retrieval.py --min-hit-rate 0.80
+
+echo "== Outcome case sync preview (read-only) =="
+python3 Model_Bench/sync_l2_outcomes.py --vault "$LEARNING_VAULT" --dry-run || true
 
 echo "== Live profile plugin/toolset config =="
 for profile in l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback; do
@@ -101,10 +104,8 @@ echo "PASS: no known retired lifecycle scripts remain in the live scripts direct
 
 echo "== Live workflow discovery (read-only) =="
 python3 Model_Bench/configure_helpdesk_workflow.py
-
 echo "== Pipeline status (read-only) =="
 python3 Model_Bench/l2_pipeline_runtime.py status
-
 echo "== Reconcile preview (dry-run) =="
 python3 Model_Bench/l2_pipeline_runtime.py reconcile --dry-run
 
@@ -112,34 +113,30 @@ echo
 cat <<EOF
 LOCAL VALIDATION COMPLETE.
 
-Adaptive learning plane:
-  shared vault:       $LEARNING_VAULT
-  session recording:  ON (post_llm_call -> redacted unverified episodic Markdown)
-  automatic prefetch: OFF by design
-  explicit recall:    l2_recall with trust-scoped zvec hybrid search
-  candidate learning: l2_lesson -> candidates only; separate promotion required
-  retrieval eval:     Model_Bench/l2_learning_eval_cases.jsonl
-  mem0 provider:      unchanged
+Control plane:
+  lifecycle:           claim -> investigate -> normalize -> frozen review -> publish/rework
+  typed evidence:      xstudio_l2
 
-Future action plane:
-  registry:           deploy/xstudio_action_capabilities.json
-  global mode:        observe
-  executable actions: none yet
-  promotion path:     observe -> recommend -> shadow -> supervised -> autonomous
+Learning plane:
+  shared vault:        $LEARNING_VAULT
+  session recording:   ON (redacted, unverified episodic)
+  automatic prefetch:  OFF by design
+  outcome cases:       approved/rejected/reopened historical case classes
+  explicit recall:     trusted/case/session scopes with trust labels
+  candidate learning:  l2_lesson -> candidates only; separate promotion required
+  mem0 provider:       unchanged
 
-SQL deployment note:
-  Knowledge/00_Hermes_L2_FULL_INSTALL.sql is the generated complete bundle.
-  It already includes the current 25_ticket_dispatch_hardening and
-  55_update_retry_hardening sources. Do not re-apply those merely because
-  the numbered source files exist.
+Action plane:
+  registry:            deploy/xstudio_action_capabilities.json
+  direct toolset:      l2_actions
+  operations:          list/describe/plan/plans/validate_plan
+  execution:           intentionally unavailable
+  global registry mode: observe until deliberately promoted
 
-After deploying/regenerating the SQL bundle, run:
-  Knowledge/98_pipeline_postflight.sql
-
-For the next naturally arriving fresh ticket, verify:
-  - database evidence uses xstudio_l2;
-  - prior experience, when useful, uses explicit l2_recall rather than prompt injection;
-  - a session file is written under the shared learning vault with run/ticket correlation when available;
-  - no generic zvec-memory prefetch block appears in the model context;
-  - no terminal/interpreter/pyodbc/sqlcmd/package-install SQL transport reappears.
+For the next natural ticket verify:
+  - current evidence uses xstudio_l2;
+  - historical recall is explicit and trust-scoped;
+  - sessions are recorded and outcome cases appear after review/publication;
+  - l2_action cannot execute anything and rejects planning while global_mode=observe;
+  - no terminal Python/pyodbc/sqlcmd/package-install SQL transport reappears.
 EOF
