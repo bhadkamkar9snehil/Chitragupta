@@ -25,6 +25,8 @@ PY_FILES=(
   Model_Bench/xstudio_l2_learning_plugin/__init__.py
   Model_Bench/xstudio_l2_actions_plugin/__init__.py
   Model_Bench/xstudio_l2_tool_bridge.py
+  Model_Bench/l2_gbrain.py
+  Model_Bench/sync_l2_gbrain.py
   Model_Bench/sync_l2_learning_corpus.py
   Model_Bench/sync_l2_outcomes.py
   Model_Bench/sync_l2_approved_solutions.py
@@ -42,6 +44,8 @@ CONTRACT_TESTS=(
   Model_Bench/test_l2_pipeline_runtime.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
   Model_Bench/test_xstudio_l2_identity_plugin.py
+  Model_Bench/test_l2_gbrain.py
+  Model_Bench/test_sync_l2_gbrain.py
   Model_Bench/test_xstudio_l2_learning_plugin.py
   Model_Bench/test_sync_l2_learning_corpus.py
   Model_Bench/test_sync_l2_outcomes.py
@@ -79,13 +83,15 @@ python3 Model_Bench/validate_action_capabilities.py
 python3 Model_Bench/validate_knowledge_manifest.py
 python3 Model_Bench/test_kb_retrieval.py
 
-echo "== zvec learning substrate =="
-if ! command -v zg >/dev/null 2>&1; then
-  echo "FAIL: zg missing. Run: bash Model_Bench/install_l2_learning_prereqs.sh" >&2
+echo "== GBrain learning substrate =="
+if ! command -v gbrain >/dev/null 2>&1; then
+  echo "FAIL: gbrain missing. Run: bash Model_Bench/install_l2_learning_prereqs.sh" >&2
   exit 1
 fi
+gbrain --version
+gbrain doctor --json
 python3 Model_Bench/sync_l2_learning_corpus.py --vault "$LEARNING_VAULT" --check
-zg status "$LEARNING_VAULT" --check-ready
+python3 Model_Bench/sync_l2_gbrain.py --vault "$LEARNING_VAULT" --check
 
 echo "== Governed Solution sync preview =="
 python3 Model_Bench/sync_l2_approved_solutions.py \
@@ -139,7 +145,7 @@ python3 Model_Bench/configure_helpdesk_workflow.py
 python3 Model_Bench/l2_pipeline_runtime.py status
 python3 Model_Bench/l2_pipeline_runtime.py reconcile --dry-run
 
-cat <<EOF
+cat <<'EOF'
 
 LOCAL VALIDATION COMPLETE
 
@@ -151,9 +157,11 @@ Control plane:
 Learning plane:
   sessions: ON, redacted, unverified
   generic automatic prefetch: OFF
+  GBrain: derivative retrieval/graph substrate behind l2_recall
+  trust lanes: separate non-federated GBrain sources
   governed reusable Solutions: explicit semantic-hash approval
   historical cases/candidates: not current-ticket proof
-  zvec: retrieval index only; mem0 unchanged
+  mem0: unchanged narrow operational-memory provider
 
 Action plane:
   registry: deploy/xstudio_action_capabilities.json

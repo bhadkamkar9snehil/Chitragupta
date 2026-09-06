@@ -33,6 +33,9 @@ xstudio-l2-identity
 l2_learning
     session recording + explicit trust-scoped recall + lesson proposal
 
+l2_gbrain.py / sync_l2_gbrain.py
+    derivative GBrain retrieval/index with non-federated trust sources
+
 l2_learning_cycle.py
     outcome labels + conservative candidate mining
 
@@ -57,7 +60,9 @@ l2_action_capability_curator.py
 - Model-driven raw SQL mutation/transport remains unavailable.
 - Identity-sensitive evidence and action plans are bound to the actual Kanban task.
 - Sessions are recorded as unverified episodic history.
-- Generic zvec prefetch stays off.
+- Generic automatic prefetch stays off, including GBrain push/reflex context.
+- Every GBrain L2 source is non-federated and retrieval names its source(s) explicitly.
+- Raw GBrain MCP tools are not a second model-facing memory surface.
 - Historical cases do not enter `trusted` automatically.
 - Active SQL Solutions are not trusted unless explicitly hash-approved.
 - Action candidates are evidence backlogs, not executable capabilities.
@@ -76,24 +81,15 @@ plan != execute
 
 Use explicit `l2_recall` scopes and verify ticket-specific claims live.
 
+GBrain is derivative search/graph state. `trusted` maps only to `l2-knowledge`, `l2-facts`, and `l2-solutions`; sessions, historical outcomes, and candidates require explicit scopes.
+
 `solutions/approved/` is generated output owned only by `sync_l2_approved_solutions.py`. Human-authored durable knowledge belongs in Git or promoted facts.
 
 ## Capability design rule
 
-The capability miner records only repeated reviewed human work. It must not invent:
+The capability miner records only repeated reviewed human work. It must not invent risk, parameter schema, SP/API/service target, preconditions, idempotency, verification, rollback/compensation, or approval policy.
 
-```text
-risk
-parameter schema
-SP/API/service target
-preconditions
-idempotency
-verification
-rollback/compensation
-approval policy
-```
-
-The curator stores at most one reviewed `draft_contract` on the candidate. There is no persisted research mini-workflow:
+The curator stores at most one reviewed `draft_contract` on the candidate:
 
 ```text
 needs_executor_design
@@ -107,7 +103,7 @@ Before `shadow_ready`, inspect the real supported XBatch operation and verify th
 
 Do not add an executor merely because the architecture anticipates one.
 
-The first supervised executor should be built only after a real shadow capability and measured shadow evidence justify it. Its deterministic outcome/audit record should be designed with the executor and its actual failure/rollback semantics, not as standalone speculative scaffolding.
+The first supervised executor should be built only after a real shadow capability and measured shadow evidence justify it. Its deterministic outcome/audit record should be designed with the executor and its actual failure/rollback semantics.
 
 ## Validation
 
@@ -117,4 +113,4 @@ Use:
 bash Model_Bench/validate_l2_pipeline_local.sh
 ```
 
-Keep validation local. When adding or deleting an adaptive component, update the aggregate validator in the same change so useful tests cannot silently fall out of the validation path.
+Keep validation local. When adding or deleting an adaptive component, update the aggregate validator in the same change.

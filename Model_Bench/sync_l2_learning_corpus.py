@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Synchronize canonical Chitragupta reference material into the zvec vault.
+"""Mirror canonical Chitragupta reference material into the learning vault.
 
-Only the disposable canonical mirror under `knowledge/` is rebuilt. Runtime
-experience, governed Solution exports, promoted facts, candidates, action plans
-and replay data are separate planes and are never rewritten here.
+This owns only the disposable `knowledge/` mirror and its manifest. Runtime
+experience, governed Solutions, facts, candidates and action artifacts are
+separate planes and are never rewritten here. GBrain indexing is handled by
+`sync_l2_gbrain.py` so corpus ownership and retrieval ownership stay separate.
 """
 from __future__ import annotations
 
@@ -12,14 +13,11 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
-DEFAULT_EMBEDDING = "local/potion-retrieval-32m"
 
 RUNTIME_DIRS = (
     "sessions",
@@ -51,12 +49,10 @@ def _sources() -> list[tuple[Path, Path]]:
         source = ROOT / name
         if source.exists():
             items.append((source, Path("knowledge/contracts") / name))
-
     knowledge = ROOT / "Knowledge"
     if knowledge.exists():
         for source in sorted(knowledge.rglob("*.md")):
             items.append((source, Path("knowledge/git") / source.relative_to(knowledge)))
-
     skills = ROOT / "deploy" / "skills" / "xstudio"
     if skills.exists():
         for source in sorted(skills.glob("*/SKILL.md")):
@@ -99,10 +95,8 @@ def _check(vault: Path, expected: dict) -> int:
     if _signature(actual) != _signature(expected):
         print("FAIL: learning corpus mirror is stale; run sync_l2_learning_corpus.py")
         return 1
-
     missing = [
-        item["vault_path"]
-        for item in actual.get("files", [])
+        item["vault_path"] for item in actual.get("files", [])
         if not (vault / item["vault_path"]).exists()
     ]
     if missing:
@@ -120,35 +114,16 @@ def _sync(vault: Path, items: list[tuple[Path, Path]], manifest: dict) -> None:
         if target.exists():
             shutil.rmtree(target)
         target.mkdir(parents=True, exist_ok=True)
-
     for source, rel in items:
         target = vault / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
-
     for rel in RUNTIME_DIRS:
         (vault / rel).mkdir(parents=True, exist_ok=True)
-
     (vault / "corpus_manifest.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-
-
-def _index(vault: Path, embedding: str, rebuild: bool) -> int:
-    zg = os.environ.get("CHITRAGUPTA_ZG_BIN", "zg")
-    if not shutil.which(zg):
-        print(
-            "FAIL: zg not found. Run: bash Model_Bench/install_l2_learning_prereqs.sh",
-            file=sys.stderr,
-        )
-        return 2
-    cmd = [zg, "index"]
-    if rebuild:
-        cmd.append("--rebuild")
-    cmd += ["--embedding", embedding, str(vault)]
-    print("indexing learning vault:", " ".join(cmd))
-    return int(subprocess.run(cmd, text=True).returncode)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -157,25 +132,17 @@ def main(argv: list[str] | None = None) -> int:
         "--vault",
         default=os.environ.get("CHITRAGUPTA_L2_LEARNING_VAULT", str(DEFAULT_VAULT)),
     )
-    ap.add_argument(
-        "--embedding",
-        default=os.environ.get("CHITRAGUPTA_ZVEC_EMBEDDING", DEFAULT_EMBEDDING),
-    )
     ap.add_argument("--check", action="store_true")
-    ap.add_argument("--no-index", action="store_true")
-    ap.add_argument("--rebuild", action="store_true")
     args = ap.parse_args(argv)
-
     vault = Path(args.vault).expanduser()
     items = _sources()
     manifest = _manifest_for(items)
     if args.check:
         return _check(vault, manifest)
-
     vault.mkdir(parents=True, exist_ok=True)
     _sync(vault, items, manifest)
     print(f"mirrored {len(items)} canonical files into {vault}")
-    return 0 if args.no_index else _index(vault, args.embedding, args.rebuild)
+    return 0
 
 
 if __name__ == "__main__":

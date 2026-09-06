@@ -1,47 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Operator-only prerequisite installer for the adaptive L2 learning plane.
-# This is deliberately NOT called from an agent investigation or implicitly from
-# deployment. Runtime workers are forbidden from installing dependencies.
+# Operator-owned prerequisite installer for Chitragupta's adaptive learning plane.
+# Workers never install dependencies. GBrain is installed only from its GitHub
+# repository; the unrelated npm package named `gbrain` must never be used.
 
-ZVEC_GREP_VERSION="${ZVEC_GREP_VERSION:-0.2.1}"
-PACKAGE="@zvec/zvec-grep@${ZVEC_GREP_VERSION}"
+GBRAIN_REF="${CHITRAGUPTA_GBRAIN_REF:-5cfb84f1d3a809c70064c292c23db3d538d5c551}"
+PACKAGE="github:garrytan/gbrain#${GBRAIN_REF}"
 
-if ! command -v node >/dev/null 2>&1; then
-  echo "ERROR: Node.js is not installed. Install Node.js 22+ first." >&2
-  exit 1
-fi
-if ! command -v npm >/dev/null 2>&1; then
-  echo "ERROR: npm is not installed." >&2
+if ! command -v bun >/dev/null 2>&1; then
+  echo "ERROR: Bun is required for GBrain. Install Bun first: https://bun.sh" >&2
   exit 1
 fi
 
-NODE_VERSION="$(node --version | sed 's/^v//')"
-NODE_MAJOR="${NODE_VERSION%%.*}"
-if [[ ! "$NODE_MAJOR" =~ ^[0-9]+$ ]] || (( NODE_MAJOR < 22 )); then
-  echo "ERROR: Node.js 22+ is required; found v${NODE_VERSION}." >&2
+echo "Installing pinned GBrain prerequisite: ${PACKAGE}"
+bun install -g "$PACKAGE"
+
+if ! command -v gbrain >/dev/null 2>&1; then
+  echo "ERROR: GBrain installation completed but gbrain is not on PATH." >&2
   exit 1
 fi
 
-echo "Installing pinned local retrieval dependency: ${PACKAGE}"
-npm install -g "$PACKAGE"
+echo "gbrain path: $(command -v gbrain)"
+gbrain --version
 
-if ! command -v zg >/dev/null 2>&1; then
-  echo "ERROR: npm completed but zg is not on PATH." >&2
-  exit 1
+# Chitragupta uses a deliberately tight retrieval shape for small local models.
+# This affects GBrain search budgeting only; it does not enable ambient context.
+if gbrain doctor --json >/dev/null 2>&1; then
+  gbrain config set search.mode conservative >/dev/null
+  echo "GBrain brain already initialized; search.mode=conservative"
+else
+  echo
+  echo "GBrain CLI is installed but no healthy brain is configured yet."
+  echo "Initialize once with one of these supported paths:"
+  echo "  keyword/local baseline: gbrain init --pglite"
+  echo "  LM Studio embeddings:   gbrain init --pglite --embedding-model lmstudio:<model-id> --embedding-dimensions <N>"
+  echo "Then run: gbrain config set search.mode conservative"
 fi
 
-echo "zg path: $(command -v zg)"
-zg --version || true
+cat <<EOF
 
-echo
-cat <<'EOF'
-Prerequisite installed.
-
-The first corpus index will download the configured local embedding model into
-zvec-grep's local model cache. No remote embedding provider is configured by this
-script and no Chitragupta data is uploaded.
+Pinned GBrain installed.
+  ref: ${GBRAIN_REF}
+  ambient/push context: not enabled by this installer
+  Chitragupta model surface: remains l2_recall/l2_lesson, not raw GBrain MCP
 
 Next:
   bash Model_Bench/deploy_l2_pipeline_runtime.sh

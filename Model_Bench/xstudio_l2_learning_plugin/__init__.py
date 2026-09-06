@@ -1,10 +1,8 @@
-"""xstudio-l2-learning — trust-scoped experience and learning plane for L2.
+"""xstudio-l2-learning — trust-scoped experience plane backed by GBrain.
 
-Session recording is ON. Generic automatic retrieval injection is OFF. The vault
-contains raw episodic sessions, outcome-conditioned historical cases, promoted
-facts, candidate lessons, mirrored canonical knowledge, governed solutions,
-action plans, capability-design candidates and retrieval replay data. zvec-grep
-indexes that material but never becomes the authority.
+Sessions are recorded. Generic automatic retrieval injection is not used.
+GBrain is the derivative search/graph/synthesis substrate; Chitragupta keeps the
+model-facing trust contract and live XStudio remains current-ticket truth.
 """
 from __future__ import annotations
 
@@ -12,8 +10,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
 import threading
 from datetime import datetime, timezone
@@ -25,12 +21,20 @@ TOOLSET = "l2_learning"
 RECALL_TOOL = "l2_recall"
 LESSON_TOOL = "l2_lesson"
 DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
-DEFAULT_ZG = "zg"
-QUERY_TIMEOUT_SECONDS = max(10, int(os.environ.get("L2_LEARNING_QUERY_TIMEOUT", "60")))
 MAX_QUERY_CHARS = max(100, int(os.environ.get("L2_LEARNING_MAX_QUERY_CHARS", "600")))
 MAX_RESULT_CHARS = max(1000, int(os.environ.get("L2_LEARNING_MAX_RESULT_CHARS", "7000")))
 MAX_TURN_CHARS = max(4000, int(os.environ.get("L2_LEARNING_MAX_TURN_CHARS", "65536")))
 MAX_LESSON_CHARS = max(500, int(os.environ.get("L2_LEARNING_MAX_LESSON_CHARS", "6000")))
+
+# The helper is beside this plugin in the repo and in the shared investigator
+# scripts directory after deployment. Keep source/scope routing in one module.
+for _helper_dir in (
+    Path(__file__).resolve().parent.parent,
+    Path.home() / ".hermes" / "profiles" / "l2-investigator" / "scripts",
+):
+    if str(_helper_dir) not in sys.path:
+        sys.path.insert(0, str(_helper_dir))
+from l2_gbrain import SCOPE_SOURCES, available as _gbrain_available, search as _gbrain_search  # noqa: E402
 
 _SECRET_PATTERNS = (
     re.compile(r"(--password\s+)(\S+|'[^']*'|\"[^\"]*\")", re.I),
@@ -48,21 +52,6 @@ _write_lock = threading.Lock()
 _context_lock = threading.Lock()
 _task_context: dict[str, str] = {}
 
-# Historical cases are deliberately excluded from trusted. A case is strong
-# historical evidence, not a universal rule or proof about the current ticket.
-_SCOPE_GLOBS: dict[str, list[str]] = {
-    "trusted": ["knowledge/**", "facts/**", "solutions/approved/**"],
-    "knowledge": ["knowledge/**"],
-    "facts": ["facts/**"],
-    "solutions": ["solutions/approved/**"],
-    "cases": ["cases/**"],
-    "approved_cases": ["cases/approved/**"],
-    "rejected_cases": ["cases/rejected/**"],
-    "reopened_cases": ["cases/reopened/**"],
-    "sessions": ["sessions/**"],
-    "candidates": ["candidates/**"],
-    "all": [],
-}
 _SCOPE_POLICY = {
     "trusted": ("mixed_trusted_reference", "Governed reference can guide diagnosis; current-ticket claims still require live verification."),
     "knowledge": ("canonical_reference_lead", "Git/skill reference documents behavior, not this ticket's current state."),
@@ -91,10 +80,6 @@ def _vault() -> Path:
     return Path(raw).expanduser() if raw else DEFAULT_VAULT
 
 
-def _zg() -> str:
-    return os.environ.get("CHITRAGUPTA_ZG_BIN", DEFAULT_ZG).strip() or DEFAULT_ZG
-
-
 def _ensure_layout() -> Path:
     vault = _vault()
     for rel in (
@@ -110,7 +95,8 @@ def _ensure_layout() -> Path:
 def _redact(text: str) -> str:
     out = text
     for pattern in _SECRET_PATTERNS:
-        out = pattern.sub((lambda m: m.group(1) + "[REDACTED]") if pattern.groups >= 2 else "[REDACTED]", out)
+        repl = (lambda m: m.group(1) + "[REDACTED]") if pattern.groups >= 2 else "[REDACTED]"
+        out = pattern.sub(repl, out)
     return out
 
 
@@ -144,7 +130,11 @@ def _resolve_task_context() -> None:
     if not _MY_TASK_ID:
         return
     try:
-        result = subprocess.run(["hermes", "kanban", "show", _MY_TASK_ID, "--json"], capture_output=True, text=True, timeout=8)
+        import subprocess
+        result = subprocess.run(
+            ["hermes", "kanban", "show", _MY_TASK_ID, "--json"],
+            capture_output=True, text=True, timeout=8,
+        )
         if result.returncode != 0:
             return
         data = json.loads(result.stdout or "{}")
@@ -201,53 +191,42 @@ def _write_session_turn(**kwargs: Any) -> None:
         return
 
 
-def _index_ready(vault: Path) -> bool:
-    return (vault / ".zvec-grep" / "manifest.json").exists()
-
-
-def _run_zg(args: list[str]) -> tuple[int, str, str]:
-    try:
-        p = subprocess.run([_zg(), *args], cwd=str(_ensure_layout()), capture_output=True, text=True, timeout=QUERY_TIMEOUT_SECONDS)
-        return p.returncode, p.stdout or "", p.stderr or ""
-    except FileNotFoundError:
-        return 127, "", "zg not found; install the branch's pinned zvec-grep prerequisite"
-    except subprocess.TimeoutExpired:
-        return 124, "", "zg query timed out"
-
-
 def _recall(params: dict[str, Any]) -> str:
     query = str(params.get("query") or "").strip()
     scope = str(params.get("scope") or "trusted")
     mode = str(params.get("mode") or "hybrid")
     if not query:
         return json.dumps({"ok": False, "error": "query is required", "retry_same_call": False})
-    if scope not in _SCOPE_GLOBS:
+    if scope not in SCOPE_SOURCES:
         return json.dumps({"ok": False, "error": f"unknown scope: {scope}", "retry_same_call": False})
-    if mode not in {"hybrid", "fts", "vector"}:
+    if mode not in {"hybrid", "deep", "fts", "vector"}:
         return json.dumps({"ok": False, "error": f"unknown mode: {mode}", "retry_same_call": False})
     try:
         limit = max(1, min(10, int(params.get("limit") or 5)))
     except (TypeError, ValueError):
         limit = 5
-    vault = _ensure_layout()
-    if not shutil.which(_zg()):
-        return json.dumps({"ok": False, "error": "zvec-grep is not installed; run the branch prerequisites", "retry_same_call": False})
-    if not _index_ready(vault):
-        return json.dumps({"ok": False, "error": "learning index is not ready; sync and index the corpus", "retry_same_call": False})
-    q = query[:MAX_QUERY_CHARS]
-    cmd = ["query", "--mode", "auto", "--refresh", "background", "--preview", "short", "--limit", str(limit)]
-    cmd += ["--fts", q] if mode == "fts" else ["--vector", q] if mode == "vector" else [q]
-    for glob in _SCOPE_GLOBS[scope]:
-        cmd += ["-g", glob]
-    rc, out, err = _run_zg(cmd)
-    if rc != 0:
-        return json.dumps({"ok": False, "error": f"zg query failed: {(err or out).strip()[-800:]}", "retry_same_call": False})
-    result = out.strip()
-    if len(result) > MAX_RESULT_CHARS:
-        result = result[:MAX_RESULT_CHARS].rsplit("\n", 1)[0] + "\n...[results truncated]"
+    if not _gbrain_available():
+        return json.dumps({"ok": False, "error": "gbrain is not installed", "retry_same_call": False})
+    result = _gbrain_search(query[:MAX_QUERY_CHARS], scope=scope, mode=mode, limit=limit)
+    if not result.get("ok"):
+        return json.dumps(result, ensure_ascii=False)
+    serialized = json.dumps(result.get("results"), ensure_ascii=False, default=str)
+    if len(serialized) > MAX_RESULT_CHARS:
+        serialized = serialized[:MAX_RESULT_CHARS] + "...[results truncated]"
     trust, warning = _SCOPE_POLICY[scope]
-    return json.dumps({"ok": True, "scope": scope, "trust": trust, "warning": warning, "results": result,
-                       "automatic_prefetch": False, "live_verification_required": True}, ensure_ascii=False)
+    return json.dumps({
+        "ok": True,
+        "backend": "gbrain",
+        "scope": scope,
+        "source_ids": result.get("source_ids"),
+        "requested_mode": result.get("requested_mode"),
+        "effective_mode": result.get("effective_mode"),
+        "trust": trust,
+        "warning": warning,
+        "results": serialized,
+        "automatic_prefetch": False,
+        "live_verification_required": True,
+    }, ensure_ascii=False)
 
 
 def _propose_lesson(params: dict[str, Any], **kwargs: Any) -> str:
@@ -274,24 +253,27 @@ def _propose_lesson(params: dict[str, Any], **kwargs: Any) -> str:
         "task_id": correlated.get("kanban_task_id") or _MY_TASK_ID or str(kwargs.get("task_id") or ""),
         "run_id": correlated.get("run_id", ""), "ticket_id": correlated.get("ticket_id", ""),
         "pipeline_stage": correlated.get("pipeline_stage", ""), "review_cycle": correlated.get("review_cycle", ""),
-        "route": _redact(str(params.get("route") or "").strip()), "tags": _redact(str(params.get("tags") or "").strip()),
-        "content_hash": digest,
+        "route": _redact(str(params.get("route") or "").strip()),
+        "tags": _redact(str(params.get("tags") or "").strip()), "content_hash": digest,
     }
     fm = "\n".join(f"{k}: {json.dumps(v, ensure_ascii=False)}" for k, v in meta.items())
     body = f"---\n{fm}\n---\n\n# Candidate lesson\n\n{summary}\n\n# Evidence / provenance\n\n{evidence}\n\n> This file is intentionally untrusted until promoted by the learning curator.\n"
     with _write_lock:
         path.write_text(body, encoding="utf-8")
-    return json.dumps({"ok": True, "status": "candidate_recorded", "path": str(path), "trust": "unverified_candidate",
-                       "note": "Candidate only; promotion is a separate reviewed/outcome-gated operation."}, ensure_ascii=False)
+    return json.dumps({
+        "ok": True, "status": "candidate_recorded", "path": str(path),
+        "trust": "unverified_candidate",
+        "note": "Candidate only; promotion is a separate reviewed/outcome-gated operation.",
+    }, ensure_ascii=False)
 
 
 _RECALL_SCHEMA = {
     "name": RECALL_TOOL,
-    "description": "Explicit trust-scoped hybrid recall. Nothing is injected automatically; current-ticket claims still require live verification.",
+    "description": "Explicit trust-scoped GBrain recall. No automatic prefetch; current-ticket claims still require live verification.",
     "parameters": {"type": "object", "properties": {
         "query": {"type": "string"},
-        "scope": {"type": "string", "enum": list(_SCOPE_GLOBS)},
-        "mode": {"type": "string", "enum": ["hybrid", "fts", "vector"]},
+        "scope": {"type": "string", "enum": list(SCOPE_SOURCES)},
+        "mode": {"type": "string", "enum": ["hybrid", "deep", "fts", "vector"]},
         "limit": {"type": "integer", "minimum": 1, "maximum": 10}},
         "required": ["query"], "additionalProperties": False},
 }
@@ -301,18 +283,25 @@ _LESSON_SCHEMA = {
     "parameters": {"type": "object", "properties": {
         "operation": {"type": "string", "enum": ["propose"]},
         "kind": {"type": "string", "enum": ["operational_heuristic", "failure_pattern", "schema_fact", "workflow_lesson", "tool_lesson"]},
-        "summary": {"type": "string"}, "evidence": {"type": "string"}, "route": {"type": "string"}, "tags": {"type": "string"}},
+        "summary": {"type": "string"}, "evidence": {"type": "string"},
+        "route": {"type": "string"}, "tags": {"type": "string"}},
         "required": ["summary", "evidence"], "additionalProperties": False},
 }
 
 
 def register(ctx: Any) -> None:
-    ctx.register_tool(name=RECALL_TOOL, toolset=TOOLSET, schema=_RECALL_SCHEMA,
-                      handler=lambda params, **kwargs: _recall(params),
-                      description="Scoped zvec recall with explicit trust semantics.")
-    ctx.register_tool(name=LESSON_TOOL, toolset=TOOLSET, schema=_LESSON_SCHEMA,
-                      handler=lambda params, **kwargs: _propose_lesson(params, **kwargs) if str(params.get("operation") or "propose") == "propose" else json.dumps({"ok": False, "error": "only operation='propose' is model-accessible"}),
-                      description="Record an unverified reusable lesson candidate with provenance.")
+    ctx.register_tool(
+        name=RECALL_TOOL, toolset=TOOLSET, schema=_RECALL_SCHEMA,
+        handler=lambda params, **kwargs: _recall(params),
+        description="Trust-scoped GBrain retrieval behind the Chitragupta safety contract.",
+    )
+    ctx.register_tool(
+        name=LESSON_TOOL, toolset=TOOLSET, schema=_LESSON_SCHEMA,
+        handler=lambda params, **kwargs: _propose_lesson(params, **kwargs)
+        if str(params.get("operation") or "propose") == "propose"
+        else json.dumps({"ok": False, "error": "only operation='propose' is model-accessible"}),
+        description="Record an unverified reusable lesson candidate with provenance.",
+    )
     ctx.register_hook("post_llm_call", _write_session_turn)
     if _MY_TASK_ID:
         threading.Thread(target=_resolve_task_context, daemon=True, name="l2-learning-task-context").start()

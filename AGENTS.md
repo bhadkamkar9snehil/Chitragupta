@@ -140,12 +140,7 @@ Never fabricate a table, view, column, stored procedure, status or identifier.
 
 `xstudio-l2-identity` binds identity-sensitive tool calls to the actual assigned Kanban task.
 
-The model may choose what evidence to inspect. It may not choose a different `run_id`/`ticket_id` for:
-
-- incident evidence;
-- run ledger writes;
-- action plan provenance;
-- plan validation/access.
+The model may choose what evidence to inspect. It may not choose a different `run_id`/`ticket_id` for incident evidence, run ledger writes, action plan provenance, or plan validation/access.
 
 Conflicting model-supplied identity is blocked.
 
@@ -162,15 +157,17 @@ facts/                     promoted operational heuristics
 cases/*                    outcome-labelled historical analogies/counterexamples
 sessions/*                 redacted unverified episodic history
 candidates/*               unverified lessons
+GBrain                     derivative retrieval/graph/search telemetry
 mem0                       compact durable operational behavior
-zvec index                 disposable retrieval substrate
 ```
 
 Session recording is ON.
 
-Generic automatic zvec prefetch is OFF. Similarity is not trust.
+Generic automatic prefetch is OFF. This includes GBrain push/reflex context. Similarity is not trust.
 
-Use explicit `l2_recall` scopes. Historical cases and sessions still require current-ticket live verification.
+GBrain L2 sources are separate and non-federated. `l2_recall` names source IDs explicitly; `trusted` includes only `l2-knowledge`, `l2-facts`, and `l2-solutions`.
+
+Do not expose raw GBrain MCP tools as a second worker memory surface. Historical cases, sessions and candidates still require explicit scopes and current-ticket live verification.
 
 ## 9. Governed SQL Solutions
 
@@ -188,11 +185,11 @@ review_evidence
 
 `solutions/approved/` is generated output owned only by that exporter. Human-authored knowledge belongs in Git or promoted facts.
 
-When Solution synchronization runs, missing or semantically drifted approved entries are removed from trusted scope and reported for re-review.
+When Solution synchronization runs, missing or semantically drifted approved entries are removed from trusted scope and reported for re-review. GBrain synchronizes only the surviving generated files into `l2-solutions`.
 
 ## 10. Learning sidecar
 
-`l2_learning_cycle.py` is the one learning sidecar boundary.
+`l2_learning_cycle.py` is the one lifecycle-side learning boundary.
 
 It may:
 
@@ -212,9 +209,34 @@ change action registry policy
 perform XBatch mutation
 ```
 
-Learning failures must not become lifecycle failures.
+Learning failures must not become lifecycle failures. GBrain synchronization is derivative corpus maintenance, not lifecycle authority.
 
-## 11. Corrective-action capability boundary
+## 11. GBrain retrieval contract
+
+`Model_Bench/l2_gbrain.py` owns the GBrain source/scope map and bounded read adapter.
+
+`Model_Bench/sync_l2_gbrain.py` owns GBrain corpus synchronization. It may create a local-only Git history inside the learning vault because GBrain path sources reconcile from Git state. It must not create or push a remote.
+
+Trust sources:
+
+```text
+l2-knowledge
+l2-facts
+l2-solutions
+l2-approved-cases
+l2-rejected-cases
+l2-reopened-cases
+l2-sessions
+l2-candidates
+```
+
+All are non-federated.
+
+`hybrid` uses GBrain `search` (cheap hybrid, no LLM query expansion). `deep` explicitly uses GBrain `query`. Legacy `fts` and `vector` remain compatibility inputs only.
+
+GBrain's graph, synthesis, contradiction/gap and dream machinery may be adopted behind Chitragupta governance, but synthesized output is candidate evidence until promoted. Do not turn those features into ambient truth.
+
+## 12. Corrective-action capability boundary
 
 Current model-facing `l2_actions` operations:
 
@@ -230,7 +252,7 @@ There is no execute operation.
 
 Repeated reviewed `NEEDS_HUMAN_ACTION` outcomes can create unverified action candidates. The miner owns observed evidence only and must not invent risk, parameters, execution target, preconditions, idempotency, verification, rollback or approval policy.
 
-The operator/control-plane curator has only the states that currently matter:
+The curator states are:
 
 ```text
 needs_executor_design
@@ -238,15 +260,13 @@ needs_executor_design
 -> registry_entry
 ```
 
-A candidate may also be rejected.
-
-The candidate carries at most one reviewed `draft_contract`; do not create parallel design representations.
+A candidate may also be rejected. The candidate carries at most one reviewed `draft_contract`; do not create parallel design representations.
 
 Before `shadow_ready`, inspect and verify the real supported XBatch SP/API/service operation and complete contract.
 
 Promotion adds only `mode=shadow` and never raises registry `global_mode`.
 
-## 12. Future XBatch execution
+## 13. Future XBatch execution
 
 Current arbitrary SQL mutation remains unavailable to workers. That is the current authority boundary, not the forever product destination.
 
@@ -256,7 +276,7 @@ A future supervised/autonomous executor must be capability-specific, determinist
 
 Do not build speculative execution state machines before a real shadow capability and measured shadow evidence require them.
 
-## 13. Current profiles
+## 14. Current profiles
 
 Active/compatibility profiles:
 
@@ -286,7 +306,7 @@ l2_actions
 
 `tool_search` remains off for these narrow specialist profiles.
 
-## 14. Repository authority order
+## 15. Repository authority order
 
 When sources disagree:
 
@@ -302,9 +322,9 @@ When sources disagree:
 10. `README.md`;
 11. historical `Plans/` / `Agent_Comms/`.
 
-The runtime learning vault is experience/derived retrieval material, not canonical project policy.
+The runtime learning vault and GBrain are experience/derived retrieval material, not canonical project policy.
 
-## 15. SQL deployment
+## 16. SQL deployment
 
 Edit numbered SQL sources, not the generated full-install bundle directly.
 
@@ -326,11 +346,11 @@ The full install is generated from:
 
 Keep `Knowledge/00_Hermes_L2_FULL_INSTALL.sql` aligned with the numbered sources.
 
-## 16. Deployment and validation
+## 17. Deployment and validation
 
 `deploy/` is the reproducible mirror of live Hermes profile artifacts.
 
-`Model_Bench/deploy_l2_pipeline_runtime.sh` installs lifecycle/adaptive runtime components. Learning-vault refresh is best-effort and must not leave deterministic runtime deployment half-finished.
+`Model_Bench/deploy_l2_pipeline_runtime.sh` installs lifecycle/adaptive runtime components. Learning/GBrain refresh is best-effort and must not leave deterministic runtime deployment half-finished.
 
 Validation is local:
 
@@ -342,7 +362,7 @@ Do not use GitHub Actions as validation authority.
 
 The aggregate validator must include every active contract test. When adding/removing an adaptive component, update the validator in the same change.
 
-## 17. Security and repository hygiene
+## 18. Security and repository hygiene
 
 Do not commit or print credentials.
 
@@ -350,7 +370,7 @@ Do not litter the project root with one-off scripts or SQL files. Reusable utili
 
 Do not reintroduce model-driven database transport or package installation as a fallback.
 
-## 18. Change discipline
+## 19. Change discipline
 
 Ponytail the system:
 
@@ -364,17 +384,6 @@ make the shortest correct change
 
 Prefer one mechanism and one owner.
 
-Any lifecycle change must preserve or deliberately revise:
-
-- explicit WIP ownership;
-- one lifecycle mutation authority;
-- exactly one reviewer per publishable completion;
-- immutable reviewer proposal;
-- deterministic/idempotent publication;
-- bounded review cycles;
-- reconciliation after event loss;
-- persisted SQL/Helpdesk postconditions;
-- live evidence over retrieval;
-- harness-owned incident identity.
+Any lifecycle change must preserve or deliberately revise explicit WIP ownership, one lifecycle mutation authority, exactly one reviewer per publishable completion, immutable reviewer proposal, deterministic/idempotent publication, bounded review cycles, reconciliation after event loss, persisted SQL/Helpdesk postconditions, live evidence over retrieval, and harness-owned incident identity.
 
 Do not add future-only architecture without a current caller, current failure, real ticket evidence or measured need.

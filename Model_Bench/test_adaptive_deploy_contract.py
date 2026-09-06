@@ -42,13 +42,15 @@ class AdaptiveDeployContractTests(unittest.TestCase):
                     (ROOT / "deploy" / "plugins" / f"{plugin}.plugin.yaml").exists()
                 )
 
-    def test_deployer_contains_adaptive_plugins_without_future_executor_scaffolding(self):
+    def test_deployer_uses_gbrain_without_exposing_a_second_agent_memory_surface(self):
         text = (ROOT / "Model_Bench" / "deploy_l2_pipeline_runtime.sh").read_text(
             encoding="utf-8"
         )
         for plugin in PLUGINS:
             self.assertIn(plugin, text)
         for script in (
+            "l2_gbrain.py",
+            "sync_l2_gbrain.py",
             "sync_l2_outcomes.py",
             "mine_l2_learning_candidates.py",
             "mine_l2_action_capability_candidates.py",
@@ -57,7 +59,15 @@ class AdaptiveDeployContractTests(unittest.TestCase):
         ):
             self.assertIn(script, text)
         self.assertIn("solution_export_policy.json", text)
+        self.assertIn("command -v gbrain", text)
+        self.assertNotIn("command -v zg", text)
         self.assertNotIn("xstudio_action_receipt", text)
+        self.assertNotIn("hermes mcp add gbrain", text)
+
+    def test_gbrain_sources_are_non_federated_by_contract(self):
+        text = (ROOT / "Model_Bench" / "sync_l2_gbrain.py").read_text(encoding="utf-8")
+        self.assertIn('"--no-federated"', text)
+        self.assertIn("GBrain source must be non-federated", text)
 
     def test_governed_solution_policy_starts_fail_closed_and_explicit(self):
         policy = json.loads(

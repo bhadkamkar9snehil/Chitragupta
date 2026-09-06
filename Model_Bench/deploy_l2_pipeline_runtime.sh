@@ -8,7 +8,7 @@ INVESTIGATOR_PROFILES=(l2-investigator l2-investigator-primary)
 REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
 RETIRED_DEPLOYED_SCRIPTS=(dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py)
 LEARNING_VAULT="${CHITRAGUPTA_L2_LEARNING_VAULT:-$HOME/.hermes/l2-learning}"
-LEARNING_EMBEDDING="${CHITRAGUPTA_ZVEC_EMBEDDING:-local/potion-retrieval-32m}"
+GBRAIN_SYNC_INTERVAL="${CHITRAGUPTA_GBRAIN_SYNC_INTERVAL:-900}"
 
 mkdir -p "$SCRIPTS_DIR"
 for retired in "${RETIRED_DEPLOYED_SCRIPTS[@]}"; do
@@ -30,6 +30,8 @@ for f in \
   run_coalesced.py \
   drain_and_summarize.py \
   l2_learning_curator.py \
+  l2_gbrain.py \
+  sync_l2_gbrain.py \
   sync_l2_outcomes.py \
   mine_l2_learning_candidates.py \
   mine_l2_action_capability_candidates.py \
@@ -44,18 +46,16 @@ test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
 cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
 cp "$ROOT/deploy/xstudio_action_capabilities.json" "$SCRIPTS_DIR/xstudio_action_capabilities.json"
 
-# Learning/KB refresh is intentionally not deployment authority. A missing zvec
-# dependency or governed-Solution drift must not leave the deterministic L2
-# runtime half-deployed. Local validation remains strict.
+# Learning/KB refresh is not lifecycle authority. GBrain is derivative state;
+# its failure must not leave deterministic Helpdesk deployment half-finished.
 refresh_learning_vault() {
-  if ! command -v zg >/dev/null 2>&1; then
-    echo "WARNING: zg missing; skipping learning-vault refresh. Run Model_Bench/install_l2_learning_prereqs.sh."
+  if ! command -v gbrain >/dev/null 2>&1; then
+    echo "WARNING: gbrain missing; skipping learning refresh. Run Model_Bench/install_l2_learning_prereqs.sh."
     return 0
   fi
 
   echo "== Learning corpus sync =="
-  if ! python3 "$ROOT/Model_Bench/sync_l2_learning_corpus.py" \
-      --vault "$LEARNING_VAULT" --no-index; then
+  if ! python3 "$ROOT/Model_Bench/sync_l2_learning_corpus.py" --vault "$LEARNING_VAULT"; then
     echo "WARNING: canonical learning-corpus sync failed; continuing runtime deployment"
     return 0
   fi
@@ -66,19 +66,12 @@ refresh_learning_vault() {
     --vault "$LEARNING_VAULT" \
     --policy "$ROOT/deploy/solution_export_policy.json" || solution_rc=$?
 
-  # Always refresh the index after a Solution sync attempt: a drift failure may
-  # have removed stale trusted files.
-  echo "== Learning vault index =="
-  zg index --embedding "$LEARNING_EMBEDDING" "$LEARNING_VAULT" \
-    || echo "WARNING: learning-vault indexing failed; explicit recall may be unavailable"
+  echo "== GBrain trust-source sync =="
+  python3 "$ROOT/Model_Bench/sync_l2_gbrain.py" --vault "$LEARNING_VAULT" \
+    || echo "WARNING: GBrain refresh failed; explicit recall may be stale/unavailable"
 
   if [[ "$solution_rc" -ne 0 ]]; then
-    echo "WARNING: governed Solution sync found missing/drifted approvals; stale trusted exports were removed"
-  fi
-
-  if [[ "${CHITRAGUPTA_ZVEC_SERVER:-1}" != "0" ]]; then
-    zg server on >/dev/null 2>&1 \
-      || echo "WARNING: zg server did not start; direct mode remains available"
+    echo "WARNING: governed Solution sync found missing/drifted approvals; stale trusted exports were removed before GBrain refresh"
   fi
 }
 
@@ -162,6 +155,35 @@ done
 echo "== Root config =="
 python3 "$ROOT/Model_Bench/patch_profile_config.py" --enable-plugin-only "$HOME/.hermes/config.yaml"
 
+install_gbrain_sync_service() {
+  if ! command -v gbrain >/dev/null 2>&1 || ! gbrain doctor --json >/dev/null 2>&1; then
+    echo "WARNING: healthy GBrain brain not detected; continuous GBrain sync service not enabled"
+    return 0
+  fi
+  local unit_dir="$HOME/.config/systemd/user"
+  local unit="$unit_dir/chitragupta-gbrain-sync.service"
+  mkdir -p "$unit_dir"
+  cat > "$unit" <<EOF
+[Unit]
+Description=Chitragupta GBrain trust-source sync
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/.hermes/profiles/l2-investigator/scripts/sync_l2_gbrain.py --vault ${LEARNING_VAULT} --watch --interval ${GBRAIN_SYNC_INTERVAL}
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+EOF
+  systemctl --user daemon-reload
+  systemctl --user enable --now chitragupta-gbrain-sync.service >/dev/null 2>&1 \
+    || echo "WARNING: could not enable continuous GBrain sync service"
+}
+
+install_gbrain_sync_service
+
 if [[ "${1:-}" != "--no-restart" ]]; then
   for profile in "${ACTIVE_PROFILES[@]}"; do
     systemctl --user restart "hermes-gateway-$profile.service" 2>/dev/null || true
@@ -170,10 +192,12 @@ fi
 
 echo
 echo "Deployed Chitragupta adaptive L2 runtime."
-echo "  evidence:          xstudio_l2 + harness-owned incident identity"
-echo "  learning:          sessions ON; explicit l2_recall; generic prefetch OFF"
+echo "  evidence:           xstudio_l2 + harness-owned incident identity"
+echo "  learning:           sessions ON; explicit l2_recall; generic prefetch OFF"
+echo "  brain:              GBrain, explicit non-federated trust sources"
+echo "  brain freshness:    systemd user sync loop every ${GBRAIN_SYNC_INTERVAL}s when GBrain is healthy"
 echo "  governed solutions: explicit hash-pinned sync; learning failures do not block deployment"
-echo "  actions:           l2_actions planning only; NO execute operation"
+echo "  actions:            l2_actions planning only; NO execute operation"
 echo "  capability backlog: repeated reviewed human actions -> unverified candidates"
-echo "  mem0 provider:     unchanged"
+echo "  mem0 provider:      unchanged"
 echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"

@@ -70,7 +70,9 @@ Shared learning vault:
   eval/
 ```
 
-`zvec-grep` is a local BM25 + vector + RRF retrieval substrate. Its index is disposable.
+GBrain is the derivative retrieval/graph substrate for this corpus. Chitragupta does not expose raw GBrain MCP tools to L2 workers; the model-facing interface remains `l2_recall` and `l2_lesson`.
+
+Every trust lane is registered as a separate non-federated GBrain source. `trusted` therefore searches only canonical knowledge, promoted facts and governed Solutions; historical cases, sessions and candidates require explicit scopes.
 
 ### Sessions are recorded
 
@@ -78,9 +80,13 @@ Completed L2 turns are recorded as redacted `unverified_episodic` history. Succe
 
 ### Generic automatic prefetch is off
 
-Similarity is not truth. Historical sessions include rejected hypotheses and stale state, so mixed top-k memory is not injected automatically into every new ticket.
+GBrain can volunteer/push related context, but Chitragupta deliberately does not enable that lane for L2. Similarity is not truth. Historical sessions include rejected hypotheses and stale state, so mixed top-k memory is not silently injected into every new ticket.
 
-`l2_recall` is explicit and trust-scoped. `trusted` contains canonical Git reference, promoted facts and explicitly governed reusable Solutions. Historical cases and raw sessions remain separate scopes and still require current-ticket verification.
+`l2_recall` is explicit and trust-scoped. Current-ticket claims still require live verification through `xstudio_l2`.
+
+### Retrieval modes
+
+`hybrid` uses GBrain's cheap hybrid `search` path. `deep` explicitly opts into GBrain's heavier `query` path. Result count and returned context are bounded by Chitragupta independently of GBrain's own search mode.
 
 ## Outcome-conditioned learning
 
@@ -104,27 +110,36 @@ candidate lesson != promoted fact
 
 `dbo.Hermes_Solution_Article_Mst_Tbl` is a reusable-knowledge source, but an active row is not automatically trusted.
 
-`Model_Bench/sync_l2_approved_solutions.py` exports only entries explicitly approved in `deploy/solution_export_policy.json` by:
+`Model_Bench/sync_l2_approved_solutions.py` exports only entries explicitly approved in `deploy/solution_export_policy.json` by semantic content hash and review provenance. `solutions/approved/` is generated output owned only by that exporter.
 
-```text
-solution_id
-semantic content_sha256
-approved_by
-approved_at
-review_evidence
+When synchronization runs, missing or semantically drifted approved Solutions are removed from trusted scope and reported until re-reviewed. GBrain then sees only the surviving governed files in `l2-solutions`.
+
+## GBrain integration
+
+`Model_Bench/l2_gbrain.py` owns the source/scope map and bounded retrieval adapter.
+
+`Model_Bench/sync_l2_gbrain.py`:
+
+- checkpoints the learning vault in a local-only Git repository;
+- registers each trust lane as a non-federated GBrain source;
+- synchronizes every source explicitly;
+- optionally runs `gbrain embed --stale` when `CHITRAGUPTA_GBRAIN_EMBED=1`.
+
+GBrain is installed from a pinned GitHub commit, never the unrelated npm package named `gbrain`.
+
+For local embeddings, GBrain supports LM Studio:
+
+```bash
+gbrain init --pglite \
+  --embedding-model lmstudio:<model-id> \
+  --embedding-dimensions <N>
 ```
 
-`solutions/approved/` is generated output owned only by that exporter. Trusted text contains governed reusable guidance, not mutable operational telemetry.
-
-When synchronization runs, missing or semantically drifted approved Solutions are removed from trusted scope and reported until re-reviewed.
+The actual LM Studio embedding model ID and its native dimensions are operator-supplied rather than guessed by Chitragupta.
 
 ## Action-capability backlog
 
-`mine_l2_action_capability_candidates.py` looks only at approved historical `NEEDS_HUMAN_ACTION` cases. Repeated lexically equivalent human actions across distinct tickets create an unverified candidate under:
-
-```text
-actions/candidates/
-```
+`mine_l2_action_capability_candidates.py` looks only at approved historical `NEEDS_HUMAN_ACTION` cases. Repeated human actions across distinct tickets create an unverified candidate under `actions/candidates/`.
 
 The miner records observed evidence only. It does not invent risk, parameters, executor paths, preconditions, verification or rollback.
 
@@ -141,8 +156,6 @@ shadow_ready
 registry_entry
 ```
 
-The curator's `list` command is also the backlog view and ranks candidates by distinct reviewed tickets, then observation count.
-
 Promotion adds only a `mode=shadow` registry entry and never raises `global_mode`.
 
 ## Current action surface
@@ -153,13 +166,7 @@ Registry:
 deploy/xstudio_action_capabilities.json
 ```
 
-Model-facing toolset:
-
-```text
-l2_actions
-```
-
-Operations:
+Model-facing operations:
 
 ```text
 list
@@ -180,8 +187,8 @@ live SQL / Helpdesk      current incident truth
 run ledger / traces      current incident execution evidence
 Git Knowledge/           canonical project/domain reference
 solutions/approved       governed reusable SQL-Solution mirror
-mem0                     compact durable operational behavior
-zvec learning vault      high-recall experience/replay substrate
+GBrain                    broad retrieval, graph and search telemetry over derivative corpus
+mem0                      compact durable operational behavior
 ```
 
 Do not collapse those authority classes.
@@ -194,13 +201,11 @@ Repository validation is local, not GitHub Actions:
 bash Model_Bench/validate_l2_pipeline_local.sh
 ```
 
-The validator covers lifecycle contracts, typed tools, identity binding, learning-vault preservation, outcome learning, governed Solution export, capability mining/curation, action planning, retrieval checks, live profile configuration, workflow discovery and reconciliation dry-run.
+The validator covers lifecycle contracts, typed tools, identity binding, GBrain source isolation, learning-vault preservation, outcome learning, governed Solution export, capability mining/curation, action planning, retrieval checks, live profile configuration, workflow discovery and reconciliation dry-run.
 
 ## Next evidence-driven step
 
-Do not add more framework before there is evidence for it.
-
-Use the real learning history to identify the strongest repeated human corrective action:
+Use real learning history to identify the strongest repeated human corrective action:
 
 ```bash
 python3 Model_Bench/l2_action_capability_curator.py list
@@ -208,4 +213,4 @@ python3 Model_Bench/l2_action_capability_curator.py list
 
 Then inspect the actual supported XBatch SP/API/service implementation and only after that draft the first real shadow contract.
 
-The future supervised/autonomous executor should be introduced only when a real shadow capability and measured shadow evidence justify it. Its audit/outcome mechanism should be designed together with that executor, not as speculative standalone scaffolding.
+GBrain's graph, contradiction/gap analysis and dream/synthesis machinery are the next learning-plane opportunities, but synthesized output must enter Chitragupta as candidate evidence rather than automatic truth.

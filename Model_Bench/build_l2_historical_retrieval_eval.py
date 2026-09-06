@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Build deterministic zvec retrieval-evaluation cases from real L2 history.
+"""Build deterministic retrieval-evaluation cases from real L2 history.
 
 The static branch smoke set proves policy text remains retrievable. This builder
 creates a second, runtime-derived set that asks a more useful question:
 
-    Given the *earliest recorded user/task context* from an actual L2 run, can
-    retrieval find the historical reviewer/publisher outcome for that same run?
+    Given the earliest recorded user/task context from an actual L2 run, can
+    GBrain-backed recall find the historical reviewer/publisher outcome for that
+    same run?
 
 No LLM judge is used. The generated JSONL points at an exact historical case
-filename and the existing benchmark checks whether zvec returns that file in its
-bounded result set.
+filename and the existing benchmark checks whether bounded retrieval returns it.
 
-Runtime data stays under the learning vault and is never committed to Git.
+Runtime data stays under the learning vault and is never committed to the
+Chitragupta repository.
 """
 from __future__ import annotations
 
@@ -68,8 +69,6 @@ def _section(text: str, heading: str) -> str:
 
 
 def _clean_query(text: str) -> str:
-    # Session user text can contain the full Kanban card. Keep its useful lexical
-    # evidence while removing giant whitespace runs and inline data-image residue.
     value = re.sub(r"data:image/[^;]+;base64,[A-Za-z0-9+/=\\]+", " [image] ", text, flags=re.I)
     value = " ".join(value.split())
     return value[:MAX_QUERY_CHARS].strip()
@@ -110,9 +109,6 @@ def build_cases(vault: Path, *, max_cases: int = 500) -> list[dict[str, Any]]:
             case_id = str(meta.get("case_id") or path.stem).strip()
             if not run_id or case_id in seen_case_ids or run_id not in queries:
                 continue
-
-            # Earliest lexical file order is a stable proxy for the first recorded
-            # turn. We deliberately do not use the outcome text itself as the query.
             query, session_path = sorted(queries[run_id], key=lambda item: str(item[1]))[0]
             cases.append({
                 "id": f"history-{bucket}-{case_id}",

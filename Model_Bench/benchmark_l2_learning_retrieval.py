@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark Chitragupta's explicit zvec learning retrieval against JSONL cases.
+"""Benchmark Chitragupta's explicit GBrain-backed recall against JSONL cases.
 
 This is a deterministic retrieval smoke/evaluation harness, not an LLM judge.
 Each case declares lexical evidence that should or should not appear in the
@@ -23,7 +23,6 @@ import argparse
 import importlib.util
 import json
 import statistics
-import sys
 import time
 from pathlib import Path
 

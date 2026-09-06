@@ -20,17 +20,11 @@ workflow, evidence attribution,
 side-effect control, or outcome verification
 ```
 
-Rules are kept because they protect that goal, not because an older design happened to contain them.
-
 ## 2. Current four-plane architecture
 
 ```text
 CONTROL
-  deterministic claim
-  investigator
-  normalize
-  frozen independent review
-  deterministic publish / bounded rework
+  deterministic claim -> investigate -> normalize -> review -> publish/rework
 
 EVIDENCE
   xstudio_l2 typed reads
@@ -44,6 +38,7 @@ EXPERIENCE
   governed reference/solution retrieval
   conservative lesson/action candidate mining
   replay and retrieval measurement
+  GBrain retrieval/graph substrate
 
 ACTION
   typed capability registry
@@ -64,33 +59,33 @@ review approval on an old case != universal truth
 planning an action != executing an action
 ```
 
-### Session recording is implemented and ON
+### Session recording is ON
 
-Completed investigator/reviewer turns are stored as redacted:
+Completed investigator/reviewer turns are stored redacted with:
 
 ```text
 trust: unverified_episodic
 ```
 
-This history intentionally contains useful mistakes as well as successes.
+This history intentionally retains useful mistakes as well as successes.
 
-### Generic automatic prefetch is intentionally OFF
+### Generic automatic prefetch is OFF
 
-Similarity answers "what looks related?", not "what is true?".
+GBrain supports push/volunteered context, but Chitragupta does not enable that lane for L2 workers.
 
-A prior hallucination or reviewer-rejected hypothesis is valuable replay data but must not silently enter every future ticket. Retrieval is therefore explicit and trust-scoped.
+Similarity and entity relevance answer "what looks related?". They do not answer "what is true for this ticket?". A reviewer-rejected hypothesis is valuable historical evidence but is dangerous if silently injected before a new investigation. Therefore retrieval is explicit, stage-aware and trust-scoped through `l2_recall`.
 
-A future automatic context builder is acceptable only if it is deterministic, stage-aware and trust-aware. Generic mixed-memory top-k injection is not.
+No raw GBrain MCP surface is exposed to the worker profiles. Chitragupta keeps the narrow model-facing contract.
 
-## 4. Shared learning vault
+## 4. Learning vault and GBrain
 
-Default:
+Source material remains under:
 
 ```text
 ~/.hermes/l2-learning/
 ```
 
-Current layout:
+Layout:
 
 ```text
 sessions/
@@ -111,31 +106,84 @@ archive/
   candidates/
 ```
 
-`.zvec-grep/` is a disposable retrieval index.
+The vault is source material. GBrain's database, chunks, embeddings, graph edges and search telemetry are **derivative state** and may be rebuilt.
 
-The canonical Git mirror under `knowledge/` can be rebuilt without touching runtime experience.
+`sync_l2_gbrain.py` keeps a local-only Git checkpoint of the vault because GBrain path sources reconcile against Git state. It creates no remote and pushes nowhere.
 
-## 5. Trust scopes
+## 5. GBrain trust topology
 
-`l2_recall` separates source classes:
+Every trust lane is a separate **non-federated** GBrain source:
+
+| GBrain source | Vault material |
+|---|---|
+| `l2-knowledge` | `knowledge/` |
+| `l2-facts` | `facts/` |
+| `l2-solutions` | `solutions/approved/` |
+| `l2-approved-cases` | `cases/approved/` |
+| `l2-rejected-cases` | `cases/rejected/` |
+| `l2-reopened-cases` | `cases/reopened/` |
+| `l2-sessions` | `sessions/` |
+| `l2-candidates` | `candidates/` |
+
+Non-federation is deliberate. An unqualified GBrain search must not silently combine trusted guidance with rejected hypotheses or raw sessions.
+
+`l2_recall` maps semantic scopes to explicit source IDs:
 
 | Scope | Meaning |
 |---|---|
-| `trusted` | canonical Git reference + promoted facts + explicitly governed reusable Solutions |
-| `knowledge` | Git/skill mirror |
+| `trusted` | `l2-knowledge,l2-facts,l2-solutions` |
+| `knowledge` | canonical Git/skill mirror |
 | `facts` | promoted operational heuristics |
-| `solutions` | explicitly governed reusable SQL Solutions |
+| `solutions` | governed reusable SQL Solutions |
 | `approved_cases` | old proposal passed review + publication postconditions |
 | `rejected_cases` | reviewer-rejected counterexamples |
 | `reopened_cases` | old resolution later regressed/reopened |
-| `cases` | mixed historical outcomes |
+| `cases` | all three historical outcome sources |
 | `sessions` | raw unverified episodic history |
 | `candidates` | unreviewed lesson candidates |
-| `all` | explicitly mixed/untrusted retrieval |
+| `all` | every L2 source, explicitly mixed/untrusted |
 
-Historical cases are deliberately excluded from `trusted`.
+Historical cases remain excluded from `trusted`.
 
-## 6. Outcome-conditioned learning
+## 6. Why GBrain replaces zvec-grep
+
+GBrain is now the intended broad retrieval substrate for this branch rather than a second memory system beside zvec.
+
+It adds capabilities useful to the product without changing authority:
+
+```text
+hybrid keyword/vector retrieval
+explicit source isolation
+search telemetry and tuning
+graph edges and traversal
+citation-aware synthesis
+gap/contradiction analysis
+Hermes transcript ingestion support
+dream/maintenance machinery
+local LM Studio provider support
+```
+
+Chitragupta deliberately does **not** expose the whole GBrain tool surface to the 9B workers. `l2_recall` remains the safety and trust adapter; `l2_lesson` remains the only model-facing learning write and still writes an unverified candidate, not truth.
+
+`hybrid` uses GBrain's cheap hybrid `search` lane. `deep` explicitly opts into GBrain `query` and its heavier retrieval path. Legacy `fts` maps to the cheap lane and legacy `vector` maps to `deep` until callers are migrated.
+
+## 7. GBrain and mem0 have different jobs
+
+For now:
+
+```text
+live SQL        = current incident truth
+run ledger      = this incident's durable evidence
+Git/Solutions   = reusable authority
+GBrain          = broad experience/knowledge retrieval + graph substrate
+mem0            = small operational behavior hints
+```
+
+Do not create a universal "memory" bucket.
+
+GBrain may eventually absorb mem0's narrow role, but only after real retrieval and behavior comparisons show that removal is an improvement.
+
+## 8. Outcome-conditioned learning
 
 Implemented:
 
@@ -150,7 +198,7 @@ published resolution later leaves terminal state
     -> cases/reopened
 ```
 
-`l2_learning_cycle.py` is the single best-effort sidecar:
+`l2_learning_cycle.py` remains the single best-effort lifecycle-side learning boundary:
 
 ```text
 sync outcomes
@@ -160,17 +208,11 @@ sync outcomes
 
 It is not lifecycle authority. A learning failure must not block ticket reconciliation, review or publication.
 
-### Lesson candidates
+GBrain synchronization is derivative corpus maintenance and is kept outside lifecycle correctness.
 
-`mine_l2_learning_candidates.py` creates unverified candidates from strong lifecycle signals such as reviewer rejection, reopen/regression, and repeated lexically equivalent approved root causes.
+## 9. Governed reusable SQL Solutions
 
-Promotion remains separate.
-
-## 7. Governed reusable SQL Solutions
-
-The SQL Solution table is a knowledge source, not automatic trusted memory.
-
-Implemented governance bridge:
+An active SQL Solution is a knowledge source, not automatic trusted memory.
 
 ```text
 active SQL Solution
@@ -186,40 +228,34 @@ deploy/solution_export_policy.json
     | sync re-reads live SQL
     v
 solutions/approved/<id>.md
+    |
+    v
+GBrain source l2-solutions
 ```
 
 `solutions/approved/` has one owner: `sync_l2_approved_solutions.py`.
 
-Consequences:
+An unapproved, missing or semantically drifted generated article leaves trusted scope when synchronization runs. The exporter is read-only to SQL.
 
-- hand-authored knowledge does not live there;
-- mutable operational telemetry is not part of trusted article text;
-- when synchronization runs, an unapproved, missing or semantically drifted generated article is removed from trusted scope;
-- a sync error reports governance failure but does not become lifecycle/deployment authority.
-
-The exporter is read-only to SQL.
-
-## 8. Harness-owned incident identity
+## 10. Harness-owned incident identity
 
 `xstudio-l2-identity` binds identity-sensitive tool calls to the actual Kanban task.
-
-The long-term rule is:
 
 ```text
 model chooses investigation/action semantics
 harness chooses incident identity and authority
 ```
 
-Conflicting model-supplied run/ticket identity is blocked.
+GBrain retrieval can suggest an analogy. It cannot change the run/ticket to which evidence or an action plan belongs.
 
-## 9. Historical replay and measurement
+## 11. Historical replay and measurement
 
-Implemented retrieval gates:
+Retrieval gates include:
 
 1. static architecture/policy smoke cases;
 2. runtime-derived replay cases built from recorded incident context and outcome-labelled history.
 
-Current deterministic metrics include retrieval hit rate, latency, retrieved context size and forbidden-result checks.
+Metrics include retrieval hit rate, false-positive guards, latency and delivered context size. GBrain additionally gives us search telemetry that can be used to tune the derivative retrieval layer without changing the lifecycle.
 
 Evaluation should grow toward:
 
@@ -234,36 +270,19 @@ shadow-plan agreement with human action
 
 A claimed improvement should be demonstrated by replay/live outcomes, not intuition.
 
-## 10. From repeated human work to capability candidates
+## 12. Repeated human work -> action candidates
 
-Implemented:
-
-`mine_l2_action_capability_candidates.py` examines approved historical `NEEDS_HUMAN_ACTION` cases.
-
-When the same normalized human corrective action appears on at least two distinct tickets, it creates/updates:
+`mine_l2_action_capability_candidates.py` examines approved historical `NEEDS_HUMAN_ACTION` cases. Repeated normalized corrective actions across distinct tickets become:
 
 ```text
 actions/candidates/<id>.json
 ```
 
-The miner owns only observed evidence:
+The miner owns only observed evidence and does not invent executor details or risk classification.
 
-```text
-source cases
-ticket/run IDs
-observation count
-distinct-ticket count
-representative action
-normalized action
-```
+## 13. Minimal capability governance
 
-It deliberately does not invent design facts.
-
-If a governed candidate file becomes unreadable, the miner fails closed for that item rather than rebuilding over possible operator state.
-
-## 11. Minimal capability governance
-
-Implemented control-plane workflow:
+Current workflow:
 
 ```text
 needs_executor_design
@@ -276,35 +295,13 @@ shadow_ready
 registry_entry
 ```
 
-A candidate can also be rejected.
+A candidate can also be rejected. There is no persisted research mini-workflow.
 
-There is no persisted "researching executor" or "contract drafted" workflow state. Research notes belong in evidence/provenance; workflow states exist only when runtime behavior needs them.
-
-`l2_action_capability_curator.py list` is the single backlog view. It ranks valid candidates by:
-
-1. distinct reviewed tickets;
-2. observation count.
-
-Risk remains `unclassified` until a real side effect is inspected.
-
-Before `shadow_ready`, the reviewed `draft_contract` must identify:
-
-```text
-capability ID
-risk
-parameter schema
-real supported executor target
-preconditions
-idempotency
-required evidence
-verification/postconditions
-rollback/compensation
-approval policy
-```
+Before `shadow_ready`, the contract must identify the capability ID, risk, parameter schema, supported executor target, preconditions, idempotency, required evidence, verification, rollback/compensation and approval policy.
 
 Promotion writes only `mode=shadow` and never raises registry `global_mode`.
 
-## 12. Current action plane
+## 14. Current action plane
 
 Registry:
 
@@ -312,13 +309,7 @@ Registry:
 deploy/xstudio_action_capabilities.json
 ```
 
-Model-facing toolset:
-
-```text
-l2_actions
-```
-
-Current operations:
+Model-facing operations:
 
 ```text
 list
@@ -330,13 +321,9 @@ validate_plan
 
 There is no execute operation.
 
-A plan is durable, evidence-carrying, capability/registry-hashed and bound to the current run/ticket. It explicitly records that execution is not authorized.
+A plan is durable, evidence-carrying, capability/registry-hashed, incident-bound and explicitly records that execution is not authorized.
 
-This lets us measure whether the system selects the correct action before granting mutation authority.
-
-## 13. Autonomy ladder
-
-Design direction:
+## 15. Autonomy ladder
 
 ```text
 A0 observe
@@ -347,39 +334,57 @@ A4 autonomous low-risk capability
 A5 broader autonomous remediation
 ```
 
-Only A0-A2 mechanics exist on this branch today.
+Only A0-A2 mechanics exist today. A3+ must be justified by a real capability and measured shadow evidence.
 
-A3+ is future work and must not be implied by current model-facing tools.
+## 16. GBrain expansion path
 
-## 14. Future executor requirements
+GBrain has useful features that should be adopted only where they improve this product:
 
-Do not build a standalone execution/audit framework before a real shadow capability needs it.
+**Now**
+- trust-separated hybrid retrieval behind `l2_recall`;
+- search telemetry;
+- source-level provenance;
+- indexing of correlated sessions, historical outcomes and governed reference material.
 
-When the first supervised executor is justified, design its outcome record together with the real capability and failure semantics. At minimum it must deterministically capture:
+**Next, after retrieval evaluation**
+- graph extraction over stable XBatch concepts: procedures, tables/views, modules, error classes, capabilities and Solution articles;
+- graph-assisted retrieval for relationship questions such as which procedure touches which transaction flow;
+- contradiction/gap analysis over governed reference and historical outcomes.
 
-```text
-plan/capability/registry version
-run/ticket identity
-approval
-preconditions checked
-side effect attempted
-execution result
-postconditions
-failure
-rollback/compensation when required
+**Offline only at first**
+- GBrain dream/synthesis over historical sessions/cases to propose lesson candidates;
+- any synthesized result remains a candidate until Chitragupta's governance accepts it.
+
+**Not enabled**
+- generic push/reflex context into L2 prompts;
+- ambient GBrain memory writes from worker prose;
+- raw GBrain MCP write tools for workers;
+- GBrain as lifecycle or side-effect authority.
+
+## 17. Local model posture
+
+GBrain supports LM Studio through its OpenAI-compatible local provider. Chitragupta setup therefore does not require a hosted embedding provider.
+
+The operator supplies the actual loaded embedding model ID and native dimensions:
+
+```bash
+gbrain init --pglite \
+  --embedding-model lmstudio:<model-id> \
+  --embedding-dimensions <N>
 ```
 
-Success means verified postconditions, not merely "the call returned without error".
+Chitragupta pins `search.mode=conservative` for a small-model retrieval budget. `l2_recall` independently caps result count and returned characters.
 
-This is a future requirement, not a current runtime subsystem.
+PGLite is acceptable while Chitragupta keeps one effective inference/work slot and uses short harness-owned calls. If the brain becomes genuinely concurrent or multi-machine, moving GBrain to Postgres is an infrastructure change, not a model-behavior change.
 
-## 15. Keep the architecture ponytailed
+## 18. Keep the architecture ponytailed
 
 Prefer:
 
 ```text
 one lifecycle authority
 one learning sidecar
+one GBrain adapter
 one generated Solution owner
 one capability backlog view
 one canonical action contract
@@ -388,26 +393,13 @@ one canonical action contract
 Do not add:
 
 ```text
+zvec beside GBrain
+direct GBrain MCP beside l2_recall
 duplicate schedulers
-duplicate backlog/report CLIs
+generic memory injection
 parallel candidate representations
 future-only state machines
-generic memory injection
 raw model-owned mutation paths
 ```
 
-The next feature should be driven by a real ticket, real repeated human action, or measured failure—not by an imagined future abstraction.
-
-## 16. Immediate next step
-
-The structural work is sufficient.
-
-Use real history:
-
-```bash
-python3 Model_Bench/l2_action_capability_curator.py list
-```
-
-Choose the strongest actual repeated human action by evidence, inspect the real supported XBatch SP/API/service implementation, and only then draft the first real shadow contract.
-
-That is the next point at which new code is justified.
+The next feature should be driven by a real ticket, measured retrieval failure, or repeated human action.
