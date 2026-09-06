@@ -27,6 +27,7 @@ PY_FILES=(
   Model_Bench/sync_l2_learning_corpus.py
   Model_Bench/sync_l2_outcomes.py
   Model_Bench/mine_l2_learning_candidates.py
+  Model_Bench/mine_l2_action_capability_candidates.py
   Model_Bench/l2_learning_cycle.py
   Model_Bench/build_l2_historical_retrieval_eval.py
   Model_Bench/l2_learning_curator.py
@@ -38,6 +39,8 @@ PY_FILES=(
   Model_Bench/test_xstudio_l2_actions_plugin.py
   Model_Bench/test_sync_l2_outcomes.py
   Model_Bench/test_mine_l2_learning_candidates.py
+  Model_Bench/test_mine_l2_action_capability_candidates.py
+  Model_Bench/test_l2_learning_cycle.py
   Model_Bench/test_build_l2_historical_retrieval_eval.py
   Model_Bench/test_validate_action_capabilities.py
   Model_Bench/test_patch_profile_config.py
@@ -63,8 +66,12 @@ echo "== Adaptive learning contract tests =="
 python3 Model_Bench/test_xstudio_l2_learning_plugin.py
 echo "== Outcome-conditioned learning contract tests =="
 python3 Model_Bench/test_sync_l2_outcomes.py
-echo "== Outcome-to-candidate mining contract tests =="
+echo "== Outcome-to-lesson-candidate mining tests =="
 python3 Model_Bench/test_mine_l2_learning_candidates.py
+echo "== Repeated-human-action capability backlog tests =="
+python3 Model_Bench/test_mine_l2_action_capability_candidates.py
+echo "== Central learning-cycle isolation tests =="
+python3 Model_Bench/test_l2_learning_cycle.py
 echo "== Historical retrieval replay builder tests =="
 python3 Model_Bench/test_build_l2_historical_retrieval_eval.py
 echo "== Non-executing action-planner contract tests =="
@@ -149,13 +156,14 @@ Learning plane:
   session recording:   ON (redacted, unverified episodic)
   automatic prefetch:  OFF by design
   outcome cases:       approved/rejected/reopened historical case classes
-  candidate mining:    deterministic and unverified; no automatic promotion
+  lesson mining:       deterministic unverified candidates; no automatic promotion
   explicit recall:     trusted/case/session scopes with trust labels
   historical replay:   real session query -> corresponding outcome-case retrieval
   mem0 provider:       unchanged
 
 Action plane:
   registry:            deploy/xstudio_action_capabilities.json
+  capability backlog:  repeated reviewed NEEDS_HUMAN_ACTION patterns under actions/candidates
   direct toolset:      l2_actions
   operations:          list/describe/plan/plans/validate_plan
   plan provenance:     harness-bound to current run/ticket
