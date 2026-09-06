@@ -41,7 +41,7 @@ for s in $SKILLS; do
   [ -n "$mirrored" ] || echo "WARNING: skill $s not found in an owning profile; repo copy left untouched"
 done
 
-for plugin in xstudio-l2-orchestrator xstudio-l2-trace xstudio-l2-tools xstudio-l2-learning xstudio-l2-actions; do
+for plugin in xstudio-l2-orchestrator xstudio-l2-trace xstudio-l2-tools xstudio-l2-identity xstudio-l2-learning xstudio-l2-actions; do
   cp "$SRC_HERMES/l2-investigator/plugins/$plugin/plugin.yaml" \
     "$DST/plugins/$plugin.plugin.yaml" 2>/dev/null || true
 done
