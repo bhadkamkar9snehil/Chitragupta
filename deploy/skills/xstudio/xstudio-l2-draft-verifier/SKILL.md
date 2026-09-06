@@ -1,13 +1,13 @@
 ---
 name: xstudio-l2-draft-verifier
-description: "Verify the frozen proposal on a deferred L2 review card against live evidence, using prior experience only as an explicitly scoped lead."
-version: 1.1.0
+description: "Verify the frozen proposal on a deferred L2 review card against live evidence, using outcome-labelled historical cases only as explicit leads and validating any shadow action plan separately."
+version: 1.2.0
 author: Snehil Bhadkamkar, Hermes Agent
 license: MIT
 platforms: [linux, windows]
 metadata:
   hermes:
-    tags: [xstudio, helpdesk, l2, reviewer, verification, learning]
+    tags: [xstudio, helpdesk, l2, reviewer, verification, learning, actions]
     related_skills: [xstudio-l2-ticket-workflow, xstudio-sql-write-discipline]
 ---
 
@@ -41,112 +41,86 @@ The reviewer is created only after the source completion is reviewable. There is
 
 ## Reviewer card contract
 
-The review card body carries the exact immutable handoff:
-
-```text
-run_id
-ticket_id
-ticket_no
-investigation_task_id
-review_cycle
-pipeline_stage: review
-proposal_json: <frozen JSON object>
-```
-
-Judge `proposal_json`. Do not reconstruct a different candidate answer from comments, memory, or mutable source-card prose.
+The review card carries exact `run_id`, `ticket_id`, `ticket_no`, `investigation_task_id`, `review_cycle`, `pipeline_stage: review`, and immutable `proposal_json`. Judge that frozen proposal. Do not reconstruct a different answer from comments, memory, or mutable source-card prose.
 
 ## Tool contract
 
-All live database/schema/ticket/run evidence comes through `xstudio_l2`.
-
-Typical operations:
-
-```text
-get_ticket_context
-get_run_actions
-validate_identifiers
-select
-query
-find_objects
-get_definition
-read_procedure
-```
+All live database/schema/ticket/run evidence comes through `xstudio_l2`. Typical operations include `get_ticket_context`, `get_run_actions`, `validate_identifiers`, `select`, `query`, `find_objects`, `get_definition`, and `read_procedure`.
 
 Do not use terminal to recreate SQL transport. Raw writes and arbitrary stored procedures are outside the reviewer interface.
 
-The shared `l2_learning` toolset is optional review support, not review authority. Use `l2_recall(scope="trusted")` when a prior reference/approved lesson helps challenge a proposal. Use `scope="sessions"` only for forensic questions about historical model/harness behavior. Session text may contain rejected hypotheses or hallucinations and never proves the current ticket.
+## Learning / historical outcome contract
 
-If review uncovers a genuinely reusable systemic lesson, `l2_lesson` may record it with concrete provenance. That creates only an unverified candidate. The reviewer does not promote knowledge simply by proposing it.
+`l2_learning` is optional support, never review authority.
+
+Use:
+
+```text
+trusted        -> governed prior knowledge
+approved_cases -> historical proposals that passed review + publisher postconditions
+rejected_cases -> reviewer-rejected counterexamples
+reopened_cases -> prior resolutions later leaving terminal status
+cases          -> all outcome-labelled historical cases
+sessions       -> raw unverified historical turns
+```
+
+`trusted` deliberately excludes cases. An approved historical case can show that a diagnostic/action pattern worked before; it cannot prove that this ticket has the same cause. A rejected case can expose a repeated reasoning failure; rejection does not make every statement false. A reopened case is a regression signal, not an automatic diagnosis.
+
+Every completed reviewer turn is automatically recorded as redacted `unverified_episodic` experience. The outcome sidecar later materializes reviewer rejection or successful publication as a stronger historical-case label. Generic automatic prefetch remains off.
+
+If review uncovers a genuinely reusable systemic lesson, `l2_lesson` may record it with provenance only as an unverified candidate.
+
+## Corrective-action plan contract
+
+The `l2_actions` toolset is intentionally non-executing. For a proposal that references a registered corrective action, use:
+
+```text
+plans         -> find durable plans associated with this run/ticket
+validate_plan -> detect capability/policy drift since plan creation
+describe      -> inspect the current capability contract
+```
+
+A plan is not evidence that the action is needed and is never evidence that the action ran. The reviewer must independently verify the current root cause/state through `xstudio_l2`.
+
+Reject any proposal that says a fix/write was performed only because a plan exists. The current planner exposes no `execute` operation and always returns `execution_authorized=false`.
+
+For `NEEDS_HUMAN_ACTION` with a recommend/shadow plan, verify that:
+
+- the plan belongs to the same run/ticket;
+- its capability ID is real;
+- its parameters match the verified incident;
+- its required evidence references correspond to real live evidence;
+- `validate_plan` still succeeds;
+- the user-facing reply clearly says execution is still required rather than claiming success.
 
 ## Verification procedure
 
 1. **Read the frozen proposal.** Confirm it contains `run_id`, `ticket_id`, `response_type`, and non-empty `reply_text`.
-2. **Identify the core claim.** Review the proposition that makes the proposed response true or false; do not automatically repeat the entire investigation.
+2. **Identify the core claim.** Review the proposition that makes the proposed response true or false.
 3. **Inspect prior run evidence.** Use `get_run_actions` and ledger/ticket context where useful.
-4. **Optionally consult trusted prior knowledge.** Use `l2_recall(scope="trusted")` only when it materially helps verification; never substitute a retrieved result for live evidence.
-5. **Independently verify live evidence.** Re-read the smallest sufficient set of current rows/definitions through `xstudio_l2`.
-6. **Check identifiers.** Reject plausible-sounding table/column/object claims that are not real or were never verified.
-7. **Check response-type safety.** A correct fact can still have the wrong workflow outcome.
-8. **Capture a reusable learning candidate only when warranted.** Reviewer corrections and repeated harness failures are valuable, but not every rejection is a general rule.
-9. **Approve or reject exactly once.**
+4. **Optionally consult governed knowledge or historical outcome cases.** Use them to challenge/shorten review, never substitute them for current evidence.
+5. **Independently verify live evidence.** Re-read the smallest sufficient current rows/definitions through `xstudio_l2`.
+6. **Check identifiers.** Reject plausible-sounding table/column/object claims that are not real or verified.
+7. **Check action plans when present.** Inspect `plans`, run `validate_plan`, and make sure the proposal does not confuse plan creation with execution.
+8. **Check response-type safety.** A correct fact can still have the wrong workflow outcome.
+9. **Capture a reusable learning candidate only when warranted.**
+10. **Approve or reject exactly once.**
 
 ## Approval standard
 
-Approve when:
+Approve when the core factual claim is supported by live evidence; the proposed reply accurately represents it; the response type is appropriate; a `RESOLUTION` is actually verified; a `NEEDS_HUMAN_ACTION` clearly identifies a known action outside current execution authority; any referenced plan is valid and clearly non-executed; and no material contradiction remains.
 
-- the core factual claim is supported by live evidence;
-- the proposed reply accurately represents that evidence;
-- the response type is appropriate;
-- a `RESOLUTION` is actually verified, not merely plausible;
-- a `NEEDS_HUMAN_ACTION` clearly identifies a known action outside worker authority;
-- no material contradiction is left unexplained.
-
-Approve with:
-
-```text
-kanban_complete
-```
-
-The deterministic reconciler will publish the frozen proposal. Do not publish it yourself.
+Approve with `kanban_complete`. The deterministic reconciler publishes the frozen proposal. Do not publish it yourself.
 
 ## Rejection standard
 
-Reject when:
+Reject with `kanban_block` when evidence is missing/contradictory, identifiers are hallucinated, a `RESOLUTION` is premature, historical material is presented as current proof, a plan is stale/invalid, or the proposal claims a write was executed despite the planner being non-executing.
 
-- evidence is missing for a material claim;
-- live evidence contradicts the proposal;
-- identifiers/objects are hallucinated or unverified;
-- a `RESOLUTION` is premature;
-- the reply says a write/fix was performed when the worker had no approved mutation path;
-- the proposal is structurally incomplete or unsafe to publish;
-- a retrieved historical session is being presented as if it were current proof.
-
-Reject with:
-
-```text
-kanban_block
-```
-
-The block reason must be specific and actionable, for example:
-
-```text
-The proposal says transaction X failed, but the live API summary row is Completed.
-Recheck the transaction ID and distinguish ErrorMessage text from Status before resubmitting.
-```
-
-Do not create the rework card yourself. The deterministic reconciler owns that transition.
+The block reason must be specific and actionable. Do not create the rework card yourself; the deterministic reconciler owns that transition.
 
 ## Rework review
 
-A rejected cycle produces a rework investigator card. After that rework completes and is normalized, the reconciler creates another fresh reviewer card with a new frozen proposal.
-
-`review_cycle` controls the bounded loop. SQL `AttemptNo` does not.
-
-## Learning boundary
-
-Every completed reviewer turn is automatically recorded as redacted `unverified_episodic` experience. This is intentional because reviewer corrections are valuable replay/evaluation data. There is deliberately no generic automatic prefetch of those sessions into future reviews.
-
-The system gets better by outcome-conditioned promotion and replay, not by trusting its own previous prose.
+A rejected cycle produces a rework investigator card. After rework completes and is normalized, the reconciler creates another fresh reviewer with a new frozen proposal. `review_cycle` controls the bounded loop; SQL `AttemptNo` does not.
 
 ## Workflow boundary
 
