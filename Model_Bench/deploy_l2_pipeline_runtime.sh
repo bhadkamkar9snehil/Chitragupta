@@ -24,7 +24,7 @@ for retired in \
   generate_readable_trace_summary.py validate_action_capabilities.py \
   mine_l2_action_capability_candidates.py l2_action_capability_curator.py \
   sync_l2_learning_corpus.py build_l2_historical_retrieval_eval.py \
-  benchmark_l2_learning_retrieval.py
+  benchmark_l2_learning_retrieval.py mine_l2_learning_candidates.py l2_learning_curator.py
 do
   rm -f "$SCRIPTS_DIR/$retired"
 done
@@ -32,8 +32,7 @@ done
 # Only scheduled-runtime dependencies are copied into the Hermes profile.
 for f in \
   l2_pipeline_runtime.py ticket_scout.py l2_gbrain.py \
-  sync_l2_outcomes.py mine_l2_learning_candidates.py \
-  sync_l2_gbrain.py l2_learning_cycle.py
+  sync_l2_outcomes.py sync_l2_gbrain.py l2_learning_cycle.py
 do
   cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
 done
@@ -45,11 +44,11 @@ python3 "$ROOT/Model_Bench/sync_l2_approved_solutions.py" \
   --vault "$LEARNING_VAULT" --policy "$ROOT/deploy/solution_export_policy.json" \
   || echo "WARNING: governed Solution sync found missing/drifted approvals"
 
-echo "== Outcome learning / GBrain convergence =="
+echo "== Outcome history / GBrain convergence =="
 CHITRAGUPTA_KNOWLEDGE_PATH="$ROOT/Knowledge" \
 CHITRAGUPTA_REFERENCE_PATH="$ROOT/Reference Documents" \
 python3 "$ROOT/Model_Bench/l2_learning_cycle.py" --vault "$LEARNING_VAULT" \
-  || echo "WARNING: learning cycle reported errors; lifecycle deployment continues"
+  || echo "WARNING: outcome/GBrain convergence reported errors; lifecycle deployment continues"
 
 deploy_plugin() {
   local profile="$1"
@@ -92,8 +91,8 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
   deploy_plugin "$profile"
 done
 
-# Only task-pinned procedural skills are deployed. Domain reference knowledge lives
-# in Git-backed Knowledge/Reference Documents and GBrain, not under every profile.
+# Current runtime still pins these procedural skills. They will be removed separately
+# only together with the corresponding lifecycle-card references.
 for profile in "${INVESTIGATOR_PROFILES[@]}"; do
   copy_skill "$profile" xstudio-l2-ticket-workflow
   copy_skill "$profile" xstudio-sql-write-discipline
@@ -101,7 +100,6 @@ done
 copy_skill l2-reviewer-primary xstudio-l2-draft-verifier
 copy_skill l2-reviewer-primary xstudio-sql-write-discipline
 
-# Remove retired/unpinned domain-skill copies from live profiles.
 for profile in "${INVESTIGATOR_PROFILES[@]}"; do
   rm -rf \
     "$HOME/.hermes/profiles/$profile/skills/xstudio/xstudio-sap-api-investigation" \
@@ -109,8 +107,6 @@ for profile in "${INVESTIGATOR_PROFILES[@]}"; do
     "$HOME/.hermes/profiles/$profile/skills/xstudio/xstudio-quality-delay-workorder"
 done
 
-# Retire the duplicate reviewer gateway/profile. The lifecycle still recognizes
-# legacy cards assigned to this name, but creates no new work there.
 systemctl --user disable --now hermes-gateway-l2-reviewer-fallback.service >/dev/null 2>&1 || true
 rm -rf "$HOME/.hermes/profiles/l2-reviewer-fallback"
 
@@ -128,10 +124,10 @@ fi
 cat <<'EOF'
 
 Deployed Chitragupta L2 on Hermes.
-  harness:    Hermes
+  harness:    Hermes in WSL2
   lifecycle:  l2_pipeline_runtime.py
-  evidence:   typed xstudio_l2
-  retrieval:  Knowledge + full reference Markdown + reviewed learning lanes in isolated GBrain
-  learning:   reviewed outcomes -> unverified candidates -> human promotion
+  evidence:   typed xstudio_l2 via the Windows SQL bridge
+  retrieval:  Knowledge + full reference Markdown + reviewed history in isolated GBrain
+  learning:   reviewed outcomes -> historical cases -> GBrain
   profiles:   dispatcher + investigator worker + reviewer worker
 EOF

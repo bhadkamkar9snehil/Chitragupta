@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""One best-effort outcome-learning cycle for Chitragupta L2.
+"""Best-effort outcome-history and GBrain convergence for Chitragupta L2.
 
-This is not lifecycle authority. It has three jobs only:
+This is not lifecycle authority. It has two jobs only:
 1. materialize reviewed ticket outcomes as historical cases;
-2. mine conservative unverified lesson candidates from those outcomes;
-3. synchronize the trust-separated GBrain retrieval index.
+2. synchronize the trust-separated GBrain retrieval index.
 
-It does not create executable capabilities, mutate worker memory, or perform actions.
+It does not create derived lesson candidates, mutate worker memory, or perform actions.
 """
 from __future__ import annotations
 
@@ -16,7 +15,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from mine_l2_learning_candidates import mine_candidates
 from sync_l2_gbrain import sync_gbrain
 from sync_l2_outcomes import sync_outcomes
 
@@ -38,7 +36,6 @@ def run_learning_cycle(*, vault: Path | None = None, dry_run: bool = False,
         "vault": str(vault),
         "dry_run": dry_run,
         "outcomes": None,
-        "lesson_candidate_mining": None,
         "gbrain_sync": None,
         "errors": [],
     }
@@ -50,14 +47,6 @@ def run_learning_cycle(*, vault: Path | None = None, dry_run: bool = False,
             result["errors"].append(f"outcome sync reported {outcomes['errors']} error(s)")
     except Exception as exc:
         result["errors"].append(f"outcome sync failed: {type(exc).__name__}: {exc}"[:1000])
-
-    try:
-        mining = mine_candidates(vault, dry_run=dry_run)
-        result["lesson_candidate_mining"] = mining
-        if mining.get("errors"):
-            result["errors"].append(f"lesson candidate mining reported {mining['errors']} error(s)")
-    except Exception as exc:
-        result["errors"].append(f"lesson candidate mining failed: {type(exc).__name__}: {exc}"[:1000])
 
     try:
         gbrain = sync_gbrain(vault, dry_run=dry_run)
