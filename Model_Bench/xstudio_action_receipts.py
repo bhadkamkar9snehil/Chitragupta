@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,8 @@ TRANSITIONS = {
     "failed": {"compensated"},
     "compensated": set(),
 }
+HEX32 = re.compile(r"^[0-9a-f]{32}$")
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _now() -> str:
@@ -59,7 +62,7 @@ def _receipt_dir(vault: Path) -> Path:
 
 
 def _receipt_path(vault: Path, receipt_id: str) -> Path:
-    if not receipt_id or any(ch not in "0123456789abcdef" for ch in receipt_id) or len(receipt_id) != 32:
+    if not HEX32.fullmatch(receipt_id or ""):
         raise ValueError("receipt_id must be 32 lowercase hex characters")
     return _receipt_dir(vault) / f"{receipt_id}.json"
 
@@ -82,9 +85,24 @@ def _validate_plan(plan: dict[str, Any]) -> None:
     missing = [k for k in required if not plan.get(k)]
     if missing:
         raise ValueError("plan missing required receipt identity: " + ", ".join(missing))
+    if not HEX32.fullmatch(str(plan.get("plan_id") or "")):
+        raise ValueError("plan_id must be 32 lowercase hex characters")
+    for field in ("capability_sha256", "registry_sha256"):
+        if not HEX64.fullmatch(str(plan.get(field) or "")):
+            raise ValueError(f"{field} must be 64 lowercase hex characters")
     context = plan.get("context")
     if not isinstance(context, dict) or not context.get("run_id") or not context.get("ticket_id"):
         raise ValueError("plan context must include run_id and ticket_id")
+
+
+def _identity_from_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "plan_id": receipt.get("plan_id"),
+        "capability_id": receipt.get("capability_id"),
+        "run_id": receipt.get("run_id"),
+        "ticket_id": receipt.get("ticket_id"),
+        "attempt_no": receipt.get("attempt_no"),
+    }
 
 
 def begin_receipt(plan: dict[str, Any], *, vault: Path | None = None, attempt_no: int = 1,
@@ -105,11 +123,21 @@ def begin_receipt(plan: dict[str, Any], *, vault: Path | None = None, attempt_no
         "attempt_no": int(attempt_no),
     }
     receipt_id = _sha(identity)[:32]
+    plan_digest = _sha(plan)
     path = _receipt_path(vault, receipt_id)
     if path.exists():
         existing = _load(path)
+        errors = validate_receipt(existing)
+        if errors:
+            raise ValueError("existing receipt is invalid: " + "; ".join(errors))
         if existing.get("identity") != identity:
             raise ValueError("receipt_id collision with different identity")
+        if existing.get("plan_sha256") != plan_digest:
+            raise ValueError("existing receipt pins different plan content for the same action-attempt identity")
+        if existing.get("capability_sha256") != str(plan["capability_sha256"]):
+            raise ValueError("existing receipt pins a different capability contract")
+        if existing.get("registry_sha256") != str(plan["registry_sha256"]):
+            raise ValueError("existing receipt pins a different registry version")
         return existing
     now = _now()
     receipt = {
@@ -122,7 +150,7 @@ def begin_receipt(plan: dict[str, Any], *, vault: Path | None = None, attempt_no
         "run_id": identity["run_id"],
         "ticket_id": identity["ticket_id"],
         "attempt_no": identity["attempt_no"],
-        "plan_sha256": _sha(plan),
+        "plan_sha256": plan_digest,
         "capability_sha256": str(plan["capability_sha256"]),
         "registry_sha256": str(plan["registry_sha256"]),
         "risk": plan.get("risk"),
@@ -142,6 +170,9 @@ def begin_receipt(plan: dict[str, Any], *, vault: Path | None = None, attempt_no
             },
         }],
     }
+    errors = validate_receipt(receipt)
+    if errors:
+        raise ValueError("new receipt failed validation: " + "; ".join(errors))
     _save(path, receipt)
     return receipt
 
@@ -159,20 +190,24 @@ def transition_receipt(receipt_id: str, target: str, *, vault: Path | None = Non
     if not path.is_file():
         raise FileNotFoundError(path)
     receipt = _load(path)
+    prior_errors = validate_receipt(receipt)
+    if prior_errors:
+        raise ValueError("refusing to transition invalid receipt: " + "; ".join(prior_errors))
     current = str(receipt.get("state") or "")
     if target == current:
         return receipt
     if target not in TRANSITIONS.get(current, set()):
         raise ValueError(f"invalid action receipt transition: {current} -> {target}")
+    if details is not None and not isinstance(details, dict):
+        raise ValueError("details must be an object")
     if target == "verified":
-        if not isinstance(details, dict) or not details.get("postconditions_verified"):
+        if not isinstance(details, dict) or details.get("postconditions_verified") is not True:
             raise ValueError("verified transition requires details.postconditions_verified=true")
     if target == "compensated":
-        if not isinstance(details, dict) or not details.get("compensation_verified"):
+        if not isinstance(details, dict) or details.get("compensation_verified") is not True:
             raise ValueError("compensated transition requires details.compensation_verified=true")
     events = receipt.get("events")
-    if not isinstance(events, list):
-        raise ValueError("receipt events history is invalid")
+    assert isinstance(events, list)  # validated above
     now = _now()
     events.append({
         "sequence": len(events) + 1,
@@ -185,18 +220,45 @@ def transition_receipt(receipt_id: str, target: str, *, vault: Path | None = Non
     })
     receipt["state"] = target
     receipt["updated_at"] = now
+    errors = validate_receipt(receipt)
+    if errors:
+        raise ValueError("receipt transition produced invalid history: " + "; ".join(errors))
     _save(path, receipt)
     return receipt
 
 
 def validate_receipt(receipt: dict[str, Any]) -> list[str]:
     errors: list[str] = []
+    if receipt.get("schema_version") != 1:
+        errors.append("schema_version must be 1")
+    if receipt.get("kind") != "xstudio_action_execution_receipt":
+        errors.append("kind must be xstudio_action_execution_receipt")
     for field in (
         "receipt_id", "plan_id", "capability_id", "run_id", "ticket_id", "attempt_no",
         "plan_sha256", "capability_sha256", "registry_sha256", "state", "events",
     ):
         if receipt.get(field) in (None, "", []):
             errors.append(f"missing {field}")
+    if not HEX32.fullmatch(str(receipt.get("receipt_id") or "")):
+        errors.append("receipt_id must be 32 lowercase hex characters")
+    for field in ("plan_sha256", "capability_sha256", "registry_sha256"):
+        if not HEX64.fullmatch(str(receipt.get(field) or "")):
+            errors.append(f"{field} must be 64 lowercase hex characters")
+    if not isinstance(receipt.get("attempt_no"), int) or isinstance(receipt.get("attempt_no"), bool) or int(receipt.get("attempt_no") or 0) < 1:
+        errors.append("attempt_no must be an integer >= 1")
+    if receipt.get("state") not in STATES:
+        errors.append(f"unknown current state: {receipt.get('state')!r}")
+
+    identity = receipt.get("identity")
+    if not isinstance(identity, dict):
+        errors.append("identity must be an object")
+    else:
+        expected_identity = _identity_from_receipt(receipt)
+        if identity != expected_identity:
+            errors.append("identity does not match top-level action-attempt fields")
+        if str(receipt.get("receipt_id") or "") != _sha(expected_identity)[:32]:
+            errors.append("receipt_id does not match deterministic action-attempt identity hash")
+
     events = receipt.get("events")
     if not isinstance(events, list) or not events:
         return errors + ["events must be a non-empty array"]
@@ -205,19 +267,29 @@ def validate_receipt(receipt: dict[str, Any]) -> list[str]:
         if not isinstance(event, dict):
             errors.append(f"events[{i}] must be an object"); continue
         state = event.get("state")
+        if state not in STATES:
+            errors.append(f"events[{i}] has unknown state {state!r}")
         if i == 0:
             if state != "planned": errors.append("first event must be planned")
+            if event.get("from_state") not in (None, ""):
+                errors.append("first planned event must not have from_state")
         else:
+            if event.get("from_state") != expected:
+                errors.append(f"events[{i}].from_state must equal prior state {expected!r}")
             if state not in TRANSITIONS.get(expected, set()):
                 errors.append(f"illegal historical transition: {expected} -> {state}")
         expected = str(state or "")
         if event.get("sequence") != i + 1:
             errors.append(f"events[{i}].sequence must equal {i + 1}")
+        if not str(event.get("at") or "").strip(): errors.append(f"events[{i}].at required")
         if not str(event.get("actor") or "").strip(): errors.append(f"events[{i}].actor required")
         if not str(event.get("evidence") or "").strip(): errors.append(f"events[{i}].evidence required")
-        if state == "verified" and not (event.get("details") or {}).get("postconditions_verified"):
+        details = event.get("details")
+        if not isinstance(details, dict):
+            errors.append(f"events[{i}].details must be an object"); details = {}
+        if state == "verified" and details.get("postconditions_verified") is not True:
             errors.append("verified event lacks postconditions_verified=true")
-        if state == "compensated" and not (event.get("details") or {}).get("compensation_verified"):
+        if state == "compensated" and details.get("compensation_verified") is not True:
             errors.append("compensated event lacks compensation_verified=true")
     if receipt.get("state") != expected:
         errors.append("receipt current state does not match last event")
