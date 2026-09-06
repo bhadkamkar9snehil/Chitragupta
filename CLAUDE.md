@@ -6,131 +6,194 @@ You are on the deliberate experimental branch:
 development/autonomous-l2-learning-runtime
 ```
 
-The product north star for this branch is the highest-level contract:
+The product north star is the highest-level contract:
 
 > Build an autonomous, AI-driven, deterministic L2 Helpdesk that gets measurably better from experience and progressively earns the ability to solve XBatch issues itself.
 
-Read `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` first, then `AGENTS.md`. `AGENTS.md` remains the current production-safety/lifecycle baseline, but any old instruction that says “main only”, fixes Qdrant/mem0 as the only possible learning architecture, or treats permanent read-only diagnosis as the end state is **not** a design constraint on this branch. Preserve deterministic safety properties unless a better implementation replaces them explicitly.
+Read `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` first, then `AGENTS.md`. `AGENTS.md` remains the production lifecycle/safety baseline, but permanent read-only diagnosis, a fixed retrieval substrate, or old topology rules are not product constraints on this branch. Preserve deterministic safety properties unless a better implementation replaces them explicitly.
 
-## Current authoritative sources
+## Current architecture
 
-- `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` — branch north star, experience/retrieval plane, learning lifecycle, evaluation plane, and action-autonomy ladder.
-- `AGENTS.md` — current production lifecycle/safety baseline.
-- `Knowledge/L2_PIPELINE_STATE_MACHINE.md` — current deterministic ticket lifecycle.
-- `Model_Bench/l2_pipeline_runtime.py` — actual lifecycle implementation.
-- `deploy/helpdesk_workflow_binding.json` — observed Helpdesk workflow binding.
-- `deploy/xstudio_action_capabilities.json` — machine-readable future corrective-action registry; initially observe-only/empty.
-- `Knowledge/manifest.json` / `Knowledge/task-router.md` — current routing.
-- `Knowledge/KB_IMPLEMENTATION_PLAN.md` — still authoritative for knowledge governance concepts (provenance, lifecycle, applicability, abstention), but its choice of retrieval substrate is no longer sacred; zvec/Qdrant/other indexing should be decided empirically.
-
-## What this branch adds
-
-The existing deterministic lifecycle remains the control plane:
+### Control plane
 
 ```text
-claim -> investigate -> normalize -> frozen independent review -> publish/rework
+claim -> investigator -> normalize -> frozen independent reviewer
+      -> approve/publish OR reject/rework -> fresh reviewer
 ```
 
-The branch adds a separate **Experience & Retrieval Plane**:
+`Model_Bench/l2_pipeline_runtime.py` owns lifecycle transitions, WIP, review cycles, publication and recovery.
+
+### Evidence plane
+
+`xstudio_l2` is the typed SQL/schema/ticket/run evidence surface.
+
+`xstudio-l2-identity` is a cross-cutting pre-tool guard. It resolves the real Kanban card and binds identity-sensitive evidence/ledger calls and `l2_action` plan provenance to the current `run_id`/`ticket_id`. Conflicting model-supplied identifiers are blocked. Do not reintroduce model-controlled incident identity.
+
+### Experience & learning plane
+
+Shared vault:
 
 ```text
 ~/.hermes/l2-learning/
-  sessions/              redacted, unverified episodic turns
-  facts/                 reviewed operational lessons
-  candidates/            unverified model-proposed lessons
-  knowledge/             mirrored Git/skill reference
-  solutions/approved/    future governed Solution export
+  sessions/              redacted unverified episodic turns
+  cases/approved/        review + publisher-postcondition historical cases
+  cases/rejected/        reviewer counterexamples
+  cases/reopened/        prior resolutions later regressing/reopening
+  facts/                 promoted operational lessons
+  candidates/            unverified lesson candidates
+  knowledge/             disposable Git/skill mirror
+  solutions/approved/    governed reusable Solution export target
+  actions/plans/         non-executing action plans
+  actions/candidates/    repeated human-action capability design backlog
+  eval/                  runtime historical retrieval replay cases
 ```
 
-`zvec-grep` provides local BM25 + vector hybrid search over that corpus.
+`zvec-grep` provides BM25 + vector hybrid retrieval. mem0 remains separate for compact durable operational behavior.
 
-Important distinction:
+### Action plane
+
+`deploy/xstudio_action_capabilities.json` is the typed corrective-action registry. `l2_actions` currently supports only:
 
 ```text
-recording experience != believing it
-retrieving experience != proving the current ticket
-reasoning about a fix != permission to execute it
+list
+describe
+plan
+plans
+validate_plan
+```
+
+There is no execute operation. A plan is an identity-bound, capability-hashed, evidence-carrying recommendation/shadow artifact with `execution_authorized=false`.
+
+## Storage is not authority
+
+The central rule is:
+
+```text
+recording experience != believing experience
+retrieving experience != proving a current ticket
+historical success != universal fix
+reasoning about an action != permission to execute it
 ```
 
 ### Sessions are deliberately recorded
 
-Every completed L2 turn is useful experience for replay, failure mining, reviewer-correction analysis, token/tool optimization, and learning. `xstudio-l2-learning` records completed turns through `post_llm_call` as redacted `unverified_episodic` Markdown.
+Every completed L2 turn is valuable for replay, failure mining, reviewer-correction analysis, token/tool optimization and future training/evaluation. Keep session recording ON.
 
-### Generic automatic prefetch is deliberately disabled
+### Generic automatic prefetch stays OFF
 
-Do not add a zvec `pre_llm_call`/turn-start top-k injection just because it is convenient. Old sessions include incorrect investigator hypotheses, reviewer-rejected claims, stale workflow state, and model hallucinations. Generic relevance-based injection gives that text epistemic privilege before the worker classifies provenance.
+Do not add a generic zvec `pre_llm_call`/turn-start top-k injection. Sessions contain incorrect investigator hypotheses, reviewer-rejected claims, stale state and hallucinations. Similarity is not trust.
 
-Use explicit `l2_recall` scopes instead. `scope=trusted` is the normal prior-knowledge path; `scope=sessions` is explicitly forensic/unverified and still requires live verification.
+Use explicit `l2_recall` scopes. `trusted` excludes historical cases. `approved_cases`, `rejected_cases`, `reopened_cases`, and `sessions` all expose different trust semantics and still require live verification for current-ticket claims.
 
-`l2_lesson` may write only unverified candidates. Promotion is separate and deterministic via `Model_Bench/l2_learning_curator.py`.
+A future automatic context builder must be deterministic and stage/source/trust aware; it must not be mixed-memory top-k injection.
 
-mem0 remains available for compact durable operational memory; the zvec learning plane does not replace it merely to reduce component count.
+## Outcome-conditioned learning is implemented
+
+`Model_Bench/sync_l2_outcomes.py` materializes:
+
+```text
+review reject                              -> cases/rejected
+review approve + publisher postconditions  -> cases/approved
+published RESOLUTION later leaves terminal -> cases/reopened
+```
+
+`Model_Bench/mine_l2_learning_candidates.py` conservatively mines these labels into unverified lesson candidates.
+
+`Model_Bench/mine_l2_action_capability_candidates.py` detects repeated independently reviewed `NEEDS_HUMAN_ACTION` actions across distinct tickets and creates/updates `actions/candidates/*.json`. These are **design backlog items**, not executable registry entries. Never invent missing procedure/API signatures, risk or parameter schemas to promote them.
+
+`Model_Bench/l2_learning_cycle.py` is the one best-effort sidecar coordinator. Keep learning mechanics behind this boundary instead of growing independent cron/scout choreography.
+
+## Historical replay is implemented
+
+`Model_Bench/build_l2_historical_retrieval_eval.py` correlates the earliest recorded user/task text for a run with that run's outcome-labelled historical case and writes runtime JSONL replay cases.
+
+`Model_Bench/benchmark_l2_learning_retrieval.py` measures deterministic retrieval hit rate, latency, context size and forbidden hits without an LLM judge.
+
+Expand replay with adversarial same-symptom/different-root-cause cases rather than only easy recall.
+
+## Learning promotion boundary
+
+`l2_lesson` and automatic miners may create only `unverified_candidate` artifacts. Promotion is separate through the learning curator/governance layer.
+
+The rule is:
+
+```text
+model says it learned something != system learned something
+```
+
+Use reviewer outcomes, repeated independent evidence, reopen/regression signals and replay results to decide promotion.
 
 ## Future XBatch solving
 
-Current investigator/reviewer SQL remains read-only. That is the present capability state, not the final product boundary.
-
-Do **not** solve future autonomy by giving a model arbitrary UPDATE/EXEC access. Build typed corrective capabilities with:
-
-```text
-parameter schema
-preconditions
-supported execution path
-idempotency
-required evidence
-postcondition verification
-rollback/compensation
-risk class
-approval policy
-```
-
-Progress capability-by-capability through:
+Current arbitrary SQL remains read-only, but that is A0—not the destination.
 
 ```text
 A0 observe
 A1 recommend
-A2 shadow-plan
+A2 shadow plan
 A3 supervised execute
 A4 autonomous low-risk execute
 A5 broader autonomous remediation
 ```
 
-The registry is `deploy/xstudio_action_capabilities.json`. A capability earns autonomy from replay/live evidence and observed outcomes, not from prompt confidence.
+Autonomy is earned per capability.
 
-## Existing production facts still important
+Before adding a real capability, verify the actual supported SP/API/service path and exact current signature. The registry contract requires parameter schema, preconditions, idempotency, evidence, verification, rollback/compensation, risk and approval policy.
+
+Before any future execution, a separate deterministic executor must re-check:
+
+```text
+current run/ticket identity
+capability + registry hashes
+current live evidence
+preconditions
+approval policy
+idempotency
+execution result
+postconditions
+rollback/compensation path
+```
+
+Do not add raw UPDATE/EXEC access as an autonomy shortcut.
+
+## Current authoritative sources
+
+- `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` — branch north star and implemented multi-plane architecture.
+- `AGENTS.md` — production lifecycle/safety baseline.
+- `Knowledge/L2_PIPELINE_STATE_MACHINE.md` — deterministic lifecycle.
+- `Model_Bench/l2_pipeline_runtime.py` — lifecycle implementation.
+- `Model_Bench/l2_learning_cycle.py` — learning sidecar coordinator.
+- `Model_Bench/xstudio_l2_identity_plugin/` — run/ticket identity guard.
+- `Model_Bench/xstudio_l2_learning_plugin/` — session recording + explicit recall + lesson candidates.
+- `Model_Bench/xstudio_l2_actions_plugin/` — non-executing action planner.
+- `deploy/xstudio_action_capabilities.json` — executable-capability registry contract, currently independent of the candidate backlog.
+- `deploy/helpdesk_workflow_binding.json` — observed Helpdesk workflow binding.
+- `Knowledge/manifest.json` / `Knowledge/task-router.md` — domain routing.
+- `Knowledge/KB_IMPLEMENTATION_PLAN.md` — useful governance/provenance concepts; its retrieval technology choice is not sacred.
+
+## Current implementation facts worth preserving until deliberately replaced
 
 - Global SQL WIP currently `1` because of local inference constraints.
 - Priorities: review `30`, rework `20`, new investigation `10`.
-- Reviewer creation is deferred until normalized/reviewable completion.
+- Reviewer creation is deferred until completion is normalized/reviewable.
 - Reviewer receives frozen `proposal_json`; publisher publishes that exact proposal.
 - `review_cycle` controls bounded rework, not SQL `AttemptNo`.
 - `ticket_scout.py` remains the reconcile-first claim backstop.
-- Database evidence uses typed `xstudio_l2`; model-driven Python/pyodbc/sqlcmd/package-install transport stays blocked.
-- Helpdesk workflow states are harness-bound from observed values, not invented by the model.
-- A resolution does not automatically become a trusted KB article.
-- GitHub Actions are not the live validation authority.
+- model-driven Python/pyodbc/sqlcmd/package-install SQL transport stays blocked.
+- Helpdesk workflow states are harness-bound from observed values.
+- run/ticket identity for evidence/action planning is harness-bound.
+- a resolution does not automatically become trusted KB.
+- no GitHub Actions workflow is the project validation mechanism.
 
-These are implementation facts, not immutable product dogma. Change them when a better design demonstrably improves the north star without losing correctness.
+## Next design priorities
 
-## Validation
+1. Export governed approved Solution knowledge into `solutions/approved/**` with provenance.
+2. Strengthen lesson promotion with repeated evidence, contradiction/reopen checks and replay metrics.
+3. Treat `actions/candidates/**` as a capability-engineering backlog: inspect the real XBatch implementation and fill exact registry contracts.
+4. Introduce the first **verified** low-risk action in `shadow`, not supervised/autonomous.
+5. Measure shadow-plan agreement against what humans actually do and whether the issue resolves.
+6. Build the separate supervised executor only after shadow evidence is strong.
+7. Record action execution/postcondition/rollback receipts into the learning plane and use them to promote or demote autonomy.
+8. Build deterministic stage-aware context assembly if automatic retrieval becomes worthwhile; do not regress to generic prefetch.
 
-Run locally on the real Windows/WSL/Hermes/SQL/LM Studio machine:
-
-```bash
-bash Model_Bench/deploy_l2_pipeline_runtime.sh
-bash Model_Bench/validate_l2_pipeline_local.sh
-python3 Model_Bench/test_xstudio_l2_learning_plugin.py
-python3 Model_Bench/validate_action_capabilities.py
-```
-
-For the first natural live ticket on this branch, verify all three planes independently:
-
-1. control plane still progresses correctly;
-2. evidence still goes through `xstudio_l2`;
-3. the learning plane records a redacted session, exposes `l2_recall`/`l2_lesson`, and injects no automatic zvec-memory block.
-
-Do not manufacture a production ticket or raw-poll around the lifecycle gate merely to test it.
-
-## Historical material
-
-`Plans/` and `Agent_Comms/` remain provenance. Do not revive dead duplicate orchestration merely because it appears in history. Conversely, do not reject a better future architecture just because it differs from an old rule: the branch north star is the governing design criterion.
+Historical `Plans/` and `Agent_Comms/` remain provenance. Do not revive dead duplicate orchestration merely because it appears there, and do not reject a better architecture merely because it differs from an old rule.
