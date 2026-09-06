@@ -55,6 +55,7 @@ ALLOWED_TRUST_BY_COLLECTION: dict[str, frozenset[str]] = {
         "current_run_evidence",
         "prior_verified_ticket_evidence",
         "prior_rejected_reasoning",
+        "original_governed_context_snapshot",
     }),
 }
 

@@ -79,17 +79,7 @@ def assemble_stage_context(
             trust_class="prior_rejected_reasoning",
         ))
     if original_context:
-        selected["prior_ticket_evidence"].append(_make_evidence_item(
-            source_type="original_context_identity",
-            source_ref=f"context:{original_context.get('context_sha256') or 'unknown'}",
-            title="Original governed context identity",
-            content={
-                "context_sha256": original_context.get("context_sha256"),
-                "query_sha256": original_context.get("query_sha256"),
-                "route": original_context.get("route"),
-                "retrieval_degraded": (original_context.get("retrieval") or {}).get("retrieval_degraded"),
-            },
-        ))
+        selected["prior_ticket_evidence"].append(_original_context_snapshot_item(original_context))
 
     initial_counts = _collection_counts(selected)
     gbrain_results = retrieval.get("gbrain") or {}
@@ -105,7 +95,7 @@ def assemble_stage_context(
     degradation_reason = "; ".join(degradation_reasons)[:2000] if degraded else None
 
     dropped = {key: 0 for key in selected}
-    max_chars = int(policy["maximum_total_rendered_context_characters"])
+    max_chars = _stage_max_chars(policy, stage)
     drop_order = policy[stage].get("drop_order") or DEFAULT_DROP_ORDER[stage]
 
     # Build/render iteratively so the hash always describes exactly what was delivered.
@@ -211,17 +201,7 @@ def assemble_degraded_context(
             trust_class="prior_rejected_reasoning",
         ))
     if original_context:
-        prior.append(_make_evidence_item(
-            source_type="original_context_identity",
-            source_ref=f"context:{original_context.get('context_sha256') or 'unknown'}",
-            title="Original governed context identity",
-            content={
-                "context_sha256": original_context.get("context_sha256"),
-                "query_sha256": original_context.get("query_sha256"),
-                "route": original_context.get("route"),
-                "retrieval_degraded": (original_context.get("retrieval") or {}).get("retrieval_degraded"),
-            },
-        ))
+        prior.append(_original_context_snapshot_item(original_context))
     envelope = build_context_envelope(
         generated_at=utc_now(),
         run_id=run_id,

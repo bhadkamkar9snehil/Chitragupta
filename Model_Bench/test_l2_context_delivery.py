@@ -153,7 +153,10 @@ class ContextDeliveryTests(unittest.TestCase):
             )
         trusts = [v["trust_class"] for v in envelope["prior_ticket_evidence"]]
         self.assertIn("prior_rejected_reasoning", trusts)
-        self.assertTrue(any(v["source_ref"] == "context:" + "a"*64 for v in envelope["prior_ticket_evidence"]))
+        snapshots = [v for v in envelope["prior_ticket_evidence"] if v["source_ref"] == "context:" + "a"*64]
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(snapshots[0]["trust_class"], "original_governed_context_snapshot")
+        self.assertIn('"route":"sap_posting"', snapshots[0]["content"])
 
     def test_degraded_retrieval_is_explicit_not_zero_hit_success(self):
         with mock.patch.object(mod.kb, "retrieve", return_value=self._retrieval(degraded=True)):
@@ -201,11 +204,14 @@ class ContextDeliveryTests(unittest.TestCase):
             stage="review", review_cycle=1, reason="manifest unavailable",
             proposal={"response_type": "RESOLUTION", "reply_text": "x"},
             current_run_evidence=[{"ActionNo": 1, "Status": "SUCCEEDED"}],
+            original_context={"context_sha256": "a"*64, "query_sha256": "b"*64, "route": "sap_posting",
+                              "retrieval": {"retrieval_degraded": False}},
         )
         self.assertTrue(envelope["retrieval"]["retrieval_degraded"])
         self.assertEqual(envelope["route"], "discover")
         self.assertEqual(envelope["canonical_documents"], [])
-        self.assertEqual(len(envelope["prior_ticket_evidence"]), 2)
+        self.assertEqual(len(envelope["prior_ticket_evidence"]), 3)
+        self.assertTrue(any(v["trust_class"] == "original_governed_context_snapshot" for v in envelope["prior_ticket_evidence"]))
         self.assertIn("manifest unavailable", rendered)
         self.assertEqual(mod.validate_context_envelope(envelope), [])
 

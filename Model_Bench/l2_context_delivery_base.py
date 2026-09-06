@@ -153,6 +153,12 @@ def validate_context_policy(policy: Any) -> list[str]:
             value = cfg.get(key)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0 or value > 10:
                 errors.append(f"{stage}.{key} must be an integer between 0 and 10")
+        stage_max = cfg.get("maximum_rendered_context_characters")
+        if stage_max is not None and (
+            not isinstance(stage_max, int) or isinstance(stage_max, bool)
+            or stage_max < 4000 or stage_max > maximum
+        ):
+            errors.append(f"{stage}.maximum_rendered_context_characters must be an integer between 4000 and the global maximum")
         drop = cfg.get("drop_order")
         if drop is not None and (
             not isinstance(drop, list) or not all(isinstance(v, str) and v for v in drop)
@@ -172,6 +178,10 @@ def _stage_limits(policy: dict[str, Any], stage: str) -> dict[str, int]:
         "rejected_cases": cfg["rejected_cases"],
         "reopened_cases": cfg["reopened_cases"],
     }
+
+
+def _stage_max_chars(policy: dict[str, Any], stage: str) -> int:
+    return int(policy[stage].get("maximum_rendered_context_characters") or policy["maximum_total_rendered_context_characters"])
 
 
 def _route_reason_strings(routes: list[dict[str, Any]]) -> list[str]:
@@ -212,6 +222,27 @@ def _make_evidence_item(
         title=title,
         content=_stable_field_text(content),
         verification_required=False,
+    )
+
+
+def _original_context_snapshot_item(original_context: Mapping[str, Any]) -> dict[str, Any]:
+    """Embed the exact original governed context for review/rework provenance.
+
+    Valid schema-v1 envelopes are rendered exactly as the investigator saw them.
+    Legacy/minimal provenance objects fall back to canonical JSON so degraded
+    recovery still carries the source material rather than only a pointer.
+    """
+    try:
+        snapshot = render_context_envelope(original_context)
+    except Exception:
+        snapshot = _stable_field_text(original_context)
+    return make_context_item(
+        source_type="original_context_snapshot",
+        source_ref=f"context:{original_context.get('context_sha256') or 'unknown'}",
+        trust_class="original_governed_context_snapshot",
+        title="Original investigation governed context snapshot",
+        content=snapshot,
+        verification_required=True,
     )
 
 
