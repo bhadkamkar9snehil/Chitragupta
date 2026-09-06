@@ -41,6 +41,7 @@ PY_FILES=(
   Model_Bench/test_xstudio_l2_identity_plugin.py
   Model_Bench/test_xstudio_l2_learning_plugin.py
   Model_Bench/test_xstudio_l2_actions_plugin.py
+  Model_Bench/test_sync_l2_learning_corpus.py
   Model_Bench/test_sync_l2_outcomes.py
   Model_Bench/test_sync_l2_approved_solutions.py
   Model_Bench/test_mine_l2_learning_candidates.py
@@ -73,6 +74,8 @@ echo "== Harness-owned identity contract tests =="
 python3 Model_Bench/test_xstudio_l2_identity_plugin.py
 echo "== Adaptive learning contract tests =="
 python3 Model_Bench/test_xstudio_l2_learning_plugin.py
+echo "== Learning corpus preservation tests =="
+python3 Model_Bench/test_sync_l2_learning_corpus.py
 echo "== Outcome-conditioned learning contract tests =="
 python3 Model_Bench/test_sync_l2_outcomes.py
 echo "== Governed SQL Solution export tests =="
@@ -186,6 +189,7 @@ Learning plane:
   outcome cases:       approved/rejected/reopened historical case classes
   lesson mining:       deterministic unverified candidates; no automatic promotion
   governed solutions:  explicit ID + semantic content hash approval only
+  corpus refresh:      canonical mirror rebuild cannot erase runtime learning/action data
   explicit recall:     trusted/case/session scopes with trust labels
   historical replay:   real session query -> corresponding outcome-case retrieval
   mem0 provider:       unchanged
