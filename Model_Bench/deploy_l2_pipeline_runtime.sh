@@ -3,9 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$HOME/.hermes/profiles/l2-investigator/scripts"
-ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
+ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary)
 INVESTIGATOR_PROFILES=(l2-investigator l2-investigator-primary)
-REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
 LEARNING_VAULT="${CHITRAGUPTA_L2_LEARNING_VAULT:-$HOME/.hermes/l2-learning}"
 
 mkdir -p "$SCRIPTS_DIR"
@@ -30,7 +29,7 @@ do
   rm -f "$SCRIPTS_DIR/$retired"
 done
 
-# Only files required by the scheduled runtime are copied into the Hermes profile.
+# Only scheduled-runtime dependencies are copied into the Hermes profile.
 for f in \
   l2_pipeline_runtime.py ticket_scout.py l2_gbrain.py \
   sync_l2_outcomes.py mine_l2_learning_candidates.py \
@@ -68,10 +67,21 @@ copy_skill() {
   cp "$src" "$dst/SKILL.md"
 }
 
+profile_soul() {
+  case "$1" in
+    l2-investigator|l2-investigator-primary)
+      printf '%s\n' "$ROOT/deploy/profiles/l2-investigator-primary/SOUL.md"
+      ;;
+    l2-reviewer-primary)
+      printf '%s\n' "$ROOT/deploy/profiles/l2-reviewer-primary/SOUL.md"
+      ;;
+  esac
+}
+
 for profile in "${ACTIVE_PROFILES[@]}"; do
   mkdir -p "$HOME/.hermes/profiles/$profile"
   cp "$ROOT/deploy/profiles/$profile/config.yaml" "$HOME/.hermes/profiles/$profile/config.yaml"
-  cp "$ROOT/deploy/profiles/$profile/SOUL.md" "$HOME/.hermes/profiles/$profile/SOUL.md"
+  cp "$(profile_soul "$profile")" "$HOME/.hermes/profiles/$profile/SOUL.md"
   rm -rf \
     "$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-orchestrator" \
     "$HOME/.hermes/profiles/$profile/plugins/xstudio-l2-trace" \
@@ -89,11 +99,14 @@ for profile in "${INVESTIGATOR_PROFILES[@]}"; do
   done
 done
 
-for profile in "${REVIEWER_PROFILES[@]}"; do
-  for skill in xstudio-l2-draft-verifier xstudio-sql-write-discipline; do
-    copy_skill "$profile" "$skill"
-  done
+for skill in xstudio-l2-draft-verifier xstudio-sql-write-discipline; do
+  copy_skill l2-reviewer-primary "$skill"
 done
+
+# Retire the duplicate reviewer gateway/profile. The lifecycle still recognizes
+# legacy cards assigned to this name, but creates no new work there.
+systemctl --user disable --now hermes-gateway-l2-reviewer-fallback.service >/dev/null 2>&1 || true
+rm -rf "$HOME/.hermes/profiles/l2-reviewer-fallback"
 
 # No independent GBrain watcher: ticket_scout -> l2_learning_cycle owns convergence.
 systemctl --user disable --now chitragupta-gbrain-sync.service >/dev/null 2>&1 || true
@@ -114,4 +127,5 @@ Deployed Chitragupta L2 on Hermes.
   evidence:   typed xstudio_l2
   retrieval:  direct Git Knowledge + reviewed learning lanes in isolated GBrain
   learning:   reviewed outcomes -> unverified candidates -> human promotion
+  profiles:   dispatcher/legacy investigator + investigator worker + reviewer worker
 EOF

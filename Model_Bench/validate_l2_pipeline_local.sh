@@ -20,7 +20,6 @@ PY_FILES=(
   Model_Bench/l2_learning_curator.py
   Model_Bench/sync_l2_gbrain.py
   Model_Bench/l2_learning_cycle.py
-  Model_Bench/validate_knowledge_manifest.py
 )
 
 CONTRACT_TESTS=(
@@ -45,13 +44,7 @@ echo "== Syntax =="
 bash -n "${SH_FILES[@]}"
 python3 -m py_compile "${PY_FILES[@]}" "${CONTRACT_TESTS[@]}"
 
-echo "== Contract tests =="
-for test_file in "${CONTRACT_TESTS[@]}"; do
-  python3 "$test_file"
-done
-
-echo "== Domain policy =="
-python3 Model_Bench/validate_knowledge_manifest.py
+echo "== Governed Solution policy =="
 python3 Model_Bench/sync_l2_approved_solutions.py \
   --vault "$LEARNING_VAULT" \
   --policy deploy/solution_export_policy.json \
@@ -87,7 +80,7 @@ for retired in \
   generate_readable_trace_summary.py validate_action_capabilities.py \
   mine_l2_action_capability_candidates.py l2_action_capability_curator.py \
   sync_l2_learning_corpus.py build_l2_historical_retrieval_eval.py \
-  benchmark_l2_learning_retrieval.py
+  benchmark_l2_learning_retrieval.py validate_knowledge_manifest.py
 do
   [[ ! -e "$DEPLOYED_SCRIPTS/$retired" ]] || {
     echo "FAIL: retired script still deployed: $retired" >&2

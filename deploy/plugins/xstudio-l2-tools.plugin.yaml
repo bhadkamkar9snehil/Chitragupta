@@ -1,5 +1,0 @@
-name: xstudio-l2-tools
-version: "2.0.0"
-description: "Single Chitragupta Hermes tool plugin: typed XStudio/Helpdesk evidence with Kanban-bound run/ticket identity plus supplemental read-only trust-scoped GBrain recall."
-author: Snehil Bhadkamkar, Hermes Agent
-requires_env: []
