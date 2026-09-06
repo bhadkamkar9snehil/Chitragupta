@@ -26,11 +26,14 @@ PY_FILES=(
   Model_Bench/xstudio_l2_tool_bridge.py
   Model_Bench/sync_l2_learning_corpus.py
   Model_Bench/sync_l2_outcomes.py
+  Model_Bench/sync_l2_approved_solutions.py
   Model_Bench/mine_l2_learning_candidates.py
   Model_Bench/mine_l2_action_capability_candidates.py
   Model_Bench/l2_learning_cycle.py
   Model_Bench/build_l2_historical_retrieval_eval.py
   Model_Bench/l2_learning_curator.py
+  Model_Bench/l2_action_capability_curator.py
+  Model_Bench/xstudio_action_receipts.py
   Model_Bench/benchmark_l2_learning_retrieval.py
   Model_Bench/validate_action_capabilities.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
@@ -38,10 +41,13 @@ PY_FILES=(
   Model_Bench/test_xstudio_l2_learning_plugin.py
   Model_Bench/test_xstudio_l2_actions_plugin.py
   Model_Bench/test_sync_l2_outcomes.py
+  Model_Bench/test_sync_l2_approved_solutions.py
   Model_Bench/test_mine_l2_learning_candidates.py
   Model_Bench/test_mine_l2_action_capability_candidates.py
   Model_Bench/test_l2_learning_cycle.py
   Model_Bench/test_build_l2_historical_retrieval_eval.py
+  Model_Bench/test_l2_action_capability_curator.py
+  Model_Bench/test_xstudio_action_receipts.py
   Model_Bench/test_validate_action_capabilities.py
   Model_Bench/test_patch_profile_config.py
   Model_Bench/test_adaptive_deploy_contract.py
@@ -67,6 +73,8 @@ echo "== Adaptive learning contract tests =="
 python3 Model_Bench/test_xstudio_l2_learning_plugin.py
 echo "== Outcome-conditioned learning contract tests =="
 python3 Model_Bench/test_sync_l2_outcomes.py
+echo "== Governed SQL Solution export tests =="
+python3 Model_Bench/test_sync_l2_approved_solutions.py
 echo "== Outcome-to-lesson-candidate mining tests =="
 python3 Model_Bench/test_mine_l2_learning_candidates.py
 echo "== Repeated-human-action capability backlog tests =="
@@ -75,6 +83,10 @@ echo "== Central learning-cycle isolation tests =="
 python3 Model_Bench/test_l2_learning_cycle.py
 echo "== Historical retrieval replay builder tests =="
 python3 Model_Bench/test_build_l2_historical_retrieval_eval.py
+echo "== Governed capability design/promotion tests =="
+python3 Model_Bench/test_l2_action_capability_curator.py
+echo "== Future action execution receipt tests =="
+python3 Model_Bench/test_xstudio_action_receipts.py
 echo "== Non-executing action-planner contract tests =="
 python3 Model_Bench/test_xstudio_l2_actions_plugin.py
 echo "== Corrective-action promotion policy tests =="
@@ -96,6 +108,12 @@ if ! command -v zg >/dev/null 2>&1; then
 fi
 python3 Model_Bench/sync_l2_learning_corpus.py --vault "$LEARNING_VAULT" --check
 zg status "$LEARNING_VAULT" --check-ready
+
+echo "== Governed Solution export preview =="
+python3 Model_Bench/sync_l2_approved_solutions.py \
+  --vault "$LEARNING_VAULT" \
+  --policy deploy/solution_export_policy.json \
+  --dry-run
 
 echo "== Static learning retrieval smoke benchmark =="
 python3 Model_Bench/benchmark_l2_learning_retrieval.py --min-hit-rate 0.80
@@ -160,6 +178,7 @@ Learning plane:
   automatic prefetch:  OFF by design
   outcome cases:       approved/rejected/reopened historical case classes
   lesson mining:       deterministic unverified candidates; no automatic promotion
+  governed solutions:  explicit ID + content hash approval only
   explicit recall:     trusted/case/session scopes with trust labels
   historical replay:   real session query -> corresponding outcome-case retrieval
   mem0 provider:       unchanged
@@ -167,9 +186,11 @@ Learning plane:
 Action plane:
   registry:            deploy/xstudio_action_capabilities.json
   capability backlog:  repeated reviewed NEEDS_HUMAN_ACTION patterns under actions/candidates
+  curator states:      needs_executor_design -> researching_executor -> contract_drafted -> shadow_ready -> registry_entry
   direct toolset:      l2_actions
   operations:          list/describe/plan/plans/validate_plan
   plan provenance:     harness-bound to current run/ticket
+  receipt lifecycle:   planned -> approved -> executed -> verified | failed -> compensated
   execution:           intentionally unavailable
-  autonomy:            capability-specific promotion only
+  autonomy:            capability-specific promotion only; curator never raises global_mode
 EOF
