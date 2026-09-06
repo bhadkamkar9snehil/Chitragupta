@@ -2,12 +2,12 @@
 """Deterministic context-envelope contract for Chitragupta L2 workers.
 
 The envelope is the durable interface between harness-owned retrieval and model
-reasoning. It records the exact governed material delivered to a worker,
+reasoning.  It records the exact governed material delivered to a worker,
 including trust classification, provenance, retrieval metadata and a canonical
 SHA-256 identity.
 
 This module is intentionally pure: it performs no SQL, Hermes, GBrain, file or
-network I/O. Retrieval and lifecycle code build envelopes; this module only
+network I/O.  Retrieval and lifecycle code build envelopes; this module only
 normalizes, validates and hashes them.
 """
 from __future__ import annotations
@@ -41,6 +41,8 @@ REQUIRED_ITEM_FIELDS = (
     "verification_required",
 )
 
+# Trust classification is structural, not prompt advice.  A record whose trust
+# class does not belong in a collection is rejected before it can be delivered.
 ALLOWED_TRUST_BY_COLLECTION: dict[str, frozenset[str]] = {
     "canonical_documents": frozenset({"canonical_reference", "canonical_procedure"}),
     "promoted_facts": frozenset({"reviewed_operational", "reviewed_operational_heuristic"}),
@@ -56,11 +58,14 @@ ALLOWED_TRUST_BY_COLLECTION: dict[str, frozenset[str]] = {
     }),
 }
 
+# These arrays are sets semantically. Ranked retrieval/result arrays remain
+# order-sensitive and are deliberately not sorted by the hash normalizer.
 UNORDERED_TOP_LEVEL_LISTS = frozenset({"route_reasons"})
 UNORDERED_RETRIEVAL_LISTS = frozenset({"gbrain_sources"})
 
 
 def canonical_json(value: Any) -> str:
+    """Canonical JSON representation used for every deterministic digest."""
     return json.dumps(
         value,
         sort_keys=True,
@@ -90,6 +95,7 @@ def make_context_item(
     verification_required: bool = True,
     **extra: Any,
 ) -> dict[str, Any]:
+    """Create a context item whose digest covers the exact delivered content."""
     item: dict[str, Any] = {
         "source_type": str(source_type),
         "source_ref": str(source_ref),
@@ -112,6 +118,12 @@ def _normalized_unordered_strings(value: Any) -> list[str]:
 
 
 def normalized_for_hash(envelope: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the canonical hash view without destroying ranked-list order.
+
+    Only fields explicitly declared semantically unordered are normalized.
+    Context result collections remain in delivered/ranked order, so reordering
+    two retrieved items changes the context identity.
+    """
     out = copy.deepcopy(dict(envelope))
     out.pop("context_sha256", None)
     for key in UNORDERED_TOP_LEVEL_LISTS:
@@ -173,6 +185,7 @@ def _validate_item(item: Any, collection: str, index: int, errors: list[str]) ->
 
 
 def validate_context_envelope(envelope: Mapping[str, Any], *, require_hash: bool = True) -> list[str]:
+    """Return validation errors; an empty list means the envelope is valid."""
     errors: list[str] = []
     if not isinstance(envelope, Mapping):
         return ["context envelope must be an object"]
@@ -236,6 +249,7 @@ def validate_context_envelope(envelope: Mapping[str, Any], *, require_hash: bool
 
 
 def finalize_context_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize semantically unordered fields, validate, and attach the hash."""
     out = copy.deepcopy(dict(envelope))
     out["schema_version"] = SCHEMA_VERSION
     for key in UNORDERED_TOP_LEVEL_LISTS:

@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "maximum_total_rendered_context_characters": 30000,
+  "route_canonical_documents": 3,
+  "investigation": {
+    "facts": 5,
+    "solutions": 3,
+    "approved_cases": 2,
+    "rejected_cases": 1,
+    "reopened_cases": 1,
+    "drop_order": [
+      "reopened_cases",
+      "rejected_cases",
+      "approved_cases",
+      "governed_solutions",
+      "promoted_facts",
+      "route_canonical"
+    ]
+  },
+  "review": {
+    "facts": 3,
+    "solutions": 2,
+    "approved_cases": 1,
+    "rejected_cases": 2,
+    "reopened_cases": 2,
+    "drop_order": [
+      "approved_cases",
+      "governed_solutions",
+      "promoted_facts",
+      "route_canonical",
+      "rejected_cases",
+      "reopened_cases"
+    ]
+  },
+  "rework": {
+    "facts": 3,
+    "solutions": 2,
+    "approved_cases": 1,
+    "rejected_cases": 2,
+    "reopened_cases": 2,
+    "drop_order": [
+      "approved_cases",
+      "governed_solutions",
+      "promoted_facts",
+      "route_canonical",
+      "rejected_cases",
+      "reopened_cases"
+    ]
+  },
+  "notes": [
+    "Counts are hard upper bounds, not targets.",
+    "Always-load canonical documents are retained; route-specific canonical documents are limited separately.",
+    "If the rendered context exceeds the total budget, complete lower-priority items are dropped. No item is cut in half.",
+    "Raw sessions, unverified candidates, and unqualified/all-source GBrain search are forbidden from automatic context."
+  ]
+}
