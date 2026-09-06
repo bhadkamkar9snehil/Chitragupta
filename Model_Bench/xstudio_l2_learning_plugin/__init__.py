@@ -2,8 +2,9 @@
 
 Session recording is ON. Generic automatic retrieval injection is OFF. The vault
 contains raw episodic sessions, outcome-conditioned historical cases, promoted
-facts, candidate lessons, mirrored canonical knowledge, governed solutions and
-action plans. zvec-grep indexes that material but never becomes the authority.
+facts, candidate lessons, mirrored canonical knowledge, governed solutions,
+action plans, capability-design candidates and retrieval replay data. zvec-grep
+indexes that material but never becomes the authority.
 """
 from __future__ import annotations
 
@@ -98,7 +99,8 @@ def _ensure_layout() -> Path:
     vault = _vault()
     for rel in (
         "sessions", "cases/approved", "cases/rejected", "cases/reopened",
-        "facts", "candidates", "knowledge", "solutions/approved", "actions/plans",
+        "facts", "candidates", "knowledge", "solutions/approved",
+        "actions/plans", "actions/candidates", "eval",
         "archive/candidates/promoted", "archive/candidates/rejected",
     ):
         (vault / rel).mkdir(parents=True, exist_ok=True)
