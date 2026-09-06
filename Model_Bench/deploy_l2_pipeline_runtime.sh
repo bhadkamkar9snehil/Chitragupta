@@ -34,6 +34,7 @@ for f in \
   l2_learning_curator.py \
   sync_l2_outcomes.py \
   mine_l2_learning_candidates.py \
+  mine_l2_action_capability_candidates.py \
   l2_learning_cycle.py
  do
   cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
@@ -62,9 +63,9 @@ if [[ "${CHITRAGUPTA_ZVEC_SERVER:-1}" != "0" ]]; then
   zg server on >/dev/null 2>&1 || echo "WARNING: zg server did not start; direct mode remains available"
 fi
 
-# Outcome capture + conservative candidate mining is one learning sidecar. It is
-# useful history, not lifecycle authority, so a historical-materialization error
-# does not invalidate the runtime deployment.
+# Outcome capture + conservative lesson/capability candidate mining is one
+# sidecar. It creates learning/control-plane evidence only; it never promotes
+# knowledge, changes the executable registry, or performs an XBatch action.
 echo "== Learning outcome/candidate cycle (best effort) =="
 python3 "$ROOT/Model_Bench/l2_learning_cycle.py" --vault "$LEARNING_VAULT" \
   || echo "WARNING: learning cycle reported errors; lifecycle deployment continues"
@@ -153,7 +154,8 @@ echo "  identity guard:      harness binds run/ticket identity before sensitive 
 echo "  learning toolset:    l2_learning (explicit recall + candidate lessons)"
 echo "  action toolset:      l2_actions (list/describe/plan/plans/validate_plan; NO execute)"
 echo "  session recording:   ON"
-echo "  outcome learning:    reviewer/publisher cases + conservative candidate mining"
+echo "  outcome learning:    reviewer/publisher cases + conservative lesson mining"
+echo "  capability backlog:  repeated reviewed human actions -> unverified action candidates"
 echo "  automatic prefetch:  OFF by design"
 echo "  mem0 provider:       unchanged"
 echo "  action execution:    unavailable until a separate deterministic executor is deliberately introduced"
