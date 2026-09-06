@@ -1,6 +1,8 @@
 #!/bin/bash
 # Mirror deployable WSL profile artifacts into the repository's deploy/ tree.
 # Run after changing live SOULs/skills/config/plugins and review the diff before commit.
+# The shared l2-learning vault is deliberately NOT mirrored into Git: sessions,
+# candidates, and promoted facts are runtime data, not deploy artifacts.
 set -euo pipefail
 
 SRC_HERMES=~/.hermes/profiles
@@ -10,8 +12,6 @@ PROFILES="l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewe
 SKILLS="xstudio-l2-ticket-workflow xstudio-sap-api-investigation xstudio-sohar-heat-execution xstudio-quality-delay-workorder xstudio-sql-write-discipline xstudio-l2-draft-verifier"
 
 mkdir -p "$DST/profiles" "$DST/skills/xstudio" "$DST/plugins"
-
-# Do not recreate retired deploy artifacts. Historical versions remain in Git history.
 rm -rf "$DST/profiles/l2-gemma"
 
 for p in $PROFILES; do
@@ -21,8 +21,6 @@ for p in $PROFILES; do
   echo "mirrored $p SOUL.md + config.yaml"
 done
 
-# Read each skill from a profile that owns that role so an old duplicate copy cannot
-# overwrite the canonical deploy artifact.
 skill_owner() {
   case "$1" in
     xstudio-l2-draft-verifier) echo "l2-reviewer-primary l2-reviewer-fallback" ;;
@@ -44,15 +42,13 @@ for s in $SKILLS; do
   [ -n "$mirrored" ] || echo "WARNING: skill $s not found in an owning profile; repo copy left untouched"
 done
 
-cp "$SRC_HERMES/l2-investigator/plugins/xstudio-l2-orchestrator/plugin.yaml" \
-  "$DST/plugins/xstudio-l2-orchestrator.plugin.yaml" 2>/dev/null || true
-cp "$SRC_HERMES/l2-investigator/plugins/xstudio-l2-trace/plugin.yaml" \
-  "$DST/plugins/xstudio-l2-trace.plugin.yaml" 2>/dev/null || true
-cp "$SRC_HERMES/l2-investigator/plugins/xstudio-l2-tools/plugin.yaml" \
-  "$DST/plugins/xstudio-l2-tools.plugin.yaml" 2>/dev/null || true
+for plugin in xstudio-l2-orchestrator xstudio-l2-trace xstudio-l2-tools xstudio-l2-learning; do
+  cp "$SRC_HERMES/l2-investigator/plugins/$plugin/plugin.yaml" \
+    "$DST/plugins/$plugin.plugin.yaml" 2>/dev/null || true
+done
 
-# Hermes cron list has no JSON output in the deployed version. Keep one truthful text mirror.
 rm -f "$DST/cron_jobs.json"
 hermes -p l2-investigator cron list > "$DST/cron_jobs.txt" 2>&1
 
 echo "Done. Review $DST before committing, especially profile config.yaml files."
+echo "Runtime learning vault intentionally excluded: ${CHITRAGUPTA_L2_LEARNING_VAULT:-$HOME/.hermes/l2-learning}"

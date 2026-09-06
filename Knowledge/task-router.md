@@ -1,14 +1,15 @@
 ---
 type: "Routing Guide"
 title: "Hermes L2 Task Router"
-description: "Human-readable mirror of Knowledge/manifest.json for routing one claimed L2 ticket to a bounded evidence set."
+description: "Human-readable mirror of Knowledge/manifest.json for routing one claimed L2 ticket to a bounded evidence and learning set."
 status: current
-verified: "2026-09-05"
+verified: "2026-09-06"
 tags:
   - hermes
   - routing
   - xstudio
   - xmes
+  - learning
 ---
 
 # Hermes L2 Task Router
@@ -24,7 +25,7 @@ mental-model.md
 execution-model.md
 ```
 
-These define the current lifecycle and the read-only worker boundary. Then choose the narrowest route below.
+These define the current lifecycle and worker boundary. The adaptive-learning north star is `AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md`; load it for Hermes-runtime/learning/action-plane work rather than bloating every ticket.
 
 ## Core routing
 
@@ -38,7 +39,7 @@ These define the current lifecycle and the read-only worker boundary. Then choos
 | Billet yard/furnace/location/transfer/genealogy/count/weight | `billet_inventory` | `xstudio-sohar-heat-execution` | billet section, Billets Cast Count section, `view_catalog.md` | billet inventory, transfer-history and genealogy views |
 | Chemistry/spectro/result/UD/RR/deviation | `quality` | `xstudio-quality-delay-workorder` | quality section, `view_catalog.md` | chemistry/spectro/deviation views, quality/SAP rows |
 | Delay/OEE/downtime/equipment/agency/shift performance | `performance` | `xstudio-quality-delay-workorder` | delay/OEE section, `view_catalog.md` | `XBatch_Delay_Analysis_Vw`, delay/master tables |
-| Hermes runtime/audit/Kanban/memory/orchestration | `hermes_runtime` | `xstudio-l2-ticket-workflow` | `hermes-runtime-database-design.md`, `hermes-sp-catalog.md` | Hermes response/action/trace tables |
+| Hermes runtime/audit/Kanban/mem0/zvec/session learning/action capabilities | `hermes_runtime` | `xstudio-l2-ticket-workflow` | `hermes-runtime-database-design.md`, `hermes-sp-catalog.md`, `AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` | Hermes response/action/trace tables plus local learning vault |
 | Unknown/cross-domain symptom | `discover` | `xstudio-sql-write-discipline` | `xbatch-investigation-surfaces.md`, `view_catalog.md` | typed schema/object discovery |
 
 ## Strong identifiers beat vague classification
@@ -75,24 +76,53 @@ suggest_tables(ticket text)
 
 For API transaction summary, `read_procedure` is allowed only for the explicit reviewed read-only procedure contract exposed by the tool. Do not call arbitrary procedures.
 
+## Learning / prior-experience routing
+
+The shared learning plane is separate from live evidence and from mem0.
+
+Use `l2_recall` deliberately:
+
+```text
+scope=trusted
+  -> mirrored Git/skills + promoted operational facts + approved Solution exports
+  -> normal prior-knowledge search
+
+scope=sessions
+  -> historical user/assistant turns
+  -> unverified episodic experience only
+  -> use for failure-shape/dead-end/evidence-strategy forensics
+
+scope=candidates
+  -> model-proposed lessons awaiting promotion
+  -> unverified; never current-ticket proof
+```
+
+There is intentionally no generic automatic zvec prefetch. A retrieved old assistant statement can be wrong, rejected, or stale. Relevance decides what is worth inspecting; provenance/trust and live evidence decide what may be believed.
+
+When a run teaches a genuinely reusable lesson, `l2_lesson` may create an **unverified candidate** with provenance. It does not promote itself. Promotion/rejection is a separate control-plane operation.
+
+Every completed L2 turn is recorded automatically as redacted unverified episodic experience. Recording is for replay, failure mining, evaluation, and later explicit recall—not implicit authority.
+
 ## View-first rule
 
 Prefer a verified comprehensive view when it already contains the required relationship. Fall back to base tables only when the view lacks the necessary evidence or when the ticket is specifically about how that view is derived.
 
 `view_catalog.md` contains the view inventory. Treat automatically categorized/lite entries as routing leads until their definitions/data are verified for the current ticket.
 
-## Mutation boundary
+## Mutation boundary and autonomy path
 
-A route may reveal that a production/configuration change is required. That does not give the L2 worker a write path.
+A route may reveal that a production/configuration change is required. Today that does not give the L2 worker an arbitrary write path.
 
-Apply `xstudio-sql-write-discipline` as a boundary rule:
+Apply `xstudio-sql-write-discipline`:
 
 ```text
-known required action, worker cannot execute -> NEEDS_HUMAN_ACTION
-unresolved/beyond L2                     -> L3_ESCALATION
+known required action, no registered execution capability -> NEEDS_HUMAN_ACTION
+unresolved/beyond L2                                   -> L3_ESCALATION
 ```
 
 Never fall back to terminal/Python/pyodbc/sqlcmd/raw write SQL.
+
+The branch north star is broader: XBatch remediation will move through a typed action-capability registry and an autonomy ladder (`observe -> recommend -> shadow -> supervised -> autonomous`). Autonomy is earned per capability with deterministic preconditions, idempotency, verification, rollback/compensation, evidence requirements, and policy. See `AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` and `deploy/xstudio_action_capabilities.json`.
 
 ## Ticket workflow route
 
@@ -102,7 +132,7 @@ Current bound values are documented in `helpdesk-workflow-binding.md`.
 
 ## Runtime procedure routing
 
-The deterministic harness owns the Hermes SQL runtime. For architecture/reference work, the important stored procedures include:
+The deterministic harness owns the Hermes SQL runtime. For architecture/reference work, important procedures include:
 
 | Need | Procedure |
 |---|---|
@@ -121,4 +151,4 @@ Workers consume the corresponding safe `xstudio_l2` operations; they do not invo
 1. Update this file.
 2. Update `Knowledge/manifest.json` with the same canonical route name, skill, and document set.
 3. Keep the route bounded; do not turn every ticket into “load everything.”
-4. Run `python3 Model_Bench/validate_knowledge_manifest.py` and the retrieval tests locally.
+4. Run `python3 Model_Bench/validate_knowledge_manifest.py`, learning-plugin tests, and retrieval tests locally.

@@ -28,6 +28,12 @@ _tmp_*
 _publish*.py
 _publish*.sql
 
+# Adaptive-learning runtime data/indexes belong under ~/.hermes by default.
+# Ignore them if an operator deliberately points the vault into a checkout.
+.zvec-grep/
+l2-learning/
+**/.zvec-grep/
+
 # OS/editor noise
 .DS_Store
 Thumbs.db

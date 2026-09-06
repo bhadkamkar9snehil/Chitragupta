@@ -1,6 +1,6 @@
 {
-  "_comment": "Machine-readable routing manifest for the current deterministic L2 pipeline. task-router.md is the human-readable mirror. Git-tracked documents route investigation; ticket-specific claims still require live evidence through xstudio_l2.",
-  "verified": "2026-09-05",
+  "_comment": "Machine-readable routing manifest for the autonomous-learning L2 branch. Git/reference and retrieved experience route investigation; ticket-specific claims still require live evidence through xstudio_l2. zvec session recall is explicit and unverified, never automatic proof.",
+  "verified": "2026-09-06",
   "always_load": [
     "mental-model.md",
     "execution-model.md"
@@ -8,7 +8,7 @@
   "skills": [
     {
       "name": "xstudio-l2-ticket-workflow",
-      "description": "Investigate one already-claimed Helpdesk L2 ticket and hand a structured proposal to the deterministic deferred-review stage.",
+      "description": "Investigate one already-claimed Helpdesk L2 ticket, optionally recall scoped prior experience, capture reusable lesson candidates, and hand a structured proposal to deterministic review.",
       "scope": "procedure"
     },
     {
@@ -28,7 +28,7 @@
     },
     {
       "name": "xstudio-sql-write-discipline",
-      "description": "Enforce the L2 mutation boundary: diagnose through read-only tools and hand off any required write rather than improvising one.",
+      "description": "Enforce the current L2 mutation boundary while the capability-based action plane is developed: diagnose read-only and hand off writes that have no registered deterministic capability.",
       "scope": "cross-cutting"
     }
   ],
@@ -99,10 +99,10 @@
     },
     {
       "route": "hermes_runtime",
-      "description": "Question about Hermes runtime tables/procedures, L2 audit trail, investigation runs, memory, or orchestration state.",
-      "keywords": ["Hermes response", "Hermes SQL action", "L2 audit", "investigation run", "kanban", "mem0", "orchestrator"],
+      "description": "Hermes runtime, L2 audit, investigation runs, memory/learning, zvec recall, orchestration, or future action capability questions.",
+      "keywords": ["Hermes response", "Hermes SQL action", "L2 audit", "investigation run", "kanban", "mem0", "zvec", "learning", "session recall", "action capability", "orchestrator"],
       "skill": "xstudio-l2-ticket-workflow",
-      "load": ["hermes-runtime-database-design.md", "hermes-sp-catalog.md"],
+      "load": ["hermes-runtime-database-design.md", "hermes-sp-catalog.md", "AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md"],
       "live_sql_leads": ["Hermes_L2_Response_Trn_Tbl", "Hermes_L2_SQL_Action_Trn_Tbl", "Hermes_Agent_Trace_Trn_Tbl"]
     },
     {

@@ -23,10 +23,19 @@ kanban_complete -> approve
 kanban_block    -> reject
 ```
 
-Project procedure lives in the `xstudio-l2-draft-verifier` skill and `AGENTS.md`. The investigator's workflow skill describes how proposals are produced; do not turn it into reviewer-side publication instructions.
+Project procedure lives in the `xstudio-l2-draft-verifier` skill and `AGENTS.md`. The adaptive-learning north star lives in `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md`.
+
+## Learning and prior experience
+
+The shared `l2_learning` toolset may help you challenge a proposal, but live evidence remains the review authority.
+
+- Prefer `l2_recall(scope="trusted")` when prior reference/approved knowledge could materially inform the review.
+- Use `scope="sessions"` only for forensic questions such as whether this is a repeated harness/model failure pattern. A historical session can contain a rejected hypothesis or hallucination and is never proof.
+- Do not approve because a retrieved past session agrees with the investigator.
+- If review uncovers a genuinely reusable systemic lesson, `l2_lesson` may record it only as an unverified candidate with explicit provenance. Promotion is separate.
+
+Every completed reviewer turn is recorded automatically as redacted unverified episodic experience. This is intentional: rejected proposals and reviewer corrections are especially valuable training/evaluation data, but they are not automatically prefetched into future prompts.
 
 ## Memory
 
-Use persistent memory only for durable facts that should help future tickets, such as a non-obvious schema fact, a repeated dead end, or a correction to an investigation heuristic.
-
-Do not store ticket-specific IDs, one-off findings, review decisions, or proposal text in memory. Per-ticket evidence belongs in the run ledger and deterministic Kanban/ticket trail.
+Use mem0 only for compact durable operational behavior. Do not store ticket-specific IDs, one-off findings, review decisions, or proposal text in memory. Per-ticket evidence belongs in the run ledger and deterministic Kanban/ticket trail; historical sessions remain searchable only as unverified experience.

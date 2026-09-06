@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "global_mode": "observe",
+  "autonomy_levels": {
+    "A0": "observe/read-only diagnosis",
+    "A1": "recommend human action",
+    "A2": "shadow-plan registered action without execution",
+    "A3": "supervised execution after explicit operator approval",
+    "A4": "autonomous low-risk allowlisted execution",
+    "A5": "broader autonomous remediation after evidence-based promotion"
+  },
+  "capability_contract": {
+    "required_fields": [
+      "id",
+      "description",
+      "risk",
+      "mode",
+      "parameter_schema",
+      "preconditions",
+      "execution",
+      "idempotency",
+      "verification",
+      "rollback",
+      "required_evidence",
+      "approval_policy"
+    ],
+    "allowed_modes": ["observe", "recommend", "shadow", "supervised", "autonomous"],
+    "allowed_risk": ["low", "medium", "high", "critical"]
+  },
+  "capabilities": [],
+  "notes": [
+    "This registry is intentionally empty on first introduction. Current L2 workers remain read-only.",
+    "A capability must be implemented as a narrow deterministic harness operation before it can be added here.",
+    "Autonomy is promoted per capability from shadow to supervised to autonomous based on replay/live evidence; there is no global raw-SQL permission switch."
+  ]
+}

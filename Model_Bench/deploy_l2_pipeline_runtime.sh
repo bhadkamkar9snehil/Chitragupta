@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploy the repo's deterministic L2 pipeline runtime AND the typed XStudio
-# investigation harness into the Hermes profile script/plugin/skill locations.
-# Run from the Chitragupta repo under WSL. Safe to run repeatedly.
+# Deploy the deterministic L2 lifecycle, typed XStudio evidence surface, and the
+# adaptive learning/experience plane into the Hermes profiles.
 #
-# The typed-tool half of this deployment exists because of Ticket_424/Ticket_441:
-# the lifecycle was fine, but the investigator rebuilt SQL transport by hand
-# (`python3 /mnt/c/Python314/python.exe ...`, then `pip install pyodbc`) and
-# burned its whole context window. Transport is now harness-owned behind the
-# `xstudio_l2` tool, and the retired shell paths are blocked.
+# Learning design:
+#   * record completed L2 turns -> shared redacted sessions vault
+#   * explicit l2_recall -> zvec BM25+vector hybrid search with trust scopes
+#   * l2_lesson -> unverified candidate only
+#   * NO generic automatic prefetch
+#   * mem0 remains independent and is not replaced by this deploy
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$HOME/.hermes/profiles/l2-investigator/scripts"
@@ -17,14 +17,10 @@ ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary l2-
 INVESTIGATOR_PROFILES=(l2-investigator l2-investigator-primary)
 REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
 RETIRED_DEPLOYED_SCRIPTS=(dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py)
+LEARNING_VAULT="${CHITRAGUPTA_L2_LEARNING_VAULT:-$HOME/.hermes/l2-learning}"
 
 mkdir -p "$SCRIPTS_DIR"
 
-# Repo deletion is not deployment deletion. Earlier cleanup removed these files
-# from Git but left old copies under ~/.hermes/profiles/.../scripts, which made
-# the live machine look like it still had two orchestration systems. Remove the
-# known retired entrypoints explicitly on every deploy so repo and live state
-# converge idempotently.
 for retired in "${RETIRED_DEPLOYED_SCRIPTS[@]}"; do
   if [[ -e "$SCRIPTS_DIR/$retired" ]]; then
     rm -f "$SCRIPTS_DIR/$retired"
@@ -42,36 +38,54 @@ for f in \
   audit_kanban_completions.py \
   enforce_publish_safety_net.py \
   run_coalesced.py \
-  drain_and_summarize.py
+  drain_and_summarize.py \
+  sync_l2_learning_corpus.py \
+  l2_learning_curator.py
  do
   cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
  done
-
 chmod +x "$SCRIPTS_DIR"/*.py
 
-# The typed-tool bridge is invoked by the plugin at its REPO path (it needs the
-# Windows interpreter and the repo's Hermes_Orchestrator module), so it is not
-# copied into the profile. Fail loudly if it is missing rather than deploying a
-# plugin whose transport cannot start.
+# Windows-side typed SQL bridge stays in the repo because it imports the repo's
+# Hermes_Orchestrator and is executed by trusted harness code only.
 test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
   || { echo "FATAL: Model_Bench/xstudio_l2_tool_bridge.py is missing" >&2; exit 1; }
 
-# Keep the workflow binding beside the deployed scripts as a fallback. The
-# runtime also reads the canonical repo copy directly.
 cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
 
-# Deploy both observer plugins to every active role. The orchestrator plugin
-# only triggers reconciliation; the tools plugin registers `xstudio_l2` and
-# enforces the execution guard. Correctness never depends on the event hook,
-# because ticket_scout runs the same reconciler before every new claim.
+# zvec is a deliberate local dependency. Do not let the LLM install it during a
+# ticket; operators install it once and deployment verifies it.
+if ! command -v zg >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+FATAL: zvec-grep (`zg`) is required by the adaptive-learning branch but is not on PATH.
+Install Node.js 22+ and then, outside an agent investigation:
+  npm install -g @zvec/zvec-grep
+Then rerun this deployment.
+EOF
+  exit 1
+fi
+
+# Mirror canonical Git/skill knowledge into the shared learning vault and refresh
+# the disposable hybrid index. Sessions/facts/candidates are never deleted by this.
+echo "== Learning corpus sync =="
+python3 "$ROOT/Model_Bench/sync_l2_learning_corpus.py" --vault "$LEARNING_VAULT"
+
+# Keep the optional shared daemon warm. `zg query --mode auto` still works direct
+# if the daemon cannot start, so daemon failure is not a correctness failure.
+if [[ "${CHITRAGUPTA_ZVEC_SERVER:-1}" != "0" ]]; then
+  zg server on >/dev/null 2>&1 || echo "WARNING: zg server did not start; direct mode remains available"
+fi
+
+# Deploy plugins to each profile. xstudio-l2-learning is a general plugin, not a
+# MemoryProvider, so this does not switch or rewrite the active mem0 provider.
 deploy_plugins() {
   local profile="$1" plugin src dir
-  for plugin in xstudio-l2-orchestrator xstudio-l2-tools; do
-    if [[ "$plugin" == "xstudio-l2-orchestrator" ]]; then
-      src="$ROOT/Model_Bench/xstudio_l2_orchestrator_plugin"
-    else
-      src="$ROOT/Model_Bench/xstudio_l2_tools_plugin"
-    fi
+  for plugin in xstudio-l2-orchestrator xstudio-l2-tools xstudio-l2-learning; do
+    case "$plugin" in
+      xstudio-l2-orchestrator) src="$ROOT/Model_Bench/xstudio_l2_orchestrator_plugin" ;;
+      xstudio-l2-tools)        src="$ROOT/Model_Bench/xstudio_l2_tools_plugin" ;;
+      xstudio-l2-learning)     src="$ROOT/Model_Bench/xstudio_l2_learning_plugin" ;;
+    esac
     dir="$HOME/.hermes/profiles/$profile/plugins/$plugin"
     mkdir -p "$dir"
     cp "$src/__init__.py" "$dir/__init__.py"
@@ -79,13 +93,8 @@ deploy_plugins() {
   done
 }
 
-# A profile-local plugin copy is enough for HOOKS to fire, but NOT for a plugin
-# to contribute a TOOLSET. Toolset gating (hermes_cli/tools_config._get_platform_tools)
-# only accepts a toolset name that plugin discovery already knows about, and that
-# discovery scans the SHARED plugins directory using the ROOT config's
-# plugins.enabled list. A tools plugin installed only under a profile therefore
-# loads its hooks, registers its tool, and still has the toolset silently dropped
-# from every session -- exactly what the first typed-harness live run exposed.
+# Toolset names must be visible to shared plugin discovery, not only to a
+# profile-local plugin copy.
 install_shared_plugin_for_discovery() {
   local plugin="$1" src="$2" dir="$HOME/.hermes/plugins/$1"
   mkdir -p "$dir"
@@ -127,30 +136,25 @@ for profile in "${REVIEWER_PROFILES[@]}"; do
   done
 done
 
-# Enable the tools plugin/toolset and the approval-deny backstop in each live
-# profile config. This is a targeted, idempotent, comment-preserving edit -- it
-# never rewrites dispatch settings, API ports, model choice, or credentials.
-echo "== Shared plugin install (required for toolset discovery) =="
+echo "== Shared plugin install (required for direct toolset discovery) =="
 install_shared_plugin_for_discovery xstudio-l2-tools "$ROOT/Model_Bench/xstudio_l2_tools_plugin"
-echo "installed xstudio-l2-tools into $HOME/.hermes/plugins for toolset discovery"
+install_shared_plugin_for_discovery xstudio-l2-learning "$ROOT/Model_Bench/xstudio_l2_learning_plugin"
 
 echo "== Profile config (idempotent, additive) =="
 for profile in "${ACTIVE_PROFILES[@]}"; do
   config="$HOME/.hermes/profiles/$profile/config.yaml"
   if [[ -f "$config" ]]; then
     python3 "$ROOT/Model_Bench/patch_profile_config.py" "$config"
-    # Never make the worker DISCOVER xstudio_l2. Deferred tool-search is a fine
-    # trade for a large model and a trap for the 9B local one: on Ticket_360 the
-    # worker searched, found the tool, said it would use it, then completed with
-    # "database access unavailable" without ever calling it.
+    # Small local models get both typed toolsets directly. Do not make them
+    # discover the tools through deferred tool_search.
     python3 "$ROOT/Model_Bench/patch_tool_search_off.py" "$config"
   else
     echo "WARNING: $config not found; skipped"
   fi
 done
 
-# The root config drives plugin discovery, which is what makes `xstudio_l2` a
-# recognised toolset name instead of an unknown one that gets filtered out.
+# Root config controls plugin discovery and therefore recognition of plugin
+# toolset names. Add both plugins; do not change memory.provider.
 echo "== Root config (plugin discovery) =="
 python3 "$ROOT/Model_Bench/patch_profile_config.py" --enable-plugin-only "$HOME/.hermes/config.yaml"
 
@@ -161,8 +165,11 @@ if [[ "${1:-}" != "--no-restart" ]]; then
 fi
 
 echo
-echo "Deployed deterministic L2 lifecycle + typed XStudio investigation harness."
-echo "Typed tool: xstudio_l2. Retired terminal transports (Hermes_Orchestrator.py,"
-echo "Windows Python, sqlcmd, pyodbc, pip) are blocked by plugin hook + approvals.deny."
-echo "Known retired deployed lifecycle scripts are removed on every deploy."
+echo "Deployed deterministic L2 lifecycle + typed evidence + adaptive learning plane."
+echo "  evidence toolset: xstudio_l2"
+echo "  learning toolset: l2_learning (l2_recall, l2_lesson)"
+echo "  learning vault:   $LEARNING_VAULT"
+echo "  session record:   ON (redacted, unverified episodic)"
+echo "  auto prefetch:    OFF by design"
+echo "  mem0 provider:    unchanged"
 echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"

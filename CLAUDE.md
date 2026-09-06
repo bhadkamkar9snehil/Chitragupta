@@ -1,68 +1,136 @@
-# Claude Entry Point — Chitragupta
+# Claude Entry Point — Chitragupta Adaptive L2 Branch
 
-Read `AGENTS.md` first. It is the stable operational contract for this repo.
-
-Do **not** duplicate the lifecycle architecture here. The authoritative sources are:
-
-- `AGENTS.md` — current agent operating contract.
-- `Knowledge/L2_PIPELINE_STATE_MACHINE.md` — normative ticket lifecycle.
-- `Model_Bench/l2_pipeline_runtime.py` — actual lifecycle implementation.
-- `deploy/helpdesk_workflow_binding.json` — live Helpdesk status binding.
-- `Knowledge/KB_IMPLEMENTATION_PLAN.md` — KB architecture/implementation plan.
-- `README.md` — human-facing current architecture/deployment overview.
-
-## Current deployment facts that matter
-
-- Branch: `main` only.
-- Live lifecycle: centralized Kanban state machine in `Model_Bench/l2_pipeline_runtime.py`.
-- Global SQL WIP: `1` active run.
-- Priorities: review `30`, rework `20`, new investigation `10`.
-- Reviewer creation is deferred until investigator/rework completion is normalized and reviewable.
-- Reviewer receives frozen `proposal_json`; deterministic publisher publishes that same proposal.
-- Rework cycles use `review_cycle`, not SQL `AttemptNo`; max cycles = 3.
-- `ticket_scout.py` is the 2-minute mutating reconciliation/claim backstop.
-- Separate 5-minute publish-safety-net and repair cron jobs were deliberately removed; do not recreate them.
-- L2 agents reach the database ONLY through the typed `xstudio_l2` tool (`xstudio-l2-tools` plugin + `Model_Bench/xstudio_l2_tool_bridge.py`). Model-driven terminal use of an interpreter, database driver, `sqlcmd`, or package install is blocked by the plugin guard and `approvals.deny`; benign terminal/file inspection still works. Raw agent SQL is read-only, arbitrary `EXEC` is unavailable, and `read_procedure` is an explicit allowlist. See `AGENTS.md` §8a.
-- Interpreter/driver/dependency mechanics are harness code and config, never mem0.
-- Reviewer completion audit is read-only.
-- Live-verified Helpdesk binding: eligible `Enter`, resolved `Closed`, waiting-user AskStatus `Ask`; L3/human-action ticket statuses remain unbound until proven live.
-- A `RESOLUTION` does not automatically create a KB article.
-- The generated SQL full-install bundle includes the `25` and `55` hardening sources.
-- `.gitattributes` forces LF on `*.sh` and `*.sql` because Windows CRLF conversion broke WSL scripts and install reproducibility.
-
-## Before changing the ticket pipeline
-
-Read:
+You are on the deliberate experimental branch:
 
 ```text
-AGENTS.md
-Knowledge/L2_PIPELINE_STATE_MACHINE.md
-Model_Bench/l2_pipeline_runtime.py
-Model_Bench/test_l2_pipeline_runtime.py
+development/autonomous-l2-learning-runtime
 ```
 
-Preserve the core invariants unless the user explicitly asks to redesign them.
+The product north star for this branch is the highest-level contract:
+
+> Build an autonomous, AI-driven, deterministic L2 Helpdesk that gets measurably better from experience and progressively earns the ability to solve XBatch issues itself.
+
+Read `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` first, then `AGENTS.md`. `AGENTS.md` remains the current production-safety/lifecycle baseline, but any old instruction that says “main only”, fixes Qdrant/mem0 as the only possible learning architecture, or treats permanent read-only diagnosis as the end state is **not** a design constraint on this branch. Preserve deterministic safety properties unless a better implementation replaces them explicitly.
+
+## Current authoritative sources
+
+- `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` — branch north star, experience/retrieval plane, learning lifecycle, evaluation plane, and action-autonomy ladder.
+- `AGENTS.md` — current production lifecycle/safety baseline.
+- `Knowledge/L2_PIPELINE_STATE_MACHINE.md` — current deterministic ticket lifecycle.
+- `Model_Bench/l2_pipeline_runtime.py` — actual lifecycle implementation.
+- `deploy/helpdesk_workflow_binding.json` — observed Helpdesk workflow binding.
+- `deploy/xstudio_action_capabilities.json` — machine-readable future corrective-action registry; initially observe-only/empty.
+- `Knowledge/manifest.json` / `Knowledge/task-router.md` — current routing.
+- `Knowledge/KB_IMPLEMENTATION_PLAN.md` — still authoritative for knowledge governance concepts (provenance, lifecycle, applicability, abstention), but its choice of retrieval substrate is no longer sacred; zvec/Qdrant/other indexing should be decided empirically.
+
+## What this branch adds
+
+The existing deterministic lifecycle remains the control plane:
+
+```text
+claim -> investigate -> normalize -> frozen independent review -> publish/rework
+```
+
+The branch adds a separate **Experience & Retrieval Plane**:
+
+```text
+~/.hermes/l2-learning/
+  sessions/              redacted, unverified episodic turns
+  facts/                 reviewed operational lessons
+  candidates/            unverified model-proposed lessons
+  knowledge/             mirrored Git/skill reference
+  solutions/approved/    future governed Solution export
+```
+
+`zvec-grep` provides local BM25 + vector hybrid search over that corpus.
+
+Important distinction:
+
+```text
+recording experience != believing it
+retrieving experience != proving the current ticket
+reasoning about a fix != permission to execute it
+```
+
+### Sessions are deliberately recorded
+
+Every completed L2 turn is useful experience for replay, failure mining, reviewer-correction analysis, token/tool optimization, and learning. `xstudio-l2-learning` records completed turns through `post_llm_call` as redacted `unverified_episodic` Markdown.
+
+### Generic automatic prefetch is deliberately disabled
+
+Do not add a zvec `pre_llm_call`/turn-start top-k injection just because it is convenient. Old sessions include incorrect investigator hypotheses, reviewer-rejected claims, stale workflow state, and model hallucinations. Generic relevance-based injection gives that text epistemic privilege before the worker classifies provenance.
+
+Use explicit `l2_recall` scopes instead. `scope=trusted` is the normal prior-knowledge path; `scope=sessions` is explicitly forensic/unverified and still requires live verification.
+
+`l2_lesson` may write only unverified candidates. Promotion is separate and deterministic via `Model_Bench/l2_learning_curator.py`.
+
+mem0 remains available for compact durable operational memory; the zvec learning plane does not replace it merely to reduce component count.
+
+## Future XBatch solving
+
+Current investigator/reviewer SQL remains read-only. That is the present capability state, not the final product boundary.
+
+Do **not** solve future autonomy by giving a model arbitrary UPDATE/EXEC access. Build typed corrective capabilities with:
+
+```text
+parameter schema
+preconditions
+supported execution path
+idempotency
+required evidence
+postcondition verification
+rollback/compensation
+risk class
+approval policy
+```
+
+Progress capability-by-capability through:
+
+```text
+A0 observe
+A1 recommend
+A2 shadow-plan
+A3 supervised execute
+A4 autonomous low-risk execute
+A5 broader autonomous remediation
+```
+
+The registry is `deploy/xstudio_action_capabilities.json`. A capability earns autonomy from replay/live evidence and observed outcomes, not from prompt confidence.
+
+## Existing production facts still important
+
+- Global SQL WIP currently `1` because of local inference constraints.
+- Priorities: review `30`, rework `20`, new investigation `10`.
+- Reviewer creation is deferred until normalized/reviewable completion.
+- Reviewer receives frozen `proposal_json`; publisher publishes that exact proposal.
+- `review_cycle` controls bounded rework, not SQL `AttemptNo`.
+- `ticket_scout.py` remains the reconcile-first claim backstop.
+- Database evidence uses typed `xstudio_l2`; model-driven Python/pyodbc/sqlcmd/package-install transport stays blocked.
+- Helpdesk workflow states are harness-bound from observed values, not invented by the model.
+- A resolution does not automatically become a trusted KB article.
+- GitHub Actions are not the live validation authority.
+
+These are implementation facts, not immutable product dogma. Change them when a better design demonstrably improves the north star without losing correctness.
 
 ## Validation
 
-Validate locally against the real environment; do not use GitHub Actions as proof of live correctness.
+Run locally on the real Windows/WSL/Hermes/SQL/LM Studio machine:
 
 ```bash
+bash Model_Bench/deploy_l2_pipeline_runtime.sh
 bash Model_Bench/validate_l2_pipeline_local.sh
-python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
-python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
+python3 Model_Bench/test_xstudio_l2_learning_plugin.py
+python3 Model_Bench/validate_action_capabilities.py
 ```
+
+For the first natural live ticket on this branch, verify all three planes independently:
+
+1. control plane still progresses correctly;
+2. evidence still goes through `xstudio_l2`;
+3. the learning plane records a redacted session, exposes `l2_recall`/`l2_lesson`, and injects no automatic zvec-memory block.
+
+Do not manufacture a production ticket or raw-poll around the lifecycle gate merely to test it.
 
 ## Historical material
 
-`Plans/` and `Agent_Comms/` contain prior architectures, model names, experiments, and incident notes. They are not current instructions. In particular, do not revive:
-
-- poll-into-long-lived-chat architecture;
-- separate `l2-review` board;
-- `kanban_forward_bridge.py`;
-- old model-based role names;
-- backlog-cap-3 claiming;
-- SQL `AttemptNo` as the review/rework counter;
-- separate publisher/reject/repair lifecycle authorities.
-
-If a historical file conflicts with `AGENTS.md` or the state-machine contract, treat the historical file as provenance only.
+`Plans/` and `Agent_Comms/` remain provenance. Do not revive dead duplicate orchestration merely because it appears in history. Conversely, do not reject a better future architecture just because it differs from an old rule: the branch north star is the governing design criterion.

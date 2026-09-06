@@ -33,6 +33,7 @@ plugins:
     - xstudio-l2-trace
     - xstudio-l2-orchestrator
     - xstudio-l2-tools
+    - xstudio-l2-learning
 kanban:
   dispatch_in_gateway: true
   dispatch_interval_seconds: 30
@@ -56,11 +57,13 @@ platform_toolsets:
     - terminal
     - todo
     - xstudio_l2
+    - l2_learning
 known_plugin_toolsets:
   cli:
     - a2a
     - spotify
     - xstudio_l2
+    - l2_learning
 known_builtin_toolsets:
   cli:
     - browser

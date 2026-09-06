@@ -35,6 +35,7 @@ plugins:
     - xstudio-l2-trace
     - xstudio-l2-orchestrator
     - xstudio-l2-tools
+    - xstudio-l2-learning
 kanban:
   dispatch_in_gateway: false
 _config_version: 40
@@ -55,11 +56,13 @@ platform_toolsets:
     - terminal
     - todo
     - xstudio_l2
+    - l2_learning
 known_plugin_toolsets:
   cli:
     - a2a
     - spotify
     - xstudio_l2
+    - l2_learning
 known_builtin_toolsets:
   cli:
     - browser

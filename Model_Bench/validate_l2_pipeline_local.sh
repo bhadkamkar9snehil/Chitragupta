@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+LEARNING_VAULT="${CHITRAGUPTA_L2_LEARNING_VAULT:-$HOME/.hermes/l2-learning}"
 
 PY_FILES=(
   Model_Bench/l2_pipeline_runtime.py
@@ -18,8 +19,13 @@ PY_FILES=(
   Model_Bench/patch_tool_search_off.py
   Model_Bench/xstudio_l2_orchestrator_plugin/__init__.py
   Model_Bench/xstudio_l2_tools_plugin/__init__.py
+  Model_Bench/xstudio_l2_learning_plugin/__init__.py
   Model_Bench/xstudio_l2_tool_bridge.py
+  Model_Bench/sync_l2_learning_corpus.py
+  Model_Bench/l2_learning_curator.py
+  Model_Bench/validate_action_capabilities.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
+  Model_Bench/test_xstudio_l2_learning_plugin.py
 )
 
 echo "== Python syntax =="
@@ -31,9 +37,34 @@ python3 Model_Bench/test_l2_pipeline_runtime.py
 echo "== Typed investigation-tool contract tests =="
 python3 Model_Bench/test_xstudio_l2_tools_plugin.py
 
+echo "== Adaptive learning contract tests =="
+python3 Model_Bench/test_xstudio_l2_learning_plugin.py
+
+echo "== Future action capability registry =="
+python3 Model_Bench/validate_action_capabilities.py
+
 echo "== Knowledge/skill validation =="
 python3 Model_Bench/validate_knowledge_manifest.py
 python3 Model_Bench/test_kb_retrieval.py
+
+echo "== zvec learning substrate =="
+if ! command -v zg >/dev/null 2>&1; then
+  echo "FAIL: zg missing. Install Node.js 22+ and: npm install -g @zvec/zvec-grep" >&2
+  exit 1
+fi
+python3 Model_Bench/sync_l2_learning_corpus.py --vault "$LEARNING_VAULT" --check
+zg status "$LEARNING_VAULT" --check-ready
+
+echo "== Live profile plugin/toolset config =="
+for profile in l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback; do
+  config="$HOME/.hermes/profiles/$profile/config.yaml"
+  if [[ ! -f "$config" ]]; then
+    echo "FAIL: missing live profile config $config" >&2
+    exit 1
+  fi
+  python3 Model_Bench/patch_profile_config.py --check "$config"
+done
+python3 Model_Bench/patch_profile_config.py --enable-plugin-only --check "$HOME/.hermes/config.yaml"
 
 echo "== Retired live-deployment guard =="
 DEPLOYED_SCRIPTS="$HOME/.hermes/profiles/l2-investigator/scripts"
@@ -60,8 +91,22 @@ echo "== Reconcile preview (dry-run) =="
 python3 Model_Bench/l2_pipeline_runtime.py reconcile --dry-run
 
 echo
-cat <<'EOF'
+cat <<EOF
 LOCAL VALIDATION COMPLETE.
+
+Adaptive learning plane:
+  shared vault:       $LEARNING_VAULT
+  session recording:  ON (post_llm_call -> redacted unverified episodic Markdown)
+  automatic prefetch: OFF by design
+  explicit recall:    l2_recall with trust-scoped zvec hybrid search
+  candidate learning: l2_lesson -> candidates only; separate promotion required
+  mem0 provider:      unchanged
+
+Future action plane:
+  registry:           deploy/xstudio_action_capabilities.json
+  global mode:        observe
+  executable actions: none yet
+  promotion path:     observe -> recommend -> shadow -> supervised -> autonomous
 
 SQL deployment note:
   Knowledge/00_Hermes_L2_FULL_INSTALL.sql is the generated complete bundle.
@@ -72,15 +117,10 @@ SQL deployment note:
 After deploying/regenerating the SQL bundle, run:
   Knowledge/98_pipeline_postflight.sql
 
-Confirm deploy/helpdesk_workflow_binding.json still matches live workflow values.
-Do not guess replacement status names.
-
-Live deployment note:
-  deploy_l2_pipeline_runtime.sh now removes known retired lifecycle scripts from
-  ~/.hermes/profiles/l2-investigator/scripts. Validation fails if those stale
-  copies reappear even when they are absent from Git.
-
-For the next naturally arriving fresh ticket, verify its trace uses xstudio_l2 for
-database/schema/ticket evidence and does not attempt to recreate SQL transport via
-terminal, an interpreter, pyodbc/sqlcmd, or package installation.
+For the next naturally arriving fresh ticket, verify:
+  - database evidence uses xstudio_l2;
+  - prior experience, when useful, uses explicit l2_recall rather than prompt injection;
+  - a session file is written under the shared learning vault;
+  - no generic zvec-memory prefetch block appears in the model context;
+  - no terminal/interpreter/pyodbc/sqlcmd/package-install SQL transport reappears.
 EOF
