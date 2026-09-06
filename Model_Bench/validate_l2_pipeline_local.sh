@@ -36,7 +36,6 @@ CONTRACT_TESTS=(
 SH_FILES=(
   Model_Bench/deploy_l2_pipeline_runtime.sh
   Model_Bench/install_l2_learning_prereqs.sh
-  Model_Bench/mirror_wsl_artifacts.sh
   Model_Bench/validate_l2_pipeline_local.sh
 )
 
