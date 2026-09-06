@@ -10,37 +10,29 @@ LEARNING_VAULT="${CHITRAGUPTA_L2_LEARNING_VAULT:-$HOME/.hermes/l2-learning}"
 
 mkdir -p "$SCRIPTS_DIR"
 
-# Remove retired compatibility/facade scripts from older deployments. The
-# lifecycle now has one entry point: l2_pipeline_runtime.py.
+# Delete runtime names retired by the Hermes-centric architecture.
 for retired in \
   dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py \
   reconcile_l2_pipeline.py kanban_approval_publisher.py kanban_reject_bridge.py \
-  repair_incomplete_completions.py enforce_publish_safety_net.py \
+  repair_incomplete_completions.py enforce_publish_safety_net.py audit_kanban_completions.py \
   l2_pipeline_runtime_core.py l2_pipeline_context_helpers.py \
   l2_pipeline_context_cards.py l2_pipeline_context_scout.py \
   l2_context_envelope.py l2_context_delivery.py l2_context_delivery_base.py \
   l2_context_delivery_assembly.py l2_context_delivery_receipts.py \
-  kb_retrieval_base.py kb_retrieval_cli.py kb_retrieval_corpus.py kb_retrieval_routing.py
+  kb_retrieval_base.py kb_retrieval_cli.py kb_retrieval_corpus.py kb_retrieval_routing.py \
+  setup_mem0.py seed_mem0_lessons.py reapply_mem0_patch.py
 do
   rm -f "$SCRIPTS_DIR/$retired"
 done
 
+# Chitragupta domain/runtime code only. Hermes owns the general harness.
 for f in \
-  l2_pipeline_runtime.py \
-  kb_retrieval.py \
-  ticket_scout.py \
-  audit_kanban_completions.py \
-  xstudio_l2_tool_bridge.py \
-  l2_gbrain.py \
-  sync_l2_learning_corpus.py \
-  sync_l2_approved_solutions.py \
-  sync_l2_outcomes.py \
-  mine_l2_learning_candidates.py \
-  mine_l2_action_capability_candidates.py \
-  l2_learning_curator.py \
-  l2_action_capability_curator.py \
-  sync_l2_gbrain.py \
-  l2_learning_cycle.py
+  l2_pipeline_runtime.py kb_retrieval.py ticket_scout.py \
+  xstudio_l2_tool_bridge.py l2_gbrain.py \
+  sync_l2_learning_corpus.py sync_l2_approved_solutions.py sync_l2_outcomes.py \
+  mine_l2_learning_candidates.py mine_l2_action_capability_candidates.py \
+  l2_learning_curator.py l2_action_capability_curator.py \
+  sync_l2_gbrain.py l2_learning_cycle.py
 do
   cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
 done
@@ -49,15 +41,11 @@ chmod +x "$SCRIPTS_DIR"/*.py
 cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
 cp "$ROOT/deploy/xstudio_action_capabilities.json" "$SCRIPTS_DIR/xstudio_action_capabilities.json"
 
-# Materialize authoritative source files first; GBrain only indexes them.
-echo "== Learning corpus sync =="
+echo "== Learning source material =="
 python3 "$ROOT/Model_Bench/sync_l2_learning_corpus.py" --vault "$LEARNING_VAULT" \
   || echo "WARNING: canonical learning-corpus sync failed"
-
-echo "== Governed Solution sync =="
 python3 "$ROOT/Model_Bench/sync_l2_approved_solutions.py" \
-  --vault "$LEARNING_VAULT" \
-  --policy "$ROOT/deploy/solution_export_policy.json" \
+  --vault "$LEARNING_VAULT" --policy "$ROOT/deploy/solution_export_policy.json" \
   || echo "WARNING: governed Solution sync found missing/drifted approvals"
 
 echo "== Learning/GBrain convergence =="
@@ -73,6 +61,7 @@ deploy_plugin() {
     xstudio-l2-identity)     src="$ROOT/Model_Bench/xstudio_l2_identity_plugin" ;;
     xstudio-l2-learning)     src="$ROOT/Model_Bench/xstudio_l2_learning_plugin" ;;
     xstudio-l2-actions)      src="$ROOT/Model_Bench/xstudio_l2_actions_plugin" ;;
+    *) echo "unknown plugin: $plugin" >&2; return 1 ;;
   esac
   local dst="$HOME/.hermes/profiles/$profile/plugins/$plugin"
   mkdir -p "$dst"
@@ -111,7 +100,7 @@ for profile in "${REVIEWER_PROFILES[@]}"; do
   done
 done
 
-# Old independent watcher is explicitly retired. l2_learning_cycle owns sync.
+# GBrain sync has one owner: l2_learning_cycle.py.
 systemctl --user disable --now chitragupta-gbrain-sync.service >/dev/null 2>&1 || true
 rm -f "$HOME/.config/systemd/user/chitragupta-gbrain-sync.service"
 systemctl --user daemon-reload >/dev/null 2>&1 || true
@@ -122,11 +111,13 @@ if [[ "${1:-}" != "--no-restart" ]]; then
   done
 fi
 
-echo
-echo "Deployed Chitragupta L2 on Hermes."
-echo "  harness:    Hermes"
-echo "  lifecycle:  l2_pipeline_runtime.py"
-echo "  evidence:   xstudio_l2 typed tools"
-echo "  retrieval:  isolated GBrain via kb_retrieval.py + supplemental l2_recall"
-echo "  learning:   outcome materialization -> candidates -> GBrain sync"
-echo "  actions:    planning only; no execute operation"
+cat <<'EOF'
+
+Deployed Chitragupta L2 on Hermes.
+  harness:    Hermes
+  lifecycle:  l2_pipeline_runtime.py
+  evidence:   xstudio_l2 typed tools
+  retrieval:  isolated GBrain + supplemental l2_recall
+  learning:   outcome materialization -> candidates -> GBrain sync
+  actions:    planning only; no execute operation
+EOF

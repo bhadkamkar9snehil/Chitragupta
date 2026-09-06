@@ -1,4 +1,3 @@
-
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         Scheduled Jobs                                  │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -7,46 +6,23 @@
     Name:      Session maintenance
     Schedule:  every 360m
     Repeat:    ∞
-    Next run:  2026-09-05T17:48:00.982592+00:00
     Deliver:   local
     Script:    session_maintenance.py
     Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-05T11:48:00.982592+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-05T11:47:38.333827+00:00)
-    Execution: completed  ac408ea93cd44eb193e6feaaadcebb88
 
   f1915c187f11 [active]
-    Name:      L2 Ticket Scout (Kanban bridge)
+    Name:      L2 Ticket Scout
     Schedule:  every 2m
     Repeat:    ∞
-    Next run:  2026-09-05T17:33:45.223454+00:00
     Deliver:   local
     Script:    ticket_scout.py
     Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-05T17:29:27.387940+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-05T17:31:27.387940+00:00)
-    Execution: running  854a6c2729a649d2b767b4cccda5ba6e
 
-  97bfe2a17d9d [active]
-    Name:      L2 Kanban Completion Audit (no-LLM)
-    Schedule:  every 10m
-    Repeat:    ∞
-    Next run:  2026-09-05T17:40:55.808621+00:00
-    Deliver:   local
-    Script:    audit_kanban_completions.py
-    Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-05T17:30:55.808621+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-05T17:29:45.285367+00:00)
-    Execution: completed  5808d302747c4db7b957cde1cef2fa1b
-
-  ba0827aece96 [active]
-    Name:      Reapply mem0 LM Studio patch (no-LLM)
-    Schedule:  every 1440m
-    Repeat:    ∞
-    Next run:  2026-09-05T18:03:23.406682+00:00
-    Deliver:   local
-    Script:    reapply_mem0_patch.py
-    Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-04T18:03:23.406682+00:00  ok
-    Execution: completed  b8c52f3fabb448c1bae3cbadb4e1bbe3
-
+Notes:
+- `ticket_scout.py` is the only scheduled Chitragupta L2 lifecycle entrypoint. It runs the
+  deterministic lifecycle reconciler before attempting a new claim and then performs the
+  best-effort learning/GBrain convergence cycle.
+- Reviewer publication, rejection handling, repair and orphan recovery are all owned by
+  `l2_pipeline_runtime.py`; there are no separate publisher/reject/audit lifecycle jobs.
+- Hermes owns session maintenance and memory-provider plumbing. Chitragupta does not run
+  a custom Mem0 patch/reapply/Qdrant job.
