@@ -10,6 +10,7 @@ INVESTIGATOR_PROFILES=(l2-investigator l2-investigator-primary)
 REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
 RETIRED_DEPLOYED_SCRIPTS=(dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py)
 LEARNING_VAULT="${CHITRAGUPTA_L2_LEARNING_VAULT:-$HOME/.hermes/l2-learning}"
+LEARNING_EMBEDDING="${CHITRAGUPTA_ZVEC_EMBEDDING:-local/potion-retrieval-32m}"
 
 mkdir -p "$SCRIPTS_DIR"
 for retired in "${RETIRED_DEPLOYED_SCRIPTS[@]}"; do
@@ -45,6 +46,7 @@ test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
   || { echo "FATAL: Model_Bench/xstudio_l2_tool_bridge.py is missing" >&2; exit 1; }
 cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
 cp "$ROOT/deploy/xstudio_action_capabilities.json" "$SCRIPTS_DIR/xstudio_action_capabilities.json"
+cp "$ROOT/deploy/xstudio_action_receipt.schema.json" "$SCRIPTS_DIR/xstudio_action_receipt.schema.json"
 
 # zvec is operator-installed, never model-installed during a ticket.
 if ! command -v zg >/dev/null 2>&1; then
@@ -57,8 +59,19 @@ EOF
   exit 1
 fi
 
+# Build the canonical mirror first without indexing, then materialize only
+# explicitly governed/hash-pinned SQL Solution articles. Index once after both
+# sources are in place so `solutions/approved/**` is immediately searchable.
 echo "== Learning corpus sync =="
-python3 "$ROOT/Model_Bench/sync_l2_learning_corpus.py" --vault "$LEARNING_VAULT"
+python3 "$ROOT/Model_Bench/sync_l2_learning_corpus.py" --vault "$LEARNING_VAULT" --no-index
+
+echo "== Governed Solution export =="
+python3 "$ROOT/Model_Bench/sync_l2_approved_solutions.py" \
+  --vault "$LEARNING_VAULT" \
+  --policy "$ROOT/deploy/solution_export_policy.json"
+
+echo "== Learning vault index =="
+zg index --embedding "$LEARNING_EMBEDDING" "$LEARNING_VAULT"
 if [[ "${CHITRAGUPTA_ZVEC_SERVER:-1}" != "0" ]]; then
   zg server on >/dev/null 2>&1 || echo "WARNING: zg server did not start; direct mode remains available"
 fi
@@ -152,7 +165,9 @@ echo "Deployed Chitragupta adaptive L2 runtime."
 echo "  evidence toolset:    xstudio_l2"
 echo "  identity guard:      harness binds run/ticket identity before sensitive tool calls"
 echo "  learning toolset:    l2_learning (explicit recall + candidate lessons)"
+echo "  governed solutions:  hash-pinned SQL approvals -> solutions/approved"
 echo "  action toolset:      l2_actions (list/describe/plan/plans/validate_plan; NO execute)"
+echo "  action receipts:     schema installed for future planned/approved/executed/verified/failed/compensated history"
 echo "  session recording:   ON"
 echo "  outcome learning:    reviewer/publisher cases + conservative lesson mining"
 echo "  capability backlog:  repeated reviewed human actions -> unverified action candidates"
