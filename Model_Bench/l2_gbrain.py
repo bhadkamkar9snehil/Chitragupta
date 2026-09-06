@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Harness-owned GBrain adapter for Chitragupta's L2 learning plane.
+"""Harness-owned GBrain adapter for Chitragupta's L2 retrieval plane.
 
-GBrain is derivative retrieval state. It never owns Helpdesk lifecycle state,
-never writes XStudio, and is never exposed to L2 workers as a raw memory API.
+GBrain is disposable derivative retrieval state. It never owns Helpdesk
+lifecycle state, never writes XStudio, and is never exposed to L2 workers as a
+raw memory API.
 
 Every trust lane is a separate non-federated source. Every read names its
 source(s) explicitly. Chitragupta also gives this adapter a dedicated GBrain
@@ -46,6 +47,12 @@ SCOPE_SOURCES: dict[str, tuple[str, ...]] = {
     "all": tuple(SOURCE_DIRS),
 }
 
+SUPPORTED_SEARCH_MODES = frozenset({"hybrid", "deep", "fts", "vector"})
+# Automatic harness retrieval may use trusted guidance or explicitly-labelled
+# historical cases, but must never silently widen into raw sessions/candidates
+# or the mixed all-source scope.
+AUTOMATIC_FORBIDDEN_SCOPES = frozenset({"all", "sessions", "candidates"})
+
 
 def vault_path(value: str | None = None) -> Path:
     if value:
@@ -71,6 +78,7 @@ def available() -> bool:
 
 def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT,
         cwd: Path | None = None) -> tuple[int, str, str]:
+    """Run one GBrain command inside the dedicated Chitragupta brain home."""
     env = os.environ.copy()
     env["GBRAIN_HOME"] = str(gbrain_home())
     try:
@@ -99,16 +107,46 @@ def sources_for_scope(scope: str) -> tuple[str, ...]:
     return SCOPE_SOURCES[scope]
 
 
-def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
-           limit: int = 5) -> dict[str, Any]:
-    """Run one deterministic, explicitly source-scoped GBrain retrieval.
+def automatic_scope_allowed(scope: str) -> bool:
+    return scope in SCOPE_SOURCES and scope not in AUTOMATIC_FORBIDDEN_SCOPES
 
-    The harness intentionally uses GBrain's retrieval-only ``search`` command.
-    Legacy callers may still request ``deep``, ``fts`` or ``vector`` while they
-    are migrated, but those modes are normalized to the same hybrid retrieval
-    path. The adapter does not invoke ``gbrain query`` because that would add a
-    second synthesis/reasoning layer between durable evidence and the L2 model.
+
+def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
+           limit: int = 5, automatic: bool = False) -> dict[str, Any]:
+    """Run one explicit, source-scoped GBrain retrieval-only search.
+
+    ``gbrain query`` is intentionally never invoked. Legacy callers may request
+    ``deep``, ``fts`` or ``vector`` during migration, but all are normalized to
+    the same retrieval-only hybrid ``search`` path.
+
+    When ``automatic=True`` the adapter additionally forbids mixed/raw scopes
+    (`all`, `sessions`, `candidates`). Explicit supplemental recall may still
+    request those scopes with ``automatic=False`` and must preserve their trust
+    labels upstream.
     """
+    if mode not in SUPPORTED_SEARCH_MODES:
+        return {
+            "ok": False,
+            "error": f"unknown search mode: {mode}",
+            "retry_same_call": False,
+            "backend": "gbrain",
+        }
+    if scope not in SCOPE_SOURCES:
+        return {
+            "ok": False,
+            "error": f"unknown scope: {scope}",
+            "retry_same_call": False,
+            "backend": "gbrain",
+        }
+    if automatic and not automatic_scope_allowed(scope):
+        return {
+            "ok": False,
+            "error": f"scope {scope!r} is forbidden for automatic harness retrieval",
+            "retry_same_call": False,
+            "backend": "gbrain",
+            "scope": scope,
+        }
+
     sources = sources_for_scope(scope)
     requested = mode
     effective = "hybrid"
@@ -126,6 +164,8 @@ def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
             "error": (err or out).strip()[-1000:] or f"gbrain search exited {rc}",
             "retry_same_call": False,
             "backend": "gbrain",
+            "scope": scope,
+            "source_ids": list(sources),
         }
     try:
         payload = parse_json(out)
@@ -136,6 +176,8 @@ def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
             "detail": out.strip()[:1000],
             "retry_same_call": False,
             "backend": "gbrain",
+            "scope": scope,
+            "source_ids": list(sources),
         }
     return {
         "ok": True,
@@ -144,6 +186,7 @@ def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
         "source_ids": list(sources),
         "requested_mode": requested,
         "effective_mode": effective,
+        "automatic": automatic,
         "results": payload,
         "deterministic_retrieval": True,
     }
