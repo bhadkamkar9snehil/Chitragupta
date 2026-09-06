@@ -10,7 +10,7 @@ The product north star is the highest-level contract:
 
 > Build an autonomous, AI-driven, deterministic L2 Helpdesk that gets measurably better from experience and progressively earns the ability to solve XBatch issues itself.
 
-Read `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` first, then `AGENTS.md`. `AGENTS.md` remains the production lifecycle/safety baseline, but permanent read-only diagnosis, a fixed retrieval substrate, or old topology rules are not product constraints on this branch. Preserve deterministic safety properties unless a better implementation replaces them explicitly.
+Read `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` first, then `AGENTS.md`. `AGENTS.md` now includes the adaptive branch's identity, experience, governed-Solution and action-authority rules while preserving the production lifecycle baseline. Permanent read-only diagnosis, a fixed retrieval substrate, or old topology rules are not product constraints on this branch. Preserve deterministic safety properties unless a better implementation replaces them explicitly.
 
 ## Current architecture
 
@@ -42,9 +42,10 @@ Shared vault:
   facts/                 promoted operational lessons
   candidates/            unverified lesson candidates
   knowledge/             disposable Git/skill mirror
-  solutions/approved/    governed reusable Solution export target
+  solutions/approved/    governed hash-pinned SQL Solution exports
   actions/plans/         non-executing action plans
   actions/candidates/    repeated human-action capability design backlog
+  actions/receipts/      future append-only action outcome history
   eval/                  runtime historical retrieval replay cases
 ```
 
@@ -64,6 +65,18 @@ validate_plan
 
 There is no execute operation. A plan is an identity-bound, capability-hashed, evidence-carrying recommendation/shadow artifact with `execution_authorized=false`.
 
+Repeated reviewed human actions are mined into `actions/candidates/**`. `Model_Bench/l2_action_capability_curator.py` is the separate operator/control-plane path:
+
+```text
+needs_executor_design
+-> researching_executor
+-> contract_drafted
+-> shadow_ready
+-> registry_entry
+```
+
+The curator requires provenance, validates the registry contract, requires a concrete supported execution target plus preconditions/idempotency/verification/evidence/rollback/approval policy before `shadow_ready`, promotes only at `mode=shadow`, and never raises registry `global_mode`.
+
 ## Storage is not authority
 
 The central rule is:
@@ -73,6 +86,7 @@ recording experience != believing experience
 retrieving experience != proving a current ticket
 historical success != universal fix
 reasoning about an action != permission to execute it
+execution returned != corrective action verified
 ```
 
 ### Sessions are deliberately recorded
@@ -103,6 +117,26 @@ published RESOLUTION later leaves terminal -> cases/reopened
 
 `Model_Bench/l2_learning_cycle.py` is the one best-effort sidecar coordinator. Keep learning mechanics behind this boundary instead of growing independent cron/scout choreography.
 
+## Governed SQL Solution retrieval is implemented
+
+`dbo.Hermes_Solution_Article_Mst_Tbl` is a source of reusable knowledge, but `IsActive=1` is not trust approval.
+
+`Model_Bench/sync_l2_approved_solutions.py` + `deploy/solution_export_policy.json` require an explicit:
+
+```text
+solution_id
+semantic content_sha256
+approved_by
+approved_at
+review_evidence
+```
+
+before an article enters `solutions/approved/**` and therefore the `trusted` zvec scope.
+
+The semantic hash deliberately excludes mutable telemetry such as `UsageCount`. Governed semantic drift fails closed and archives the stale managed trusted export until the new content is reviewed. `--preview-live` lists active Solution IDs and semantic hashes without trusting them.
+
+Do not weaken this to "all active Solutions are trusted."
+
 ## Historical replay is implemented
 
 `Model_Bench/build_l2_historical_retrieval_eval.py` correlates the earliest recorded user/task text for a run with that run's outcome-labelled historical case and writes runtime JSONL replay cases.
@@ -111,17 +145,25 @@ published RESOLUTION later leaves terminal -> cases/reopened
 
 Expand replay with adversarial same-symptom/different-root-cause cases rather than only easy recall.
 
-## Learning promotion boundary
+## Learning promotion boundaries
 
-`l2_lesson` and automatic miners may create only `unverified_candidate` artifacts. Promotion is separate through the learning curator/governance layer.
-
-The rule is:
+Different artifacts have different governance paths:
 
 ```text
-model says it learned something != system learned something
+unverified lesson candidate
+  -> l2_learning_curator.py
+  -> reviewed operational fact
+
+active SQL Solution
+  -> solution_export_policy.json + semantic hash check
+  -> governed trusted retrieval export
+
+repeated human-action candidate
+  -> l2_action_capability_curator.py
+  -> reviewed shadow registry contract
 ```
 
-Use reviewer outcomes, repeated independent evidence, reopen/regression signals and replay results to decide promotion.
+The model cannot promote any of these merely by asserting confidence.
 
 ## Future XBatch solving
 
@@ -140,7 +182,24 @@ Autonomy is earned per capability.
 
 Before adding a real capability, verify the actual supported SP/API/service path and exact current signature. The registry contract requires parameter schema, preconditions, idempotency, evidence, verification, rollback/compensation, risk and approval policy.
 
-Before any future execution, a separate deterministic executor must re-check:
+Synthetic test capability names are never evidence that such an XBatch operation exists.
+
+## Action receipts are already defined
+
+Before any real executor exists, `deploy/xstudio_action_receipt.schema.json` and `Model_Bench/xstudio_action_receipts.py` define:
+
+```text
+planned -> approved -> executed -> verified
+    \         \          \
+     +-> failed <---------+
+           |
+           v
+      compensated
+```
+
+The history is append-only. `verified` requires deterministic postcondition proof; `compensated` requires verified rollback/compensation. Creating a planned receipt is not permission to execute.
+
+A future deterministic executor must re-check:
 
 ```text
 current run/ticket identity
@@ -154,19 +213,22 @@ postconditions
 rollback/compensation path
 ```
 
-Do not add raw UPDATE/EXEC access as an autonomy shortcut.
+and append receipt events throughout. Do not add raw UPDATE/EXEC access as an autonomy shortcut.
 
 ## Current authoritative sources
 
 - `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` — branch north star and implemented multi-plane architecture.
-- `AGENTS.md` — production lifecycle/safety baseline.
+- `AGENTS.md` — detailed operating contract for lifecycle, evidence, learning and action authority.
 - `Knowledge/L2_PIPELINE_STATE_MACHINE.md` — deterministic lifecycle.
 - `Model_Bench/l2_pipeline_runtime.py` — lifecycle implementation.
 - `Model_Bench/l2_learning_cycle.py` — learning sidecar coordinator.
 - `Model_Bench/xstudio_l2_identity_plugin/` — run/ticket identity guard.
 - `Model_Bench/xstudio_l2_learning_plugin/` — session recording + explicit recall + lesson candidates.
+- `Model_Bench/sync_l2_approved_solutions.py` + `deploy/solution_export_policy.json` — governed SQL Solution trust bridge.
 - `Model_Bench/xstudio_l2_actions_plugin/` — non-executing action planner.
-- `deploy/xstudio_action_capabilities.json` — executable-capability registry contract, currently independent of the candidate backlog.
+- `Model_Bench/l2_action_capability_curator.py` — reviewed action candidate -> shadow registry workflow.
+- `deploy/xstudio_action_capabilities.json` — corrective-action registry contract.
+- `deploy/xstudio_action_receipt.schema.json` + `Model_Bench/xstudio_action_receipts.py` — future execution outcome contract.
 - `deploy/helpdesk_workflow_binding.json` — observed Helpdesk workflow binding.
 - `Knowledge/manifest.json` / `Knowledge/task-router.md` — domain routing.
 - `Knowledge/KB_IMPLEMENTATION_PLAN.md` — useful governance/provenance concepts; its retrieval technology choice is not sacred.
@@ -182,18 +244,22 @@ Do not add raw UPDATE/EXEC access as an autonomy shortcut.
 - model-driven Python/pyodbc/sqlcmd/package-install SQL transport stays blocked.
 - Helpdesk workflow states are harness-bound from observed values.
 - run/ticket identity for evidence/action planning is harness-bound.
-- a resolution does not automatically become trusted KB.
+- sessions/cases are not automatically trusted knowledge.
+- a resolution does not automatically become a trusted Solution export.
+- action candidate/plan creation does not grant execution authority.
+- capability curation cannot implicitly raise global autonomy mode.
 - no GitHub Actions workflow is the project validation mechanism.
 
 ## Next design priorities
 
-1. Export governed approved Solution knowledge into `solutions/approved/**` with provenance.
-2. Strengthen lesson promotion with repeated evidence, contradiction/reopen checks and replay metrics.
-3. Treat `actions/candidates/**` as a capability-engineering backlog: inspect the real XBatch implementation and fill exact registry contracts.
-4. Introduce the first **verified** low-risk action in `shadow`, not supervised/autonomous.
+1. Use `sync_l2_approved_solutions.py --preview-live` to review and pin genuinely reusable active SQL Solutions rather than bulk-trusting them.
+2. Run the learning cycle against real history and inspect the real `actions/candidates/**` backlog; choose the strongest repeated candidate by evidence, not by a synthetic test name.
+3. Research that candidate's actual XBatch SP/API/service implementation, signature, preconditions, idempotency, postconditions and compensation path.
+4. Move it through `l2_action_capability_curator.py` into the first **real** `shadow` registry entry while leaving `global_mode=observe` until shadow activation is deliberately justified.
 5. Measure shadow-plan agreement against what humans actually do and whether the issue resolves.
-6. Build the separate supervised executor only after shadow evidence is strong.
-7. Record action execution/postcondition/rollback receipts into the learning plane and use them to promote or demote autonomy.
-8. Build deterministic stage-aware context assembly if automatic retrieval becomes worthwhile; do not regress to generic prefetch.
+6. Strengthen lesson promotion with repeated evidence, contradiction/reopen checks and replay metrics.
+7. Build the separate supervised executor only after shadow evidence is strong, using the existing action receipt contract from the first execution attempt.
+8. Use verified/failed/compensated receipts to promote or demote per-capability autonomy.
+9. Build deterministic stage-aware context assembly if automatic retrieval becomes worthwhile; do not regress to generic prefetch.
 
 Historical `Plans/` and `Agent_Comms/` remain provenance. Do not revive dead duplicate orchestration merely because it appears there, and do not reject a better architecture merely because it differs from an old rule.
