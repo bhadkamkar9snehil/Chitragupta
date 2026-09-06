@@ -1,0 +1,6 @@
+name: xstudio-l2-actions
+version: "0.1.0"
+description: "Deterministic non-executing XBatch corrective-action planner. Exposes registered capabilities, validates parameters/evidence, creates durable recommendation/shadow plans, and revalidates plan drift. Deliberately provides no execution operation."
+author: Snehil Bhadkamkar, Hermes Agent
+requires_env: []
+provides_hooks: []
