@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused contracts for the isolated GBrain adapter."""
+"""Focused contracts for the temporary dispatch-time GBrain adapter."""
 from __future__ import annotations
 
 import os
@@ -11,41 +11,30 @@ import l2_gbrain as mod
 
 
 class GBrainAdapterTests(unittest.TestCase):
-    def test_only_real_model_facing_source_lanes_exist(self):
+    def test_uses_shared_xstudio_source_names(self):
         self.assertEqual(set(mod.SOURCE_IDS), {
-            "l2-knowledge", "l2-reference", "l2-facts", "l2-solutions",
-            "l2-approved-cases", "l2-rejected-cases", "l2-reopened-cases",
+            "xstudio-knowledge", "xstudio-reference", "xstudio-solutions",
+            "xstudio-approved-cases", "xstudio-rejected-cases", "xstudio-reopened-cases",
         })
-        self.assertNotIn("sessions", mod.SCOPE_SOURCES)
-        self.assertNotIn("candidates", mod.SCOPE_SOURCES)
-        self.assertNotIn("all", mod.SCOPE_SOURCES)
 
-    def test_trusted_scope_includes_reference_but_excludes_cases(self):
+    def test_trusted_scope_excludes_historical_cases(self):
         self.assertEqual(
             set(mod.sources_for_scope("trusted")),
-            {"l2-knowledge", "l2-reference", "l2-facts", "l2-solutions"},
+            {"xstudio-knowledge", "xstudio-reference", "xstudio-solutions"},
         )
         self.assertTrue(
             set(mod.sources_for_scope("trusted")).isdisjoint(mod.sources_for_scope("cases"))
         )
 
-    def test_knowledge_scope_includes_canonical_and_reference_docs(self):
-        self.assertEqual(
-            mod.sources_for_scope("knowledge"),
-            ("l2-knowledge", "l2-reference"),
-        )
-        self.assertEqual(mod.sources_for_scope("reference"), ("l2-reference",))
-
-    def test_search_is_always_explicit_retrieval_only(self):
+    def test_search_names_sources_explicitly(self):
         with mock.patch.object(mod, "run", return_value=(0, '[{"slug":"x"}]', "")) as run:
             result = mod.search("posting stuck", scope="trusted", limit=5)
         self.assertTrue(result["ok"])
         args = run.call_args.args[0]
         self.assertEqual(args[0], "search")
-        self.assertNotIn("query", args)
         self.assertEqual(
             args[args.index("--source") + 1],
-            "l2-knowledge,l2-reference,l2-facts,l2-solutions",
+            "xstudio-knowledge,xstudio-reference,xstudio-solutions",
         )
 
     def test_unknown_scope_fails_before_process_call(self):
@@ -54,23 +43,19 @@ class GBrainAdapterTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         run.assert_not_called()
 
-    def test_run_forces_isolated_gbrain_home(self):
+    def test_run_uses_shared_xstudio_brain_home(self):
         completed = mock.Mock(returncode=0, stdout="[]", stderr="")
         with mock.patch("subprocess.run", return_value=completed) as subprocess_run, \
-             mock.patch.dict(os.environ, {"CHITRAGUPTA_GBRAIN_HOME": "/tmp/chitragupta-brain"}, clear=False):
+             mock.patch.dict(os.environ, {"XSTUDIO_GBRAIN_HOME": "/tmp/xstudio-brain"}, clear=False):
             mod.run(["sources", "list", "--json"])
         self.assertEqual(
             subprocess_run.call_args.kwargs["env"]["GBRAIN_HOME"],
-            "/tmp/chitragupta-brain",
+            "/tmp/xstudio-brain",
         )
 
-    def test_static_repo_paths_can_be_bound_explicitly(self):
-        with mock.patch.dict(os.environ, {
-            "CHITRAGUPTA_KNOWLEDGE_PATH": "/tmp/repo/Knowledge",
-            "CHITRAGUPTA_REFERENCE_PATH": "/tmp/repo/Reference Documents",
-        }, clear=False):
-            self.assertEqual(mod.knowledge_path(), Path("/tmp/repo/Knowledge"))
-            self.assertEqual(mod.reference_path(), Path("/tmp/repo/Reference Documents"))
+    def test_default_home_is_xstudio_gbrain(self):
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(Path, "home", return_value=Path("/home/test")):
+            self.assertEqual(mod.gbrain_home(), Path("/home/test/.hermes/xstudio-gbrain"))
 
     def test_non_json_output_fails_closed(self):
         with mock.patch.object(mod, "run", return_value=(0, "not json", "")):

@@ -1,5 +1,5 @@
 name: xstudio-l2-tools
-version: "2.0.0"
-description: "Single Chitragupta Hermes tool plugin: typed XStudio/Helpdesk evidence with Kanban-bound run/ticket identity plus supplemental read-only trust-scoped GBrain recall."
+version: "3.0.0"
+description: "Chitragupta Hermes domain plugin: typed XStudio/Helpdesk evidence with Kanban-bound run/ticket identity. GBrain is provided natively through Hermes MCP."
 author: Snehil Bhadkamkar, Hermes Agent
 requires_env: []

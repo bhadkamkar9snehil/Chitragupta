@@ -31,6 +31,35 @@ onboarding:
   seen:
     tool_progress_prompt: true
 _config_version: 40
+mcp_servers:
+  gbrain:
+    command: "gbrain"
+    args:
+      - "serve"
+    env:
+      GBRAIN_HOME: "/home/snehil/.hermes/xstudio-gbrain"
+    connect_timeout: 60.0
+    enabled: true
+    tools:
+      include:
+        - "get_brain_identity"
+        - "search"
+        - "query"
+        - "list_pages"
+        - "get_page"
+        - "get_chunks"
+        - "get_links"
+        - "get_backlinks"
+        - "get_timeline"
+        - "traverse_graph"
+        - "recall"
+        - "get_health"
+        - "get_stats"
+        - "find_experts"
+        - "find_orphans"
+        - "find_anomalies"
+        - "get_recent_salience"
+        - "find_trajectory"
 platforms:
   api_server:
     host: 0.0.0.0
@@ -39,41 +68,6 @@ platform_toolsets:
   cli:
     - kanban
     - xstudio_l2
-    - l2_learning
-known_plugin_toolsets:
-  cli:
-    - a2a
-    - spotify
-    - xstudio_l2
-    - l2_learning
-known_builtin_toolsets:
-  cli:
-    - browser
-    - clarify
-    - code_execution
-    - computer_use
-    - context_engine
-    - cronjob
-    - delegation
-    - discord
-    - discord_admin
-    - file
-    - homeassistant
-    - image_gen
-    - memory
-    - session_search
-    - skills
-    - spotify
-    - stt
-    - terminal
-    - todo
-    - tts
-    - video
-    - video_gen
-    - vision
-    - web
-    - x_search
-    - yuanbao
 tools:
   tool_search:
     enabled: off

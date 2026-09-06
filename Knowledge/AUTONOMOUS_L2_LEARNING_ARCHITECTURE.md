@@ -1,121 +1,114 @@
-# Chitragupta L2 Architecture
+# Chitragupta Architecture
 
-Status: current branch contract.
+Status: current cleanup branch contract.
 
-## Product boundary
+## Boundaries
 
-Hermes is the agent harness. Chitragupta is an XStudio/Helpdesk domain application running on Hermes.
+Hermes is the agent harness.
 
-Hermes owns model/session lifecycle, Kanban worker dispatch, gateway/scheduling, plugin/tool loading and durable conversation state.
+GBrain is the shared XStudio organizational knowledge platform.
 
 Chitragupta owns only:
-
 - deterministic Helpdesk claim/review/rework/publication semantics;
-- typed XStudio/Helpdesk evidence access;
-- trust-scoped GBrain indexing/retrieval;
-- reviewed outcome history;
+- typed live XStudio/Helpdesk evidence;
+- materialization of reviewed support outcomes;
 - governed reusable Solution export.
-
-Do not add a second agent harness around Hermes.
-
-## Deployment topology
-
-```text
-Laptop WSL2
-  Hermes backend + Kanban + Chitragupta runtime + GBrain
-
-Laptop Windows
-  Hermes Web
-  Windows Python/pyodbc bridge
-
-Desktop Windows
-  LM Studio inference server
-
-Separate Windows VM
-  Helpdesk / XStudio SQL Server
-```
-
-The Windows SQL bridge is a real environment boundary today. It should be removed only after a WSL-native SQL path is proven operationally equivalent.
 
 ## Runtime
 
 ```text
-Helpdesk claim
--> investigator Kanban card
--> frozen proposal
--> reviewer Kanban card
-   -> approve -> deterministic publish
-   -> reject  -> bounded rework -> reviewer
+Helpdesk ticket
+  -> deterministic claim
+  -> investigator
+  -> frozen proposal
+  -> independent reviewer
+     -> approve -> deterministic publish
+     -> reject  -> bounded rework
 ```
 
-The model never chooses lifecycle state or publishes directly.
-
-## Model-facing tools
-
-One Hermes plugin registers only:
-
-- `xstudio_l2` — typed live XStudio/Helpdesk evidence and run-ledger operations;
-- `l2_recall` — read-only source-scoped GBrain search.
-
-Identity-sensitive XStudio calls are bound to the current Kanban task before crossing the SQL bridge.
-
-## Evidence authority
-
-1. current live XStudio/Helpdesk evidence;
-2. committed Knowledge and Reference Documents, reviewed facts, governed Solutions;
-3. approved/rejected/reopened historical cases.
-
-Historical similarity is a lead, not proof.
+`Model_Bench/l2_pipeline_runtime.py` owns these transitions.
 
 ## GBrain
 
-GBrain is disposable derivative retrieval state under an isolated `GBRAIN_HOME`.
-
-| Source | Content |
-|---|---|
-| `l2-knowledge` | committed `Knowledge/` |
-| `l2-reference` | committed `Reference Documents/` |
-| `l2-facts` | explicitly reviewed facts |
-| `l2-solutions` | governed Solution exports |
-| `l2-approved-cases` | reviewed/published successes |
-| `l2-rejected-cases` | reviewer counterexamples |
-| `l2-reopened-cases` | regressions/reopens |
-
-All sources are non-federated. Chitragupta uses `gbrain search`; workers do not receive raw GBrain management or synthesis tools.
-
-## Learning
-
-The best-effort learning cycle has only two responsibilities:
+The shared brain lives at:
 
 ```text
-reviewed lifecycle outcomes
--> approved/rejected/reopened historical cases
--> GBrain synchronization
+~/.hermes/xstudio-gbrain
 ```
 
-There is no automatic lesson-candidate miner or curator pipeline. GBrain can already retrieve the reviewed outcomes directly. Add canonical-promotion machinery later only if observed operations prove a need.
+It is a full GBrain installation using the native Hermes MCP integration.
 
-## Governed Solutions
+The operator/default Hermes may use the full surface. L1/L2 service workers use read-only tool filtering through Hermes `mcp_servers.<name>.tools.include`.
 
-A live active Solution row is not trusted by default. `sync_l2_approved_solutions.py` exports only semantic-hash-approved material from `deploy/solution_export_policy.json`.
+Workers can use lexical/hybrid retrieval, page/chunk reads and graph/history reads without receiving page writes, deletes, source administration or brain administration.
 
-## Mutation boundary
+GBrain owns its own:
+- source synchronization;
+- embeddings;
+- graph/link extraction;
+- maintenance/doctor;
+- dream/autopilot.
 
-Autonomous L2 diagnoses and recommends. It does not execute arbitrary production/configuration changes. Known required changes outside the approved interface become `NEEDS_HUMAN_ACTION`; unresolved cases become `L3_ESCALATION`.
+Chitragupta must not wrap those capabilities in another plugin or scheduler.
 
-## Current justified files
+## Knowledge sources
 
-| File | Reason |
-|---|---|
-| `l2_pipeline_runtime.py` | deterministic Helpdesk/Kanban lifecycle |
-| `ticket_scout.py` | current scheduled wrapper; slated for consolidation into runtime |
-| `xstudio_l2_tools_plugin/` | single Hermes domain plugin |
-| `xstudio_l2_tool_bridge.py` | current WSL/Windows/pyodbc boundary |
-| `l2_gbrain.py` | GBrain source/scope policy |
-| `sync_l2_gbrain.py` | source convergence |
-| `sync_l2_outcomes.py` | reviewed outcome materialization |
-| `l2_learning_cycle.py` | outcome + GBrain convergence |
-| `sync_l2_approved_solutions.py` | fail-closed Solution export |
-| `solution_export_policy.json` | reviewed Solution hashes |
+Authoritative sources include:
+- committed `Knowledge/`;
+- `Reference Documents/`, including the full Helpdesk/XBatch schema and stored-procedure Markdown;
+- governed reusable Solutions;
+- approved/rejected/reopened reviewed historical cases.
 
-Every surviving file must continue to justify itself against the same question: why is Hermes or GBrain not already doing this?
+Raw source files remain preserved where they provide provenance. Searchable normalized representations should coexist with raw binaries where needed.
+
+L1 and L2 use this same brain.
+
+## Model-facing domain plugin
+
+There is one Chitragupta plugin: `xstudio-l2-tools`.
+
+It registers only:
+
+- `xstudio_l2` — typed XStudio/Helpdesk evidence and investigation-ledger operations.
+
+GBrain tools come directly from Hermes MCP.
+
+## SQL transport
+
+Today the proven path is:
+
+```text
+Hermes WSL2 -> Windows Python/pyodbc -> remote SQL Server VM
+```
+
+That bridge is a real current environment boundary. It is not deleted until WSL-native ODBC connectivity is demonstrated and tested against both Helpdesk and XBatch access.
+
+## Outcome history
+
+`sync_l2_outcomes.py` materializes reviewed/published/reopened outcomes into labelled historical material.
+
+There is no candidate-mining/curation framework. GBrain can retrieve historical experience directly.
+
+`sync_l2_approved_solutions.py` exports only semantic-hash-approved reusable Helpdesk Solutions.
+
+## Temporary compatibility
+
+The old dispatch-time prefetch still passes through:
+
+```text
+l2_pipeline_runtime.py -> Windows kb_retrieval.py -> WSL l2_gbrain.py -> shared GBrain
+```
+
+This is explicitly temporary. It is the next retrieval cleanup target because workers now have native GBrain MCP.
+
+## Profiles
+
+- `l2-investigator`: Kanban dispatcher only.
+- `l2-investigator-primary`: investigator + typed XStudio + read-only GBrain MCP.
+- `l2-reviewer-primary`: reviewer + typed XStudio + read-only GBrain MCP.
+
+## Future L1
+
+L1 should be implemented as another Hermes service profile/application layer using the same GBrain read surface. Its responsibility is conversational support and known-resolution matching, escalating unresolved issues into the existing Helpdesk/L2 lifecycle.
+
+Do not build a separate L1 RAG stack.

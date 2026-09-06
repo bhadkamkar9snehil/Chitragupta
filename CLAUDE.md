@@ -1,51 +1,24 @@
 # Claude Entry Point — Chitragupta
 
-Read `AGENTS.md` first, then `Knowledge/AUTONOMOUS_L2_LEARNING_ARCHITECTURE.md` when changing architecture.
+Read `AGENTS.md` first.
 
-## Current system
+Hermes owns the agent harness. GBrain owns the shared XStudio knowledge/retrieval platform. Chitragupta owns deterministic Helpdesk lifecycle rules and the typed XStudio evidence boundary.
 
-Hermes owns model/session lifecycle, Kanban dispatch, gateway scheduling and plugin loading.
+Current key invariants:
 
-Chitragupta owns only:
-
-- deterministic Helpdesk claim/review/rework/publication semantics;
-- the typed XStudio evidence boundary;
-- governed reusable learning and Solution export;
-- isolated trust-scoped GBrain retrieval.
-
-`Model_Bench/l2_pipeline_runtime.py` is the lifecycle authority.
-
-The only Chitragupta Hermes plugin is `xstudio-l2-tools`, exposing `xstudio_l2` and read-only `l2_recall`.
-
-## Preserve these invariants
-
-- One lifecycle mutation authority.
-- Global SQL WIP is 1.
-- Review 30 > rework 20 > new investigation 10.
-- Reviewer creation happens only after a reviewable frozen proposal exists.
-- Reviewer and publisher operate on the same frozen proposal.
+- `l2_pipeline_runtime.py` is the only lifecycle mutation authority.
+- L1 and L2 share `~/.hermes/xstudio-gbrain`; do not create duplicate brains.
+- L2 workers use native read-only GBrain MCP tools, not a custom recall plugin.
+- `xstudio-l2-tools` exposes only `xstudio_l2`.
 - Current-ticket claims require live `xstudio_l2` evidence.
-- Model-built database transport, arbitrary SQL writes/DDL/EXEC and package-install fallbacks remain unavailable.
-- Run/ticket identity is harness-bound.
-- `trusted` GBrain recall contains only canonical Knowledge, reviewed facts and governed Solutions.
-- Historical approved/rejected/reopened cases are analogies/counterexamples, not current proof.
-- Workers do not promote their own durable lessons.
-- Learning/GBrain convergence is best-effort and cannot own ticket correctness.
-- Helpdesk Solution rows enter trusted retrieval only through semantic-hash approval policy.
-- Do not add speculative action/execution frameworks without a real supported corrective operation and measured need.
+- Full schema/SP reference documents are authoritative and preserved.
+- GBrain owns embeddings, graph, source sync and maintenance/autopilot.
+- Chitragupta materializes reviewed outcomes and governed Solutions; it does not build another memory framework.
+- The Windows SQL bridge remains until WSL-native SQL access is proven equivalent.
+- Delete benchmark, migration, wrapper and compatibility code when its real caller disappears.
 
-## Repository discipline
-
-Delete obsolete paths instead of documenting them forever. Do not retain benchmark harnesses, generated duplicate indexes, one-time migration/repair scripts, alternate policy registries, duplicate profile variants, or unpinned copies of Knowledge.
-
-Any surviving subsystem should have an active caller and one clear owner.
-
-## Validation
-
-Run:
+Validate with:
 
 ```bash
 bash Model_Bench/validate_l2_pipeline_local.sh
 ```
-
-Update deployment and validation whenever runtime components are added, removed, or consolidated.

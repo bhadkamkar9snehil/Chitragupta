@@ -1,8 +1,7 @@
-"""Chitragupta's single Hermes domain-tool plugin.
+"""Chitragupta's Hermes domain plugin.
 
-Hermes owns the agent harness. This plugin exposes:
-- xstudio_l2: typed XStudio/Helpdesk evidence and ledger operations;
-- l2_recall: read-only, trust-scoped GBrain retrieval.
+Hermes owns the agent harness and GBrain MCP integration.
+This plugin exposes only the typed XStudio/Helpdesk evidence interface.
 
 Identity-sensitive XStudio calls are bound to the current Kanban task before
 they cross the Windows/pyodbc bridge.
@@ -15,7 +14,6 @@ import re
 import subprocess
 import sys
 import threading
-from pathlib import Path
 from typing import Any
 
 WINDOWS_PYTHON = "/mnt/c/Python314/python.exe"
@@ -24,23 +22,12 @@ BRIDGE_TIMEOUT_SECONDS = max(10, int(os.environ.get("L2_BRIDGE_TIMEOUT_SECONDS",
 
 XSTUDIO_TOOL = "xstudio_l2"
 XSTUDIO_TOOLSET = "xstudio_l2"
-RECALL_TOOL = "l2_recall"
-RECALL_TOOLSET = "l2_learning"
 
 _TASK_ID_RE = re.compile(r"\bt_[0-9a-f]{6,}\b", re.IGNORECASE)
 _RUN_OPS = {"select", "query", "read_procedure", "get_run_actions", "save_ledger"}
 _TICKET_OPS = {"get_ticket_context"}
 _CONTEXT_LOCK = threading.Lock()
 _CONTEXT_CACHE: dict[str, dict[str, str]] = {}
-
-for _helper_dir in (
-    Path(__file__).resolve().parent.parent,
-    Path.home() / ".hermes" / "profiles" / "l2-investigator" / "scripts",
-):
-    if str(_helper_dir) not in sys.path:
-        sys.path.insert(0, str(_helper_dir))
-
-from l2_gbrain import SCOPE_SOURCES, available as gbrain_available, search as gbrain_search  # noqa: E402
 
 
 def _kanban_task_id(task_id: str | None = None) -> str:
@@ -160,38 +147,6 @@ def _xstudio(params: dict[str, Any], task_id: str = "", **_: Any) -> str:
         })
 
 
-def _recall(params: dict[str, Any], **_: Any) -> str:
-    query = " ".join(str(params.get("query") or "").split())
-    scope = str(params.get("scope") or "trusted")
-    if not query:
-        return json.dumps({"ok": False, "error": "query is required"})
-    if scope not in SCOPE_SOURCES:
-        return json.dumps({"ok": False, "error": f"unknown scope: {scope}"})
-    try:
-        limit = max(1, min(10, int(params.get("limit") or 5)))
-    except (TypeError, ValueError):
-        limit = 5
-    if not gbrain_available():
-        return json.dumps({"ok": False, "error": "gbrain is unavailable"})
-    result = gbrain_search(query[:600], scope=scope, limit=limit)
-    if not result.get("ok"):
-        return json.dumps(result, ensure_ascii=False, default=str)
-    historical = scope == "cases" or scope.endswith("_cases")
-    return json.dumps({
-        "ok": True,
-        "backend": "gbrain",
-        "scope": scope,
-        "source_ids": result.get("source_ids") or [],
-        "warning": (
-            "Historical outcomes are leads/counterexamples, not proof."
-            if historical
-            else "Reusable reference only; verify current-ticket claims live."
-        ),
-        "results": result.get("results") or [],
-        "live_verification_required": True,
-    }, ensure_ascii=False, default=str)
-
-
 _XSTUDIO_SCHEMA = {
     "name": XSTUDIO_TOOL,
     "description": "Typed XStudio/Helpdesk L2 evidence interface. Use current live evidence for ticket claims.",
@@ -228,21 +183,6 @@ _XSTUDIO_SCHEMA = {
     },
 }
 
-_RECALL_SCHEMA = {
-    "name": RECALL_TOOL,
-    "description": "Read-only trust-scoped GBrain recall. Live ticket claims still require xstudio_l2 evidence.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {"type": "string"},
-            "scope": {"type": "string", "enum": list(SCOPE_SOURCES)},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 10},
-        },
-        "required": ["query"],
-        "additionalProperties": False,
-    },
-}
-
 
 def register(ctx: Any) -> None:
     ctx.register_tool(
@@ -251,11 +191,4 @@ def register(ctx: Any) -> None:
         schema=_XSTUDIO_SCHEMA,
         handler=_xstudio,
         description="Typed guarded XStudio L2 evidence interface.",
-    )
-    ctx.register_tool(
-        name=RECALL_TOOL,
-        toolset=RECALL_TOOLSET,
-        schema=_RECALL_SCHEMA,
-        handler=_recall,
-        description="Read-only trust-scoped GBrain recall.",
     )

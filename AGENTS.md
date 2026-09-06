@@ -1,69 +1,61 @@
 # Chitragupta Agent Contract
 
-Chitragupta is the deterministic XStudio/Helpdesk L2 domain layer on the existing Hermes harness.
+Hermes is the agent harness. GBrain is the shared XStudio organizational brain. Chitragupta is the XStudio/Helpdesk domain application.
 
 ## Authority
 
-`Model_Bench/l2_pipeline_runtime.py` is the single Helpdesk/Kanban lifecycle authority:
+`Model_Bench/l2_pipeline_runtime.py` is the single deterministic Helpdesk/Kanban lifecycle authority:
 
 ```text
-eligible ticket
--> claim
--> investigator
--> frozen proposal
--> reviewer
-   -> approve -> deterministic publish
-   -> reject  -> bounded rework -> reviewer
+eligible ticket -> claim -> investigator -> frozen proposal -> reviewer
+review approve -> publish
+review reject  -> bounded rework -> fresh review
 ```
 
-Do not add parallel publisher, repair, forwarding, nudge, trace, memory, action-planning or reconciliation subsystems.
+Global SQL WIP is 1. Review priority 30 > rework 20 > new investigation 10.
 
-## Runtime topology
+Do not add parallel publisher, repair, review-board, nudge, trace, memory, action-planner or GBrain-synchronizer subsystems.
 
-Hermes backend and GBrain run in WSL2 on the laptop. Hermes Web runs on laptop Windows. LM Studio runs on Windows on the desktop. Helpdesk/XStudio SQL Server is on another Windows VM.
+## GBrain
 
-The current Windows Python/pyodbc bridge is retained because it represents the proven SQL transport boundary. Do not remove it merely for architectural neatness; replace it only after a WSL-native path is proven equivalent.
+The shared brain is `~/.hermes/xstudio-gbrain`.
 
-## Model-facing tools
+Hermes owns the native GBrain MCP connection. The main/operator Hermes may use the full GBrain surface. Autonomous service workers receive read-only MCP tools only.
 
-The only Chitragupta Hermes plugin is `xstudio-l2-tools`.
+Do not recreate GBrain search/query/page/graph tooling as a Chitragupta plugin. `xstudio-l2-tools` exposes only `xstudio_l2`.
 
-It exposes:
+L1 and L2 must use the same organizational brain. Do not create an L1 copy of the knowledge corpus.
 
-- `xstudio_l2` for typed live XStudio/Helpdesk evidence and run-ledger operations;
-- `l2_recall` for read-only GBrain search.
+GBrain owns source synchronization, embeddings, graph extraction, maintenance and dream/autopilot. Chitragupta may materialize reviewed Helpdesk outcomes and governed Solutions for GBrain to ingest.
 
-Current-ticket claims require live evidence. Retrieved knowledge and historical cases are leads, not proof.
+## Evidence
 
-## Retrieval
+Live `xstudio_l2` evidence outranks retrieved material for current incidents.
 
-GBrain indexes committed `Knowledge/`, committed `Reference Documents/`, reviewed facts, governed Solutions and reviewed historical cases as explicit non-federated sources.
+Canonical/reference material and prior cases can guide the investigation but historical similarity is not proof of present state.
 
-Small L2 workers do not own durable memory writes or knowledge promotion.
+The full Helpdesk/XBatch schema and stored-procedure documents under `Reference Documents/` are authoritative engineering evidence. Preserve them.
 
-## Learning
+## SQL boundary
 
-The current best-effort cycle is deliberately minimal:
+The current Windows bridge is retained because Hermes runs in WSL2 while the proven SQL transport uses Windows Python/pyodbc to the remote SQL Server VM. Do not remove it until a WSL-native SQL path is tested successfully.
 
-```text
-materialize reviewed outcomes
--> synchronize GBrain
+The model may not build arbitrary connection strings, run DDL/writes, install drivers, or bypass the typed XStudio interface.
+
+## Repository discipline
+
+Delete obsolete layers rather than retaining compatibility frameworks indefinitely. A surviving file must have a current caller and own a real domain/environment boundary.
+
+`Model_Bench` is historical naming. Once the remaining runtime stabilizes, move production code out of it and remove the directory.
+
+The remaining `l2_gbrain.py`/`kb_retrieval.py` pair is temporary compatibility for dispatch-time prefetch and is an explicit cleanup target.
+
+## Validation
+
+Run:
+
+```bash
+bash Model_Bench/validate_l2_pipeline_local.sh
 ```
 
-There is no automatic candidate-mining or candidate-curation framework.
-
-`sync_l2_approved_solutions.py` exports a Helpdesk Solution into trusted retrieval only when its semantic hash matches `deploy/solution_export_policy.json`.
-
-## Profiles
-
-```text
-l2-investigator          Hermes gateway/dispatcher
-l2-investigator-primary  investigator worker
-l2-reviewer-primary      reviewer worker
-```
-
-## Repository rule
-
-Keep one mechanism and one owner. Delete benchmark harnesses, one-off repair tools, generated duplicate indexes, speculative frameworks and compatibility wrappers once their real caller is gone.
-
-`Knowledge/schema_allowlist.json` and the full schema/SP reference Markdown are intentionally retained because they serve different runtime/reference purposes.
+Update deployment and validation whenever runtime components are removed or consolidated.

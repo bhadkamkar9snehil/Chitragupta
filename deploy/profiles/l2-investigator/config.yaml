@@ -22,8 +22,7 @@ memory:
   memory_enabled: false
   user_profile_enabled: false
 plugins:
-  enabled:
-    - xstudio-l2-tools
+  enabled: []
 kanban:
   dispatch_in_gateway: true
   dispatch_interval_seconds: 30
@@ -37,42 +36,6 @@ platforms:
 platform_toolsets:
   cli:
     - kanban
-    - xstudio_l2
-    - l2_learning
-known_plugin_toolsets:
-  cli:
-    - a2a
-    - spotify
-    - xstudio_l2
-    - l2_learning
-known_builtin_toolsets:
-  cli:
-    - browser
-    - clarify
-    - code_execution
-    - computer_use
-    - context_engine
-    - cronjob
-    - delegation
-    - discord
-    - discord_admin
-    - file
-    - homeassistant
-    - image_gen
-    - memory
-    - session_search
-    - skills
-    - spotify
-    - stt
-    - terminal
-    - todo
-    - tts
-    - video
-    - video_gen
-    - vision
-    - web
-    - x_search
-    - yuanbao
 tools:
   tool_search:
     enabled: off

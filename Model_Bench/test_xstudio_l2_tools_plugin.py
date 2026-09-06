@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused contracts for Chitragupta's single Hermes tool plugin and Windows bridge."""
+"""Focused contracts for Chitragupta's Hermes XStudio plugin and Windows bridge."""
 from __future__ import annotations
 
 import importlib.util
@@ -62,18 +62,7 @@ def test_bridge_transport_is_harness_owned() -> None:
     assert run.call_args.args[0] == [plugin.WINDOWS_PYTHON, plugin.BRIDGE_WIN]
 
 
-def test_recall_is_read_only_gbrain_search() -> None:
-    with mock.patch.object(plugin, "gbrain_available", return_value=True), \
-         mock.patch.object(plugin, "gbrain_search", return_value={
-             "ok": True, "source_ids": ["l2-knowledge"], "results": [{"text": "known fact"}]
-         }) as search:
-        result = json.loads(plugin._recall({"query": "SAP posting", "scope": "trusted", "limit": 3}))
-    assert result["ok"] is True
-    assert result["live_verification_required"] is True
-    search.assert_called_once_with("SAP posting", scope="trusted", limit=3)
-
-
-def test_plugin_registers_only_two_domain_tools() -> None:
+def test_plugin_registers_only_xstudio_domain_tool() -> None:
     class Ctx:
         def __init__(self):
             self.tools = []
@@ -81,7 +70,7 @@ def test_plugin_registers_only_two_domain_tools() -> None:
             self.tools.append((kwargs["name"], kwargs["toolset"]))
     ctx = Ctx()
     plugin.register(ctx)
-    assert ctx.tools == [("xstudio_l2", "xstudio_l2"), ("l2_recall", "l2_learning")]
+    assert ctx.tools == [("xstudio_l2", "xstudio_l2")]
 
 
 def test_read_only_sql_guard() -> None:

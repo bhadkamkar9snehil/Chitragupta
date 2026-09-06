@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Small harness-owned adapter around Chitragupta's isolated GBrain.
+"""Temporary dispatch-time adapter for the shared XStudio GBrain.
 
-GBrain is derivative retrieval state, never Helpdesk lifecycle authority. Only
-reviewed/canonical material is indexed automatically; historical cases remain
-explicitly labelled analogies. Raw sessions and unreviewed candidates are kept
-out of the model-facing retrieval plane entirely.
+Hermes workers use GBrain natively through MCP. This module exists only for the
+legacy dispatch-time prefetch path in l2_pipeline_runtime.py and should disappear
+when that prefetch is moved in-process.
 """
 from __future__ import annotations
 
@@ -15,68 +14,37 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
-DEFAULT_GBRAIN_HOME = Path.home() / ".hermes" / "l2-gbrain"
-DEFAULT_KNOWLEDGE = Path("/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Knowledge")
-DEFAULT_REFERENCE = Path("/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Reference Documents")
-DEFAULT_TIMEOUT = max(10, int(os.environ.get("L2_GBRAIN_TIMEOUT_SECONDS", "60")))
+DEFAULT_GBRAIN_HOME = Path.home() / ".hermes" / "xstudio-gbrain"
+DEFAULT_TIMEOUT = max(10, int(os.environ.get("XSTUDIO_GBRAIN_TIMEOUT_SECONDS", "60")))
 
-VAULT_SOURCE_DIRS: dict[str, str] = {
-    "l2-facts": "facts",
-    "l2-solutions": "solutions/approved",
-    "l2-approved-cases": "cases/approved",
-    "l2-rejected-cases": "cases/rejected",
-    "l2-reopened-cases": "cases/reopened",
-}
-SOURCE_IDS: tuple[str, ...] = ("l2-knowledge", "l2-reference", *VAULT_SOURCE_DIRS)
+SOURCE_IDS: tuple[str, ...] = (
+    "xstudio-knowledge",
+    "xstudio-reference",
+    "xstudio-solutions",
+    "xstudio-approved-cases",
+    "xstudio-rejected-cases",
+    "xstudio-reopened-cases",
+)
 
 SCOPE_SOURCES: dict[str, tuple[str, ...]] = {
-    "trusted": ("l2-knowledge", "l2-reference", "l2-facts", "l2-solutions"),
-    "knowledge": ("l2-knowledge", "l2-reference"),
-    "reference": ("l2-reference",),
-    "facts": ("l2-facts",),
-    "solutions": ("l2-solutions",),
-    "cases": ("l2-approved-cases", "l2-rejected-cases", "l2-reopened-cases"),
-    "approved_cases": ("l2-approved-cases",),
-    "rejected_cases": ("l2-rejected-cases",),
-    "reopened_cases": ("l2-reopened-cases",),
+    "trusted": ("xstudio-knowledge", "xstudio-reference", "xstudio-solutions"),
+    "knowledge": ("xstudio-knowledge", "xstudio-reference"),
+    "reference": ("xstudio-reference",),
+    "solutions": ("xstudio-solutions",),
+    "cases": ("xstudio-approved-cases", "xstudio-rejected-cases", "xstudio-reopened-cases"),
+    "approved_cases": ("xstudio-approved-cases",),
+    "rejected_cases": ("xstudio-rejected-cases",),
+    "reopened_cases": ("xstudio-reopened-cases",),
 }
-
-
-def vault_path(value: str | None = None) -> Path:
-    raw = value or os.environ.get("CHITRAGUPTA_L2_LEARNING_VAULT", "").strip()
-    return Path(raw).expanduser() if raw else DEFAULT_VAULT
 
 
 def gbrain_home(value: str | None = None) -> Path:
-    raw = value or os.environ.get("CHITRAGUPTA_GBRAIN_HOME", "").strip()
+    raw = value or os.environ.get("XSTUDIO_GBRAIN_HOME", "").strip()
     return Path(raw).expanduser() if raw else DEFAULT_GBRAIN_HOME
 
 
-def _repo_subdir(value: str | None, env_name: str, folder: str, fallback: Path) -> Path | None:
-    raw = value or os.environ.get(env_name, "").strip()
-    if raw:
-        return Path(raw).expanduser()
-    for candidate in (
-        Path.cwd() / folder,
-        Path(__file__).resolve().parent.parent / folder,
-        fallback,
-    ):
-        if candidate.is_dir():
-            return candidate
-    return None
-
-
-def knowledge_path(value: str | None = None) -> Path | None:
-    return _repo_subdir(value, "CHITRAGUPTA_KNOWLEDGE_PATH", "Knowledge", DEFAULT_KNOWLEDGE)
-
-
-def reference_path(value: str | None = None) -> Path | None:
-    return _repo_subdir(value, "CHITRAGUPTA_REFERENCE_PATH", "Reference Documents", DEFAULT_REFERENCE)
-
-
 def binary() -> str:
-    return os.environ.get("CHITRAGUPTA_GBRAIN_BIN", "gbrain").strip() or "gbrain"
+    return os.environ.get("XSTUDIO_GBRAIN_BIN", "gbrain").strip() or "gbrain"
 
 
 def available() -> bool:
@@ -95,7 +63,7 @@ def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT) -> tuple[int, str, s
             env=env,
         )
     except FileNotFoundError:
-        return 127, "", "gbrain not found; install the pinned Chitragupta GBrain prerequisite"
+        return 127, "", "gbrain not found"
     except subprocess.TimeoutExpired:
         return 124, "", "gbrain command timed out"
     return proc.returncode, proc.stdout or "", proc.stderr or ""
@@ -109,7 +77,7 @@ def sources_for_scope(scope: str) -> tuple[str, ...]:
 
 
 def search(query: str, *, scope: str = "trusted", limit: int = 5) -> dict[str, Any]:
-    """Run source-scoped retrieval only. This adapter never calls `gbrain query`."""
+    """Source-scoped lexical prefetch for the legacy dispatcher path."""
     if scope not in SCOPE_SOURCES:
         return {
             "ok": False,
@@ -151,5 +119,4 @@ def search(query: str, *, scope: str = "trusted", limit: int = 5) -> dict[str, A
         "scope": scope,
         "source_ids": list(sources),
         "results": payload,
-        "deterministic_retrieval": True,
     }
