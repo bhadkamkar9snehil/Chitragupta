@@ -27,8 +27,8 @@ documents, or any "did the API call even happen" question against
 
 ## Procedure
 
-1. **Start broad, one call, before anything else:** the `xstudio_l2`
-   `read_procedure` operation with
+1. **Start broad, one call, before anything else:** the `xstudio_read_procedure`
+   tool with
    `procedure = "XMES_Get_API_Transaction_Summary"` and
    `parameters = {"APIType": "<Type>"}` (values look like SAP operation
    names, e.g. `UsageDecision`), against
@@ -38,7 +38,7 @@ documents, or any "did the API call even happen" question against
    This answers "did it happen and what was the result" faster than
    chasing domain-specific error tables first. This is the only stored
    procedure the typed tool will execute; everything else is read through
-   `select`/`query`/`find_objects`.
+   `xstudio_select` / `xstudio_query` / `xstudio_find_objects`.
 2. **Then narrow to the posting record:** `SAP_Posting_Tbl`, keyed by
    `WorkOrderNo`/`HeatNo`. A row with `IsProcessed = 0`/NULL, a populated
    `SAP_Message`, and no `SAP_DocumentNo` is the classic stuck signature.

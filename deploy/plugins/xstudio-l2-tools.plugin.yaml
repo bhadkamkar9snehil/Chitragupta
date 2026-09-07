@@ -1,9 +1,21 @@
 name: xstudio-l2-tools
 version: "1.0.0"
-description: "Typed guarded XStudio L2 investigation tool. Registers the xstudio_l2 tool and owns Windows/WSL/pyodbc transport, credentials, read-only enforcement, allowlisted diagnostic procedures, output budgets, call budgets, and repeated-failure guards. Also blocks the retired terminal SQL transport (Hermes_Orchestrator.py / Windows Python / sqlcmd / pyodbc / pip) that caused the Ticket_424 and Ticket_441 context blowouts."
+description: "Small typed XStudio L2 investigation tools. Registers named xstudio_* tools in the xstudio_l2 toolset and owns Windows/WSL/pyodbc transport, credentials, read-only enforcement, allowlisted diagnostic procedures, output budgets, call budgets, and repeated-failure guards. Also blocks the retired terminal SQL transport (Hermes_Orchestrator.py / Windows Python / sqlcmd / pyodbc / pip)."
 author: Snehil Bhadkamkar, Hermes Agent
 requires_env: []
 provides_hooks:
   - pre_tool_call
   - post_tool_call
   - pre_llm_call
+provides_tools:
+  - xstudio_select
+  - xstudio_query
+  - xstudio_suggest_tables
+  - xstudio_find_objects
+  - xstudio_get_definition
+  - xstudio_validate_identifiers
+  - xstudio_read_procedure
+  - xstudio_resolve_heat
+  - xstudio_get_ticket_context
+  - xstudio_get_run_actions
+  - xstudio_save_ledger

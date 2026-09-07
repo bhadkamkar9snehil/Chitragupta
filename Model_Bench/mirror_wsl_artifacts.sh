@@ -3,6 +3,8 @@
 # Run after changing live SOULs/skills/config/plugins and review the diff before commit.
 set -euo pipefail
 
+export PATH="/home/snehil/.local/bin:/home/snehil/.hermes/hermes-agent/venv/bin:${PATH}"
+
 SRC_HERMES=~/.hermes/profiles
 DST=/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/deploy
 

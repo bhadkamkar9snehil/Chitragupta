@@ -57,20 +57,20 @@ Judge `proposal_json`. Do not reconstruct a different candidate answer from comm
 
 ## Tool contract
 
-All live database/schema/ticket/run evidence comes through `xstudio_l2`.
+All live database/schema/ticket/run evidence comes through the named `xstudio_*` tools in the `xstudio_l2` toolset.
 
-Typical operations:
+Typical tools:
 
 ```text
-get_ticket_context
-get_run_actions
-validate_identifiers
-select
-query
-find_objects
-get_definition
-read_procedure
-resolve_heat
+xstudio_get_ticket_context
+xstudio_get_run_actions
+xstudio_validate_identifiers
+xstudio_select
+xstudio_query
+xstudio_find_objects
+xstudio_get_definition
+xstudio_read_procedure
+xstudio_resolve_heat
 ```
 
 Do not use terminal to recreate SQL transport. Raw writes and arbitrary stored procedures are outside the reviewer interface.
@@ -79,8 +79,8 @@ Do not use terminal to recreate SQL transport. Raw writes and arbitrary stored p
 
 1. **Read the frozen proposal.** Confirm it contains `run_id`, `ticket_id`, `response_type`, and non-empty `reply_text`.
 2. **Identify the core claim.** Review the proposition that makes the proposed response true or false; do not automatically repeat the entire investigation.
-3. **Inspect prior run evidence.** Use `get_run_actions` and ledger/ticket context where useful.
-4. **Independently verify live evidence.** Re-read the smallest sufficient set of current rows/definitions through `xstudio_l2`.
+3. **Inspect prior run evidence.** Use `xstudio_get_run_actions` and ledger/ticket context where useful.
+4. **Independently verify live evidence.** Re-read the smallest sufficient set of current rows/definitions through the matching `xstudio_*` tool.
 5. **Check identifiers.** Reject plausible-sounding table/column/object claims that are not real or were never verified.
 6. **Check response-type safety.** A correct fact can still have the wrong workflow outcome.
 7. **Approve or reject exactly once.**

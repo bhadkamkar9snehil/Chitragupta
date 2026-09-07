@@ -14,7 +14,7 @@ Approve because the evidence holds up, not because the proposal sounds confident
 
 Never publish the response, update `Complaint_Mst_Tbl`, create rework, or choose Helpdesk statuses. The deterministic reconciler/publisher owns those transitions.
 
-All database/schema/ticket/run evidence comes through the typed `xstudio_l2` tool. Do not use terminal to recreate SQL transport, run interpreters/drivers, call sqlcmd, or install packages. Arbitrary SQL writes and arbitrary stored procedures are outside the reviewer interface.
+All database/schema/ticket/run evidence comes through the named `xstudio_*` tools in the `xstudio_l2` toolset. Do not use terminal to recreate SQL transport, run interpreters/drivers, call sqlcmd, or install packages. Arbitrary SQL writes and arbitrary stored procedures are outside the reviewer interface.
 
 Your only lifecycle decisions for your own review card are:
 

@@ -9,7 +9,7 @@ set -euo pipefail
 # the lifecycle was fine, but the investigator rebuilt SQL transport by hand
 # (`python3 /mnt/c/Python314/python.exe ...`, then `pip install pyodbc`) and
 # burned its whole context window. Transport is now harness-owned behind the
-# `xstudio_l2` tool, and the retired shell paths are blocked.
+# named `xstudio_*` tools in the `xstudio_l2` toolset, and the retired shell paths are blocked.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
@@ -54,7 +54,8 @@ test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
   || { echo "FATAL: Model_Bench/xstudio_l2_tool_bridge.py is missing" >&2; exit 1; }
 
 # Deploy both observer plugins to every active role. The orchestrator plugin
-# only triggers reconciliation; the tools plugin registers `xstudio_l2` and
+# only triggers reconciliation; the tools plugin registers named `xstudio_*`
+# tools in the `xstudio_l2` toolset and
 # enforces the execution guard. Correctness never depends on the event hook,
 # because ticket_scout runs the same reconciler before every new claim.
 deploy_plugins() {
@@ -79,7 +80,7 @@ deploy_plugins() {
 # plugins.enabled list. A tools plugin installed only under a profile therefore
 # loads its hooks, registers its tool, and still has the toolset silently dropped
 # from every session -- which is exactly why the first typed-harness ticket saw
-# its terminal fallback blocked but never got `xstudio_l2` as an alternative.
+# its terminal fallback blocked but never got a typed XStudio tool as an alternative.
 # xstudio-l2-trace was already installed in both places for this same reason.
 install_shared_plugin_for_discovery() {
   local plugin="$1" src="$2" dir="$HOME/.hermes/plugins/$1"
@@ -147,7 +148,7 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
   fi
 done
 
-# The root config drives plugin discovery, which is what makes `xstudio_l2` a
+# The root config drives plugin discovery, which is what makes the `xstudio_l2`
 # recognised toolset name instead of an unknown one that gets filtered out.
 echo "== Root config (plugin discovery) =="
 python3 "$ROOT/Model_Bench/patch_profile_config.py" --enable-plugin-only "$HOME/.hermes/config.yaml"
@@ -160,7 +161,7 @@ fi
 
 echo
 echo "Deployed deterministic L2 lifecycle + typed XStudio investigation harness."
-echo "Typed tool: xstudio_l2. SQL transport runs natively in WSL behind the harness."
+echo "Typed tools: named xstudio_* tools in xstudio_l2. SQL transport runs natively in WSL behind the harness."
 echo "Model-driven terminal transports (Hermes_Orchestrator.py, Windows Python,"
 echo "sqlcmd, pyodbc, pip) remain blocked by plugin hook + approvals.deny."
 echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"

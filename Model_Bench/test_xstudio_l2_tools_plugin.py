@@ -37,6 +37,7 @@ def setup_function() -> None:
     with plugin._lock:
         plugin._session_calls.clear()
         plugin._session_failures.clear()
+        plugin._session_context.clear()
 
 
 # --------------------------------------------------------------------------
@@ -121,11 +122,11 @@ def test_named_tool_schemas_have_small_required_contracts() -> None:
         "xstudio_find_objects": {"database", "search"},
         "xstudio_get_definition": {"database", "object_name"},
         "xstudio_validate_identifiers": {"database", "table"},
-        "xstudio_read_procedure": {"database", "run_id", "procedure", "parameters"},
-        "xstudio_resolve_heat": {"database", "heat"},
-        "xstudio_get_ticket_context": {"ticket_id"},
-        "xstudio_get_run_actions": {"run_id"},
-        "xstudio_save_ledger": {"run_id", "ledger"},
+        "xstudio_read_procedure": {"database", "procedure", "parameters"},
+        "xstudio_resolve_heat": {"heat"},
+        "xstudio_get_ticket_context": set(),
+        "xstudio_get_run_actions": set(),
+        "xstudio_save_ledger": {"ledger"},
     }
     assert set(plugin.TOOL_SCHEMAS) == set(expected)
     for name, required in expected.items():
@@ -133,6 +134,12 @@ def test_named_tool_schemas_have_small_required_contracts() -> None:
         assert set(schema["required"]) == required
         assert schema["additionalProperties"] is False
         assert "operation" not in schema["properties"]
+    # Effective required fields after repair must guarantee SQL safety:
+    assert plugin._EFFECTIVE_REQUIRED_FIELDS_BY_TOOL["xstudio_resolve_heat"] == ("database", "heat")
+    assert plugin._EFFECTIVE_REQUIRED_FIELDS_BY_TOOL["xstudio_get_ticket_context"] == ("ticket_id",)
+    assert plugin._EFFECTIVE_REQUIRED_FIELDS_BY_TOOL["xstudio_get_run_actions"] == ("run_id",)
+    assert plugin._EFFECTIVE_REQUIRED_FIELDS_BY_TOOL["xstudio_save_ledger"] == ("run_id", "ledger")
+    assert plugin._EFFECTIVE_REQUIRED_FIELDS_BY_TOOL["xstudio_read_procedure"] == ("database", "run_id", "procedure", "parameters")
 
 
 def test_register_exposes_named_tools_and_not_legacy_polymorphic_tool() -> None:
@@ -156,14 +163,37 @@ def test_repairable_context_is_injected_before_budget() -> None:
         task_id="task-context",
         user_message="Current run_id: RUN-1\nCurrent ticket_id: TICKET-1",
     )
+    # 1. resolve_heat defaults database to XStudio_Xbatch and injects run_id:
     modified = plugin._pre_tool_call(
         "xstudio_resolve_heat", {"heat": "H99328"}, task_id="task-context"
     )
     assert modified and modified["action"] == "modify"
     assert modified["args"]["database"] == "XStudio_Xbatch"
     assert modified["args"]["run_id"] == "RUN-1"
-    with plugin._lock:
-        assert plugin._session_calls["task-context"] == 1
+
+    # 2. get_ticket_context injects ticket_id:
+    mod_tc = plugin._pre_tool_call("xstudio_get_ticket_context", {}, task_id="task-context")
+    assert mod_tc and mod_tc["action"] == "modify"
+    assert mod_tc["args"]["ticket_id"] == "TICKET-1"
+
+    # 3. get_run_actions injects run_id:
+    mod_ra = plugin._pre_tool_call("xstudio_get_run_actions", {}, task_id="task-context")
+    assert mod_ra and mod_ra["action"] == "modify"
+    assert mod_ra["args"]["run_id"] == "RUN-1"
+
+    # 4. save_ledger injects run_id:
+    mod_sl = plugin._pre_tool_call("xstudio_save_ledger", {"ledger": {"ok": True}}, task_id="task-context")
+    assert mod_sl and mod_sl["action"] == "modify"
+    assert mod_sl["args"]["run_id"] == "RUN-1"
+
+    # 5. read_procedure injects run_id:
+    mod_rp = plugin._pre_tool_call("xstudio_read_procedure", {
+        "database": "XStudio_Configuration_Xbatch",
+        "procedure": "XMES_Get_API_Transaction_Summary",
+        "parameters": {"APIType": "UsageDecision"},
+    }, task_id="task-context")
+    assert mod_rp and mod_rp["action"] == "modify"
+    assert mod_rp["args"]["run_id"] == "RUN-1"
 
 
 def test_ambiguous_missing_database_is_rejected_before_budget() -> None:
@@ -195,7 +225,9 @@ def test_named_handler_injects_operation_without_exposing_it() -> None:
 def test_plugin_manifest_declares_registered_toolset() -> None:
     manifest = (ROOT / "xstudio_l2_tools_plugin" / "plugin.yaml").read_text(encoding="utf-8")
     assert "provides_tools:" in manifest
-    assert "  - xstudio_l2" in manifest
+    assert "  - xstudio_select" in manifest
+    assert "  - xstudio_save_ledger" in manifest
+    assert "  - xstudio_l2\n" not in manifest
 
 
 def test_terminal_guard_inspects_alternate_argument_keys() -> None:
@@ -393,43 +425,92 @@ def test_long_strings_are_truncated_with_a_marker() -> None:
 # --------------------------------------------------------------------------
 
 def test_repeated_identical_failure_is_blocked_and_different_call_is_not() -> None:
+    # 1. Test named model-facing path
+    named_args = {"database": "XStudio_Xbatch", "table": "dbo.SAP_Posting_Tbl", "columns": ["ID"]}
+    for _ in range(plugin.MAX_IDENTICAL_FAILURES):
+        assert plugin._pre_tool_call("xstudio_select", named_args, task_id="session-named") is None
+        plugin._post_tool_call("xstudio_select", named_args, '{"ok":false,"error":"same failure"}',
+                               task_id="session-named")
+    blocked = plugin._pre_tool_call("xstudio_select", named_args, task_id="session-named")
+    assert blocked and blocked["action"] == "block" and "Repeated-failure" in blocked["message"]
+    # A genuinely different named call must still be allowed.
+    assert plugin._pre_tool_call("xstudio_select", dict(named_args, columns=["ID", "Status"]),
+                                 task_id="session-named") is None
+
+    # 2. Test legacy compatibility path
     args = {"operation": "select", "database": "XStudio_Xbatch",
             "table": "dbo.SAP_Posting_Tbl", "columns": ["ID"], "run_id": "run-1"}
     for _ in range(plugin.MAX_IDENTICAL_FAILURES):
         assert plugin._pre_tool_call(plugin.TOOL_NAME, args, task_id="session-a") is None
         plugin._post_tool_call(plugin.TOOL_NAME, args, '{"ok":false,"error":"same failure"}',
                                task_id="session-a")
-    blocked = plugin._pre_tool_call(plugin.TOOL_NAME, args, task_id="session-a")
+    blocked_legacy = plugin._pre_tool_call(plugin.TOOL_NAME, args, task_id="session-a")
+    assert blocked_legacy and blocked_legacy["action"] == "block" and "Repeated-failure" in blocked_legacy["message"]
+
+
+def test_repaired_call_fingerprint_matches_post_tool_call_with_original_args() -> None:
+    """Repaired/defaulted args must produce the exact same fingerprint in pre and post hooks.
+
+    When Qwen calls xstudio_resolve_heat without database, _pre_tool_call modifies
+    the args. Even if Hermes passes the original unmodified args to _post_tool_call,
+    _post_tool_call must apply _repair_args so the failure counter matches.
+    """
+    plugin._pre_llm_call(
+        task_id="session-repair-fp",
+        user_message="Current run_id: RUN-RP\nCurrent ticket_id: TICKET-RP",
+    )
+    original_args = {"heat": "H99328"}
+    for _ in range(plugin.MAX_IDENTICAL_FAILURES):
+        res = plugin._pre_tool_call("xstudio_resolve_heat", original_args, task_id="session-repair-fp")
+        assert res and res["action"] == "modify"
+        # Hermes hook delivers original unmodified args to post_tool_call:
+        plugin._post_tool_call("xstudio_resolve_heat", original_args, '{"ok":false,"error":"timeout"}',
+                               task_id="session-repair-fp")
+
+    # The next attempt must be blocked by the repeated failure breaker:
+    blocked = plugin._pre_tool_call("xstudio_resolve_heat", original_args, task_id="session-repair-fp")
     assert blocked and blocked["action"] == "block" and "Repeated-failure" in blocked["message"]
-    # A genuinely different call must still be allowed.
-    assert plugin._pre_tool_call(plugin.TOOL_NAME, dict(args, columns=["ID", "Status"]),
-                                 task_id="session-a") is None
+
+
+def test_session_isolation_context_does_not_leak_across_sessions() -> None:
+    """Session A's context must never leak into Session B."""
+    plugin._pre_llm_call(task_id="sess-a", user_message="Current run_id: RUN-A\nCurrent ticket_id: TICKET-A")
+    plugin._pre_llm_call(task_id="sess-b", user_message="Current run_id: RUN-B\nCurrent ticket_id: TICKET-B")
+
+    mod_a = plugin._pre_tool_call("xstudio_get_ticket_context", {}, task_id="sess-a")
+    mod_b = plugin._pre_tool_call("xstudio_get_ticket_context", {}, task_id="sess-b")
+    assert mod_a and mod_a["args"]["ticket_id"] == "TICKET-A"
+    assert mod_b and mod_b["args"]["ticket_id"] == "TICKET-B"
+
+    # A session with no context must fail closed rather than borrowing from another session:
+    blocked_c = plugin._pre_tool_call("xstudio_get_ticket_context", {}, task_id="sess-c")
+    assert blocked_c and blocked_c["action"] == "block"
+    assert "ticket_id" in blocked_c["message"]
 
 
 def test_successful_calls_never_trip_the_failure_breaker() -> None:
-    args = {"operation": "get_run_actions", "run_id": "r1"}
+    plugin._pre_llm_call(task_id="ok-session", user_message="Current run_id: RUN-OK")
     for _ in range(5):
-        assert plugin._pre_tool_call(plugin.TOOL_NAME, args, task_id="ok-session") is None
-        plugin._post_tool_call(plugin.TOOL_NAME, args, '{"ok":true,"actions":[]}', task_id="ok-session")
+        assert plugin._pre_tool_call("xstudio_get_run_actions", {}, task_id="ok-session")["action"] == "modify"
+        plugin._post_tool_call("xstudio_get_run_actions", {}, '{"ok":true,"actions":[]}', task_id="ok-session")
 
 
 def test_failure_breaker_is_scoped_per_session() -> None:
-    args = {"operation": "select", "database": "XStudio_Xbatch",
-            "table": "dbo.X", "columns": ["ID"]}
+    args = {"database": "XStudio_Xbatch", "table": "dbo.X", "columns": ["ID"]}
     for _ in range(plugin.MAX_IDENTICAL_FAILURES):
-        plugin._pre_tool_call(plugin.TOOL_NAME, args, task_id="session-x")
-        plugin._post_tool_call(plugin.TOOL_NAME, args, '{"ok":false}', task_id="session-x")
-    assert plugin._pre_tool_call(plugin.TOOL_NAME, args, task_id="session-x")["action"] == "block"
-    assert plugin._pre_tool_call(plugin.TOOL_NAME, args, task_id="session-y") is None
+        plugin._pre_tool_call("xstudio_select", args, task_id="session-x")
+        plugin._post_tool_call("xstudio_select", args, '{"ok":false}', task_id="session-x")
+    assert plugin._pre_tool_call("xstudio_select", args, task_id="session-x")["action"] == "block"
+    assert plugin._pre_tool_call("xstudio_select", args, task_id="session-y") is None
 
 
 def test_session_budget_blocks_excess_tool_calls() -> None:
     old = plugin.MAX_TOOL_CALLS
     plugin.MAX_TOOL_CALLS = 2
     try:
-        assert plugin._pre_tool_call(plugin.TOOL_NAME, {"operation": "get_run_actions", "run_id": "1"}, task_id="b") is None
-        assert plugin._pre_tool_call(plugin.TOOL_NAME, {"operation": "get_run_actions", "run_id": "2"}, task_id="b") is None
-        blocked = plugin._pre_tool_call(plugin.TOOL_NAME, {"operation": "get_run_actions", "run_id": "3"}, task_id="b")
+        assert plugin._pre_tool_call("xstudio_query", {"database": "XStudio_Xbatch", "sql": "SELECT 1"}, task_id="b") is None
+        assert plugin._pre_tool_call("xstudio_query", {"database": "XStudio_Xbatch", "sql": "SELECT 2"}, task_id="b") is None
+        blocked = plugin._pre_tool_call("xstudio_query", {"database": "XStudio_Xbatch", "sql": "SELECT 3"}, task_id="b")
         assert blocked and blocked["action"] == "block" and "budget" in blocked["message"]
     finally:
         plugin.MAX_TOOL_CALLS = old
@@ -441,10 +522,13 @@ def test_default_budget_matches_the_reviewed_contract() -> None:
 
 
 def test_session_cleanup_releases_counters() -> None:
-    plugin._pre_tool_call(plugin.TOOL_NAME, {"operation": "get_run_actions", "run_id": "1"}, task_id="tidy")
+    plugin._pre_llm_call(task_id="tidy", user_message="Current run_id: RUN-TIDY")
+    plugin._pre_tool_call("xstudio_get_run_actions", {}, task_id="tidy")
     plugin._cleanup_session(task_id="tidy")
     with plugin._lock:
         assert "tidy" not in plugin._session_calls
+        assert "tidy" not in plugin._session_context
+        assert "tidy" not in plugin._session_failures
 
 
 def test_execution_contract_is_injected_before_each_llm_turn() -> None:
@@ -462,6 +546,9 @@ def test_production_cards_render_typed_contract_and_no_raw_interpreter_recipe() 
     runtime = _load("l2_pipeline_runtime_test", ROOT / "l2_pipeline_runtime.py")
     body = runtime._query_instructions("RUN-1", "TICKET-1")
     assert "xstudio_l2" in body
+    for tool_name in ("xstudio_select", "xstudio_query", "xstudio_suggest_tables",
+                      "xstudio_resolve_heat", "xstudio_save_ledger"):
+        assert tool_name in body
     assert "RUN-1" in body and "TICKET-1" in body
     assert "resolve_heat" in body
     assert "Evidence status: INCOMPLETE" in body

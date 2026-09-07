@@ -57,23 +57,23 @@ The normative lifecycle specification is `Knowledge/L2_PIPELINE_STATE_MACHINE.md
 
 ## Agent-facing investigation surface
 
-L2 workers do not build SQL transport themselves. They use one typed plugin tool: `xstudio_l2`.
+L2 workers do not build SQL transport themselves. They use small named typed plugin tools in the `xstudio_l2` toolset.
 
 | Need | Operation |
 |---|---|
-| Read a known table/view with validated identifiers | `select` |
-| Run composed read-only SQL | `query` |
-| Narrow likely tables from ticket text | `suggest_tables` |
-| Discover real SQL objects | `find_objects` |
-| Read one object definition | `get_definition` |
-| Validate table/column identifiers | `validate_identifiers` |
-| Execute an explicitly allowlisted read procedure | `read_procedure` |
-| Resolve a ticket heat identifier across curated XStudio_Xbatch surfaces | `resolve_heat` |
-| Refresh the live ticket row | `get_ticket_context` |
-| Inspect the run's SQL audit trail | `get_run_actions` |
-| Persist ticket-specific findings | `save_ledger` |
+| Read a known table/view with validated identifiers | `xstudio_select` |
+| Run composed read-only SQL | `xstudio_query` |
+| Narrow likely tables from ticket text | `xstudio_suggest_tables` |
+| Discover real SQL objects | `xstudio_find_objects` |
+| Read one object definition | `xstudio_get_definition` |
+| Validate table/column identifiers | `xstudio_validate_identifiers` |
+| Execute an explicitly allowlisted read procedure | `xstudio_read_procedure` |
+| Resolve a ticket heat identifier across curated XStudio_Xbatch surfaces | `xstudio_resolve_heat` |
+| Refresh the live ticket row | `xstudio_get_ticket_context` |
+| Inspect the run's SQL audit trail | `xstudio_get_run_actions` |
+| Persist ticket-specific findings | `xstudio_save_ledger` |
 
-`Model_Bench/xstudio_l2_tools_plugin/` registers and guards the tool. `Model_Bench/xstudio_l2_tool_bridge.py` runs under the backend Hermes Python in WSL, owns the native ODBC transport, and returns bounded JSON.
+`Model_Bench/xstudio_l2_tools_plugin/` registers and guards the named tools. `Model_Bench/xstudio_l2_tool_bridge.py` runs under the backend Hermes Python in WSL, owns the native ODBC transport, and returns bounded JSON.
 
 The worker-facing safety contract is structural:
 
@@ -96,7 +96,7 @@ Profile: `l2-investigator-primary` (with `l2-investigator` retained as the dispa
 The investigator:
 
 1. reads the dispatch bundle and live evidence;
-2. uses `xstudio_l2` for database/schema/ticket/ledger work;
+2. uses the named `xstudio_*` tools for database/schema/ticket/ledger work;
 3. treats KB/history/mem0 as leads rather than ticket-specific proof;
 4. records meaningful ticket-specific findings in the run ledger;
 5. completes its own Kanban card with structured metadata.
@@ -204,7 +204,7 @@ Model_Bench/xstudio_l2_orchestrator_plugin/
     Event-driven reconciler trigger; no lifecycle logic of its own.
 
 Model_Bench/xstudio_l2_tools_plugin/
-    Typed xstudio_l2 tool registration and execution guard.
+    Named xstudio_* tool registration and execution guard.
 
 Model_Bench/xstudio_l2_tool_bridge.py
     Harness-owned Windows/SQL transport behind the typed tool.

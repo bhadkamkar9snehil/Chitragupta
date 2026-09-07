@@ -4,6 +4,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+if [[ -z "${MSSQL_MCP_SERVER:-}" && -f "$HOME/.hermes/profiles/l2-investigator-primary/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$HOME/.hermes/profiles/l2-investigator-primary/.env"
+  set +a
+fi
+export PATH="/home/snehil/.local/bin:/home/snehil/.hermes/hermes-agent/venv/bin:${PATH}"
+
 PY_FILES=(
   Model_Bench/l2_pipeline_runtime.py
   Model_Bench/ticket_scout.py
@@ -59,7 +67,8 @@ After deploying/regenerating the SQL bundle, run:
 Confirm deploy/helpdesk_workflow_binding.json still matches live workflow values.
 Do not guess replacement status names.
 
-For the next naturally arriving fresh ticket, verify its trace uses xstudio_l2 for
+For the next naturally arriving fresh ticket, verify its trace uses named xstudio_*
+tools from the xstudio_l2 toolset for
 database/schema/ticket evidence and does not attempt to recreate SQL transport via
 terminal, an interpreter, pyodbc/sqlcmd, or package installation.
 EOF

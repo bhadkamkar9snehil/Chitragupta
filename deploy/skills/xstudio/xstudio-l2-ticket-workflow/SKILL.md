@@ -46,31 +46,36 @@ pipeline_stage
 
 ## Database/tool contract
 
-All database, schema, ticket, and ledger work goes through `xstudio_l2`.
+All database, schema, ticket, and ledger work goes through the named `xstudio_*` tools in the `xstudio_l2` toolset.
 
-Useful operations:
+Use the smallest matching tool (`xstudio_select`, `xstudio_query`, `xstudio_suggest_tables`,
+`xstudio_find_objects`, `xstudio_get_definition`, `xstudio_validate_identifiers`,
+`xstudio_read_procedure`, `xstudio_resolve_heat`, `xstudio_get_ticket_context`,
+`xstudio_get_run_actions`, or `xstudio_save_ledger`). Do not emit an `operation` field.
+
+Available tools:
 
 ```text
-get_ticket_context
-suggest_tables
-find_objects
-get_definition
-validate_identifiers
-select
-query
-read_procedure
-resolve_heat
-get_run_actions
-save_ledger
+xstudio_get_ticket_context
+xstudio_suggest_tables
+xstudio_find_objects
+xstudio_get_definition
+xstudio_validate_identifiers
+xstudio_select
+xstudio_query
+xstudio_read_procedure
+xstudio_resolve_heat
+xstudio_get_run_actions
+xstudio_save_ledger
 ```
 
 Do not use terminal to run the orchestrator, Windows Python, sqlcmd, pyodbc, or package installation. The harness owns transport.
 
-Raw `query` is read-only. Arbitrary `EXEC` and arbitrary SQL mutation are not available.
+Raw `xstudio_query` is read-only. Arbitrary `EXEC` and arbitrary SQL mutation are not available.
 
-The typed interface validates operation-specific arguments before opening SQL. Always provide
-the required fields for the selected operation (including the explicit database for every
-schema/table/query operation); do not spend turns retrying a call that reports a missing field.
+The typed interface validates tool-specific arguments before opening SQL. Always provide
+the required fields for the selected tool (including the explicit database for every
+schema/table/query tool); do not spend turns retrying a call that reports a missing field.
 
 Ticket/user identifiers are not proof of database storage representation. For example, `H99328`
 may map to numeric `99328`, another normalized key, or no live row. Establish the mapping from
@@ -78,13 +83,13 @@ live schema and rows before claiming a format or count.
 
 ## Investigation procedure
 
-1. **Read the ticket/context.** Use the task body plus `get_ticket_context` when current ticket state matters.
+1. **Read the ticket/context.** Use the task body plus `xstudio_get_ticket_context` when current ticket state matters.
 2. **Route the ticket.** Use `Knowledge/manifest.json` / `task-router.md` and the narrowest domain skill.
 3. **Extract strong identifiers.** Heat, work order, transaction ID, billet, inspection lot, equipment, etc. Prefer identifiers over speculative classification.
 4. **Start with the narrowest high-value live read.** Prefer verified comprehensive views before hand-building joins.
-5. **Discover rather than guess.** Use `suggest_tables`, `find_objects`, `get_definition`, and `validate_identifiers` when schema/object names are uncertain.
+5. **Discover rather than guess.** Use `xstudio_suggest_tables`, `xstudio_find_objects`, `xstudio_get_definition`, and `xstudio_validate_identifiers` when schema/object names are uncertain.
 6. **Verify the actual incident.** Knowledge files, old tickets, history, Qdrant hits, and mem0 are leads; live ticket-specific evidence is the authority when available.
-7. **Record meaningful findings.** Use `save_ledger` for ticket-specific evidence that the reviewer or later continuation should be able to inspect.
+7. **Record meaningful findings.** Use `xstudio_save_ledger` for ticket-specific evidence that the reviewer or later continuation should be able to inspect.
 8. **Choose the response type conservatively.**
 9. **Complete your own Kanban card with structured metadata.** Do not publish the ticket yourself.
 

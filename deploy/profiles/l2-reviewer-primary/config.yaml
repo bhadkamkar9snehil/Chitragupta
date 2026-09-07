@@ -1,12 +1,12 @@
 model:
+  max_tokens: 8192
   default: qwen/qwen3.5-9b
   provider: lmstudio
   base_url: http://100.111.69.102:1235/v1
   context_length: 75776
-  max_tokens: 8192
 agent:
-  reasoning_effort: none
   max_turns: 20
+  reasoning_effort: none
 memory:
   provider: mem0
 approvals:

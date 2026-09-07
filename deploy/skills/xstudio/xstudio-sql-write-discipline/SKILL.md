@@ -17,23 +17,23 @@ This skill exists so an L2 worker stops at the right boundary when diagnosis sug
 
 ## Current rule
 
-The L2 worker-facing database surface is `xstudio_l2` and is read-only for arbitrary SQL.
+The L2 worker-facing database surface is the named `xstudio_*` tools in the `xstudio_l2` toolset and is read-only for arbitrary SQL.
 
 Do not use terminal, Python, pyodbc, sqlcmd, package installation, or an unreviewed stored procedure to create a write path that the typed tool does not expose.
 
 ## During investigation
 
-Use typed operations instead of shell recipes:
+Use named tools instead of shell recipes:
 
 ```text
-validate_identifiers  -> prove table/column names
-suggest_tables        -> narrow candidate surfaces
-find_objects          -> discover real procedures/views/triggers
-get_definition        -> inspect current SQL definition
-select / query        -> read live evidence
-read_procedure        -> only the explicit reviewed read-only allowlist
-get_run_actions       -> inspect audited run evidence
-save_ledger           -> persist ticket-specific findings
+xstudio_validate_identifiers  -> prove table/column names
+xstudio_suggest_tables        -> narrow candidate surfaces
+xstudio_find_objects          -> discover real procedures/views/triggers
+xstudio_get_definition        -> inspect current SQL definition
+xstudio_select / xstudio_query -> read live evidence
+xstudio_read_procedure        -> only the explicit reviewed read-only allowlist
+xstudio_get_run_actions       -> inspect audited run evidence
+xstudio_save_ledger           -> persist ticket-specific findings
 ```
 
 A procedure definition may be useful evidence even when the procedure itself is not callable by the worker.

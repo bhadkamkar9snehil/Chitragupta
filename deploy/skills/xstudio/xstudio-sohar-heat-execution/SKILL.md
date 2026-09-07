@@ -15,15 +15,15 @@ metadata:
 
 Use for tickets about EAF/LRF/CCM values, missing/wrong per-heat data, heat attribution, billet count/weight, furnace/yard tracking, or SMS Plant Process Time.
 
-Primary reference: `Knowledge/sohar-sms-event-workflows.md`. Treat its formulas/state maps as routing knowledge; verify current ticket-specific facts and any exact SQL definition live through `xstudio_l2`.
+Primary reference: `Knowledge/sohar-sms-event-workflows.md`. Treat its formulas/state maps as routing knowledge; verify current ticket-specific facts and any exact SQL definition live through the matching named `xstudio_*` tool.
 
 ## Procedure
 
 1. **Identify the chain position:** EAF -> LRF -> CCM -> billet production, with SMS Plant Process Time tracking related process timing.
 2. **Prefer comprehensive verified views first.** For many per-heat questions start with `XBatch_Tracability_Heat_Details_Vw` or `Vw_XBatch_Tracability_SMS_Process_Time`; fall back to `EAF_PER_HEAT`, `LRF_Per_Heat`, `CCM_Per_Heat`, `SMS_Plant_Process_EventTime`, or `BilletsCastCount` when necessary.
 3. **Read the specific heat live.** Do not infer current state from the reference document's examples.
-4. **For a wrong/missing value, trace which workflow stage writes it.** Use `xstudio_l2.find_objects` to locate the real workflow object and `xstudio_l2.get_definition` to read its current definition. Do not execute a write procedure merely because its name appears in the reference.
-5. **Validate identifiers before composing a narrow query.** Use `validate_identifiers` rather than carrying plausible schema names from memory.
+4. **For a wrong/missing value, trace which workflow stage writes it.** Use `xstudio_find_objects` to locate the real workflow object and `xstudio_get_definition` to read its current definition. Do not execute a write procedure merely because its name appears in the reference.
+5. **Validate identifiers before composing a narrow query.** Use `xstudio_validate_identifiers` rather than carrying plausible schema names from memory.
 6. **If the evidence points to SAP/API rather than process execution, switch to `xstudio-sap-api-investigation`.**
 
 ## Known patterns to verify before calling them defects
