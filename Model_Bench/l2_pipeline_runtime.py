@@ -107,7 +107,116 @@ def annotate_evidence_status(metadata: dict[str, Any]) -> dict[str, Any]:
                 "Evidence status: INCOMPLETE. No material claim below should be treated "
                 "as verified until the missing live evidence is obtained.\n\n" + reply
             )
+    # Also flag proposals where material VERIFIED claims lack evidence references.
+    claims = out.get("claims")
+    if isinstance(claims, list):
+        for claim in claims:
+            if not isinstance(claim, dict):
+                continue
+            if (claim.get("material") and claim.get("status") == "VERIFIED"
+                    and not claim.get("evidence")):
+                out["evidence_status"] = "CLAIM_EVIDENCE_GAP"
+                break
     return out
+
+
+# Claim statuses recognised by the pipeline. INFERRED is acceptable only when
+# reply_text does not present it as established fact.
+VALID_CLAIM_STATUSES = {"VERIFIED", "INFERRED", "UNVERIFIED", "CONTRADICTED"}
+
+# Conservative set of causal phrases that, when applied to an UNVERIFIED or
+# INFERRED claim, indicate the reply is stronger than the evidence supports.
+# These are intentionally high-precision/low-recall: better to miss an edge
+# case than to false-positive on normal prose.
+_CAUSAL_MARKERS = re.compile(
+    r"\b(?:caused by|due to|resulted? in|because of|failure of|"
+    r"never initiated|never called|trigger fail|api fail|"
+    r"failed to (?:initiate|call|send|post|execute))\b",
+    re.I,
+)
+
+
+def validate_claims_contract(claims: Any) -> tuple[bool, list[str]]:
+    """Validate structural correctness of a claims array.
+
+    Returns (valid, issues). Does NOT evaluate semantic truth -- that is the
+    reviewer's job. This only enforces:
+      - every claim has id, claim text, material flag, status
+      - VERIFIED claims have at least one evidence reference
+      - status is from the recognised enum
+    """
+    if claims is None:
+        return True, []  # claims are optional for backward compat
+    if not isinstance(claims, list):
+        return False, ["claims must be an array"]
+
+    issues: list[str] = []
+    seen_ids: set[str] = set()
+    for i, claim in enumerate(claims):
+        label = f"claims[{i}]"
+        if not isinstance(claim, dict):
+            issues.append(f"{label}: must be an object")
+            continue
+        cid = claim.get("id")
+        if not cid or not isinstance(cid, str):
+            issues.append(f"{label}: missing or invalid id")
+        elif cid in seen_ids:
+            issues.append(f"{label}: duplicate id {cid!r}")
+        else:
+            seen_ids.add(cid)
+        if not claim.get("claim"):
+            issues.append(f"{label}: missing claim text")
+        status = claim.get("status")
+        if status not in VALID_CLAIM_STATUSES:
+            issues.append(f"{label}: status {status!r} not in {sorted(VALID_CLAIM_STATUSES)}")
+        if claim.get("material") and status == "VERIFIED":
+            evidence = claim.get("evidence")
+            if not evidence or not isinstance(evidence, list) or len(evidence) == 0:
+                issues.append(f"{label} ({cid}): material VERIFIED claim has no evidence reference")
+            else:
+                for j, ref in enumerate(evidence):
+                    if not isinstance(ref, dict) or not ref.get("source"):
+                        issues.append(f"{label}.evidence[{j}]: must have a source field")
+
+    return (len(issues) == 0), issues
+
+
+def validate_reply_text_against_claims(
+    reply_text: str, claims: Any
+) -> tuple[bool, list[str]]:
+    """Check that reply_text doesn't assert UNVERIFIED/INFERRED claims as fact.
+
+    Returns (ok, warnings). This is intentionally conservative -- it only flags
+    cases where a known causal phrase co-occurs with text from an unverified
+    claim. The reviewer remains responsible for full semantic judgment.
+    """
+    if not claims or not isinstance(claims, list) or not reply_text:
+        return True, []
+
+    warnings: list[str] = []
+    reply_lower = reply_text.lower()
+    for claim in claims:
+        if not isinstance(claim, dict) or not claim.get("material"):
+            continue
+        status = claim.get("status", "")
+        if status in ("VERIFIED", "CONTRADICTED"):
+            continue  # VERIFIED is fine; CONTRADICTED is caught structurally
+        claim_text = str(claim.get("claim") or "").lower()
+        # Only flag if both a causal marker AND claim-specific keywords appear
+        # in reply_text. This avoids false positives from generic phrasing.
+        claim_words = [w for w in re.findall(r"\w{4,}", claim_text) if len(w) >= 4]
+        if not claim_words:
+            continue
+        # At least two significant claim words must appear in reply
+        matches = sum(1 for w in claim_words if w in reply_lower)
+        if matches >= min(2, len(claim_words)) and _CAUSAL_MARKERS.search(reply_lower):
+            cid = claim.get("id", "?")
+            warnings.append(
+                f"Claim {cid} (status={status}) may be asserted as fact in reply_text. "
+                f"Causal language detected for an {status} claim."
+            )
+
+    return (len(warnings) == 0), warnings
 
 
 # ---------------------------------------------------------------------------
@@ -489,7 +598,11 @@ def create_reviewer_card(
         "H99328 may map to a numeric key); establish the physical key and format from live "
         "schema/rows.\n"
         "Verify the frozen proposal above against live evidence. Approve with kanban_complete; "
-        "reject with kanban_block. The deterministic reconciler owns publication/rework."
+        "reject with kanban_block. The deterministic reconciler owns publication/rework.\n"
+        "If proposal_json contains a claims array, verify each material VERIFIED claim has a "
+        "matching evidence reference in xstudio_get_run_actions. Reject if a material claim "
+        "marked VERIFIED has no supporting action/evidence, or if reply_text asserts an "
+        "UNVERIFIED/INFERRED claim as established fact."
     )
     argv = [
         "kanban", "create", f"REVIEW[{cycle}]: L2 {ticket_no}",
@@ -787,6 +900,26 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dic
             ):
                 counts["rework_created"] += 1
             continue
+
+        # Structural claim/evidence gate. If the proposal carries a claims array,
+        # every material VERIFIED claim must have an evidence reference. This is a
+        # deterministic structural check, not semantic judgment (that stays with the
+        # reviewer). Legacy proposals without claims pass through normally.
+        proposal_claims = proposal.get("claims") if proposal else None
+        if proposal_claims is not None:
+            claims_valid, claims_issues = validate_claims_contract(proposal_claims)
+            if not claims_valid:
+                reason = (
+                    "Pre-publish claim/evidence gate: " + "; ".join(claims_issues[:5])
+                    + ". Fix the material claim evidence references and resubmit."
+                )
+                source_id = body_field(task.get("body"), "investigation_task_id")
+                if create_rework_card(
+                    args, source_task=task, reason=reason,
+                    investigation_task_id=source_id, dry_run=dry_run,
+                ):
+                    counts["rework_created"] += 1
+                continue
 
         response_type = str(proposal["response_type"]).upper()
         try:
@@ -1123,6 +1256,10 @@ def _query_instructions(run_id: str, ticket_id: str) -> str:
         "A ticket/user identifier is not proof of database storage representation. If a material "
         "fact is not established before the tool budget ends, report Evidence status: INCOMPLETE "
         "and list the missing evidence; do not call it verified.\n"
+        "Before completing, identify material claims and label each VERIFIED/INFERRED/"
+        "UNVERIFIED/CONTRADICTED. Include a claims array in metadata with evidence refs "
+        "(ActionNo from your xstudio_* calls). Absence of records is evidence of absence, "
+        "not evidence of causation.\n"
         "Never write the live ticket directly. Complete the Kanban task with full "
         "structured metadata; deterministic review/publish owns the rest.\n"
     )

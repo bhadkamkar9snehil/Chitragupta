@@ -162,6 +162,202 @@ class PipelineContractTests(unittest.TestCase):
         body = run.call_args.args[0][run.call_args.args[0].index("--body") + 1]
         self.assertIn("ticket identifier is not proof of database storage representation", body)
 
+    # ------------------------------------------------------------------
+    # Claim / evidence contract tests
+    # ------------------------------------------------------------------
+
+    def test_verified_claim_with_evidence_passes_validation(self):
+        claims = [{"id": "C1", "claim": "Heat not found", "material": True,
+                   "status": "VERIFIED", "evidence": [{"action": 3, "source": "xstudio_resolve_heat"}]}]
+        valid, issues = mod.validate_claims_contract(claims)
+        self.assertTrue(valid, issues)
+
+    def test_verified_claim_without_evidence_fails_validation(self):
+        claims = [{"id": "C1", "claim": "Heat not found", "material": True,
+                   "status": "VERIFIED"}]
+        valid, issues = mod.validate_claims_contract(claims)
+        self.assertFalse(valid)
+        self.assertTrue(any("evidence" in i.lower() for i in issues))
+
+    def test_unverified_claim_retained_if_reply_cautious(self):
+        claims = [{"id": "C1", "claim": "SAP API never called", "material": True,
+                   "status": "UNVERIFIED", "required_evidence": ["XMES_Get_API_Transaction_Summary"]}]
+        valid, issues = mod.validate_claims_contract(claims)
+        self.assertTrue(valid, "UNVERIFIED claim should pass structural validation")
+        ok, warnings = mod.validate_reply_text_against_claims(
+            "Could not verify whether the SAP API was invoked. Further investigation needed.", claims)
+        self.assertTrue(ok, f"Cautious wording should not trigger: {warnings}")
+
+    def test_contradicted_claim_cannot_become_positive_assertion(self):
+        claims = [{"id": "C1", "claim": "API was called", "material": True,
+                   "status": "CONTRADICTED"}]
+        valid, _ = mod.validate_claims_contract(claims)
+        self.assertTrue(valid, "CONTRADICTED is a valid status structurally")
+
+    def test_incomplete_investigation_publishable_as_update(self):
+        claims = [{"id": "C1", "claim": "SAP posting status", "material": True,
+                   "status": "UNVERIFIED"}]
+        valid, _ = mod.validate_claims_contract(claims)
+        self.assertTrue(valid)
+        proposal = {"response_type": "UPDATE", "reply_text": "Checked available surfaces but could not verify.",
+                     "claims": claims}
+        self.assertTrue(mod._proposal_complete({**proposal, "run_id": "r", "ticket_id": "t"}))
+
+    def test_claims_optional_for_backward_compat(self):
+        proposal = {"run_id": "r", "ticket_id": "t",
+                    "response_type": "UPDATE", "reply_text": "Some findings."}
+        self.assertTrue(mod._proposal_complete(proposal))
+        valid, _ = mod.validate_claims_contract(None)
+        self.assertTrue(valid)
+
+    def test_inferred_claim_with_causal_language_flagged(self):
+        claims = [{"id": "C1", "claim": "SAP API trigger failure caused the posting to stop",
+                   "material": True, "status": "INFERRED"}]
+        ok, warnings = mod.validate_reply_text_against_claims(
+            "The SAP posting never initiated due to API trigger failure.", claims)
+        self.assertFalse(ok, f"Should flag causal language for INFERRED claim: {warnings}")
+        self.assertTrue(len(warnings) > 0)
+
+    def test_ticket_381_regression_overclaim_detected(self):
+        """Ticket_381: reply said 'never initiated due to API/trigger failure'
+        but evidence was only xstudio_resolve_heat + xstudio_select (absence).
+        The claims contract should catch this."""
+        claims = [
+            {"id": "C1", "claim": "Heat 1900001 not found in production surfaces",
+             "material": True, "status": "VERIFIED",
+             "evidence": [{"action": 1, "source": "xstudio_resolve_heat"}]},
+            {"id": "C2", "claim": "SAP API never initiated due to trigger failure",
+             "material": True, "status": "UNVERIFIED",
+             "required_evidence": ["XMES_Get_API_Transaction_Summary"]},
+        ]
+        reply = ("The SAP posting for Heat 1900001/WO 199000000001 never initiated "
+                 "due to API/trigger failure.")
+        # Structural validation passes (claims are well-formed)
+        valid, _ = mod.validate_claims_contract(claims)
+        self.assertTrue(valid)
+        # But causal language check catches the overclaim
+        ok, warnings = mod.validate_reply_text_against_claims(reply, claims)
+        self.assertFalse(ok, f"Should detect causal overclaim: {warnings}")
+
+    def test_prepublish_rejects_verified_without_evidence(self):
+        """Pre-publish gate should trigger rework for invalid claims."""
+        bad_claims = [{"id": "C1", "claim": "API failed", "material": True,
+                       "status": "VERIFIED"}]  # no evidence!
+        proposal = {"run_id": "run-1", "ticket_id": "ticket-1",
+                    "response_type": "UPDATE", "reply_text": "API failed.",
+                    "claims": bad_claims}
+        task = {"id": "reviewer-1", "status": "done", "assignee": mod.REVIEWER_PROFILE,
+                "body": f"run_id: run-1\nticket_id: ticket-1\nproposal_json: {json.dumps(proposal)}"}
+        with patch.object(mod, "list_tasks", return_value=[task]), \
+                patch.object(mod, "query_active_runs", return_value=[{"ID": "run-1"}]), \
+                patch.object(mod, "_query_published_state", return_value=[]), \
+                patch.object(mod, "safe_query_active_run", return_value=[{"ID": "run-1"}]), \
+                patch.object(mod, "load_workflow_binding", return_value={"resolved_ticket_status": "Closed", "strict_resolution_status_binding": True}), \
+                patch.object(mod, "create_rework_card", return_value="rework") as rework, \
+                patch.object(mod, "run_orchestrator") as publish:
+            result = mod.process_approvals(mod.default_args())
+        self.assertGreater(result.get("rework_created", 0), 0)
+        rework.assert_called_once()
+        # Publisher should NOT have been invoked
+        publish.assert_not_called()
+
+    def test_prepublish_accepts_valid_claims(self):
+        """Pre-publish gate passes valid claims through to publication."""
+        good_claims = [{"id": "C1", "claim": "Heat found", "material": True,
+                        "status": "VERIFIED",
+                        "evidence": [{"action": 1, "source": "xstudio_resolve_heat"}]}]
+        proposal = {"run_id": "run-1", "ticket_id": "ticket-1",
+                    "response_type": "UPDATE", "reply_text": "Heat found.",
+                    "claims": good_claims}
+        task = {"id": "reviewer-1", "status": "done", "assignee": mod.REVIEWER_PROFILE,
+                "body": f"run_id: run-1\nticket_id: ticket-1\nproposal_json: {json.dumps(proposal)}"}
+        published_state = [{"ID": "run-1", "ProcessStatus": "COMPLETED", "ReplyText": "Heat found.",
+                            "TicketStatus": "Enter", "ResponseType": "UPDATE"}]
+        with patch.object(mod, "list_tasks", return_value=[task]), \
+                patch.object(mod, "query_active_runs", return_value=[{"ID": "run-1"}]), \
+                patch.object(mod, "_query_published_state", side_effect=[[], published_state]), \
+                patch.object(mod, "safe_query_active_run", return_value=[{"ID": "run-1"}]), \
+                patch.object(mod, "load_workflow_binding", return_value={"resolved_ticket_status": "Closed", "strict_resolution_status_binding": True}), \
+                patch.object(mod, "run_orchestrator"), \
+                patch.object(mod, "create_rework_card") as rework, \
+                patch.object(mod, "_post_publish_activity"):
+            result = mod.process_approvals(mod.default_args())
+        rework.assert_not_called()
+        self.assertEqual(result.get("published", 0), 1)
+
+    def test_prepublish_skips_proposals_without_claims(self):
+        """Legacy proposals without claims array should publish normally."""
+        proposal = {"run_id": "run-1", "ticket_id": "ticket-1",
+                    "response_type": "UPDATE", "reply_text": "Legacy finding."}
+        task = {"id": "reviewer-1", "status": "done", "assignee": mod.REVIEWER_PROFILE,
+                "body": f"run_id: run-1\nticket_id: ticket-1\nproposal_json: {json.dumps(proposal)}"}
+        published_state = [{"ID": "run-1", "ProcessStatus": "COMPLETED", "ReplyText": "Legacy finding.",
+                            "TicketStatus": "Enter", "ResponseType": "UPDATE"}]
+        with patch.object(mod, "list_tasks", return_value=[task]), \
+                patch.object(mod, "query_active_runs", return_value=[{"ID": "run-1"}]), \
+                patch.object(mod, "_query_published_state", side_effect=[[], published_state]), \
+                patch.object(mod, "safe_query_active_run", return_value=[{"ID": "run-1"}]), \
+                patch.object(mod, "load_workflow_binding", return_value={"resolved_ticket_status": "Closed", "strict_resolution_status_binding": True}), \
+                patch.object(mod, "run_orchestrator"), \
+                patch.object(mod, "create_rework_card") as rework, \
+                patch.object(mod, "_post_publish_activity"):
+            result = mod.process_approvals(mod.default_args())
+        rework.assert_not_called()
+        self.assertEqual(result.get("published", 0), 1)
+
+    def test_frozen_proposal_preserves_claims(self):
+        """Claims array in proposal_json must survive card creation."""
+        claims = [{"id": "C1", "claim": "Heat found", "material": True,
+                   "status": "VERIFIED",
+                   "evidence": [{"action": 1, "source": "xstudio_resolve_heat"}]}]
+        task = {"id": "inv-1", "body": "run_id: r\nticket_id: t\nticket_no: T1\nreview_cycle: 0"}
+        proposal = {"run_id": "r", "ticket_id": "t",
+                    "response_type": "UPDATE", "reply_text": "Heat found.", "claims": claims}
+        completed = type("Completed", (), {"returncode": 0, "stdout": '{"id":"rev-1"}', "stderr": ""})()
+        with patch.object(mod, "run_hermes", return_value=completed) as run:
+            mod.create_reviewer_card(source_task=task, proposal=proposal)
+        body = run.call_args.args[0][run.call_args.args[0].index("--body") + 1]
+        # Parse the proposal_json back from the card body
+        import re as test_re
+        match = test_re.search(r"proposal_json: (.+)", body)
+        self.assertIsNotNone(match)
+        frozen = json.loads(match.group(1))
+        self.assertEqual(frozen["claims"], claims)
+
+    def test_evidence_status_flags_claim_evidence_gap(self):
+        """annotate_evidence_status should set CLAIM_EVIDENCE_GAP when a material
+        VERIFIED claim has no evidence reference."""
+        proposal = {"response_type": "UPDATE", "reply_text": "Heat was found.",
+                     "claims": [{"id": "C1", "claim": "Heat found", "material": True,
+                                 "status": "VERIFIED"}]}
+        result = mod.annotate_evidence_status(proposal)
+        self.assertEqual(result["evidence_status"], "CLAIM_EVIDENCE_GAP")
+
+    def test_existing_evidence_status_annotation_unchanged(self):
+        """Existing INCOMPLETE detection must still work unchanged."""
+        proposal = {"response_type": "UPDATE",
+                    "reply_text": "Could not verify the SAP posting status."}
+        result = mod.annotate_evidence_status(proposal)
+        self.assertEqual(result["evidence_status"], "INCOMPLETE")
+
+    def test_investigation_card_contains_claim_instructions(self):
+        instructions = mod._query_instructions("run-1", "ticket-1")
+        self.assertIn("claims array", instructions)
+        self.assertIn("VERIFIED", instructions)
+        self.assertIn("Absence of records is evidence of absence", instructions)
+
+    def test_reviewer_card_contains_claim_verification_instruction(self):
+        task = {"id": "inv-1", "body": "run_id: r\nticket_id: t\nticket_no: T1\nreview_cycle: 0"}
+        proposal = {"run_id": "r", "ticket_id": "t",
+                    "response_type": "UPDATE", "reply_text": "Finding."}
+        completed = type("Completed", (), {"returncode": 0, "stdout": '{"id":"rev-1"}', "stderr": ""})()
+        with patch.object(mod, "run_hermes", return_value=completed) as run:
+            mod.create_reviewer_card(source_task=task, proposal=proposal)
+        body = run.call_args.args[0][run.call_args.args[0].index("--body") + 1]
+        self.assertIn("claims array", body)
+        self.assertIn("VERIFIED", body)
+
 
 if __name__ == "__main__":
     unittest.main()
+
