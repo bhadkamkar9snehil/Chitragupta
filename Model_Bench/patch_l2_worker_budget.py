@@ -6,7 +6,9 @@ from patch_profile_config import _find_key_line, _block_end
 
 def configure(text: str) -> str:
     lines = text.splitlines()
-    for section, key, value in [("model", "context_length", "75776"),
+    # Match the verified loaded Qwen context, rather than advertising a larger
+    # window Hermes can never actually send to LM Studio.
+    for section, key, value in [("model", "context_length", "65792"),
                                 ("model", "max_tokens", "8192"),
                                 ("agent", "reasoning_effort", "none"),
                                 ("agent", "max_turns", "20")]:

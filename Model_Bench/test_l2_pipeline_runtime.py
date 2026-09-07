@@ -85,6 +85,46 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(command[1], str(mod.REPO_ROOT_WSL / "Hermes_Orchestrator.py"))
         self.assertFalse(any("python.exe" in part.lower() for part in command[:2]))
 
+    def test_lifecycle_task_list_is_scoped_to_l2_profiles(self):
+        completed = type("Completed", (), {"returncode": 0, "stderr": "", "stdout": "[]"})()
+        with patch.object(mod, "run_hermes", return_value=completed) as run:
+            self.assertEqual(mod.list_tasks("done"), [])
+        calls = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(len(calls), len(mod.INVESTIGATOR_PROFILES | mod.REVIEWER_PROFILES))
+        self.assertTrue(all("--assignee" in call and "--status" in call for call in calls))
+        self.assertEqual(
+            {call[call.index("--assignee") + 1] for call in calls},
+            mod.INVESTIGATOR_PROFILES | mod.REVIEWER_PROFILES,
+        )
+
+    def test_historical_done_cards_do_not_trigger_per_card_sql_checks(self):
+        historical = {"id": "old", "status": "done", "assignee": mod.INVESTIGATOR_PROFILE,
+                      "body": "run_id: old-run\nticket_id: old-ticket"}
+        with patch.object(mod, "list_tasks", return_value=[historical]), \
+                patch.object(mod, "query_active_runs", return_value=[{"ID": "active-run"}]), \
+                patch.object(mod, "safe_query_active_run") as active_check:
+            self.assertEqual(mod.ensure_missing_reviewers(mod.default_args()), 0)
+        active_check.assert_not_called()
+
+    def test_deterministic_route_extracts_heat_from_ticket_entities(self):
+        ticket = {"ProblemCategory": "SAP_INTEGRATION", "SourceSystem": "Xbatch",
+                  "ExtractedEntitiesJson": json.dumps({"HeatNo": "H1602522"})}
+        route = mod.deterministic_ticket_route(ticket)
+        self.assertEqual(route["domain"], "heat_sap")
+        self.assertEqual(route["heat"], "1602522")
+        self.assertEqual(route["recommended_tool"], "xstudio_heat_context")
+
+    def test_dispatch_route_context_uses_typed_heat_context_with_run_provenance(self):
+        ticket = {"ExtractedEntitiesJson": json.dumps({"HeatNo": "1602522"})}
+        completed = type("Completed", (), {"returncode": 0, "stderr": "",
+                    "stdout": json.dumps({"ok": True, "evidence_refs": [{"action_id": "a-1"}]})})()
+        with patch.object(mod.subprocess, "run", return_value=completed) as bridge:
+            rendered = mod._dispatch_route_context("run-1", "ticket-1", ticket)
+        request = json.loads(bridge.call_args.kwargs["input"])
+        self.assertEqual(request, {"operation": "heat_context", "database": "XStudio_Xbatch",
+                                   "run_id": "run-1", "ticket_id": "ticket-1", "heat": "1602522"})
+        self.assertIn('"action_id": "a-1"', rendered)
+
     def test_priority_closes_work_before_new_claim(self):
         self.assertGreater(mod.REVIEW_PRIORITY, mod.REWORK_PRIORITY)
         self.assertGreater(mod.REWORK_PRIORITY, mod.NEW_INVESTIGATION_PRIORITY)
@@ -292,6 +332,30 @@ class PipelineContractTests(unittest.TestCase):
         rework.assert_not_called()
         self.assertEqual(result.get("published", 0), 1)
 
+    def test_publication_persists_the_frozen_proposal_in_helpdesk(self):
+        claims = [{"id": "C1", "claim": "Heat found", "material": True,
+                   "status": "VERIFIED", "evidence": [{"action_id": "action-1"}]}]
+        proposal = {"run_id": "run-1", "ticket_id": "ticket-1", "response_type": "UPDATE",
+                    "reply_text": "Heat found.", "claims_contract_version": 1, "claims": claims}
+        task = {"id": "reviewer-1", "status": "done", "assignee": mod.REVIEWER_PROFILE,
+                "body": f"run_id: run-1\nticket_id: ticket-1\nreview_cycle: 0\nproposal_json: {json.dumps(proposal)}"}
+        published_state = [{"ID": "run-1", "ProcessStatus": "COMPLETED", "ReplyText": "Heat found.",
+                            "TicketStatus": "Enter", "ResponseType": "UPDATE"}]
+        with patch.object(mod, "list_tasks", return_value=[task]), \
+                patch.object(mod, "query_active_runs", return_value=[{"ID": "run-1"}]), \
+                patch.object(mod, "_query_published_state", side_effect=[[], published_state]), \
+                patch.object(mod, "safe_query_active_run", return_value=[{"ID": "run-1"}]), \
+                patch.object(mod, "get_run_actions", return_value=[{"ID": "action-1", "RunID": "run-1", "TicketID": "ticket-1"}]), \
+                patch.object(mod, "load_workflow_binding", return_value={"resolved_ticket_status": "Closed", "strict_resolution_status_binding": True}), \
+                patch.object(mod, "run_orchestrator") as publish, \
+                patch.object(mod, "_post_publish_activity"):
+            mod.process_approvals(mod.default_args())
+        command = publish.call_args.args[1]
+        ledger = json.loads(command[command.index("--ledger") + 1])
+        self.assertEqual(ledger["frozen_proposal"], proposal)
+        self.assertEqual(ledger["review_task_id"], "reviewer-1")
+        self.assertEqual(ledger["claims_contract_version"], 1)
+
     def test_prepublish_skips_proposals_without_claims(self):
         """Legacy proposals without claims array should publish normally."""
         proposal = {"run_id": "run-1", "ticket_id": "ticket-1",
@@ -352,6 +416,25 @@ class PipelineContractTests(unittest.TestCase):
         self.assertIn("claims array", instructions)
         self.assertIn("VERIFIED", instructions)
         self.assertIn("Absence of records is evidence of absence", instructions)
+
+    def test_investigation_card_lists_semantic_context_tools(self):
+        instructions = mod._query_instructions("run-1", "ticket-1")
+        self.assertIn("xstudio_heat_context", instructions)
+        self.assertIn("xstudio_sap_api_context", instructions)
+
+    def test_rework_card_repeats_typed_context_contract(self):
+        task = {"id": "review-1", "body": "run_id: r\nticket_id: t\nticket_no: T1\nreview_cycle: 0"}
+        completed = type("Completed", (), {"returncode": 0, "stdout": '{"id":"rework-1"}', "stderr": ""})()
+        with patch.object(mod, "list_tasks", return_value=[]), \
+                patch.object(mod, "_ticket_for_route", return_value={"ExtractedEntitiesJson": '{"HeatNo":"1602522"}'}), \
+                patch.object(mod, "_dispatch_route_context", return_value="\n--- Deterministic live route/context ---\n{}\n") as route, \
+                patch.object(mod, "run_hermes", return_value=completed) as run:
+            mod.create_rework_card(mod.default_args(), source_task=task, reason="missing evidence",
+                                   investigation_task_id="investigation-1")
+        body = run.call_args.args[0][run.call_args.args[0].index("--body") + 1]
+        self.assertIn("xstudio_heat_context", body)
+        self.assertIn("Deterministic live route/context", body)
+        route.assert_called_once_with("r", "t", {"ExtractedEntitiesJson": '{"HeatNo":"1602522"}'})
 
     def test_reviewer_card_contains_claim_verification_instruction(self):
         task = {"id": "inv-1", "body": "run_id: r\nticket_id: t\nticket_no: T1\nreview_cycle: 0"}

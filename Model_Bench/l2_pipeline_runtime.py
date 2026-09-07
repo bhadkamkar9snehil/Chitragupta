@@ -249,7 +249,8 @@ def run_hermes(argv: list[str], *, timeout: int = 30) -> subprocess.CompletedPro
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
-def list_tasks(status: Optional[str] = None) -> list[dict[str, Any]]:
+def list_all_tasks(status: Optional[str] = None) -> list[dict[str, Any]]:
+    """Read the whole Kanban board only when an orphan check truly needs it."""
     argv = ["kanban", "list"]
     if status:
         argv += ["--status", status]
@@ -262,6 +263,35 @@ def list_tasks(status: Optional[str] = None) -> list[dict[str, Any]]:
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"kanban list returned invalid JSON: {r.stdout[:300]}") from exc
     return data if isinstance(data, list) else []
+
+
+def list_tasks(status: Optional[str] = None) -> list[dict[str, Any]]:
+    """Return lifecycle-owned cards without serializing unrelated historical work.
+
+    The board retains large completed task bodies. A full ``kanban list`` can exceed
+    the lifecycle command timeout and wedge global WIP. All cards created by this
+    runtime are assigned to one of these profiles, so query each profile directly.
+    ``recover_orphan_runs`` performs a full-board fallback only for an active run
+    that has no such card at all.
+    """
+    tasks_by_id: dict[str, dict[str, Any]] = {}
+    for profile in sorted(INVESTIGATOR_PROFILES | REVIEWER_PROFILES):
+        argv = ["kanban", "list", "--assignee", profile]
+        if status:
+            argv += ["--status", status]
+        argv += ["--json"]
+        r = run_hermes(argv)
+        if r.returncode != 0:
+            raise RuntimeError(f"kanban list failed for {profile}: {r.stderr.strip()[:300]}")
+        try:
+            data = json.loads(r.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"kanban list returned invalid JSON for {profile}: {r.stdout[:300]}") from exc
+        for task in data if isinstance(data, list) else []:
+            task_id = str(task.get("id") or "")
+            if task_id:
+                tasks_by_id[task_id] = task
+    return list(tasks_by_id.values())
 
 
 def get_runs(task_id: str) -> list[dict[str, Any]]:
@@ -602,14 +632,22 @@ def create_reviewer_card(
         return None
 
 
-def ensure_missing_reviewers(args: argparse.Namespace, *, dry_run: bool = False) -> int:
+def ensure_missing_reviewers(
+    args: argparse.Namespace,
+    *,
+    dry_run: bool = False,
+    active_run_ids: Optional[set[str]] = None,
+) -> int:
     tasks = list_tasks()
+    active = active_run_ids if active_run_ids is not None else {
+        str(row["ID"]) for row in query_active_runs(args)
+    }
     created = 0
     for task in tasks:
         if task.get("status") != "done" or (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
             continue
         run_id = task_run_id(task)
-        if not run_id or not safe_query_active_run(run_id, args):
+        if not run_id or run_id not in active:
             continue
         if _source_has_reviewer(tasks, task["id"]) or _source_has_rework(tasks, task["id"]):
             continue
@@ -708,6 +746,11 @@ def create_rework_card(
         return None
 
     prior = "" if dry_run else _persist_rejected_ledger(args, investigation_task_id, run_id)
+    # Rework is a fresh investigation stage.  It must receive the same compact,
+    # current route evidence as an initial card rather than being pushed back
+    # into schema discovery just because a reviewer rejected the first proposal.
+    route_ticket = _ticket_for_route(args, ticket_id)
+    route_context = _dispatch_route_context(run_id, ticket_id, route_ticket)
     ticket_no = body_field(source_task.get("body"), "ticket_no") or ticket_id
     body = (
         f"run_id: {run_id}\n"
@@ -722,6 +765,8 @@ def create_rework_card(
         "Address this exact rejected/invalid point using current live evidence. Reuse prior verified "
         "findings; do not restart the entire investigation unless the objection invalidates them. "
         "Complete with the full structured metadata contract.\n"
+        + route_context
+        + _query_instructions(run_id, ticket_id)
     )
     if prior:
         body += f"\nPRIOR FINDINGS (verbatim):\n{prior}\n"
@@ -751,7 +796,12 @@ def create_rework_card(
         return "created"
 
 
-def process_unreviewable_completions(args: argparse.Namespace, *, dry_run: bool = False) -> int:
+def process_unreviewable_completions(
+    args: argparse.Namespace,
+    *,
+    dry_run: bool = False,
+    active_run_ids: Optional[set[str]] = None,
+) -> int:
     """Turn a terminal investigator packaging failure into bounded rework.
 
     A done investigator with a short/non-substantive summary and missing required metadata
@@ -759,12 +809,15 @@ def process_unreviewable_completions(args: argparse.Namespace, *, dry_run: bool 
     so this path creates the rework deterministically after normalization had a chance to salvage it.
     """
     tasks = list_tasks()
+    active = active_run_ids if active_run_ids is not None else {
+        str(row["ID"]) for row in query_active_runs(args)
+    }
     processed = 0
     for task in tasks:
         if task.get("status") != "done" or (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
             continue
         run_id = task_run_id(task)
-        if not run_id or not safe_query_active_run(run_id, args):
+        if not run_id or run_id not in active:
             continue
         if _source_has_reviewer(tasks, task["id"]) or _source_has_rework(tasks, task["id"]):
             continue
@@ -842,6 +895,22 @@ def _post_publish_activity(args: argparse.Namespace, run_id: str, ticket_id: str
     # history; KB promotion/dedupe is governed by Knowledge/KB_IMPLEMENTATION_PLAN.md.
 
 
+def publication_ledger(proposal: dict[str, Any], reviewer_task: dict[str, Any]) -> dict[str, Any]:
+    """Persist the immutable review payload alongside the published response.
+
+    Tool-level provenance remains in Hermes_L2_SQL_Action_Trn_Tbl. This compact
+    run-level record makes the exact material claims and their action IDs visible
+    from Helpdesk without treating a mutable Kanban card as the only audit copy.
+    """
+    return {
+        "schema": "chitragupta.l2.frozen-proposal.v1",
+        "review_task_id": reviewer_task.get("id"),
+        "review_cycle": task_review_cycle(reviewer_task),
+        "claims_contract_version": proposal.get("claims_contract_version"),
+        "frozen_proposal": proposal,
+    }
+
+
 def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
     binding = load_workflow_binding()
     counts = {"published": 0, "blocked_configuration": 0, "rework_created": 0}
@@ -915,6 +984,7 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dic
             "--response-type", response_type,
             "--reply-text", str(proposal["reply_text"]),
             "--mirror-to-support-remarks",
+            "--ledger", json.dumps(publication_ledger(proposal, task), separators=(",", ":"), default=str),
             *workflow_args,
         ]
         if response_type == "QUESTION":
@@ -971,8 +1041,23 @@ def recover_orphan_runs(
     # ready/running/blocked work and a done reviewer awaiting deterministic publication.
     tasks = list_tasks()
     referenced_run_ids = {task_run_id(t) for t in tasks if task_run_id(t)}
+    active_rows = query_active_runs(args)
+    # A pipeline-owned card is enough to prove that an active run is not an
+    # orphan. Only the rare remaining candidates require the expensive board-wide
+    # lookup needed to honour manually-created cards as well.
+    unresolved = [
+        str(row.get("ID") or "") for row in active_rows
+        if str(row.get("ID") or "") and str(row.get("ID") or "") not in referenced_run_ids
+    ]
+    if unresolved:
+        try:
+            all_tasks = list_all_tasks()
+        except RuntimeError as exc:
+            print(f"WARNING: full Kanban orphan check unavailable: {exc}")
+            return 0
+        referenced_run_ids = {task_run_id(t) for t in all_tasks if task_run_id(t)}
     recovered = 0
-    for row in query_active_runs(args):
+    for row in active_rows:
         run_id = str(row.get("ID") or "")
         if not run_id or run_id in referenced_run_ids:
             continue
@@ -1035,8 +1120,10 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
     failed_workers = recover_failed_workers(args, dry_run=dry_run)
     active = {str(row["ID"]) for row in query_active_runs(args)}
     normalized = normalize_investigator_completions(dry_run=dry_run, active_run_ids=active)
-    unreviewable = process_unreviewable_completions(args, dry_run=dry_run)
-    reviewers = ensure_missing_reviewers(args, dry_run=dry_run)
+    unreviewable = process_unreviewable_completions(
+        args, dry_run=dry_run, active_run_ids=active,
+    )
+    reviewers = ensure_missing_reviewers(args, dry_run=dry_run, active_run_ids=active)
     rejections = process_rejections(args, dry_run=dry_run)
     approvals = process_approvals(args, dry_run=dry_run)
     orphans = recover_orphan_runs(
@@ -1194,6 +1281,86 @@ def _investigation_bundle(args: argparse.Namespace, ticket_id: str, fallback_tic
     )
 
 
+def _ticket_for_route(args: argparse.Namespace, ticket_id: str) -> dict[str, Any]:
+    """Read just the authoritative ticket row needed for a rework route.
+
+    A rejected card deliberately contains only frozen prior findings.  Fetching
+    the live Helpdesk ticket here keeps rework routing current without making a
+    model spend a tool call or trusting the old card body.
+    """
+    try:
+        context = run_orchestrator(args, ["--get-ticket-context", ticket_id])
+    except RuntimeError:
+        return {}
+    if not isinstance(context, dict):
+        return {}
+    ticket = context.get("ticket")
+    return ticket if isinstance(ticket, dict) else context
+
+
+def deterministic_ticket_route(ticket: dict[str, Any]) -> dict[str, Any]:
+    """Extract a small, auditable first evidence path from ticket-owned fields."""
+    entities: dict[str, Any] = {}
+    raw_entities = ticket.get("ExtractedEntitiesJson")
+    if isinstance(raw_entities, dict):
+        entities = raw_entities
+    elif raw_entities:
+        try:
+            parsed = json.loads(str(raw_entities))
+            entities = parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            entities = {}
+    raw_heat = next((entities.get(key) for key in ("HeatNo", "HeatID", "Heat") if entities.get(key) is not None), None)
+    if raw_heat is None:
+        text = " ".join(str(ticket.get(key) or "") for key in ("BriefDetails", "Description", "ConversationSummary"))
+        match = re.search(r"\bheat\s+(?:H\s*)?(\d{4,})\b", text, re.I)
+        raw_heat = match.group(1) if match else None
+    heat_match = re.fullmatch(r"\s*[Hh]?(\d+)\s*", str(raw_heat or ""))
+    if not heat_match:
+        return {"domain": "generic", "recommended_tool": None, "reason": "No unambiguous numeric heat identifier."}
+    category = str(ticket.get("ProblemCategory") or "").upper()
+    summary = " ".join(str(ticket.get(key) or "") for key in ("BriefDetails", "Description", "ConversationSummary")).upper()
+    sap = "SAP" in category or "SAP" in summary
+    return {
+        "domain": "heat_sap" if sap else "heat_execution",
+        "heat": heat_match.group(1),
+        "recommended_tool": "xstudio_heat_context",
+        "reason": "Canonical EAF/LRF/CCM, work-order and SAP production surfaces are harness-routed for this heat.",
+    }
+
+
+def _dispatch_route_context(run_id: str, ticket_id: str, ticket: dict[str, Any]) -> str:
+    """Collect the smallest deterministic live evidence package before dispatch.
+
+    This is a trusted harness call, not model-generated SQL. It records the
+    same per-surface action rows as the named tool and gives the investigator a
+    bounded first read instead of making Qwen rediscover stable joins.
+    """
+    route = deterministic_ticket_route(ticket)
+    rendered: dict[str, Any] = {"route": route}
+    if route.get("recommended_tool") == "xstudio_heat_context":
+        bridge = REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py"
+        request = {"operation": "heat_context", "database": "XStudio_Xbatch",
+                   "run_id": run_id, "ticket_id": ticket_id, "heat": route["heat"]}
+        try:
+            result = subprocess.run([sys.executable, str(bridge)], input=json.dumps(request),
+                                    capture_output=True, text=True, timeout=45)
+            if result.returncode:
+                raise RuntimeError(result.stderr.strip() or f"bridge exit {result.returncode}")
+            rendered["live_context"] = json.loads(result.stdout)
+        except (OSError, subprocess.TimeoutExpired, RuntimeError, json.JSONDecodeError) as exc:
+            rendered["live_context_warning"] = f"Deterministic heat context unavailable: {type(exc).__name__}: {exc}"
+    text = json.dumps(rendered, indent=2, default=str)
+    if len(text) > 7000:
+        text = text[:7000] + "\n... [route context truncated at 7,000 chars]"
+    return (
+        "\n--- Deterministic live route/context ---\n"
+        "This is current live evidence collected by the harness. Interpret only the returned rows; "
+        "use the evidence_refs action IDs for VERIFIED claims. Absence does not establish causation.\n"
+        f"{text}\n"
+    )
+
+
 def _query_instructions(run_id: str, ticket_id: str) -> str:
     """Render the typed-tool investigation contract for a fresh card body.
 
@@ -1210,7 +1377,7 @@ def _query_instructions(run_id: str, ticket_id: str) -> str:
         "run-audit and ledger work. The harness owns Windows/WSL transport, Python, "
         "pyodbc, credentials, auditing, output limits and retry guards.\n"
         f"Current run_id: {run_id}\nCurrent ticket_id: {ticket_id}\n"
-        "The starting bundle is already above; do not refetch the same context.\n\n"
+        "The starting bundle and deterministic live route/context are already above; do not refetch them.\n\n"
         "Tools:\n"
         "  xstudio_select(database,table,columns,where?,order_by?,top?)\n"
         "  xstudio_query(database,sql)\n"
@@ -1223,6 +1390,8 @@ def _query_instructions(run_id: str, ticket_id: str) -> str:
         "  xstudio_get_ticket_context(ticket_id?)\n"
         "  xstudio_get_run_actions(run_id?)\n"
         "  xstudio_save_ledger(ledger,run_id?)\n"
+        "  xstudio_heat_context(heat) — first choice for a heat/SAP/work-order/billet ticket\n"
+        "  xstudio_sap_api_context(api_type) — live API summary when whether an API ran matters\n"
         "The harness injects the current run_id/ticket_id when safely known and defaults resolve_heat to XStudio_Xbatch.\n"
         "Pass database explicitly: XStudio_Helpdesk for ticket/Hermes runtime data, "
         "XStudio_Xbatch for production/heat/billet/quality/delay/SAP data.\n"
@@ -1314,6 +1483,7 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
         f"claims_contract_version: {CLAIMS_CONTRACT_VERSION}\n"
         "pipeline_stage: investigation\n"
         + _investigation_bundle(args, ticket_id, ticket)
+        + _dispatch_route_context(run_id, ticket_id, ticket)
         + _query_instructions(run_id, ticket_id)
     )
     create = run_hermes([
