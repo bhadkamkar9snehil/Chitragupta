@@ -37,6 +37,21 @@ USERNAME = "sa"
 PASSWORD = os.environ.get("MSSQL_MCP_PASSWORD")
 
 
+def usage_payload_for_event(event):
+    """Keep provider usage and harness-compute dimensions in one JSON value.
+
+    The live trace table already has a UsageJson column and the current
+    experiment is intentionally avoiding a schema migration. Names are kept
+    explicit so a later normalized table/view can lift them losslessly.
+    """
+    usage = dict(event.get("usage") or {})
+    for key in ("profile_name", "ttft_ms", "api_duration_ms"):
+        value = event.get(key)
+        if value is not None:
+            usage[key] = value
+    return usage or None
+
+
 def load_cursor() -> int:
     if CURSOR_PATH.exists():
         return json.loads(CURSOR_PATH.read_text(encoding="utf-8")).get("byte_offset", 0)
@@ -115,7 +130,7 @@ def main():
                 from datetime import datetime, timezone
                 event_on = datetime.fromtimestamp(written_at, tz=timezone.utc)
 
-            usage = e.get("usage")
+            usage = usage_payload_for_event(e)
             args_json = e.get("args")
             result_json = e.get("result")
             error = e.get("error")

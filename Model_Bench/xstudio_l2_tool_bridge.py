@@ -225,24 +225,15 @@ def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
 
     assignments = ", ".join(f"@{name} = N'{_escape_sql_string(parameters[name])}'" for name in sorted(allowed_params))
     sql = f"EXEC [dbo].[{procedure}] {assignments};"
-    action_id = client.execute_sql(
-        run_id=run_id,
-        database_name=database,
-        action_type="READ",
-        sql=sql,
+    action_id, result = client.execute_readonly_sql_with_rows(
+        run_id=run_id, database_name=database, sql=sql,
         schema_name="dbo",
         object_name=procedure,
         operation_name=procedure,
         purpose="Typed L2 allowlisted diagnostic procedure",
         parameters_json=parameters,
-        use_transaction=False,
     )
-    # Execute the reviewed read diagnostic once for its bounded result.  The
-    # first audited execution created the immutable action reference; this
-    # second execution is read-only and supplies the model-visible rows.
-    cur = client.conn.cursor()
-    cur.execute(sql)
-    result: Any = _orchestrator()._rows_as_dicts(cur)[:MAX_LIST_ITEMS]
+    result = result[:MAX_LIST_ITEMS]
     if action_id:
         client.update_sql_action_evidence(action_id, after_json=result)
     return {"ok": True, "operation": "read_procedure", "database": database,
@@ -279,6 +270,30 @@ def _semantic_read(client: Any, *, run_id: str, sql: str, parameters: tuple[Any,
     if action_id:
         client.update_sql_action_evidence(action_id, after_json=rows[:MAX_LIST_ITEMS])
     return rows[:MAX_LIST_ITEMS], {"action_id": action_id, "operation": operation_name}
+
+
+def _semantic_text_read(client: Any, *, run_id: str, sql: str, value: str,
+                        parameter_name: str, operation_name: str,
+                        object_name: str, purpose: str) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Execute one fixed text-key recipe after strict identifier validation.
+
+    The audit stored procedure accepts SQL text rather than DB-API parameters,
+    so this boundary validates the tiny identifier alphabet and quotes it. The
+    model can choose an identifier, but cannot influence SQL structure.
+    """
+    normalized = str(value).strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", normalized):
+        raise ValueError(f"{parameter_name} must be 1-100 letters, digits, dot, dash, or underscore")
+    literal = "N'" + _escape_sql_string(normalized) + "'"
+    action_id, rows = client.execute_readonly_sql_with_rows(
+        run_id=run_id, database_name="XStudio_Xbatch", sql=sql.replace("?", literal),
+        schema_name="dbo", object_name=object_name, operation_name=operation_name,
+        purpose=purpose, parameters_json={parameter_name: normalized},
+    )
+    bounded = rows[:MAX_LIST_ITEMS]
+    if action_id:
+        client.update_sql_action_evidence(action_id, after_json=bounded)
+    return bounded, {"action_id": action_id, "operation": operation_name}
 
 
 def _heat_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
@@ -321,10 +336,68 @@ def _sap_api_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
         raise ValueError("api_type must be a short API name")
     result = _read_procedure({"database": "XStudio_Xbatch", "run_id": _require(req, "run_id"),
                               "procedure": "XMES_Get_API_Transaction_Summary", "parameters": {"APIType": api_type}}, client)
+    identifier = str(req.get("identifier") or "").strip()
+    if identifier and result.get("ok"):
+        rows = list(result.get("result") or [])
+        needle = identifier.casefold()
+        result["unfiltered_row_count"] = len(rows)
+        result["result"] = [
+            row for row in rows
+            if needle in json.dumps(row, default=str, separators=(",", ":")).casefold()
+        ]
     result["operation"] = "sap_api_context"
-    result["normalized_identifiers"] = {"api_type": api_type}
-    result["claim_guidance"] = "This confirms only rows returned by the API diagnostic; missing rows alone do not establish why an API was not invoked."
+    result["normalized_identifiers"] = {"api_type": api_type, "identifier": identifier or None}
+    result["claim_guidance"] = (
+        "Returned rows are live API evidence. An empty identifier match within this bounded summary "
+        "does not by itself prove the API was never invoked and never proves why it was absent."
+    )
     return result
+
+
+def _work_order_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    if _database(req) != "XStudio_Xbatch":
+        raise ValueError("work_order_context is allowlisted only for database=XStudio_Xbatch")
+    run_id = str(_require(req, "run_id"))
+    work_order = str(_require(req, "work_order")).strip()
+    campaign = str(req.get("campaign") or "").strip()
+    recipes = (
+        ("campaign_work_order", "XStudio_XMes_Campaign_Plan_work_order_Vw",
+         "l2_work_order_campaign", "Canonical campaign/work-order projection by SAP or MES work-order number",
+         "SELECT TOP 10 ID, WorkOrderNumber, MESWorkOrderNumber, CampaignNo, CampaignId, Campaign_Status, Status, Equipment, ItemName, TotalQuantity, CreatedDate FROM dbo.XStudio_XMes_Campaign_Plan_work_order_Vw WHERE WorkOrderNumber = ? OR MESWorkOrderNumber = ? ORDER BY CreatedDate DESC"),
+        ("work_order_master", "XBatch_Work_Order_Mst_Tbl",
+         "l2_work_order_master", "Work-order master including internal ID, external number, CSV heat allocation and SAP state",
+         "SELECT TOP 10 ID, WorkOrderNumber, HeatNo, Status, SalesOrder, ManufacturingOrderCategory, SAPTransactionID, CampaignId, CreatedOn, ModifiedOn FROM dbo.XBatch_Work_Order_Mst_Tbl WHERE WorkOrderNumber = ? ORDER BY COALESCE(ModifiedOn, CreatedOn) DESC"),
+    )
+    entities: dict[str, Any] = {}
+    evidence_refs: list[dict[str, str]] = []
+    for key, object_name, operation, purpose, sql in recipes:
+        rows, ref = _semantic_text_read(
+            client, run_id=run_id, sql=sql, value=work_order,
+            parameter_name="work_order", operation_name=operation,
+            object_name=object_name, purpose=purpose,
+        )
+        entities[key] = rows
+        evidence_refs.append(ref)
+    if campaign:
+        rows, ref = _semantic_text_read(
+            client, run_id=run_id,
+            sql="SELECT TOP 10 ID, WorkOrderNumber, MESWorkOrderNumber, CampaignNo, CampaignId, Campaign_Status, Status, Equipment, ItemName, TotalQuantity, CreatedDate FROM dbo.XStudio_XMes_Campaign_Plan_work_order_Vw WHERE CampaignNo = ? ORDER BY CreatedDate DESC",
+            value=campaign, parameter_name="campaign", operation_name="l2_campaign_work_orders",
+            object_name="XStudio_XMes_Campaign_Plan_work_order_Vw",
+            purpose="Canonical campaign membership by external campaign number",
+        )
+        entities["campaign_membership"] = rows
+        evidence_refs.append(ref)
+    return {
+        "ok": True, "operation": "work_order_context", "database": "XStudio_Xbatch",
+        "normalized_identifiers": {"work_order": work_order, "campaign": campaign or None},
+        "entities": entities, "evidence_refs": evidence_refs,
+        "identifier_guidance": (
+            "ID is the internal work-order key; WorkOrderNumber/MESWorkOrderNumber are external identifiers. "
+            "HeatNo in XBatch_Work_Order_Mst_Tbl is a comma-separated allocation, not a scalar foreign key."
+        ),
+        "claim_guidance": "No matching row proves only absence from the checked live surfaces; it does not prove deletion, orphaning, or cause.",
+    }
 
 
 def _heat_candidates(value: str) -> list[str]:
@@ -459,6 +532,9 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
 
         if operation == "sap_api_context":
             return _sap_api_context(req, client)
+
+        if operation == "work_order_context":
+            return _work_order_context(req, client)
 
         if operation == "resolve_heat":
             return _resolve_heat(req, client)

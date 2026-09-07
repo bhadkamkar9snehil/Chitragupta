@@ -527,6 +527,25 @@ def infer_response_type(summary: str) -> str:
     return "UPDATE"
 
 
+def normalized_fallback_claims(summary: str) -> list[dict[str, Any]]:
+    """Preserve an unstructured completion without pretending it is verified.
+
+    Small models often put a useful finding in ``summary`` while leaving the
+    generic Kanban metadata object empty. A second model session just to copy
+    that prose into JSON is wasted compute. The safe deterministic repair is a
+    material UNVERIFIED claim: it is reviewable, cannot satisfy VERIFIED
+    provenance gates, and tells the reviewer exactly what still needs checking.
+    """
+    return [{
+        "id": "C1",
+        "claim": summary.strip(),
+        "material": True,
+        "status": "UNVERIFIED",
+        "evidence": [],
+        "required_evidence": ["Reviewer must independently verify this summary against current-run actions and live evidence."],
+    }]
+
+
 def normalize_investigator_completions(*, dry_run: bool = False, active_run_ids: Optional[set[str]] = None) -> int:
     repaired = 0
     for task in list_tasks("done"):
@@ -558,6 +577,10 @@ def normalize_investigator_completions(*, dry_run: bool = False, active_run_ids:
             "reply_text": metadata.get("reply_text") or summary,
             "normalized_by": "l2_pipeline_runtime.py",
         })
+        if body_field(task.get("body"), "claims_contract_version"):
+            metadata["claims_contract_version"] = CLAIMS_CONTRACT_VERSION
+            if not isinstance(metadata.get("claims"), list):
+                metadata["claims"] = normalized_fallback_claims(summary)
         metadata = annotate_evidence_status(metadata)
         if dry_run:
             print(f"[DRY RUN] normalize investigator task {task['id']}")
@@ -1284,10 +1307,37 @@ def _investigation_bundle(args: argparse.Namespace, ticket_id: str, fallback_tic
     # Orchestrator still has the old route-only solution lookup for compatibility. Never expose
     # two competing KB paths to the worker.
     bundle.pop("known_solutions", None)
-    bundle["kb_retrieval"] = _run_kb_retrieval(args, fallback_ticket)
-    rendered = json.dumps(bundle, indent=2, default=str)
-    if len(rendered) > 14000:
-        rendered = rendered[:14000] + "\n... [bundle truncated at 14,000 chars]"
+    kb = _run_kb_retrieval(args, fallback_ticket)
+    ticket_context = bundle.get("ticket") if isinstance(bundle.get("ticket"), dict) else {}
+    live_ticket = ticket_context.get("ticket") if isinstance(ticket_context.get("ticket"), dict) else fallback_ticket
+    ticket_fields = (
+        "ID", "TicketNo", "AreaID", "BriefDetails", "Description", "ProblemCategory",
+        "SourceSystem", "ConversationSummary", "ExtractedEntitiesJson", "HermesAreaName",
+        "HermesComplaintTypeName", "HermesPriorityName",
+    )
+    prior_runs = ticket_context.get("prior_runs") if isinstance(ticket_context, dict) else []
+    compact = {
+        "ticket": {key: live_ticket.get(key) for key in ticket_fields if live_ticket.get(key) is not None},
+        "prior_attempts": [
+            {key: row.get(key) for key in ("ID", "ProcessStatus", "ResponseType", "ReplyText", "ErrorMessage", "ClaimedOn")
+             if row.get(key) not in (None, "")}
+            for row in list(prior_runs or [])[:3]
+        ],
+        "prior_ledger": bundle.get("prior_ledger"),
+        "suggested_tables": [
+            {key: row.get(key) for key in ("table", "database", "matched_columns") if row.get(key) is not None}
+            for row in list(bundle.get("suggested_tables") or [])[:3]
+        ],
+        "kb": {
+            "solutions": list(kb.get("solutions") or [])[:2],
+            "route_candidates": list(kb.get("route_candidates") or [])[:2],
+            "abstained": kb.get("abstained"),
+            "abstention_reason": kb.get("abstention_reason"),
+        },
+    }
+    rendered = json.dumps(compact, indent=2, default=str)
+    if len(rendered) > 5000:
+        rendered = rendered[:5000] + "\n... [bundle truncated at 5,000 chars]"
     return (
         "\n--- Investigation bundle (single dispatch-time package) ---\n"
         "KB hits, prior findings, and suggested tables are leads, not proof. Final claims require current live SQL or verified Knowledge/ evidence.\n"
@@ -1324,17 +1374,65 @@ def deterministic_ticket_route(ticket: dict[str, Any]) -> dict[str, Any]:
             entities = parsed if isinstance(parsed, dict) else {}
         except json.JSONDecodeError:
             entities = {}
+    category = str(ticket.get("ProblemCategory") or "").upper()
+    summary = " ".join(str(ticket.get(key) or "") for key in (
+        "BriefDetails", "Description", "ConversationSummary"
+    ))
+    normalized_text = re.sub(r"[^A-Z0-9]+", " ", (category + " " + summary).upper())
+    api_types = (
+        (("WORK ORDER", "PROCESS ORDER"), "WorkOrderCreation"),
+        (("BATCH CHARACTERISTIC",), "BatchCharacteristics"),
+        (("BATCH CREATION",), "BatchCreation"),
+        (("RESULT RECORDING",), "ResultRecording"),
+        (("USAGE DECISION",), "UsageDecision"),
+        (("INVENTORY", "STORAGE LOCATION"), "Inventory"),
+        (("CONSUMPTION",), "Consumption"),
+        (("BY PRODUCT", "BYPRODUCT"), "ByProduct"),
+        (("REVERSAL",), "Reversal"),
+        (("PRODUCTION",), "Production"),
+    )
+    explicit_api = "API" in normalized_text or "SAP INTEGRATION" in normalized_text
+    if explicit_api:
+        api_type = next((value for phrases, value in api_types if any(p in normalized_text for p in phrases)), None)
+        if api_type:
+            identifier = next((entities.get(key) for key in (
+                "Batch", "BatchNo", "SAPTransactionID", "TransactionID", "InspectionLot",
+                "ManufacturingOrder", "WorkOrderNumber", "HeatNo",
+            ) if entities.get(key) not in (None, "")), None)
+            return {
+                "domain": "sap_api", "api_type": api_type,
+                "identifier": str(identifier) if identifier is not None else None,
+                "recommended_tool": "xstudio_sap_api_context",
+                "reason": "The ticket explicitly asks about a reviewed SAP API family; route directly to its live diagnostic.",
+            }
+
+    work_order = next((entities.get(key) for key in (
+        "WorkOrderNumber", "WorkOrder", "ManufacturingOrder", "MESWorkOrderNumber"
+    ) if entities.get(key) not in (None, "")), None)
+    if work_order is None:
+        match = re.search(r"\b(?:work\s*order|wo)\s*[:#-]?\s*([A-Z0-9][A-Z0-9_.-]{2,99})\b", summary, re.I)
+        work_order = match.group(1) if match else None
+    campaign = next((entities.get(key) for key in ("CampaignNo", "Campaign")
+                     if entities.get(key) not in (None, "")), None)
+    if campaign is None:
+        match = re.search(r"\bcampaign\s*[:#-]?\s*([A-Z0-9][A-Z0-9_.-]{2,99})\b", summary, re.I)
+        campaign = match.group(1) if match else None
+    if work_order and re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", str(work_order)):
+        return {
+            "domain": "work_order", "work_order": str(work_order),
+            "campaign": str(campaign) if campaign else None,
+            "recommended_tool": "xstudio_work_order_context",
+            "reason": "Work-order and campaign identifiers route directly to canonical fixed live projections.",
+        }
+
     raw_heat = next((entities.get(key) for key in ("HeatNo", "HeatID", "Heat") if entities.get(key) is not None), None)
     if raw_heat is None:
-        text = " ".join(str(ticket.get(key) or "") for key in ("BriefDetails", "Description", "ConversationSummary"))
-        match = re.search(r"\bheat\s+(?:H\s*)?(\d{4,})\b", text, re.I)
+        match = re.search(r"\bheat\s+(?:H\s*)?(\d{4,})\b", summary, re.I)
         raw_heat = match.group(1) if match else None
     heat_match = re.fullmatch(r"\s*[Hh]?(\d+)\s*", str(raw_heat or ""))
     if not heat_match:
         return {"domain": "generic", "recommended_tool": None, "reason": "No unambiguous numeric heat identifier."}
-    category = str(ticket.get("ProblemCategory") or "").upper()
-    summary = " ".join(str(ticket.get(key) or "") for key in ("BriefDetails", "Description", "ConversationSummary")).upper()
-    sap = "SAP" in category or "SAP" in summary
+    sap = "SAP" in category or "SAP" in summary.upper()
     return {
         "domain": "heat_sap" if sap else "heat_execution",
         "heat": heat_match.group(1),
@@ -1364,6 +1462,35 @@ def _dispatch_route_context(run_id: str, ticket_id: str, ticket: dict[str, Any])
             rendered["live_context"] = json.loads(result.stdout)
         except (OSError, subprocess.TimeoutExpired, RuntimeError, json.JSONDecodeError) as exc:
             rendered["live_context_warning"] = f"Deterministic heat context unavailable: {type(exc).__name__}: {exc}"
+    elif route.get("recommended_tool") == "xstudio_sap_api_context":
+        bridge = REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py"
+        request = {"operation": "sap_api_context", "database": "XStudio_Xbatch",
+                   "run_id": run_id, "ticket_id": ticket_id, "api_type": route["api_type"]}
+        if route.get("identifier"):
+            request["identifier"] = route["identifier"]
+        try:
+            result = subprocess.run([sys.executable, str(bridge)], input=json.dumps(request),
+                                    capture_output=True, text=True, timeout=45)
+            if result.returncode:
+                raise RuntimeError(result.stderr.strip() or f"bridge exit {result.returncode}")
+            rendered["live_context"] = json.loads(result.stdout)
+        except (OSError, subprocess.TimeoutExpired, RuntimeError, json.JSONDecodeError) as exc:
+            rendered["live_context_warning"] = f"Deterministic SAP API context unavailable: {type(exc).__name__}: {exc}"
+    elif route.get("recommended_tool") == "xstudio_work_order_context":
+        bridge = REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py"
+        request = {"operation": "work_order_context", "database": "XStudio_Xbatch",
+                   "run_id": run_id, "ticket_id": ticket_id,
+                   "work_order": route["work_order"]}
+        if route.get("campaign"):
+            request["campaign"] = route["campaign"]
+        try:
+            result = subprocess.run([sys.executable, str(bridge)], input=json.dumps(request),
+                                    capture_output=True, text=True, timeout=45)
+            if result.returncode:
+                raise RuntimeError(result.stderr.strip() or f"bridge exit {result.returncode}")
+            rendered["live_context"] = json.loads(result.stdout)
+        except (OSError, subprocess.TimeoutExpired, RuntimeError, json.JSONDecodeError) as exc:
+            rendered["live_context_warning"] = f"Deterministic work-order context unavailable: {type(exc).__name__}: {exc}"
     text = json.dumps(rendered, indent=2, default=str)
     if len(text) > 7000:
         text = text[:7000] + "\n... [route context truncated at 7,000 chars]"
@@ -1406,6 +1533,7 @@ def _query_instructions(run_id: str, ticket_id: str) -> str:
         "  xstudio_save_ledger(ledger,run_id?)\n"
         "  xstudio_heat_context(heat) — first choice for a heat/SAP/work-order/billet ticket\n"
         "  xstudio_sap_api_context(api_type) — live API summary when whether an API ran matters\n"
+        "  xstudio_work_order_context(work_order,campaign?) — canonical work-order/campaign state\n"
         "The harness injects the current run_id/ticket_id when safely known and defaults resolve_heat to XStudio_Xbatch.\n"
         "Pass database explicitly: XStudio_Helpdesk for ticket/Hermes runtime data, "
         "XStudio_Xbatch for production/heat/billet/quality/delay/SAP data.\n"

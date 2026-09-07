@@ -188,6 +188,70 @@ END;
 GO
 
 /*
+Hermes_Agent_Trace_Trn_Tbl
+Platform-level evidence for every L2 model request and tool call. The observer
+plugin writes JSONL off the hot path; drain_l2_trace_log.py persists it through
+Hermes_Log_Agent_Trace_Usp. This table is deliberately separate from SQL actions:
+one records agent/computation turns, the other records live database evidence.
+*/
+IF OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Hermes_Agent_Trace_Trn_Tbl
+    (
+        ID                varchar(36)  NOT NULL CONSTRAINT DF_Hermes_Agent_Trace_ID DEFAULT (NEWID()),
+        Name              varchar(100) NULL,
+        ParentID          varchar(36)  NULL,
+        CreatedBy         varchar(36)  NULL,
+        ModifiedBy        varchar(36)  NULL,
+        CreatedOn         datetime     NULL CONSTRAINT DF_Hermes_Agent_Trace_CreatedOn DEFAULT (GETDATE()),
+        ModifiedOn        datetime     NULL,
+        IsDeleted         bit          NULL CONSTRAINT DF_Hermes_Agent_Trace_IsDeleted DEFAULT (0),
+        IsSystem          bit          NULL CONSTRAINT DF_Hermes_Agent_Trace_IsSystem DEFAULT (0),
+        AssignedUserID    varchar(36)  NULL,
+        HostAddress       varchar(100) NULL,
+        DbSyncStatus      varchar(500) NULL,
+        MobileSyncStatus  varchar(100) NULL,
+        Source            varchar(20)  NULL,
+        EventType         varchar(100) NOT NULL,
+        EventOn           datetime     NOT NULL,
+        SessionID         varchar(100) NULL,
+        TaskID            varchar(100) NULL,
+        TurnID            varchar(100) NULL,
+        ToolCallID        varchar(100) NULL,
+        ApiRequestID      varchar(100) NULL,
+        ToolName          varchar(100) NULL,
+        Status            varchar(100) NULL,
+        DurationMs        int          NULL,
+        ArgsJson          varchar(max) NULL,
+        ResultJson        varchar(max) NULL,
+        ErrorMessage      varchar(max) NULL,
+        Model             varchar(100) NULL,
+        Provider          varchar(100) NULL,
+        UsageJson         varchar(max) NULL,
+        RunID             varchar(36)  NULL,
+        TicketID          varchar(36)  NULL,
+        CONSTRAINT PK_Hermes_Agent_Trace_Trn PRIMARY KEY CLUSTERED (ID)
+    );
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl') AND name = 'IX_Hermes_Agent_Trace_RunEvent')
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_RunEvent
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(RunID, EventOn)
+        INCLUDE (TicketID, EventType, SessionID, TaskID, ToolName, Status);
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl') AND name = 'IX_Hermes_Agent_Trace_TicketEvent')
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_TicketEvent
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(TicketID, EventOn)
+        WHERE TicketID IS NOT NULL;
+END;
+GO
+
+/*
 Hermes_L3_Escalation_Trn_Tbl
 Closes a real gap: Hermes_L2_Escalate_L3_Usp today only writes a text reply into
 Complaint_Mst_Tbl.SupportExecutiveRemarks / Hermes_L2_Response_Trn_Tbl -- there is no

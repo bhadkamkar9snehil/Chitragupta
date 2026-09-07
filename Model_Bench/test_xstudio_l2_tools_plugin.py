@@ -129,6 +129,7 @@ def test_named_tool_schemas_have_small_required_contracts() -> None:
         "xstudio_save_ledger": {"ledger"},
         "xstudio_heat_context": {"heat"},
         "xstudio_sap_api_context": {"api_type"},
+        "xstudio_work_order_context": {"work_order"},
     }
     assert set(plugin.TOOL_SCHEMAS) == set(expected)
     for name, required in expected.items():
@@ -257,10 +258,13 @@ def test_bridge_transport_uses_the_current_wsl_python_directly() -> None:
 def test_semantic_context_tools_have_tiny_typed_inputs() -> None:
     heat = plugin.TOOL_SCHEMAS["xstudio_heat_context"]["parameters"]
     api = plugin.TOOL_SCHEMAS["xstudio_sap_api_context"]["parameters"]
+    work_order = plugin.TOOL_SCHEMAS["xstudio_work_order_context"]["parameters"]
     assert set(heat["required"]) == {"heat"}
     assert set(api["required"]) == {"api_type"}
+    assert set(work_order["required"]) == {"work_order"}
     assert heat["additionalProperties"] is False
     assert api["additionalProperties"] is False
+    assert work_order["additionalProperties"] is False
 
 
 def test_semantic_context_tools_default_to_xbatch_and_receive_run_context() -> None:
@@ -353,17 +357,9 @@ def test_read_procedure_accepts_allowlisted_call_with_correct_contract() -> None
     captured = {}
 
     class FakeClient:
-        class Cursor:
-            description = None
-            def execute(self, sql):
-                self.sql = sql
-        class Connection:
-            def cursor(self):
-                return FakeClient.Cursor()
-        conn = Connection()
-        def execute_sql(self, **kwargs):
+        def execute_readonly_sql_with_rows(self, **kwargs):
             captured.update(kwargs)
-            return "action-1"
+            return "action-1", [{"TransactionID": "tx-1"}]
         def update_sql_action_evidence(self, *args, **kwargs):
             pass
 
@@ -373,25 +369,17 @@ def test_read_procedure_accepts_allowlisted_call_with_correct_contract() -> None
         "parameters": {"APIType": "UsageDecision"},
     }, FakeClient())
     assert result["ok"] is True
-    assert captured["action_type"] == "READ"
     assert captured["sql"] == "EXEC [dbo].[XMES_Get_API_Transaction_Summary] @APIType = N'UsageDecision';"
+    assert result["result"] == [{"TransactionID": "tx-1"}]
 
 
 def test_read_procedure_escapes_quotes_in_parameter_values() -> None:
     captured = {}
 
     class FakeClient:
-        class Cursor:
-            description = None
-            def execute(self, sql):
-                self.sql = sql
-        class Connection:
-            def cursor(self):
-                return FakeClient.Cursor()
-        conn = Connection()
-        def execute_sql(self, **kwargs):
+        def execute_readonly_sql_with_rows(self, **kwargs):
             captured.update(kwargs)
-            return "action-1"
+            return "action-1", []
         def update_sql_action_evidence(self, *args, **kwargs):
             pass
 
@@ -422,6 +410,31 @@ def test_semantic_read_executes_once_through_the_audited_database_path() -> None
     assert ref == {"action_id": "action-1", "operation": "l2_heat_eaf"}
     assert captured["database_name"] == "XStudio_Xbatch"
     assert captured["sql"].endswith("HeatID = 1602522")
+
+
+def test_work_order_context_uses_fixed_validated_recipes() -> None:
+    calls = []
+
+    class FakeClient:
+        def execute_readonly_sql_with_rows(self, **kwargs):
+            calls.append(kwargs)
+            return f"action-{len(calls)}", []
+        def update_sql_action_evidence(self, *args, **kwargs):
+            pass
+
+    result = bridge._work_order_context({
+        "database": "XStudio_Xbatch", "run_id": "run-1",
+        "work_order": "WO-99402", "campaign": "CMP-9902",
+    }, FakeClient())
+
+    assert result["ok"] is True
+    assert result["normalized_identifiers"] == {
+        "work_order": "WO-99402", "campaign": "CMP-9902"
+    }
+    assert len(calls) == 3
+    assert all(call["database_name"] == "XStudio_Xbatch" for call in calls)
+    assert any("WorkOrderNumber" in call["sql"] for call in calls)
+    assert any("CampaignNo" in call["sql"] for call in calls)
 
 
 def test_database_must_be_explicitly_allowlisted() -> None:
@@ -552,6 +565,24 @@ def test_session_isolation_context_does_not_leak_across_sessions() -> None:
     blocked_c = plugin._pre_tool_call("xstudio_get_ticket_context", {}, task_id="sess-c")
     assert blocked_c and blocked_c["action"] == "block"
     assert "ticket_id" in blocked_c["message"]
+
+
+def test_kanban_show_seeds_model_hidden_run_and_ticket_context() -> None:
+    plugin._post_tool_call(
+        "kanban_show",
+        {},
+        '{"task":{"body":"run_id: RUN-CARD\\nticket_id: TICKET-CARD\\n"}}',
+        task_id="card-session",
+    )
+
+    repaired = plugin._pre_tool_call(
+        "xstudio_heat_context", {"heat": "1602522"}, task_id="card-session"
+    )
+
+    assert repaired and repaired["action"] == "modify"
+    assert repaired["args"] == {
+        "run_id": "RUN-CARD", "ticket_id": "TICKET-CARD", "database": "XStudio_Xbatch"
+    }
 
 
 def test_successful_calls_never_trip_the_failure_breaker() -> None:

@@ -188,6 +188,70 @@ END;
 GO
 
 /*
+Hermes_Agent_Trace_Trn_Tbl
+Platform-level evidence for every L2 model request and tool call. The observer
+plugin writes JSONL off the hot path; drain_l2_trace_log.py persists it through
+Hermes_Log_Agent_Trace_Usp. This table is deliberately separate from SQL actions:
+one records agent/computation turns, the other records live database evidence.
+*/
+IF OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Hermes_Agent_Trace_Trn_Tbl
+    (
+        ID                varchar(36)  NOT NULL CONSTRAINT DF_Hermes_Agent_Trace_ID DEFAULT (NEWID()),
+        Name              varchar(100) NULL,
+        ParentID          varchar(36)  NULL,
+        CreatedBy         varchar(36)  NULL,
+        ModifiedBy        varchar(36)  NULL,
+        CreatedOn         datetime     NULL CONSTRAINT DF_Hermes_Agent_Trace_CreatedOn DEFAULT (GETDATE()),
+        ModifiedOn        datetime     NULL,
+        IsDeleted         bit          NULL CONSTRAINT DF_Hermes_Agent_Trace_IsDeleted DEFAULT (0),
+        IsSystem          bit          NULL CONSTRAINT DF_Hermes_Agent_Trace_IsSystem DEFAULT (0),
+        AssignedUserID    varchar(36)  NULL,
+        HostAddress       varchar(100) NULL,
+        DbSyncStatus      varchar(500) NULL,
+        MobileSyncStatus  varchar(100) NULL,
+        Source            varchar(20)  NULL,
+        EventType         varchar(100) NOT NULL,
+        EventOn           datetime     NOT NULL,
+        SessionID         varchar(100) NULL,
+        TaskID            varchar(100) NULL,
+        TurnID            varchar(100) NULL,
+        ToolCallID        varchar(100) NULL,
+        ApiRequestID      varchar(100) NULL,
+        ToolName          varchar(100) NULL,
+        Status            varchar(100) NULL,
+        DurationMs        int          NULL,
+        ArgsJson          varchar(max) NULL,
+        ResultJson        varchar(max) NULL,
+        ErrorMessage      varchar(max) NULL,
+        Model             varchar(100) NULL,
+        Provider          varchar(100) NULL,
+        UsageJson         varchar(max) NULL,
+        RunID             varchar(36)  NULL,
+        TicketID          varchar(36)  NULL,
+        CONSTRAINT PK_Hermes_Agent_Trace_Trn PRIMARY KEY CLUSTERED (ID)
+    );
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl') AND name = 'IX_Hermes_Agent_Trace_RunEvent')
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_RunEvent
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(RunID, EventOn)
+        INCLUDE (TicketID, EventType, SessionID, TaskID, ToolName, Status);
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl') AND name = 'IX_Hermes_Agent_Trace_TicketEvent')
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_TicketEvent
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(TicketID, EventOn)
+        WHERE TicketID IS NOT NULL;
+END;
+GO
+
+/*
 Hermes_L3_Escalation_Trn_Tbl
 Closes a real gap: Hermes_L2_Escalate_L3_Usp today only writes a text reply into
 Complaint_Mst_Tbl.SupportExecutiveRemarks / Hermes_L2_Response_Trn_Tbl -- there is no
@@ -659,6 +723,7 @@ BEGIN
     ORDER BY ISNULL(ModifiedOn, CreatedOn) DESC;
 END;
 GO
+
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
@@ -988,6 +1053,7 @@ BEGIN
     SELECT @@ROWCOUNT AS RecoveredRunCount;
 END;
 GO
+
 /*
   Required post-install hardening for Hermes_L2_Get_Candidate_Tickets_Usp.
 
@@ -1124,6 +1190,7 @@ BEGIN
         c.ID ASC;
 END;
 GO
+
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
@@ -1469,6 +1536,7 @@ BEGIN
         @TwoPartName = @TwoPartName;
 END;
 GO
+
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
@@ -1823,6 +1891,7 @@ BEGIN
     ORDER BY ActionNo;
 END;
 GO
+
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
@@ -2661,6 +2730,7 @@ BEGIN
             @NoteText = @FeedbackText, @IsCustomerVisible = 1, @HermesUserID = @HermesUserID;
 END;
 GO
+
 /*
   Pipeline continuation hardening for ResponseType='UPDATE'.
 
@@ -2698,6 +2768,7 @@ BEGIN
       AND r.NextEligibleOn IS NULL;
 END;
 GO
+
 -- ============================================================================
 -- Hermes L2 -- Ticket Response Time Metrics
 -- ============================================================================
@@ -3043,4 +3114,45 @@ OUTER APPLY (
 ) u
 WHERE t.IsDeleted = 0 AND t.TicketID IS NOT NULL
 GROUP BY t.TicketID, t.RunID;
+GO
+
+IF OBJECT_ID('dbo.Hermes_L2_Compute_Per_Profile_Vw', 'V') IS NOT NULL
+    DROP VIEW dbo.Hermes_L2_Compute_Per_Profile_Vw;
+GO
+
+CREATE VIEW dbo.Hermes_L2_Compute_Per_Profile_Vw
+AS
+SELECT
+    t.TicketID,
+    t.RunID,
+    COALESCE(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.profile_name'), 'unknown') AS ProfileName,
+    COUNT(DISTINCT t.SessionID) AS SessionCount,
+    SUM(CASE WHEN t.EventType = 'pre_tool_call' THEN 1 ELSE 0 END) AS ToolCallCount,
+    SUM(CASE WHEN t.EventType = 'post_api_request' THEN 1 ELSE 0 END) AS ModelTurnCount,
+    SUM(CASE WHEN t.EventType = 'api_request_error' THEN 1 ELSE 0 END) AS ModelErrorCount,
+    SUM(CASE WHEN u.[key] = 'total_tokens' THEN TRY_CAST(u.[value] AS bigint) ELSE 0 END) AS TotalTokens,
+    SUM(CASE WHEN u.[key] = 'prompt_tokens' THEN TRY_CAST(u.[value] AS bigint) ELSE 0 END) AS PromptTokens,
+    SUM(CASE WHEN u.[key] IN ('completion_tokens', 'output_tokens') THEN TRY_CAST(u.[value] AS bigint) ELSE 0 END) AS OutputTokens,
+    AVG(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.ttft_ms') AS float)) AS AvgTtftMs,
+    SUM(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.api_duration_ms') AS bigint)) AS ApiDurationMsTotal,
+    MAX(TRY_CAST(COALESCE(
+        JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.gpu_mem_used_mb'),
+        JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.mem_used_mb')) AS int)) AS PeakGpuVramMb,
+    MAX(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.gpu_util_pct') AS int)) AS PeakGpuUtilPct,
+    MAX(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.cpu_util_pct') AS int)) AS PeakCpuUtilPct,
+    MAX(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.system_mem_used_mb') AS int)) AS PeakSystemMemoryMb,
+    MAX(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.lmstudio_working_set_mb') AS int)) AS PeakLmStudioWorkingSetMb,
+    MIN(t.EventOn) AS FirstEventOn,
+    MAX(t.EventOn) AS LastEventOn,
+    DATEDIFF(SECOND, MIN(t.EventOn), MAX(t.EventOn)) AS WallClockSeconds
+FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+OUTER APPLY (
+    SELECT [key], [value]
+    FROM OPENJSON(t.UsageJson)
+    WHERE ISJSON(t.UsageJson) = 1
+      AND [key] IN ('prompt_tokens', 'completion_tokens', 'output_tokens', 'total_tokens')
+) u
+WHERE t.IsDeleted = 0 AND t.RunID IS NOT NULL
+GROUP BY t.TicketID, t.RunID,
+    COALESCE(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.profile_name'), 'unknown');
 GO

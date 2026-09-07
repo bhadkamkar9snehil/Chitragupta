@@ -118,11 +118,20 @@ def build_summary(events, compute_row) -> str:
             lines.append(f"[{ts}] Model call to {e.model or 'the model'}" + (f" ({total} tokens)" if total else ""))
         elif e.event_type == "api_request_error":
             lines.append(f"[{ts}] Model call FAILED ({e.error_message or 'unknown error'})")
-        elif e.event_type in ("lmstudio_sample", "gpu_sample"):
+        elif e.event_type in ("lmstudio_sample", "gpu_sample", "compute_sample"):
             result = _safe_json(e.result_json) or {}
-            if e.event_type == "gpu_sample" and "gpu_util_pct" in result:
-                lines.append(f"[{ts}] GPU snapshot ({e.tool_name}): {result.get('gpu_util_pct')}% util, "
-                              f"{result.get('mem_used_mb')}/{result.get('mem_total_mb')} MiB")
+            if e.event_type in ("gpu_sample", "compute_sample") and "gpu_util_pct" in result:
+                used = result.get("gpu_mem_used_mb", result.get("mem_used_mb"))
+                total = result.get("gpu_mem_total_mb", result.get("mem_total_mb"))
+                compute = f"{result.get('gpu_util_pct')}% GPU, {used}/{total} MiB VRAM"
+                if result.get("cpu_util_pct") is not None:
+                    compute += f", {result.get('cpu_util_pct')}% CPU"
+                if result.get("system_mem_used_mb") is not None:
+                    compute += (
+                        f", {result.get('system_mem_used_mb')}/"
+                        f"{result.get('system_mem_total_mb')} MiB system RAM"
+                    )
+                lines.append(f"[{ts}] Compute snapshot ({e.tool_name}): {compute}")
     if compute_row and compute_row.TotalTokens:
         lines.append(
             f"\nTotals: {compute_row.ToolCallCount or 0} tool call(s), "

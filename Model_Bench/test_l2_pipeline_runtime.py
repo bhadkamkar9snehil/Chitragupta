@@ -127,6 +127,50 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(route["heat"], "1602522")
         self.assertEqual(route["recommended_tool"], "xstudio_heat_context")
 
+    def test_deterministic_route_maps_inventory_api_ticket_without_heat(self):
+        ticket = {
+            "ProblemCategory": "SAP_INTEGRATION",
+            "BriefDetails": "SAP inventory sync missing for Plant/Storage on Batch B99402",
+            "Description": "Was the inventory-sync API call ever made?",
+            "ExtractedEntitiesJson": json.dumps({"Batch": "B99402"}),
+        }
+        route = mod.deterministic_ticket_route(ticket)
+        self.assertEqual("sap_api", route["domain"])
+        self.assertEqual("Inventory", route["api_type"])
+        self.assertEqual("B99402", route["identifier"])
+        self.assertEqual("xstudio_sap_api_context", route["recommended_tool"])
+
+    def test_deterministic_route_maps_work_order_and_campaign(self):
+        ticket = {
+            "ProblemCategory": "WORK_ORDER",
+            "ExtractedEntitiesJson": json.dumps({
+                "WorkOrder": "WO-99402", "Campaign": "CMP-9902"
+            }),
+        }
+        route = mod.deterministic_ticket_route(ticket)
+        self.assertEqual("work_order", route["domain"])
+        self.assertEqual("WO-99402", route["work_order"])
+        self.assertEqual("CMP-9902", route["campaign"])
+        self.assertEqual("xstudio_work_order_context", route["recommended_tool"])
+
+    def test_dispatch_route_context_uses_inventory_api_recipe(self):
+        ticket = {
+            "ProblemCategory": "SAP_INTEGRATION",
+            "Description": "Was the inventory sync API call ever made?",
+            "ExtractedEntitiesJson": json.dumps({"Batch": "B99402"}),
+        }
+        completed = type("Completed", (), {"returncode": 0, "stderr": "",
+                    "stdout": json.dumps({"ok": True, "evidence_refs": [{"action_id": "api-1"}]})})()
+        with patch.object(mod.subprocess, "run", return_value=completed) as bridge:
+            rendered = mod._dispatch_route_context("run-1", "ticket-1", ticket)
+        request = json.loads(bridge.call_args.kwargs["input"])
+        self.assertEqual(request, {
+            "operation": "sap_api_context", "database": "XStudio_Xbatch",
+            "run_id": "run-1", "ticket_id": "ticket-1", "api_type": "Inventory",
+            "identifier": "B99402",
+        })
+        self.assertIn('"action_id": "api-1"', rendered)
+
     def test_dispatch_route_context_uses_typed_heat_context_with_run_provenance(self):
         ticket = {"ExtractedEntitiesJson": json.dumps({"HeatNo": "1602522"})}
         completed = type("Completed", (), {"returncode": 0, "stderr": "",
@@ -429,6 +473,13 @@ class PipelineContractTests(unittest.TestCase):
         self.assertIn("claims array", instructions)
         self.assertIn("VERIFIED", instructions)
         self.assertIn("Absence of records is evidence of absence", instructions)
+
+    def test_unstructured_completion_normalizes_to_unverified_claim(self):
+        claims = mod.normalized_fallback_claims("No matching API row was found.")
+        self.assertEqual("UNVERIFIED", claims[0]["status"])
+        self.assertTrue(claims[0]["material"])
+        self.assertEqual([], claims[0]["evidence"])
+        self.assertIn("independently verify", claims[0]["required_evidence"][0])
 
     def test_investigation_card_lists_semantic_context_tools(self):
         instructions = mod._query_instructions("run-1", "ticket-1")

@@ -122,7 +122,11 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     ),
     "xstudio_sap_api_context": _tool_schema(
         "Read the live reviewed SAP API transaction summary for one API type.",
-        {"api_type": _STRING, "database": _DATABASE}, ("api_type",),
+        {"api_type": _STRING, "identifier": _STRING, "database": _DATABASE}, ("api_type",),
+    ),
+    "xstudio_work_order_context": _tool_schema(
+        "Read canonical work-order and campaign evidence using fixed reviewed recipes.",
+        {"work_order": _STRING, "campaign": _STRING, "database": _DATABASE}, ("work_order",),
     ),
 }
 
@@ -140,6 +144,7 @@ TOOL_OPERATIONS: dict[str, str] = {
     "xstudio_save_ledger": "save_ledger",
     "xstudio_heat_context": "heat_context",
     "xstudio_sap_api_context": "sap_api_context",
+    "xstudio_work_order_context": "work_order_context",
 }
 _REQUIRED_FIELDS_BY_TOOL = {
     name: tuple(schema["parameters"]["required"])
@@ -159,6 +164,7 @@ _EFFECTIVE_REQUIRED_FIELDS_BY_TOOL: dict[str, tuple[str, ...]] = {
     "xstudio_save_ledger": ("run_id", "ledger"),
     "xstudio_heat_context": ("database", "run_id", "heat"),
     "xstudio_sap_api_context": ("database", "run_id", "api_type"),
+    "xstudio_work_order_context": ("database", "run_id", "work_order"),
 }
 _CONTEXT_FIELD_RE = {
     "run_id": re.compile(r"(?:current\s+)?run_id\s*[:=]\s*[`\"']?([A-Za-z0-9-]+)", re.IGNORECASE),
@@ -224,6 +230,7 @@ _REQUIRED_FIELDS_BY_OPERATION: dict[str, tuple[str, ...]] = {
     "save_ledger": ("run_id", "ledger"),
     "heat_context": ("database", "run_id", "heat"),
     "sap_api_context": ("database", "run_id", "api_type"),
+    "work_order_context": ("database", "run_id", "work_order"),
     "resolve_heat": ("database", "heat"),
 }
 
@@ -310,7 +317,7 @@ def _repair_args(tool_name: str, args: dict[str, Any], session: str,
             changed[field] = context[field]
 
     operation = TOOL_OPERATIONS.get(tool_name)
-    if operation in {"resolve_heat", "heat_context", "sap_api_context"} and not effective.get("database"):
+    if operation in {"resolve_heat", "heat_context", "sap_api_context", "work_order_context"} and not effective.get("database"):
         effective["database"] = "XStudio_Xbatch"
         changed["database"] = "XStudio_Xbatch"
     return effective, changed
@@ -497,6 +504,17 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
 
 def _post_tool_call(tool_name: str, args: dict[str, Any] | None = None,
                     result: Any = None, task_id: str = "", **kwargs: Any) -> None:
+    # Hermes does not consistently include the full task body in pre_llm_call.
+    # Every Kanban worker does, however, begin with kanban_show. Learn the two
+    # harness-owned identifiers from that deterministic response so model-hidden
+    # run_id/ticket_id defaults remain reliable in real sessions.
+    if tool_name == "kanban_show":
+        parsed = _parse_result(result)
+        task = parsed.get("task") if isinstance(parsed, dict) else None
+        if isinstance(task, dict):
+            session = _session_key(task_id, **kwargs)
+            _remember_context(session, task.get("body"))
+        return
     if tool_name not in TOOL_OPERATIONS and tool_name != TOOL_NAME:
         return
     parsed = _parse_result(result)

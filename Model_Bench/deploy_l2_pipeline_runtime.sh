@@ -60,9 +60,11 @@ test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
 # because ticket_scout runs the same reconciler before every new claim.
 deploy_plugins() {
   local profile="$1" plugin src dir
-  for plugin in xstudio-l2-orchestrator xstudio-l2-tools; do
+  for plugin in xstudio-l2-orchestrator xstudio-l2-tools xstudio-l2-trace; do
     if [[ "$plugin" == "xstudio-l2-orchestrator" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_orchestrator_plugin"
+    elif [[ "$plugin" == "xstudio-l2-trace" ]]; then
+      src="$ROOT/Model_Bench/xstudio_l2_trace_plugin"
     else
       src="$ROOT/Model_Bench/xstudio_l2_tools_plugin"
     fi
@@ -128,6 +130,7 @@ done
 # never rewrites dispatch settings, API ports, model choice, or credentials.
 echo "== Shared plugin install (required for toolset discovery) =="
 install_shared_plugin_for_discovery xstudio-l2-tools "$ROOT/Model_Bench/xstudio_l2_tools_plugin"
+install_shared_plugin_for_discovery xstudio-l2-trace "$ROOT/Model_Bench/xstudio_l2_trace_plugin"
 echo "installed xstudio-l2-tools into $HOME/.hermes/plugins for toolset discovery"
 
 echo "== Profile config (idempotent, additive) =="

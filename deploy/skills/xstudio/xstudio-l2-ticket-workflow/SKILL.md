@@ -139,9 +139,25 @@ Your `kanban_complete` must make the proposal structurally reviewable:
   "run_id": "<exact run id>",
   "ticket_id": "<exact ticket id>",
   "response_type": "UPDATE|QUESTION|RESOLUTION|L3_ESCALATION|NEEDS_HUMAN_ACTION",
-  "reply_text": "<user-facing proposed reply>"
+  "reply_text": "<user-facing proposed reply>",
+  "claims_contract_version": 1,
+  "claims": [
+    {
+      "id": "C1",
+      "claim": "<one material factual assertion>",
+      "material": true,
+      "status": "VERIFIED|INFERRED|UNVERIFIED|CONTRADICTED",
+      "evidence": [{"action_id": "<current-run Hermes action ID>"}]
+    }
+  ]
 }
 ```
+
+Only `VERIFIED` material claims require one or more current-run evidence refs.
+For other states, use an empty evidence list and keep the reply strength consistent
+with the uncertainty. The harness rejects incomplete completion metadata before the
+card becomes terminal, so correct the same `kanban_complete` call instead of ending
+the session or opening a second investigation.
 
 Add useful structured fields when supported by evidence:
 

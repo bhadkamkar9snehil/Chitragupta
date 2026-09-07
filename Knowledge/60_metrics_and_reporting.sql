@@ -344,3 +344,44 @@ OUTER APPLY (
 WHERE t.IsDeleted = 0 AND t.TicketID IS NOT NULL
 GROUP BY t.TicketID, t.RunID;
 GO
+
+IF OBJECT_ID('dbo.Hermes_L2_Compute_Per_Profile_Vw', 'V') IS NOT NULL
+    DROP VIEW dbo.Hermes_L2_Compute_Per_Profile_Vw;
+GO
+
+CREATE VIEW dbo.Hermes_L2_Compute_Per_Profile_Vw
+AS
+SELECT
+    t.TicketID,
+    t.RunID,
+    COALESCE(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.profile_name'), 'unknown') AS ProfileName,
+    COUNT(DISTINCT t.SessionID) AS SessionCount,
+    SUM(CASE WHEN t.EventType = 'pre_tool_call' THEN 1 ELSE 0 END) AS ToolCallCount,
+    SUM(CASE WHEN t.EventType = 'post_api_request' THEN 1 ELSE 0 END) AS ModelTurnCount,
+    SUM(CASE WHEN t.EventType = 'api_request_error' THEN 1 ELSE 0 END) AS ModelErrorCount,
+    SUM(CASE WHEN u.[key] = 'total_tokens' THEN TRY_CAST(u.[value] AS bigint) ELSE 0 END) AS TotalTokens,
+    SUM(CASE WHEN u.[key] = 'prompt_tokens' THEN TRY_CAST(u.[value] AS bigint) ELSE 0 END) AS PromptTokens,
+    SUM(CASE WHEN u.[key] IN ('completion_tokens', 'output_tokens') THEN TRY_CAST(u.[value] AS bigint) ELSE 0 END) AS OutputTokens,
+    AVG(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.ttft_ms') AS float)) AS AvgTtftMs,
+    SUM(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.api_duration_ms') AS bigint)) AS ApiDurationMsTotal,
+    MAX(TRY_CAST(COALESCE(
+        JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.gpu_mem_used_mb'),
+        JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.mem_used_mb')) AS int)) AS PeakGpuVramMb,
+    MAX(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.gpu_util_pct') AS int)) AS PeakGpuUtilPct,
+    MAX(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.cpu_util_pct') AS int)) AS PeakCpuUtilPct,
+    MAX(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.system_mem_used_mb') AS int)) AS PeakSystemMemoryMb,
+    MAX(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.lmstudio_working_set_mb') AS int)) AS PeakLmStudioWorkingSetMb,
+    MIN(t.EventOn) AS FirstEventOn,
+    MAX(t.EventOn) AS LastEventOn,
+    DATEDIFF(SECOND, MIN(t.EventOn), MAX(t.EventOn)) AS WallClockSeconds
+FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+OUTER APPLY (
+    SELECT [key], [value]
+    FROM OPENJSON(t.UsageJson)
+    WHERE ISJSON(t.UsageJson) = 1
+      AND [key] IN ('prompt_tokens', 'completion_tokens', 'output_tokens', 'total_tokens')
+) u
+WHERE t.IsDeleted = 0 AND t.RunID IS NOT NULL
+GROUP BY t.TicketID, t.RunID,
+    COALESCE(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.profile_name'), 'unknown');
+GO

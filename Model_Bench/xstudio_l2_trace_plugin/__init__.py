@@ -309,7 +309,7 @@ def on_api_request_error(**kwargs) -> None:
 # ---------------------------------------------------------------------------
 _LMSTUDIO_MODELS_URL = "http://100.111.69.102:1235/v1/models"
 _POWERSHELL_EXE = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-_GPU_SCRIPT_WIN_PATH = "C:/Users/Admin/AppData/Local/hermes/profiles/infra-guardian/scripts/gpu_check.ps1"
+_COMPUTE_SCRIPT_WIN_PATH = "C:/Users/Admin/Documents/Office/AIHelpdesk/Model_Bench/remote_compute_snapshot.ps1"
 
 
 def _sample_lmstudio() -> Optional[Dict[str, Any]]:
@@ -323,29 +323,26 @@ def _sample_lmstudio() -> Optional[Dict[str, Any]]:
         return {"error": str(e)}
 
 
-def _sample_gpu() -> Optional[Dict[str, Any]]:
+def _parse_compute_snapshot(output: str) -> Dict[str, Any]:
+    for line in reversed(output.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            parsed = json.loads(line)
+            if isinstance(parsed, dict):
+                return parsed
+    raise ValueError("no JSON compute snapshot found")
+
+
+def _sample_compute() -> Optional[Dict[str, Any]]:
     try:
         t0 = time.time()
         out = subprocess.run(
-            [_POWERSHELL_EXE, "-File", _GPU_SCRIPT_WIN_PATH],
+            [_POWERSHELL_EXE, "-File", _COMPUTE_SCRIPT_WIN_PATH],
             capture_output=True, text=True, timeout=25,
         ).stdout
-        line = None
-        for l in out.splitlines():
-            if "MiB /" in l and "%" in l:
-                line = l.strip()
-                break
-        if not line:
-            return {"error": "no parseable nvidia-smi line", "raw": out[:500]}
-        util_m = re.search(r"(\d+)%\s*(?:Default|E\. Process)", line)
-        mem_m = re.search(r"(\d+)MiB\s*/\s*(\d+)MiB", line)
-        return {
-            "latency_s": round(time.time() - t0, 3),
-            "gpu_util_pct": int(util_m.group(1)) if util_m else None,
-            "mem_used_mb": int(mem_m.group(1)) if mem_m else None,
-            "mem_total_mb": int(mem_m.group(2)) if mem_m else None,
-            "raw": line,
-        }
+        result = _parse_compute_snapshot(out)
+        result["latency_s"] = round(time.time() - t0, 3)
+        return result
     except Exception as e:
         return {"error": str(e)}
 
@@ -357,7 +354,7 @@ def _sample_hardware_async(boundary: str, kwargs: Dict[str, Any]) -> None:
         # GPU sample alone takes several seconds, which gives the background
         # resolver thread time to finish before we read the cache again below.
         lm = _sample_lmstudio()
-        gpu = _sample_gpu()
+        compute = _sample_compute()
         ids2 = _TASK_CACHE.get(_MY_KANBAN_TASK_ID, {}) if _MY_KANBAN_TASK_ID else {}
         base = {
             "session_id": kwargs.get("session_id"),
@@ -366,7 +363,7 @@ def _sample_hardware_async(boundary: str, kwargs: Dict[str, Any]) -> None:
             "ticket_id": ids2.get("ticket_id"),
         }
         _write_event({"event_type": "lmstudio_sample", "boundary": boundary, **base, "result": lm})
-        _write_event({"event_type": "gpu_sample", "boundary": boundary, **base, "result": gpu})
+        _write_event({"event_type": "compute_sample", "boundary": boundary, **base, "result": compute})
 
     threading.Thread(target=_run, daemon=True).start()
 
