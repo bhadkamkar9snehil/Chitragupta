@@ -4,6 +4,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# Validate this checkout/worktree, while loading the same secret-bearing SQL
+# environment used by the live investigator. Values are exported to child
+# processes but never printed or copied into deploy artifacts.
+export L2_REPO_ROOT="$ROOT"
+export L2_XSTUDIO_BRIDGE="$ROOT/Model_Bench/xstudio_l2_tool_bridge.py"
+PROFILE_ENV="$HOME/.hermes/profiles/l2-investigator/.env"
+if [[ -f "$PROFILE_ENV" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$PROFILE_ENV"
+  set +a
+fi
+
 PY_FILES=(
   Model_Bench/l2_pipeline_runtime.py
   Model_Bench/ticket_scout.py
@@ -36,19 +49,22 @@ python3 Model_Bench/validate_knowledge_manifest.py
 python3 Model_Bench/test_kb_retrieval.py
 
 echo "== Retired live-deployment guard =="
-DEPLOYED_SCRIPTS="$HOME/.hermes/profiles/l2-investigator/scripts"
+ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
 retired_found=0
-for retired in dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py; do
-  if [[ -e "$DEPLOYED_SCRIPTS/$retired" ]]; then
-    echo "FAIL: retired script is still deployed live: $DEPLOYED_SCRIPTS/$retired" >&2
-    retired_found=1
-  fi
+for profile in "${ACTIVE_PROFILES[@]}"; do
+  deployed_scripts="$HOME/.hermes/profiles/$profile/scripts"
+  for retired in dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py; do
+    if [[ -e "$deployed_scripts/$retired" ]]; then
+      echo "FAIL: retired script is still deployed live: $deployed_scripts/$retired" >&2
+      retired_found=1
+    fi
+  done
 done
 if [[ "$retired_found" -ne 0 ]]; then
   echo "Run: bash Model_Bench/deploy_l2_pipeline_runtime.sh" >&2
   exit 1
 fi
-echo "PASS: no known retired lifecycle scripts remain in the live scripts directory"
+echo "PASS: no known retired lifecycle scripts remain in any active profile"
 
 echo "== Live workflow discovery (read-only) =="
 python3 Model_Bench/configure_helpdesk_workflow.py
@@ -77,8 +93,8 @@ Do not guess replacement status names.
 
 Live deployment note:
   deploy_l2_pipeline_runtime.sh now removes known retired lifecycle scripts from
-  ~/.hermes/profiles/l2-investigator/scripts. Validation fails if those stale
-  copies reappear even when they are absent from Git.
+  every active L2 profile. Validation fails if those stale copies reappear even
+  when they are absent from Git.
 
 For the next naturally arriving fresh ticket, verify its trace uses xstudio_l2 for
 database/schema/ticket evidence and does not attempt to recreate SQL transport via

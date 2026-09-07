@@ -62,7 +62,7 @@ MIN_SUMMARY_CHARS = 40
 # new reconciler no longer relies on pre-created parent-gated reviewers.
 LIVE_KANBAN_STATUSES = {"todo", "ready", "blocked", "triage", "running", "review", "scheduled"}
 
-REPO_ROOT_WSL = Path("/mnt/c/Users/Admin/Documents/Office/AIHelpdesk")
+REPO_ROOT_WSL = Path(os.environ.get("L2_REPO_ROOT", "/mnt/c/Users/Admin/Documents/Office/AIHelpdesk"))
 BINDING_CANDIDATES = [
     Path(os.environ["L2_HELPDESK_WORKFLOW_BINDING"]) if os.environ.get("L2_HELPDESK_WORKFLOW_BINDING") else None,
     REPO_ROOT_WSL / "deploy" / "helpdesk_workflow_binding.json",

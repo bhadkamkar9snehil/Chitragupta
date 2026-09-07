@@ -3,8 +3,9 @@
 # Run after changing live SOULs/skills/config/plugins and review the diff before commit.
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_HERMES=~/.hermes/profiles
-DST=/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/deploy
+DST="$ROOT/deploy"
 
 PROFILES="l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback"
 SKILLS="xstudio-l2-ticket-workflow xstudio-sap-api-investigation xstudio-sohar-heat-execution xstudio-quality-delay-workorder xstudio-sql-write-discipline xstudio-l2-draft-verifier"

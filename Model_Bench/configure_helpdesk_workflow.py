@@ -13,9 +13,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-ORCHESTRATOR = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Hermes_Orchestrator.py"
-ORCHESTRATOR_WSL = "/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Hermes_Orchestrator.py"
-DEFAULT_OUTPUT = Path("/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/deploy/helpdesk_workflow_binding.json")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+ORCHESTRATOR = REPO_ROOT / "Hermes_Orchestrator.py"
+DEFAULT_OUTPUT = REPO_ROOT / "deploy" / "helpdesk_workflow_binding.json"
 
 
 def main() -> int:
@@ -34,8 +34,7 @@ def main() -> int:
     args = p.parse_args()
 
     python = sys.executable
-    orchestrator = ORCHESTRATOR if os.name == "nt" else ORCHESTRATOR_WSL
-    cmd = [python, orchestrator, "--server", args.server, "--username", args.username, "--discover-workflow"]
+    cmd = [python, str(ORCHESTRATOR), "--server", args.server, "--username", args.username, "--discover-workflow"]
     if args.password:
         cmd += ["--password", args.password]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
