@@ -1,63 +1,46 @@
 ---
 type: "Playbook"
-title: "Deploy Hermes L2 SQL Runtime"
-description: "Deployment sequence for the Hermes Helpdesk SQL runtime and deterministic L2 lifecycle."
-tags:
-  - hermes
-  - deployment
-  - sql
+title: "Deploy Chitragupta L2"
+description: "Current deployment sequence for the Helpdesk SQL runtime and Hermes L2 domain layer."
 status: current
-verified: "2026-09-05"
+verified: "2026-09-07"
 ---
 
-# Deploy Hermes L2 SQL Runtime
+# Deploy Chitragupta L2
 
-Target database:
+## 1. SQL runtime
 
-```text
-XStudio_Helpdesk
-```
+Target database: `XStudio_Helpdesk`.
 
-## 1. Deploy the generated complete SQL bundle
-
-Run:
+Deploy the generated complete bundle:
 
 ```text
 Knowledge/00_Hermes_L2_FULL_INSTALL.sql
 ```
 
-The numbered SQL files are the maintainable sources. The generated full-install bundle already includes the current hardening sources, including:
+The numbered SQL files are maintainable source. Do not separately re-apply numbered hardening files already included in the generated bundle.
+
+Then run:
 
 ```text
-Knowledge/25_ticket_dispatch_hardening.sql
-Knowledge/55_update_retry_hardening.sql
+Knowledge/98_pipeline_postflight.sql
 ```
 
-Do **not** apply those two again merely because they exist as source files. When SQL runtime logic changes:
+## 2. Helpdesk workflow binding
 
-```text
-edit the numbered source
--> regenerate 00_Hermes_L2_FULL_INSTALL.sql
--> deploy the generated bundle
-```
-
-Apply a separate overlay only when it is intentionally not yet part of the generated bundle.
-
-## 2. Discover and bind the live Helpdesk workflow
-
-Run the read-only discovery helper:
+Discover the real live workflow rather than guessing status names:
 
 ```bash
 python Model_Bench/configure_helpdesk_workflow.py
 ```
 
-Underlying SQL discovery:
+Canonical deployment binding:
 
-```sql
-EXEC dbo.Hermes_L2_Discover_Helpdesk_Workflow_Usp;
+```text
+deploy/helpdesk_workflow_binding.json
 ```
 
-The current checked-in deployment binding is:
+Current observed values:
 
 ```text
 eligible ticket status:       Enter
@@ -68,86 +51,58 @@ L3 ticket status:             unbound
 needs-human-action status:    unbound
 ```
 
-Canonical file:
+`RESOLUTION` fails closed if the resolved status is not bound.
+
+## 3. Hermes/GBrain prerequisites
+
+Hermes runs in WSL2. The shared organizational GBrain is already installed separately at:
 
 ```text
-deploy/helpdesk_workflow_binding.json
+~/.hermes/xstudio-gbrain
 ```
 
-If live workflow values change, update the binding only from observed live values. Do not guess replacements.
+GBrain is connected through native Hermes MCP. Chitragupta does not deploy a GBrain wrapper, synchronizer or maintenance daemon.
 
-`RESOLUTION` publication fails closed when `resolved_ticket_status` is not configured.
+## 4. Deploy L2
 
-## 3. Run SQL postflight
-
-Run:
-
-```text
-Knowledge/98_pipeline_postflight.sql
-```
-
-Then verify the Hermes-side pipeline from WSL:
-
-```bash
-python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
-```
-
-Expected lifecycle contract:
-
-```text
-max_pipeline_wip = 1
-review priority = 30
-rework priority = 20
-new investigation priority = 10
-max_review_cycles = 3
-```
-
-No unexplained `ACTIVE_SQL_WITH_NO_KANBAN` anomaly should remain.
-
-## 4. Deploy Hermes-side runtime, plugins, profiles, and skills
-
-From the repository under WSL:
+From the repository under WSL2:
 
 ```bash
 bash Model_Bench/deploy_l2_pipeline_runtime.sh
 ```
 
-This deploys:
+The deploy installs only:
 
-- the central lifecycle runtime and small compatibility entrypoints;
-- the event reconciler plugin;
-- the typed `xstudio_l2` investigation plugin and bridge configuration;
-- current investigator/reviewer SOULs and skills;
-- workflow-binding fallback;
-- current profile configuration changes.
+- the central deterministic lifecycle runtime;
+- reviewed-outcome materialization;
+- current workflow binding;
+- the `xstudio-l2-tools` plugin on investigator/reviewer worker profiles;
+- the three current profile configs and SOULs.
 
-The deployment script is intended to be idempotent.
+It also removes known retired GBrain wrappers, procedural skills, duplicate plugins and the retired reviewer-fallback profile from the live Hermes profile directories.
+
+There is no event-reconciler plugin and no separate publisher/reject/repair/audit job.
 
 ## 5. Current lifecycle
 
 ```text
-ticket_scout tick
-  -> reconcile all in-flight work
+2-minute scout
+  -> reconcile existing work
   -> active SQL run?
-       yes -> WIP_LIMIT; claim nothing
-       no  -> claim one ticket
+       yes -> claim nothing
+       no  -> claim one eligible ticket
              -> investigator [10]
              -> normalize structured completion
-             -> create reviewer [30] with frozen proposal_json
+             -> reviewer [30] with frozen proposal_json
                   -> approve -> deterministic publish
-                  -> reject  -> rework investigator [20]
-                               -> normalize
-                               -> fresh reviewer [30]
-             -> bounded review_cycle -> human escalation when exhausted
+                  -> reject  -> rework [20] -> fresh reviewer
+             -> cycle cap -> L3/human escalation path
+  -> best-effort reviewed-outcome materialization
 ```
 
-Reviewer cards are created **after** the source completion becomes reviewable. There is no pre-created or parent-gated reviewer.
+Reviewer cards are created only after the investigator/rework completion is structurally reviewable.
 
-The 2-minute scout is the durable correctness backstop. Event hooks call the same reconciler for low-latency handoff but are not required for correctness.
-
-See `Knowledge/L2_PIPELINE_STATE_MACHINE.md` for the normative lifecycle.
-
-## 6. Local validation
+## 6. Validate
 
 Run:
 
@@ -155,14 +110,21 @@ Run:
 bash Model_Bench/validate_l2_pipeline_local.sh
 ```
 
-This is the project validation authority before deployment. Do not substitute a GitHub Actions result for inspection of the real local Windows/WSL/Hermes environment.
+Validation checks:
 
-For the next naturally arriving ticket, confirm its trace uses `xstudio_l2` for database/schema work and does not attempt to recreate Python/pyodbc/sqlcmd transport.
+- Python/shell syntax;
+- focused lifecycle/tool/outcome/Solution tests;
+- governed Solution policy dry-run;
+- outcome materialization dry-run;
+- GBrain health/source state;
+- native Hermes→GBrain MCP connectivity;
+- absence of retired compatibility artifacts;
+- live read-only workflow discovery, status and reconcile dry-run.
 
-## 7. Service identity and permissions
+For a real ticket, verify the worker actually receives and calls `xstudio_l2` and native GBrain MCP as appropriate.
 
-Use the real Hermes/XStudio service identity where the audited SQL runtime accepts a user ID.
+## 7. Runtime authority
 
-The SQL login must have only the operational permissions required by the deterministic runtime across the relevant XStudio databases.
+Workers do not mutate the visible Helpdesk ticket directly.
 
-Investigators and reviewers do not directly update `Complaint_Mst_Tbl`; approved ticket publication goes through the audited deterministic path.
+The deterministic lifecycle owns claim, recovery, publish and workflow transitions. The investigator and reviewer only produce/verify structured evidence-backed proposals.
