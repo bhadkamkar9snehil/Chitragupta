@@ -113,6 +113,85 @@ def test_typed_tool_guard_requires_operation_specific_arguments() -> None:
     assert "object_name" in blocked["message"]
 
 
+def test_named_tool_schemas_have_small_required_contracts() -> None:
+    expected = {
+        "xstudio_select": {"database", "table", "columns"},
+        "xstudio_query": {"database", "sql"},
+        "xstudio_suggest_tables": {"database", "search"},
+        "xstudio_find_objects": {"database", "search"},
+        "xstudio_get_definition": {"database", "object_name"},
+        "xstudio_validate_identifiers": {"database", "table"},
+        "xstudio_read_procedure": {"database", "run_id", "procedure", "parameters"},
+        "xstudio_resolve_heat": {"database", "heat"},
+        "xstudio_get_ticket_context": {"ticket_id"},
+        "xstudio_get_run_actions": {"run_id"},
+        "xstudio_save_ledger": {"run_id", "ledger"},
+    }
+    assert set(plugin.TOOL_SCHEMAS) == set(expected)
+    for name, required in expected.items():
+        schema = plugin.TOOL_SCHEMAS[name]["parameters"]
+        assert set(schema["required"]) == required
+        assert schema["additionalProperties"] is False
+        assert "operation" not in schema["properties"]
+
+
+def test_register_exposes_named_tools_and_not_legacy_polymorphic_tool() -> None:
+    calls = []
+
+    class Context:
+        def register_tool(self, **kwargs):
+            calls.append(kwargs)
+
+        def register_hook(self, *args, **kwargs):
+            pass
+
+    plugin.register(Context())
+    names = {call["name"] for call in calls}
+    assert names == set(plugin.TOOL_SCHEMAS)
+    assert "xstudio_l2" not in names
+
+
+def test_repairable_context_is_injected_before_budget() -> None:
+    plugin._pre_llm_call(
+        task_id="task-context",
+        user_message="Current run_id: RUN-1\nCurrent ticket_id: TICKET-1",
+    )
+    modified = plugin._pre_tool_call(
+        "xstudio_resolve_heat", {"heat": "H99328"}, task_id="task-context"
+    )
+    assert modified and modified["action"] == "modify"
+    assert modified["args"]["database"] == "XStudio_Xbatch"
+    assert modified["args"]["run_id"] == "RUN-1"
+    with plugin._lock:
+        assert plugin._session_calls["task-context"] == 1
+
+
+def test_ambiguous_missing_database_is_rejected_before_budget() -> None:
+    blocked = plugin._pre_tool_call(
+        "xstudio_suggest_tables", {"search": "SAP posting pending"}, task_id="ambiguous"
+    )
+    assert blocked and blocked["action"] == "block"
+    assert "database" in blocked["message"]
+    with plugin._lock:
+        assert plugin._session_calls["ambiguous"] == 0
+
+
+def test_named_handler_injects_operation_without_exposing_it() -> None:
+    captured = {}
+
+    def fake_invoke(args):
+        captured.update(args)
+        return '{"ok":true}'
+
+    with mock.patch.object(plugin, "_invoke_bridge", side_effect=fake_invoke):
+        result = plugin.TOOL_HANDLERS["xstudio_query"](
+            {"database": "XStudio_Xbatch", "sql": "SELECT 1"}, task_id="task-1"
+        )
+    assert json.loads(result)["ok"] is True
+    assert captured["operation"] == "query"
+    assert "operation" not in {"database": "XStudio_Xbatch", "sql": "SELECT 1"}
+
+
 def test_plugin_manifest_declares_registered_toolset() -> None:
     manifest = (ROOT / "xstudio_l2_tools_plugin" / "plugin.yaml").read_text(encoding="utf-8")
     assert "provides_tools:" in manifest
