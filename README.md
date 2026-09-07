@@ -1,8 +1,8 @@
 # Chitragupta — XStudio Support on Hermes
 
-Chitragupta is the XStudio/Helpdesk domain layer running on the Hermes agent harness.
+Chitragupta is the XStudio/Helpdesk domain layer running on Hermes.
 
-## Physical topology
+## Architecture
 
 ```text
 Laptop Windows
@@ -10,8 +10,8 @@ Laptop Windows
 
 Laptop WSL2
   Hermes backend
-  Chitragupta runtime
-  GBrain MCP server/client
+  Chitragupta L2 lifecycle
+  native GBrain MCP
   ~/.hermes/xstudio-gbrain
 
 Desktop Windows
@@ -21,73 +21,70 @@ Remote Windows VM
   XStudio / Helpdesk SQL Server
 ```
 
-Hermes owns agent/session lifecycle, Kanban dispatch, gateways, MCP, skills and scheduling.
+Hermes owns agent/session lifecycle, Kanban dispatch, gateways, MCP and scheduling.
 GBrain owns organizational retrieval, embeddings, graph, ingestion and maintenance.
 Chitragupta owns Helpdesk lifecycle semantics and typed XStudio evidence.
 
-## Support flow
+## L2
 
 ```text
-L1 (planned)
-  shared XStudio GBrain
-  known-answer / documentation / known-resolution support
-  unresolved -> Helpdesk ticket
-
-L2
-  deterministic claim
+eligible Helpdesk ticket
+  -> deterministic claim
   -> investigator
   -> frozen proposal
   -> independent reviewer
      -> approve -> deterministic publish
-     -> reject  -> bounded rework
+     -> reject  -> bounded rework -> fresh review
 ```
 
-L1 and L2 share the same organizational GBrain. Do not create separate duplicate knowledge bases.
+Global active SQL WIP is 1. Review priority is 30, rework 20, new investigation 10.
+
+The only scheduled Chitragupta lifecycle command is:
+
+```bash
+python3 Model_Bench/l2_pipeline_runtime.py scout
+```
+
+The public operator modes are only:
+
+```text
+scout
+reconcile
+status
+```
 
 ## GBrain
 
-The installed brain is:
+The shared organizational brain is:
 
 ```text
 ~/.hermes/xstudio-gbrain
 ```
 
-The main/operator Hermes has the full GBrain MCP surface. Autonomous L2 workers use the same native MCP server with a read-only tool allow-list (`search`, `query`, page/chunk reads, links/backlinks/timeline/graph and read-only diagnostics).
+The main/operator Hermes may use the full native GBrain MCP surface. L2 workers use a filtered read surface for search, hybrid query, page/chunk retrieval, links/backlinks, graph/timeline and read-only diagnostics.
 
-`xstudio-l2-tools` no longer wraps GBrain. It exposes only `xstudio_l2`.
+There is no Chitragupta GBrain search wrapper, synchronizer or MCP proxy.
 
-Canonical sources include committed `Knowledge/`, full `Reference Documents/`, governed reusable Solutions and reviewed approved/rejected/reopened historical cases. Full schema and stored-procedure Markdown references are authoritative and must not be deleted.
+L1 and L2 will use this same organizational brain.
 
-GBrain maintenance/autopilot owns index/embedding/graph convergence. Chitragupta only materializes domain data that GBrain should ingest.
+## Evidence
 
-## Live evidence
+Current-ticket truth comes from `xstudio_l2`. GBrain material is reusable reference/history and must not be treated as proof of current state.
 
-Current-ticket truth comes from `xstudio_l2`.
+The full schema and stored-procedure references under `Reference Documents/` are authoritative engineering evidence and must be preserved.
 
-The current Windows bridge remains intentionally because the working SQL transport is:
+## History and reusable Solutions
 
-```text
-Hermes in WSL2 -> Windows Python/pyodbc -> remote SQL Server VM
-```
-
-It should be removed only after WSL-native SQL connectivity is proven equivalent.
-
-## Learning
-
-Reviewed Helpdesk outcomes are materialized as labelled historical cases. GBrain indexes those cases directly. Chitragupta no longer maintains a candidate-miner/curator pipeline or a second GBrain synchronization framework.
+Reviewed approved/rejected/reopened outcomes are materialized as labelled historical cases for GBrain ingestion.
 
 Helpdesk Solutions enter reusable retrieval only when their semantic hash matches `deploy/solution_export_policy.json`.
-
-## Current temporary compatibility
-
-`Model_Bench/l2_gbrain.py` and `kb_retrieval.py` remain only for the old dispatch-time prefetch path in `l2_pipeline_runtime.py`. Workers themselves use native GBrain MCP. These two files are next cleanup targets.
 
 ## Profiles
 
 ```text
 l2-investigator          Kanban dispatcher only
-l2-investigator-primary  investigator worker: Kanban + xstudio_l2 + read-only GBrain MCP
-l2-reviewer-primary      reviewer worker: Kanban + xstudio_l2 + read-only GBrain MCP
+l2-investigator-primary  investigator: Kanban + xstudio_l2 + native read-only GBrain MCP
+l2-reviewer-primary      reviewer: Kanban + xstudio_l2 + native read-only GBrain MCP
 ```
 
 ## Deployment
@@ -102,6 +99,8 @@ bash Model_Bench/deploy_l2_pipeline_runtime.sh
 bash Model_Bench/validate_l2_pipeline_local.sh
 ```
 
+`Model_Bench` is now only a historical directory name. The benchmark programs are gone. After this cleaned L2 deployment is proven live, the surviving production files can be moved to a final `l2/` package without changing architecture.
+
 ## Rule
 
-Keep one owner for each responsibility. Do not recreate Hermes or GBrain features inside Chitragupta.
+One owner per responsibility. Do not recreate Hermes or GBrain features inside Chitragupta.

@@ -9,31 +9,30 @@ GBRAIN_HOME="${XSTUDIO_GBRAIN_HOME:-$HOME/.hermes/xstudio-gbrain}"
 
 PY_FILES=(
   Model_Bench/l2_pipeline_runtime.py
-  Model_Bench/kb_retrieval.py
-  Model_Bench/ticket_scout.py
+  Model_Bench/configure_helpdesk_workflow.py
   Model_Bench/xstudio_l2_tool_bridge.py
   Model_Bench/xstudio_l2_tools_plugin/__init__.py
-  Model_Bench/l2_gbrain.py
   Model_Bench/sync_l2_approved_solutions.py
   Model_Bench/sync_l2_outcomes.py
 )
 
 CONTRACT_TESTS=(
   Model_Bench/test_l2_pipeline_runtime.py
-  Model_Bench/test_l2_gbrain.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
   Model_Bench/test_sync_l2_outcomes.py
   Model_Bench/test_sync_l2_approved_solutions.py
 )
 
-SH_FILES=(
-  Model_Bench/deploy_l2_pipeline_runtime.sh
-  Model_Bench/validate_l2_pipeline_local.sh
-)
-
 echo "== Syntax =="
-bash -n "${SH_FILES[@]}"
+bash -n Model_Bench/deploy_l2_pipeline_runtime.sh Model_Bench/validate_l2_pipeline_local.sh
 python3 -m py_compile "${PY_FILES[@]}" "${CONTRACT_TESTS[@]}"
+
+echo "== Focused owner tests =="
+python3 -m unittest \
+  Model_Bench/test_l2_pipeline_runtime.py \
+  Model_Bench/test_xstudio_l2_tools_plugin.py \
+  Model_Bench/test_sync_l2_outcomes.py \
+  Model_Bench/test_sync_l2_approved_solutions.py
 
 echo "== Governed Solution policy =="
 python3 Model_Bench/sync_l2_approved_solutions.py \
@@ -50,30 +49,27 @@ GBRAIN_HOME="$GBRAIN_HOME" gbrain --version
 GBRAIN_HOME="$GBRAIN_HOME" gbrain doctor --json
 GBRAIN_HOME="$GBRAIN_HOME" gbrain sources list --json
 
-echo "== Hermes MCP =="
+echo "== Hermes native GBrain MCP =="
 hermes mcp test gbrain
 
-echo "== Retired deployment guard =="
+echo "== Retired compatibility guard =="
+for path in \
+  Model_Bench/kb_retrieval.py \
+  Model_Bench/l2_gbrain.py \
+  Model_Bench/test_l2_gbrain.py \
+  Model_Bench/ticket_scout.py \
+  deploy/skills/xstudio/xstudio-l2-ticket-workflow/SKILL.md \
+  deploy/skills/xstudio/xstudio-l2-draft-verifier/SKILL.md \
+  deploy/skills/xstudio/xstudio-sql-write-discipline/SKILL.md
+do
+  [[ ! -e "$path" ]] || { echo "FAIL: retired repo artifact exists: $path" >&2; exit 1; }
+done
+
 DEPLOYED_SCRIPTS="$HOME/.hermes/profiles/l2-investigator/scripts"
-for retired in \
-  dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py \
-  reconcile_l2_pipeline.py kanban_approval_publisher.py kanban_reject_bridge.py \
-  repair_incomplete_completions.py enforce_publish_safety_net.py audit_kanban_completions.py \
-  l2_pipeline_runtime_core.py l2_pipeline_context_helpers.py \
-  l2_pipeline_context_cards.py l2_pipeline_context_scout.py \
-  l2_context_envelope.py l2_context_delivery.py l2_context_delivery_base.py \
-  l2_context_delivery_assembly.py l2_context_delivery_receipts.py \
-  kb_retrieval_base.py kb_retrieval_cli.py kb_retrieval_corpus.py kb_retrieval_routing.py \
-  setup_mem0.py seed_mem0_lessons.py reapply_mem0_patch.py \
-  run_coalesced.py drain_l2_trace_log.py drain_and_summarize.py \
-  generate_readable_trace_summary.py validate_action_capabilities.py \
-  mine_l2_action_capability_candidates.py l2_action_capability_curator.py \
-  sync_l2_learning_corpus.py build_l2_historical_retrieval_eval.py \
-  benchmark_l2_learning_retrieval.py validate_knowledge_manifest.py \
-  mine_l2_learning_candidates.py l2_learning_curator.py sync_l2_gbrain.py l2_learning_cycle.py
+for retired in kb_retrieval.py l2_gbrain.py ticket_scout.py sync_l2_gbrain.py l2_learning_cycle.py
 do
   [[ ! -e "$DEPLOYED_SCRIPTS/$retired" ]] || {
-    echo "FAIL: retired script still deployed: $retired" >&2
+    echo "FAIL: retired deployed script exists: $retired" >&2
     exit 1
   }
 done
@@ -85,10 +81,10 @@ python3 Model_Bench/l2_pipeline_runtime.py reconcile --dry-run
 
 cat <<'EOF'
 
-LOCAL VALIDATION COMPLETE
+L2 VALIDATION COMPLETE
 
-Hermes owns the agent harness, sessions, and native GBrain MCP integration.
+Hermes owns agent execution, sessions, Kanban and native GBrain MCP.
 GBrain owns retrieval/index/graph/maintenance.
-Chitragupta owns the Helpdesk lifecycle, typed XStudio evidence boundary,
-reviewed outcome materialization, and governed Solution export.
+Chitragupta owns only the deterministic Helpdesk lifecycle, typed live
+XStudio evidence, reviewed outcome materialization and governed Solution export.
 EOF

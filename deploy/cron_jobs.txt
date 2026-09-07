@@ -15,14 +15,11 @@
     Schedule:  every 2m
     Repeat:    ∞
     Deliver:   local
-    Script:    ticket_scout.py
+    Script:    l2_pipeline_runtime.py scout
     Mode:      no-agent (script stdout delivered directly)
 
 Notes:
-- `ticket_scout.py` is the only scheduled Chitragupta L2 lifecycle entrypoint. It runs the
-  deterministic lifecycle reconciler before attempting a new claim and then performs the
-  best-effort learning/GBrain convergence cycle.
-- Reviewer publication, rejection handling, repair and orphan recovery are all owned by
-  `l2_pipeline_runtime.py`; there are no separate publisher/reject/audit lifecycle jobs.
-- Hermes owns session maintenance and memory-provider plumbing. Chitragupta does not run
-  a custom Mem0 patch/reapply/Qdrant job.
+- `l2_pipeline_runtime.py scout` is the only scheduled Chitragupta lifecycle entrypoint.
+- Each scout reconciles existing work before any new claim and performs best-effort reviewed-outcome materialization.
+- Reviewer publication, rejection handling, repair and orphan recovery are internal lifecycle steps, not separate jobs.
+- Hermes owns session maintenance. GBrain owns its own sync/embedding/graph/dream/maintenance jobs.
