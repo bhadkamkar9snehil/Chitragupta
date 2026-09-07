@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Windows-side bridge for the xstudio_l2 Hermes plugin.
+"""Guarded SQL bridge for the xstudio_l2 Hermes plugin.
 
 A JSON request arrives on stdin; a bounded JSON response leaves on stdout.
 
 This file is the only L2 worker-facing place that knows how to import the
-Windows pyodbc-backed Hermes_Orchestrator module. Keeping that knowledge here
+pyodbc-backed Hermes_Orchestrator module. Keeping that knowledge here
 is the whole point: the model never composes an interpreter path, a driver
 import, a credential, or a connection string, so it cannot repeat the
 Ticket_424 failure of trying to build that transport itself.
@@ -37,11 +37,10 @@ if str(REPO_ROOT) not in sys.path:
 def _orchestrator():
     """Import the guarded orchestrator primitives lazily.
 
-    Deliberately not a module-level import. This file runs under the Windows
-    interpreter (the only one with pyodbc), but its pure guard logic --
+    Deliberately not a module-level import. Its pure guard logic --
     read-only checking, the procedure allowlist, response bounding -- is also
-    exercised by the WSL-side contract tests, where pyodbc does not exist by
-    design. A lazy import keeps those testable and turns a missing driver into
+    exercised without a live database dependency. A lazy import keeps those
+    testable and turns a missing driver into
     a clean JSON error instead of an import traceback.
     """
     import Hermes_Orchestrator  # noqa: PLC0415

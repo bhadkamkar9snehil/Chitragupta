@@ -10,8 +10,8 @@ overflowed context. That is an agent-computer-interface defect, not a
 lifecycle defect, so it is fixed at the harness boundary rather than taught
 through mem0.
 
-The model calls ONE typed tool. This plugin invokes the Windows bridge itself,
-so the model never composes Windows/WSL paths, interpreters, pyodbc, or
+The model calls ONE typed tool. This plugin invokes the bridge itself using the
+current Hermes Python environment, so the model never composes paths, interpreters, pyodbc, or
 credentials. The same plugin blocks the retired shell transport, injects the
 execution contract ahead of the LLM turn (so pre-migration cards carrying a raw
 command recipe cannot steer the worker back), and bounds call count / repeated
@@ -23,12 +23,15 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import threading
 from collections import defaultdict
 from typing import Any
 
-WINDOWS_PYTHON = "/mnt/c/Python314/python.exe"
-BRIDGE_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\xstudio_l2_tool_bridge.py"
+BRIDGE_PATH = os.environ.get(
+    "L2_XSTUDIO_BRIDGE",
+    "/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Model_Bench/xstudio_l2_tool_bridge.py",
+)
 TOOL_NAME = "xstudio_l2"
 TOOLSET = "xstudio_l2"
 
@@ -113,16 +116,15 @@ def _parse_result(result: Any) -> dict[str, Any]:
 
 
 def _invoke_bridge(params: dict[str, Any]) -> str:
-    """Run the Windows bridge directly.
+    """Run the guarded bridge directly in the current Hermes environment.
 
     This is trusted harness code, not a model-driven terminal call, so it is the
-    one place the Windows interpreter is named. Note the argv shape: the Windows
-    interpreter is argv[0] and the bridge script argv[1] -- never prefixed with
-    `python3`, which is precisely the mistake Ticket_424 kept retrying.
+    bridge script is argv[1]. Native WSL execution avoids crossing into Windows
+    while retaining the same typed boundary and safety checks.
     """
     try:
         proc = subprocess.run(
-            [WINDOWS_PYTHON, BRIDGE_WIN],
+            [sys.executable, BRIDGE_PATH],
             input=json.dumps(params, separators=(",", ":"), default=str),
             capture_output=True,
             text=True,

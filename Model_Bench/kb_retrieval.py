@@ -158,7 +158,7 @@ def knowledge_docs_for_routes(manifest: dict[str, Any], routes: list[dict[str, A
 
 def connect(server: str, database: str, username: str, password: str | None):
     if pyodbc is None:
-        raise RuntimeError("pyodbc is required for live KB retrieval; use the Windows Python deployment interpreter")
+        raise RuntimeError("pyodbc is required for live KB retrieval; install it in the backend Hermes WSL Python environment")
     if not password:
         raise RuntimeError("MSSQL_MCP_PASSWORD is required for KB retrieval")
     conn_str = (
