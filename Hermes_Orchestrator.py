@@ -742,11 +742,62 @@ class HermesL2Client:
             "EXEC dbo.Hermes_L2_Update_SQL_Action_Evidence_Usp "
             "@ActionID = ?, @BeforeJson = ?, @AfterJson = ?, @HermesUserID = ?;",
             (action_id,
-             json.dumps(before_json) if before_json is not None else None,
-             json.dumps(after_json) if after_json is not None else None,
+             json.dumps(before_json, default=str) if before_json is not None else None,
+             json.dumps(after_json, default=str) if after_json is not None else None,
              self.hermes_user_id),
         )
         self.conn.commit()
+
+    def execute_readonly_sql_with_rows(
+        self,
+        run_id: str,
+        database_name: str,
+        sql: str,
+        *,
+        schema_name: Optional[str] = None,
+        object_name: Optional[str] = None,
+        operation_name: Optional[str] = None,
+        purpose: Optional[str] = None,
+        parameters_json: Optional[Any] = None,
+    ) -> tuple[str, List[Dict[str, Any]]]:
+        """Execute one audited, code-owned read and return its result rows.
+
+        ``Hermes_L2_Execute_SQL_Usp`` is the authority that switches to the
+        requested evidence database and records SUCCESS/FAILED.  Calling the
+        same SELECT again through this Helpdesk-connected client is wrong: it
+        silently changes the database context and doubles the evidence read.
+        This method consumes the procedure's first data result set and final
+        audit result in one execution.
+        """
+        params_json = json.dumps(parameters_json) if parameters_json is not None else None
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            DECLARE @ActionIDOut varchar(36);
+            EXEC dbo.Hermes_L2_Execute_SQL_Usp
+                @RunID = ?, @DatabaseName = ?, @ActionType = 'READ', @SchemaName = ?,
+                @ObjectName = ?, @OperationName = ?, @Purpose = ?, @Sql = ?,
+                @ParametersJson = ?, @BeforeJson = NULL, @UseTransaction = 0,
+                @HermesUserID = ?, @ActionID = @ActionIDOut OUTPUT;
+            """,
+            (run_id, database_name, schema_name, object_name, operation_name,
+             purpose, sql, params_json, self.hermes_user_id),
+        )
+        rows: List[Dict[str, Any]] = []
+        action_id: Optional[str] = None
+        while True:
+            if cur.description:
+                current = _rows_as_dicts(cur)
+                if current and "HermesActionID" in current[0]:
+                    action_id = str(current[-1]["HermesActionID"])
+                elif current:
+                    rows = current
+            if not cur.nextset():
+                break
+        self.conn.commit()
+        if not action_id:
+            raise RuntimeError("Hermes_L2_Execute_SQL_Usp returned no action ID")
+        return action_id, rows
 
     # -- Response / workflow ----------------------------------------------
 

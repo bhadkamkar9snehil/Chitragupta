@@ -64,12 +64,25 @@ class PipelineContractTests(unittest.TestCase):
             create.assert_not_called()
 
     def test_failed_escalation_does_not_release_run(self):
-        with patch.object(mod, "_l3_exists", return_value=False), \
-                patch.object(mod, "run_orchestrator", side_effect=RuntimeError("handoff unavailable")) as run:
+        with patch.object(mod, "run_orchestrator", side_effect=RuntimeError("handoff unavailable")) as run:
             self.assertFalse(mod._escalate_run(mod.default_args(), run_id="run", ticket_id="ticket",
                                               reason="test", cycle=2, dry_run=False))
             self.assertEqual(run.call_count, 1)
-            self.assertIn("--escalate-blocked", run.call_args.args[1])
+            self.assertIn("--publish-response", run.call_args.args[1])
+
+    def test_review_cap_publishes_a_real_l3_handoff_not_a_failed_run(self):
+        with patch.object(mod, "run_orchestrator") as invoke, \
+                patch.object(mod, "_post_publish_activity") as activity:
+            self.assertTrue(mod._escalate_run(mod.default_args(), run_id="run-1", ticket_id="ticket-1",
+                                               reason="missing live API evidence", cycle=2, dry_run=False))
+        command = invoke.call_args.args[1]
+        self.assertIn("--publish-response", command)
+        self.assertIn("L3_ESCALATION", command)
+        self.assertNotIn("--fail-run", command)
+        self.assertNotIn("--escalate-blocked", command)
+        ledger = json.loads(command[command.index("--ledger") + 1])
+        self.assertEqual(ledger["evidence_location"], "Hermes_L2_SQL_Action_Trn_Tbl")
+        activity.assert_called_once()
 
     def test_odbc_driver_selection_prefers_installed_driver_18(self):
         self.assertEqual(

@@ -697,20 +697,34 @@ def _escalate_run(
         print(f"[DRY RUN] escalate run {run_id} after cycle {cycle}: {reason[:160]}")
         return True
     try:
-        # Persist the handoff before releasing SQL ownership. If this fails,
-        # reconciliation can retry while the run remains active.
-        if not _l3_exists(args, run_id):
-            run_orchestrator(args, [
-                "--escalate-blocked", "--run-id", run_id,
-                "--ticket-id", ticket_id,
-                "--block-reason", f"Automated review cycle cap reached after {cycle + 1} cycles. {reason[:1500]}",
-            ])
-        if safe_query_active_run(run_id, args):
-            run_orchestrator(args, [
-                "--fail-run", "--run-id", run_id,
-                "--error-message", f"Automated review cycle cap reached after {cycle + 1} cycles. {reason[:500]}",
-                "--retry-after-minutes", "999999",
-            ])
+        # Exhaustion is a deterministic L3 handoff, not a terminal support
+        # outcome called FAILED. The publisher records the terminal response,
+        # creates the L3 queue item, mirrors the human-facing note, and
+        # releases WIP atomically; SQL actions remain the detailed evidence.
+        handoff = {
+            "schema": "chitragupta.l2.escalation-handoff.v1",
+            "run_id": run_id,
+            "ticket_id": ticket_id,
+            "review_cycles_completed": cycle + 1,
+            "reason": reason[:3000],
+            "outcome": "L3_ESCALATION",
+            "evidence_location": "Hermes_L2_SQL_Action_Trn_Tbl",
+        }
+        reply = (
+            "Automated L2 did not reach an evidence-supported conclusion within its bounded "
+            f"review/rework budget ({cycle + 1} cycles). A human L3 investigation has been "
+            "created with the complete run audit and the specific remaining objection. "
+            f"Remaining issue: {reason[:1200]}"
+        )
+        run_orchestrator(args, [
+            "--publish-response", "--run-id", run_id, "--force-run-id",
+            "--response-type", "L3_ESCALATION", "--reply-text", reply,
+            "--ledger", json.dumps(handoff, separators=(",", ":")),
+            "--mirror-to-support-remarks",
+        ])
+        _post_publish_activity(args, run_id, ticket_id, {
+            "response_type": "L3_ESCALATION", "reply_text": reply,
+        })
     except RuntimeError as exc:
         print(f"WARNING: escalation failed for {run_id}: {exc}")
         return False

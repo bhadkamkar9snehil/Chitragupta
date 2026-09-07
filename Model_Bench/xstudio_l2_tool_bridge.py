@@ -267,15 +267,15 @@ def _semantic_read(client: Any, *, run_id: str, sql: str, parameters: tuple[Any,
     uses DB-API parameters; audit text contains only normalized numeric input.
     """
     audit_sql = sql.replace("?", str(parameters[0])) if parameters else sql
-    action_id = client.execute_sql(
-        run_id=run_id, database_name="XStudio_Xbatch", action_type="READ",
-        sql=audit_sql, schema_name="dbo", object_name=object_name,
-        operation_name=operation_name, purpose=purpose,
-        parameters_json={"heat": parameters[0]} if parameters else {}, use_transaction=False,
+    # The Helpdesk audit SP executes this fixed SELECT in XStudio_Xbatch and
+    # returns both its rows and action ID.  Do not repeat it on the bridge's
+    # Helpdesk connection: that was both a duplicate read and the source of
+    # false "invalid object" errors against the wrong database.
+    action_id, rows = client.execute_readonly_sql_with_rows(
+        run_id=run_id, database_name="XStudio_Xbatch", sql=audit_sql,
+        schema_name="dbo", object_name=object_name, operation_name=operation_name,
+        purpose=purpose, parameters_json={"heat": parameters[0]} if parameters else {},
     )
-    cur = client.conn.cursor()
-    cur.execute(sql, parameters)
-    rows = _orchestrator()._rows_as_dicts(cur)
     if action_id:
         client.update_sql_action_evidence(action_id, after_json=rows[:MAX_LIST_ITEMS])
     return rows[:MAX_LIST_ITEMS], {"action_id": action_id, "operation": operation_name}

@@ -97,6 +97,22 @@ def _redact(value: str) -> str:
 _DATA_DIR = Path.home() / ".hermes" / "plugin-data" / "xstudio-l2-trace"
 _EVENTS_PATH = _DATA_DIR / "events.jsonl"
 
+
+def _profile_name_from_process() -> Optional[str]:
+    """Return the Hermes profile selected for this worker process.
+
+    Hermes does not currently include the profile name in observer-hook kwargs,
+    but the worker command line always carries ``-p NAME`` or ``--profile NAME``.
+    Resolve it once so every event can be separated by investigator/reviewer.
+    """
+    for index, arg in enumerate(sys.argv[:-1]):
+        if arg in {"-p", "--profile"}:
+            return sys.argv[index + 1]
+    return os.getenv("HERMES_PROFILE") or os.getenv("HERMES_PROFILE_NAME")
+
+
+_PROFILE_NAME = _profile_name_from_process()
+
 # Import-time marker -- proves the module was actually imported by whatever
 # process loaded it, independent of whether any hook has fired yet. Debug
 # aid only; safe to leave in permanently (negligible cost, fires once).
@@ -218,6 +234,7 @@ def _identity_fields(kwargs: Dict[str, Any]) -> Dict[str, Any]:
         "api_request_id": kwargs.get("api_request_id"),
         "run_id": ids.get("run_id"),
         "ticket_id": ids.get("ticket_id"),
+        "profile_name": _PROFILE_NAME,
     }
 
 
@@ -244,12 +261,20 @@ def on_post_tool_call(**kwargs) -> None:
 
 
 def on_post_api_request(**kwargs) -> None:
+    started_at = kwargs.get("started_at")
+    first_chunk_at = kwargs.get("first_chunk_at")
+    api_duration = kwargs.get("api_duration")
+    ttft_ms = None
+    if isinstance(started_at, (int, float)) and isinstance(first_chunk_at, (int, float)):
+        ttft_ms = max(0, round((first_chunk_at - started_at) * 1000))
     _write_event({
         "event_type": "post_api_request",
         **_identity_fields(kwargs),
         "model": kwargs.get("model"),
         "provider": kwargs.get("provider"),
         "api_duration": kwargs.get("api_duration"),
+        "api_duration_ms": round(api_duration * 1000) if isinstance(api_duration, (int, float)) else None,
+        "ttft_ms": ttft_ms,
         "finish_reason": kwargs.get("finish_reason"),
         "usage": kwargs.get("usage"),
         "assistant_content_chars": kwargs.get("assistant_content_chars"),

@@ -403,6 +403,27 @@ def test_read_procedure_escapes_quotes_in_parameter_values() -> None:
     assert "O''Brien''" in captured["sql"]
 
 
+def test_semantic_read_executes_once_through_the_audited_database_path() -> None:
+    captured = {}
+
+    class FakeClient:
+        def execute_readonly_sql_with_rows(self, **kwargs):
+            captured.update(kwargs)
+            return "action-1", [{"HeatID": 1602522}]
+        def update_sql_action_evidence(self, *args, **kwargs):
+            captured["evidence"] = (args, kwargs)
+
+    rows, ref = bridge._semantic_read(
+        FakeClient(), run_id="run-1", sql="SELECT HeatID FROM dbo.EAF_PER_HEAT WHERE HeatID = ?",
+        parameters=(1602522,), operation_name="l2_heat_eaf", object_name="EAF_PER_HEAT",
+        purpose="Canonical EAF state for heat",
+    )
+    assert rows == [{"HeatID": 1602522}]
+    assert ref == {"action_id": "action-1", "operation": "l2_heat_eaf"}
+    assert captured["database_name"] == "XStudio_Xbatch"
+    assert captured["sql"].endswith("HeatID = 1602522")
+
+
 def test_database_must_be_explicitly_allowlisted() -> None:
     try:
         bridge._database({"database": "master"})
