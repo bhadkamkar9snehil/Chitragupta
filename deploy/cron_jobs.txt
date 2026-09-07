@@ -8,18 +8,19 @@
     Repeat:    ∞
     Deliver:   local
     Script:    session_maintenance.py
-    Mode:      no-agent (script stdout delivered directly)
+    Mode:      no-agent
 
   f1915c187f11 [active]
     Name:      L2 Ticket Scout
     Schedule:  every 2m
     Repeat:    ∞
     Deliver:   local
-    Script:    l2_pipeline_runtime.py scout
-    Mode:      no-agent (script stdout delivered directly)
+    Profile:   l2-investigator
+    Script:    l2_pipeline_runtime.py
+    Mode:      no-agent
 
 Notes:
-- `l2_pipeline_runtime.py scout` is the only scheduled Chitragupta lifecycle entrypoint.
-- Each scout reconciles existing work before any new claim and performs best-effort reviewed-outcome materialization.
-- Reviewer publication, rejection handling, repair and orphan recovery are internal lifecycle steps, not separate jobs.
-- Hermes owns session maintenance. GBrain owns its own sync/embedding/graph/dream/maintenance jobs.
+- `l2_pipeline_runtime.py` defaults to `scout` when invoked with no positional mode, which is how Hermes no-agent script jobs execute it.
+- Scout is the only scheduled Chitragupta L2 lifecycle entrypoint. It reconciles existing work before attempting a new claim.
+- Publication, rejection handling, normalization and orphan recovery are internal lifecycle operations, not separate jobs.
+- Hermes owns session maintenance. GBrain owns its own sync/embedding/graph/dream/maintenance scheduling.

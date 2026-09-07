@@ -10,6 +10,7 @@ This module owns only the Helpdesk lifecycle:
                       reject  -> bounded rework -> fresh reviewer
 
 There is one active SQL run at a time. Review/rework always outrank a new claim.
+When invoked without a mode (as a Hermes no-agent cron script), it runs `scout`.
 """
 from __future__ import annotations
 
@@ -33,7 +34,6 @@ DEFAULT_ELIGIBLE_STATUS = "Enter"
 
 INVESTIGATOR_PROFILE = os.environ.get("L2_INVESTIGATOR_PROFILE", "l2-investigator-primary")
 REVIEWER_PROFILE = os.environ.get("L2_REVIEWER_PROFILE", "l2-reviewer-primary")
-# Keep the retired reviewer name readable only so old cards can be reconciled safely.
 REVIEWER_PROFILES = {REVIEWER_PROFILE, "l2-reviewer-primary", "l2-reviewer-fallback"}
 INVESTIGATOR_PROFILES = {INVESTIGATOR_PROFILE, "l2-investigator-primary", "l2-investigator"}
 
@@ -69,12 +69,7 @@ def _orch_python() -> str:
 
 
 def _base_orchestrator_args(args: argparse.Namespace) -> list[str]:
-    cmd = [
-        _orch_python(), ORCHESTRATOR_WIN,
-        "--server", args.server,
-        "--database", args.database,
-        "--username", args.username,
-    ]
+    cmd = [_orch_python(), ORCHESTRATOR_WIN, "--server", args.server, "--database", args.database, "--username", args.username]
     if args.password:
         cmd += ["--password", args.password]
     return cmd
@@ -82,12 +77,7 @@ def _base_orchestrator_args(args: argparse.Namespace) -> list[str]:
 
 def run_orchestrator(args: argparse.Namespace, extra: Iterable[str], *, timeout: int = 60) -> Any:
     try:
-        result = subprocess.run(
-            _base_orchestrator_args(args) + list(extra),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        result = subprocess.run(_base_orchestrator_args(args) + list(extra), capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(f"orchestrator invocation failed: {type(exc).__name__}: {exc}") from exc
     if result.returncode != 0:
@@ -195,13 +185,7 @@ def _completion_metadata(task: dict[str, Any]) -> Optional[dict[str, Any]]:
 
 
 def _proposal_complete(metadata: Optional[dict[str, Any]]) -> bool:
-    return bool(
-        metadata
-        and metadata.get("run_id")
-        and metadata.get("ticket_id")
-        and metadata.get("response_type")
-        and str(metadata.get("reply_text") or "").strip()
-    )
+    return bool(metadata and metadata.get("run_id") and metadata.get("ticket_id") and metadata.get("response_type") and str(metadata.get("reply_text") or "").strip())
 
 
 def load_workflow_binding() -> dict[str, Any]:
@@ -215,27 +199,16 @@ def load_workflow_binding() -> dict[str, Any]:
         if isinstance(data, dict):
             data["_path"] = str(path)
             return data
-    return {
-        "schema_version": 1,
-        "eligible_ticket_status": DEFAULT_ELIGIBLE_STATUS,
-        "strict_resolution_status_binding": True,
-        "allow_metadata_status_override": False,
-        "_path": None,
-    }
+    return {"schema_version": 1, "eligible_ticket_status": DEFAULT_ELIGIBLE_STATUS, "strict_resolution_status_binding": True, "allow_metadata_status_override": False, "_path": None}
 
 
 def _binding_ready_for_claims(binding: dict[str, Any]) -> tuple[bool, Optional[str]]:
     if binding.get("strict_resolution_status_binding", True) and not binding.get("resolved_ticket_status"):
-        return False, (
-            "resolved_ticket_status is not configured; run configure_helpdesk_workflow.py "
-            "against the live Helpdesk before new claims."
-        )
+        return False, "resolved_ticket_status is not configured; run configure_helpdesk_workflow.py against the live Helpdesk before new claims."
     return True, None
 
 
-def _status_args_for_response(
-    binding: dict[str, Any], metadata: dict[str, Any]
-) -> tuple[list[str], Optional[str]]:
+def _status_args_for_response(binding: dict[str, Any], metadata: dict[str, Any]) -> tuple[list[str], Optional[str]]:
     response_type = str(metadata.get("response_type") or "").upper()
     out: list[str] = []
     expected_status: Optional[str] = None
@@ -245,10 +218,7 @@ def _status_args_for_response(
     if response_type == "RESOLUTION":
         expected_status = override or binding.get("resolved_ticket_status")
         if not expected_status and binding.get("strict_resolution_status_binding", True):
-            raise RuntimeError(
-                "RESOLUTION approved but workflow binding has no resolved_ticket_status; "
-                "refusing to complete Hermes while leaving Helpdesk unresolved."
-            )
+            raise RuntimeError("RESOLUTION approved but workflow binding has no resolved_ticket_status; refusing to complete Hermes while leaving Helpdesk unresolved.")
     elif response_type == "QUESTION":
         expected_status = override or binding.get("waiting_user_ticket_status")
         if ask := binding.get("waiting_user_ask_status"):
@@ -256,11 +226,7 @@ def _status_args_for_response(
     elif response_type == "L3_ESCALATION":
         expected_status = override or binding.get("l3_ticket_status")
     elif response_type == "NEEDS_HUMAN_ACTION":
-        expected_status = (
-            override
-            or binding.get("needs_human_action_ticket_status")
-            or binding.get("l3_ticket_status")
-        )
+        expected_status = override or binding.get("needs_human_action_ticket_status") or binding.get("l3_ticket_status")
 
     if expected_status:
         out += ["--new-ticket-status", str(expected_status)]
@@ -268,27 +234,13 @@ def _status_args_for_response(
 
 
 def default_args() -> argparse.Namespace:
-    return argparse.Namespace(
-        server=os.environ.get("MSSQL_MCP_SERVER") or DEFAULT_SERVER,
-        database=DEFAULT_DATABASE,
-        username=os.environ.get("MSSQL_MCP_USER") or DEFAULT_USER,
-        password=os.environ.get("MSSQL_MCP_PASSWORD"),
-        eligible_status=DEFAULT_ELIGIBLE_STATUS,
-        stale_after_minutes=ORPHAN_GRACE_MINUTES,
-        dry_run=False,
-    )
+    return argparse.Namespace(server=os.environ.get("MSSQL_MCP_SERVER") or DEFAULT_SERVER, database=DEFAULT_DATABASE, username=os.environ.get("MSSQL_MCP_USER") or DEFAULT_USER, password=os.environ.get("MSSQL_MCP_PASSWORD"), eligible_status=DEFAULT_ELIGIBLE_STATUS, stale_after_minutes=ORPHAN_GRACE_MINUTES, dry_run=False)
 
 
-def safe_query_active_run(
-    run_id: str, args: Optional[argparse.Namespace] = None
-) -> list[dict[str, Any]]:
+def safe_query_active_run(run_id: str, args: Optional[argparse.Namespace] = None) -> list[dict[str, Any]]:
     args = args or default_args()
     safe = run_id.replace("'", "''")
-    sql = (
-        "SELECT ID, TicketID, ProcessStatus, IsActive, ResponseType, ReplyText, ClaimedOn, HeartbeatOn "
-        "FROM dbo.Hermes_L2_Response_Trn_Tbl "
-        f"WHERE ID = '{safe}' AND IsDeleted = 0 AND IsActive = 1"
-    )
+    sql = "SELECT ID, TicketID, ProcessStatus, IsActive, ResponseType, ReplyText, ClaimedOn, HeartbeatOn FROM dbo.Hermes_L2_Response_Trn_Tbl " + f"WHERE ID = '{safe}' AND IsDeleted = 0 AND IsActive = 1"
     try:
         rows = run_orchestrator(args, ["--query", sql])
     except RuntimeError:
@@ -297,34 +249,20 @@ def safe_query_active_run(
 
 
 def query_active_runs(args: argparse.Namespace) -> list[dict[str, Any]]:
-    rows = run_orchestrator(args, ["--query", (
-        "SELECT ID, TicketID, ProcessStatus, ClaimedOn, HeartbeatOn, "
-        "DATEDIFF(MINUTE, ISNULL(HeartbeatOn, ClaimedOn), GETDATE()) AS AgeMinutes "
-        "FROM dbo.Hermes_L2_Response_Trn_Tbl "
-        "WHERE IsActive = 1 AND IsDeleted = 0 ORDER BY ClaimedOn"
-    )])
+    rows = run_orchestrator(args, ["--query", "SELECT ID, TicketID, ProcessStatus, ClaimedOn, HeartbeatOn, DATEDIFF(MINUTE, ISNULL(HeartbeatOn, ClaimedOn), GETDATE()) AS AgeMinutes FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE IsActive = 1 AND IsDeleted = 0 ORDER BY ClaimedOn"])
     return rows if isinstance(rows, list) else []
 
 
 def _query_published_state(args: argparse.Namespace, run_id: str) -> list[dict[str, Any]]:
     safe = run_id.replace("'", "''")
-    rows = run_orchestrator(args, ["--query", (
-        "SELECT r.ID, r.TicketID, r.ProcessStatus, r.ResponseType, r.ReplyText, r.IsResolved, "
-        "r.NextEligibleOn, c.Status AS TicketStatus, c.AskStatus, c.SupportExecutiveRemarks "
-        "FROM dbo.Hermes_L2_Response_Trn_Tbl r "
-        "JOIN dbo.Complaint_Mst_Tbl c ON c.ID = r.TicketID "
-        f"WHERE r.ID = '{safe}' AND r.IsDeleted = 0"
-    )])
+    rows = run_orchestrator(args, ["--query", "SELECT r.ID, r.TicketID, r.ProcessStatus, r.ResponseType, r.ReplyText, r.IsResolved, r.NextEligibleOn, c.Status AS TicketStatus, c.AskStatus, c.SupportExecutiveRemarks FROM dbo.Hermes_L2_Response_Trn_Tbl r JOIN dbo.Complaint_Mst_Tbl c ON c.ID = r.TicketID " + f"WHERE r.ID = '{safe}' AND r.IsDeleted = 0"])
     return rows if isinstance(rows, list) else []
 
 
 def _l3_exists(args: argparse.Namespace, run_id: str) -> bool:
     safe = run_id.replace("'", "''")
     try:
-        rows = run_orchestrator(args, ["--query", (
-            "SELECT TOP 1 ID FROM dbo.Hermes_L3_Escalation_Trn_Tbl "
-            f"WHERE RunID = '{safe}' AND IsDeleted = 0"
-        )])
+        rows = run_orchestrator(args, ["--query", "SELECT TOP 1 ID FROM dbo.Hermes_L3_Escalation_Trn_Tbl " + f"WHERE RunID = '{safe}' AND IsDeleted = 0"])
     except RuntimeError:
         return False
     return bool(rows)
@@ -346,33 +284,17 @@ def normalize_investigator_completions(*, dry_run: bool = False) -> int:
         if not latest:
             continue
         metadata = dict(latest.get("metadata") or {})
-        candidate = {
-            **metadata,
-            "run_id": metadata.get("run_id") or task_run_id(task),
-            "ticket_id": metadata.get("ticket_id") or task_ticket_id(task),
-        }
+        candidate = {**metadata, "run_id": metadata.get("run_id") or task_run_id(task), "ticket_id": metadata.get("ticket_id") or task_ticket_id(task)}
         if _proposal_complete(candidate):
             continue
         summary = (latest.get("summary") or "").strip()
-        if len(summary) < MIN_SUMMARY_CHARS:
+        if len(summary) < MIN_SUMMARY_CHARS or not candidate.get("run_id") or not candidate.get("ticket_id"):
             continue
-        if not candidate.get("run_id") or not candidate.get("ticket_id"):
-            continue
-        metadata.update({
-            "run_id": candidate["run_id"],
-            "ticket_id": candidate["ticket_id"],
-            "response_type": metadata.get("response_type") or infer_response_type(summary),
-            "reply_text": metadata.get("reply_text") or summary,
-            "normalized_by": "l2_pipeline_runtime.py",
-        })
+        metadata.update({"run_id": candidate["run_id"], "ticket_id": candidate["ticket_id"], "response_type": metadata.get("response_type") or infer_response_type(summary), "reply_text": metadata.get("reply_text") or summary, "normalized_by": "l2_pipeline_runtime.py"})
         if dry_run:
             repaired += 1
             continue
-        result = run_hermes([
-            "kanban", "edit", task["id"],
-            "--result", summary[:500],
-            "--metadata", json.dumps(metadata, separators=(",", ":")),
-        ])
+        result = run_hermes(["kanban", "edit", task["id"], "--result", summary[:500], "--metadata", json.dumps(metadata, separators=(",", ":"))])
         if result.returncode == 0:
             repaired += 1
         else:
@@ -380,36 +302,14 @@ def normalize_investigator_completions(*, dry_run: bool = False) -> int:
     return repaired
 
 
-def create_reviewer_card(
-    *, source_task: dict[str, Any], proposal: dict[str, Any], dry_run: bool = False
-) -> Optional[str]:
+def create_reviewer_card(*, source_task: dict[str, Any], proposal: dict[str, Any], dry_run: bool = False) -> Optional[str]:
     run_id = str(proposal["run_id"])
     ticket_id = str(proposal["ticket_id"])
     ticket_no = body_field(source_task.get("body"), "ticket_no") or ticket_id
     cycle = task_review_cycle(source_task)
     proposal_json = json.dumps(proposal, separators=(",", ":"), default=str)
-    body = (
-        f"run_id: {run_id}\n"
-        f"ticket_id: {ticket_id}\n"
-        f"ticket_no: {ticket_no}\n"
-        f"investigation_task_id: {source_task['id']}\n"
-        f"review_cycle: {cycle}\n"
-        "pipeline_stage: review\n"
-        f"proposal_json: {proposal_json}\n\n"
-        "Review only the frozen proposal above. Independently verify its material claims "
-        "with current xstudio_l2 evidence. Native GBrain is supporting reference/history, "
-        "not current-ticket proof. Approve with kanban_complete or reject with kanban_block "
-        "and one specific actionable reason. The deterministic runtime owns publish/rework."
-    )
-    argv = [
-        "kanban", "create", f"REVIEW[{cycle}]: L2 {ticket_no}",
-        "--assignee", REVIEWER_PROFILE,
-        "--body", body,
-        "--priority", str(REVIEW_PRIORITY),
-        "--idempotency-key", f"review-{run_id}-{cycle}-{source_task['id']}",
-        "--max-runtime", "15m",
-        "--json",
-    ]
+    body = f"run_id: {run_id}\nticket_id: {ticket_id}\nticket_no: {ticket_no}\ninvestigation_task_id: {source_task['id']}\nreview_cycle: {cycle}\npipeline_stage: review\nproposal_json: {proposal_json}\n\nReview only the frozen proposal above. Independently verify its material claims with current xstudio_l2 evidence. Native GBrain is supporting reference/history, not current-ticket proof. Approve with kanban_complete or reject with kanban_block and one specific actionable reason. The deterministic runtime owns publish/rework."
+    argv = ["kanban", "create", f"REVIEW[{cycle}]: L2 {ticket_no}", "--assignee", REVIEWER_PROFILE, "--body", body, "--priority", str(REVIEW_PRIORITY), "--idempotency-key", f"review-{run_id}-{cycle}-{source_task['id']}", "--max-runtime", "15m", "--json"]
     if dry_run:
         return "dry-run"
     result = run_hermes(argv)
@@ -434,16 +334,12 @@ def ensure_missing_reviewers(args: argparse.Namespace, *, dry_run: bool = False)
         if _source_has_reviewer(tasks, task["id"]) or _source_has_rework(tasks, task["id"]):
             continue
         proposal = _completion_metadata(task)
-        if _proposal_complete(proposal) and create_reviewer_card(
-            source_task=task, proposal=proposal or {}, dry_run=dry_run
-        ):
+        if _proposal_complete(proposal) and create_reviewer_card(source_task=task, proposal=proposal or {}, dry_run=dry_run):
             created += 1
     return created
 
 
-def _persist_rejected_ledger(
-    args: argparse.Namespace, investigation_task_id: Optional[str], run_id: str
-) -> str:
+def _persist_rejected_ledger(args: argparse.Namespace, investigation_task_id: Optional[str], run_id: str) -> str:
     if not investigation_task_id:
         return ""
     done = [r for r in get_runs(investigation_task_id) if r.get("status") == "done"]
@@ -451,114 +347,45 @@ def _persist_rejected_ledger(
         return ""
     last = done[-1]
     metadata = last.get("metadata") or {}
-    ledger = {
-        "source": "rejected_attempt",
-        "prior_investigation_task_id": investigation_task_id,
-        "summary": (last.get("summary") or "").strip(),
-        **{
-            key: metadata[key]
-            for key in ("response_type", "reply_text", "findings", "root_cause", "resolution")
-            if metadata.get(key)
-        },
-    }
+    ledger = {"source": "rejected_attempt", "prior_investigation_task_id": investigation_task_id, "summary": (last.get("summary") or "").strip(), **{key: metadata[key] for key in ("response_type", "reply_text", "findings", "root_cause", "resolution") if metadata.get(key)}}
     try:
-        run_orchestrator(
-            args, ["--save-ledger", run_id, "--ledger", json.dumps(ledger)], timeout=45
-        )
+        run_orchestrator(args, ["--save-ledger", run_id, "--ledger", json.dumps(ledger)], timeout=45)
     except RuntimeError:
         pass
     return json.dumps(ledger, indent=2, default=str)[:3000]
 
 
-def _escalate_run(
-    args: argparse.Namespace,
-    *,
-    run_id: str,
-    ticket_id: str,
-    reason: str,
-    cycle: int,
-    dry_run: bool,
-) -> bool:
+def _escalate_run(args: argparse.Namespace, *, run_id: str, ticket_id: str, reason: str, cycle: int, dry_run: bool) -> bool:
     if dry_run:
         return True
     try:
         if safe_query_active_run(run_id, args):
-            run_orchestrator(args, [
-                "--fail-run", "--run-id", run_id,
-                "--error-message",
-                f"Automated review cycle cap reached after {cycle + 1} cycles. {reason[:500]}",
-                "--retry-after-minutes", "999999",
-            ])
+            run_orchestrator(args, ["--fail-run", "--run-id", run_id, "--error-message", f"Automated review cycle cap reached after {cycle + 1} cycles. {reason[:500]}", "--retry-after-minutes", "999999"])
         if not _l3_exists(args, run_id):
-            run_orchestrator(args, [
-                "--escalate-blocked", "--run-id", run_id,
-                "--ticket-id", ticket_id,
-                "--block-reason",
-                f"Automated review cycle cap reached after {cycle + 1} cycles. {reason[:1500]}",
-            ])
+            run_orchestrator(args, ["--escalate-blocked", "--run-id", run_id, "--ticket-id", ticket_id, "--block-reason", f"Automated review cycle cap reached after {cycle + 1} cycles. {reason[:1500]}"])
     except RuntimeError as exc:
         print(f"WARNING: escalation failed for {run_id}: {exc}")
         return False
     return True
 
 
-def create_rework_card(
-    args: argparse.Namespace,
-    *,
-    source_task: dict[str, Any],
-    reason: str,
-    investigation_task_id: Optional[str],
-    dry_run: bool = False,
-) -> Optional[str]:
+def create_rework_card(args: argparse.Namespace, *, source_task: dict[str, Any], reason: str, investigation_task_id: Optional[str], dry_run: bool = False) -> Optional[str]:
     run_id, ticket_id = task_run_id(source_task), task_ticket_id(source_task)
     if not run_id or not ticket_id:
         return None
     current_cycle = task_review_cycle(source_task)
     next_cycle = current_cycle + 1
     if next_cycle >= MAX_REVIEW_CYCLES:
-        return "escalated" if _escalate_run(
-            args,
-            run_id=run_id,
-            ticket_id=ticket_id,
-            reason=reason,
-            cycle=current_cycle,
-            dry_run=dry_run,
-        ) else None
-
+        return "escalated" if _escalate_run(args, run_id=run_id, ticket_id=ticket_id, reason=reason, cycle=current_cycle, dry_run=dry_run) else None
     tasks = list_tasks()
     if _source_has_rework(tasks, source_task["id"]):
         return None
-
-    prior = "" if dry_run else _persist_rejected_ledger(
-        args, investigation_task_id, run_id
-    )
+    prior = "" if dry_run else _persist_rejected_ledger(args, investigation_task_id, run_id)
     ticket_no = body_field(source_task.get("body"), "ticket_no") or ticket_id
-    body = (
-        f"run_id: {run_id}\n"
-        f"ticket_id: {ticket_id}\n"
-        f"ticket_no: {ticket_no}\n"
-        f"review_cycle: {next_cycle}\n"
-        f"rework_source_id: {source_task['id']}\n"
-        f"prior_investigation_task_id: {investigation_task_id or 'unknown'}\n"
-        "pipeline_stage: rework\n\n"
-        f"REWORK REASON:\n{reason}\n\n"
-        "Address this exact rejected point using current live evidence. Reuse prior verified "
-        "findings where still valid; do not restart the whole investigation by default. "
-        "Complete with metadata containing the exact run_id, ticket_id, response_type and "
-        "non-empty reply_text."
-    )
+    body = f"run_id: {run_id}\nticket_id: {ticket_id}\nticket_no: {ticket_no}\nreview_cycle: {next_cycle}\nrework_source_id: {source_task['id']}\nprior_investigation_task_id: {investigation_task_id or 'unknown'}\npipeline_stage: rework\n\nREWORK REASON:\n{reason}\n\nAddress this exact rejected point using current live evidence. Reuse prior verified findings where still valid; do not restart the whole investigation by default. Complete with metadata containing the exact run_id, ticket_id, response_type and non-empty reply_text."
     if prior:
         body += f"\n\nPRIOR FINDINGS (verbatim):\n{prior}\n"
-
-    argv = [
-        "kanban", "create", f"REWORK[{next_cycle}]: L2 {ticket_no}",
-        "--body", body,
-        "--assignee", INVESTIGATOR_PROFILE,
-        "--priority", str(REWORK_PRIORITY),
-        "--idempotency-key", f"rework-{source_task['id']}",
-        "--max-runtime", "20m",
-        "--json",
-    ]
+    argv = ["kanban", "create", f"REWORK[{next_cycle}]: L2 {ticket_no}", "--body", body, "--assignee", INVESTIGATOR_PROFILE, "--priority", str(REWORK_PRIORITY), "--idempotency-key", f"rework-{source_task['id']}", "--max-runtime", "20m", "--json"]
     if dry_run:
         return "dry-run"
     result = run_hermes(argv)
@@ -571,9 +398,7 @@ def create_rework_card(
         return "created"
 
 
-def process_unreviewable_completions(
-    args: argparse.Namespace, *, dry_run: bool = False
-) -> int:
+def process_unreviewable_completions(args: argparse.Namespace, *, dry_run: bool = False) -> int:
     tasks = list_tasks()
     processed = 0
     for task in tasks:
@@ -586,17 +411,7 @@ def process_unreviewable_completions(
             continue
         if _proposal_complete(_completion_metadata(task)):
             continue
-        if create_rework_card(
-            args,
-            source_task=task,
-            reason=(
-                "Investigator completion is not reviewable: required "
-                "run_id/ticket_id/response_type/reply_text metadata is incomplete after "
-                "deterministic normalization. Re-package verified findings; do not invent evidence."
-            ),
-            investigation_task_id=task["id"],
-            dry_run=dry_run,
-        ):
+        if create_rework_card(args, source_task=task, reason="Investigator completion is not reviewable: required run_id/ticket_id/response_type/reply_text metadata is incomplete after deterministic normalization. Re-package verified findings; do not invent evidence.", investigation_task_id=task["id"], dry_run=dry_run):
             processed += 1
     return processed
 
@@ -604,16 +419,10 @@ def process_unreviewable_completions(
 def reviewer_block_reason(task: dict[str, Any]) -> str:
     profile = task.get("assignee") or ""
     runs = get_runs(task["id"])
-    blocks = [
-        r for r in runs
-        if r.get("outcome") == "blocked" and (not profile or r.get("profile") == profile)
-    ]
+    blocks = [r for r in runs if r.get("outcome") == "blocked" and (not profile or r.get("profile") == profile)]
     if not blocks:
         blocks = [r for r in runs if r.get("outcome") == "blocked"]
-    return (
-        (blocks[-1].get("summary") if blocks else None)
-        or "Reviewer rejected without a recorded reason."
-    ).strip()
+    return ((blocks[-1].get("summary") if blocks else None) or "Reviewer rejected without a recorded reason.").strip()
 
 
 def process_rejections(args: argparse.Namespace, *, dry_run: bool = False) -> int:
@@ -623,76 +432,41 @@ def process_rejections(args: argparse.Namespace, *, dry_run: bool = False) -> in
         if task.get("status") != "blocked" or (task.get("assignee") or "") not in REVIEWER_PROFILES:
             continue
         run_id = task_run_id(task)
-        if not run_id or not safe_query_active_run(run_id, args):
+        if not run_id or not safe_query_active_run(run_id, args) or _source_has_rework(tasks, task["id"]):
             continue
-        if _source_has_rework(tasks, task["id"]):
-            continue
-        if create_rework_card(
-            args,
-            source_task=task,
-            reason=reviewer_block_reason(task),
-            investigation_task_id=body_field(task.get("body"), "investigation_task_id"),
-            dry_run=dry_run,
-        ):
+        if create_rework_card(args, source_task=task, reason=reviewer_block_reason(task), investigation_task_id=body_field(task.get("body"), "investigation_task_id"), dry_run=dry_run):
             processed += 1
     return processed
 
 
-def _post_publish_activity(
-    args: argparse.Namespace, run_id: str, ticket_id: str, metadata: dict[str, Any]
-) -> None:
+def _post_publish_activity(args: argparse.Namespace, run_id: str, ticket_id: str, metadata: dict[str, Any]) -> None:
     response_type = str(metadata.get("response_type") or "UPDATE").upper()
-    activity_type = {
-        "RESOLUTION": "Resolution",
-        "L3_ESCALATION": "Escalation",
-        "NEEDS_HUMAN_ACTION": "Escalation",
-        "QUESTION": "Note",
-        "UPDATE": "Note",
-    }.get(response_type, "Note")
+    activity_type = {"RESOLUTION": "Resolution", "L3_ESCALATION": "Escalation", "NEEDS_HUMAN_ACTION": "Escalation", "QUESTION": "Note", "UPDATE": "Note"}.get(response_type, "Note")
     try:
-        run_orchestrator(args, [
-            "--log-activity", "--ticket-id", ticket_id, "--run-id", run_id,
-            "--activity-type", activity_type, "--actor-type", "Bot",
-            "--note-text", str(metadata.get("reply_text") or "")[:3900],
-        ])
+        run_orchestrator(args, ["--log-activity", "--ticket-id", ticket_id, "--run-id", run_id, "--activity-type", activity_type, "--actor-type", "Bot", "--note-text", str(metadata.get("reply_text") or "")[:3900]])
     except RuntimeError as exc:
         print(f"WARNING: activity log failed for {run_id}: {exc}")
 
 
-def process_approvals(
-    args: argparse.Namespace, *, dry_run: bool = False
-) -> dict[str, int]:
+def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
     binding = load_workflow_binding()
     counts = {"published": 0, "blocked_configuration": 0, "rework_created": 0}
-
     for task in list_tasks("done"):
         if (task.get("assignee") or "") not in REVIEWER_PROFILES:
             continue
         run_id, ticket_id = task_run_id(task), task_ticket_id(task)
         if not run_id or not ticket_id:
             continue
-
         state = _query_published_state(args, run_id)
         if state and state[0].get("ProcessStatus") in ("COMPLETED", "WAITING_USER") and state[0].get("ReplyText"):
             continue
         if not safe_query_active_run(run_id, args):
             continue
-
         proposal = task_proposal(task)
         if not _proposal_complete(proposal):
-            if create_rework_card(
-                args,
-                source_task=task,
-                reason=(
-                    "Reviewer reached done but frozen proposal_json is missing/incomplete; "
-                    "re-package the verified finding through a fresh investigation/review cycle."
-                ),
-                investigation_task_id=body_field(task.get("body"), "investigation_task_id"),
-                dry_run=dry_run,
-            ):
+            if create_rework_card(args, source_task=task, reason="Reviewer reached done but frozen proposal_json is missing/incomplete; re-package the verified finding through a fresh investigation/review cycle.", investigation_task_id=body_field(task.get("body"), "investigation_task_id"), dry_run=dry_run):
                 counts["rework_created"] += 1
             continue
-
         response_type = str(proposal["response_type"]).upper()
         try:
             workflow_args, expected_status = _status_args_for_response(binding, proposal)
@@ -700,35 +474,20 @@ def process_approvals(
             print(f"PUBLISH BLOCKED for run {run_id}: {exc}")
             counts["blocked_configuration"] += 1
             continue
-
-        command = [
-            "--publish-response", "--run-id", run_id, "--force-run-id",
-            "--response-type", response_type,
-            "--reply-text", str(proposal["reply_text"]),
-            "--mirror-to-support-remarks",
-            *workflow_args,
-        ]
+        command = ["--publish-response", "--run-id", run_id, "--force-run-id", "--response-type", response_type, "--reply-text", str(proposal["reply_text"]), "--mirror-to-support-remarks", *workflow_args]
         if response_type == "QUESTION":
             command.append("--mirror-to-ask-remarks")
-        for key, flag in (
-            ("problem_summary", "--problem-summary"),
-            ("findings", "--findings"),
-            ("root_cause", "--root-cause"),
-            ("resolution", "--resolution"),
-        ):
+        for key, flag in (("problem_summary", "--problem-summary"), ("findings", "--findings"), ("root_cause", "--root-cause"), ("resolution", "--resolution")):
             if proposal.get(key):
                 command += [flag, str(proposal[key])]
-
         if dry_run:
             counts["published"] += 1
             continue
-
         try:
             run_orchestrator(args, command, timeout=90)
         except RuntimeError as exc:
             print(f"WARNING: publish failed for run {run_id}: {exc}")
             continue
-
         verify = _query_published_state(args, run_id)
         if not verify:
             print(f"WARNING: publish returned success but no SQL row found for {run_id}")
@@ -738,24 +497,14 @@ def process_approvals(
             print(f"WARNING: publish postcondition failed for {run_id}: {row}")
             continue
         if expected_status and row.get("TicketStatus") != expected_status:
-            print(
-                f"WARNING: Helpdesk status postcondition failed for {run_id}: "
-                f"expected {expected_status!r}, got {row.get('TicketStatus')!r}"
-            )
+            print(f"WARNING: Helpdesk status postcondition failed for {run_id}: expected {expected_status!r}, got {row.get('TicketStatus')!r}")
             continue
-
         _post_publish_activity(args, run_id, ticket_id, proposal)
         counts["published"] += 1
-
     return counts
 
 
-def recover_orphan_runs(
-    args: argparse.Namespace,
-    *,
-    dry_run: bool = False,
-    stale_after_minutes: int = ORPHAN_GRACE_MINUTES,
-) -> int:
+def recover_orphan_runs(args: argparse.Namespace, *, dry_run: bool = False, stale_after_minutes: int = ORPHAN_GRACE_MINUTES) -> int:
     referenced = {task_run_id(task) for task in list_tasks() if task_run_id(task)}
     recovered = 0
     for row in query_active_runs(args):
@@ -772,12 +521,7 @@ def recover_orphan_runs(
             recovered += 1
             continue
         try:
-            run_orchestrator(args, [
-                "--fail-run", "--run-id", run_id,
-                "--error-message",
-                "L2 reconciler: active SQL run has no Kanban task; failed for clean retry.",
-                "--retry-after-minutes", "5",
-            ])
+            run_orchestrator(args, ["--fail-run", "--run-id", run_id, "--error-message", "L2 reconciler: active SQL run has no Kanban task; failed for clean retry.", "--retry-after-minutes", "5"])
             recovered += 1
         except RuntimeError as exc:
             print(f"WARNING: orphan recovery failed for {run_id}: {exc}")
@@ -790,64 +534,27 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
     reviewers = ensure_missing_reviewers(args, dry_run=dry_run)
     rejections = process_rejections(args, dry_run=dry_run)
     approvals = process_approvals(args, dry_run=dry_run)
-    orphans = recover_orphan_runs(
-        args, dry_run=dry_run, stale_after_minutes=args.stale_after_minutes
-    )
-    return {
-        "normalized": normalized,
-        "unreviewable_reworked": unreviewable,
-        "reviewers_created": reviewers,
-        "rejections_processed": rejections,
-        "approvals": approvals,
-        "orphans_recovered": orphans,
-    }
+    orphans = recover_orphan_runs(args, dry_run=dry_run, stale_after_minutes=args.stale_after_minutes)
+    return {"normalized": normalized, "unreviewable_reworked": unreviewable, "reviewers_created": reviewers, "rejections_processed": rejections, "approvals": approvals, "orphans_recovered": orphans}
 
 
-def _investigation_bundle(
-    args: argparse.Namespace, ticket_id: str, fallback_ticket: dict[str, Any]
-) -> str:
+def _investigation_bundle(args: argparse.Namespace, ticket_id: str, fallback_ticket: dict[str, Any]) -> str:
     try:
         bundle = run_orchestrator(args, ["--investigate-bundle", ticket_id], timeout=90)
     except RuntimeError as exc:
-        bundle = {
-            "ticket_id": ticket_id,
-            "ticket": fallback_ticket,
-            "bundle_warning": f"Dispatcher could not assemble investigation bundle: {exc}",
-        }
+        bundle = {"ticket_id": ticket_id, "ticket": fallback_ticket, "bundle_warning": f"Dispatcher could not assemble investigation bundle: {exc}"}
     if not isinstance(bundle, dict):
-        bundle = {
-            "ticket_id": ticket_id,
-            "ticket": fallback_ticket,
-            "bundle_warning": "Unexpected bundle shape.",
-        }
+        bundle = {"ticket_id": ticket_id, "ticket": fallback_ticket, "bundle_warning": "Unexpected bundle shape."}
     bundle.pop("known_solutions", None)
     bundle.pop("kb_retrieval", None)
     rendered = json.dumps(bundle, indent=2, default=str)
     if len(rendered) > 14000:
         rendered = rendered[:14000] + "\n... [bundle truncated at 14,000 chars]"
-    return (
-        "\n--- Starting live context ---\n"
-        "This is current ticket/run context, not a knowledge answer. Use native GBrain MCP "
-        "search/query/get_page/graph reads when reusable reference or prior cases can help. "
-        "Retrieved material is a lead; current-ticket claims require live xstudio_l2 evidence.\n"
-        f"{rendered}\n"
-    )
+    return "\n--- Starting live context ---\nThis is current ticket/run context, not a knowledge answer. Use native GBrain MCP search/query/get_page/graph reads when reusable reference or prior cases can help. Retrieved material is a lead; current-ticket claims require live xstudio_l2 evidence.\n" + rendered + "\n"
 
 
 def _investigation_instructions(run_id: str, ticket_id: str) -> str:
-    return (
-        "\n--- L2 investigation contract ---\n"
-        f"Current run_id: {run_id}\nCurrent ticket_id: {ticket_id}\n"
-        "Use xstudio_l2 for all XStudio/Helpdesk database, schema, ticket, run-audit and "
-        "ledger work. Use native GBrain MCP for organizational knowledge/history. "
-        "Prefer hybrid query when ticket wording differs from documentation; fetch the full "
-        "page when a result matters. Never treat historical similarity as current proof.\n"
-        "Do not write the live ticket directly. The deterministic runtime owns publication.\n"
-        "Complete this Kanban card with metadata containing the exact run_id, ticket_id, "
-        "response_type (UPDATE|QUESTION|RESOLUTION|L3_ESCALATION|NEEDS_HUMAN_ACTION) and "
-        "a non-empty user-facing reply_text. Add problem_summary/findings/root_cause/resolution "
-        "only when supported by evidence."
-    )
+    return f"\n--- L2 investigation contract ---\nCurrent run_id: {run_id}\nCurrent ticket_id: {ticket_id}\nUse xstudio_l2 for all XStudio/Helpdesk database, schema, ticket, run-audit and ledger work. Use native GBrain MCP for organizational knowledge/history. Prefer hybrid query when ticket wording differs from documentation; fetch the full page when a result matters. Never treat historical similarity as current proof.\nDo not write the live ticket directly. The deterministic runtime owns publication.\nComplete this Kanban card with metadata containing the exact run_id, ticket_id, response_type (UPDATE|QUESTION|RESOLUTION|L3_ESCALATION|NEEDS_HUMAN_ACTION) and a non-empty user-facing reply_text. Add problem_summary/findings/root_cause/resolution only when supported by evidence."
 
 
 def _archive_stale_cards_for_ticket(ticket_id: str, new_run_id: str) -> None:
@@ -856,12 +563,7 @@ def _archive_stale_cards_for_ticket(ticket_id: str, new_run_id: str) -> None:
         tasks = list_tasks()
     except RuntimeError:
         return
-    stale = [
-        task["id"] for task in tasks
-        if task.get("status") in stale_statuses
-        and task_ticket_id(task) == ticket_id
-        and task_run_id(task) != new_run_id
-    ]
+    stale = [task["id"] for task in tasks if task.get("status") in stale_statuses and task_ticket_id(task) == ticket_id and task_run_id(task) != new_run_id]
     if stale:
         result = run_hermes(["kanban", "archive", *stale])
         if result.returncode != 0:
@@ -872,99 +574,48 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
     reconciliation = reconcile(args, dry_run=dry_run)
     if dry_run:
         return {"status": "DRY_RUN", "reconcile": reconciliation}
-
     binding = load_workflow_binding()
     ready, reason = _binding_ready_for_claims(binding)
     if not ready:
-        return {
-            "status": "WORKFLOW_BINDING_NOT_READY",
-            "reason": reason,
-            "binding_path": binding.get("_path"),
-            "reconcile": reconciliation,
-        }
-
+        return {"status": "WORKFLOW_BINDING_NOT_READY", "reason": reason, "binding_path": binding.get("_path"), "reconcile": reconciliation}
     active = query_active_runs(args)
     if active:
         return {"status": "WIP_LIMIT", "active_runs": active, "reconcile": reconciliation}
-
-    eligible = str(
-        binding.get("eligible_ticket_status")
-        or args.eligible_status
-        or DEFAULT_ELIGIBLE_STATUS
-    )
-    poll = run_orchestrator(
-        args,
-        ["--poll", "--eligible-status", eligible, "--bot-label", INVESTIGATOR_PROFILE],
-        timeout=90,
-    )
+    eligible = str(binding.get("eligible_ticket_status") or args.eligible_status or DEFAULT_ELIGIBLE_STATUS)
+    poll = run_orchestrator(args, ["--poll", "--eligible-status", eligible, "--bot-label", INVESTIGATOR_PROFILE], timeout=90)
     if not isinstance(poll, dict):
         raise RuntimeError(f"unexpected poll response: {poll!r}")
     if poll.get("status") in ("NO_TICKETS", "NO_CLAIMABLE_TICKET"):
         return {"status": poll.get("status"), "reconcile": reconciliation}
     if poll.get("status") != "CLAIMED":
         raise RuntimeError(f"unexpected poll status: {poll.get('status')}")
-
     run_id = str(poll["run_id"])
     ticket_id = str(poll["ticket_id"])
     ticket = poll.get("ticket") or {}
     ticket_no = str(ticket.get("TicketNo") or ticket_id)
     _archive_stale_cards_for_ticket(ticket_id, run_id)
-
-    body = (
-        f"run_id: {run_id}\n"
-        f"ticket_id: {ticket_id}\n"
-        f"ticket_no: {ticket_no}\n"
-        "review_cycle: 0\n"
-        "pipeline_stage: investigation\n"
-        + _investigation_bundle(args, ticket_id, ticket)
-        + _investigation_instructions(run_id, ticket_id)
-    )
-    create = run_hermes([
-        "kanban", "create", f"L2 {ticket_no}",
-        "--assignee", INVESTIGATOR_PROFILE,
-        "--body", body,
-        "--priority", str(NEW_INVESTIGATION_PRIORITY),
-        "--idempotency-key", f"l2-ticket-{run_id}",
-        "--max-runtime", "20m",
-        "--json",
-    ])
+    body = f"run_id: {run_id}\nticket_id: {ticket_id}\nticket_no: {ticket_no}\nreview_cycle: 0\npipeline_stage: investigation\n" + _investigation_bundle(args, ticket_id, ticket) + _investigation_instructions(run_id, ticket_id)
+    create = run_hermes(["kanban", "create", f"L2 {ticket_no}", "--assignee", INVESTIGATOR_PROFILE, "--body", body, "--priority", str(NEW_INVESTIGATION_PRIORITY), "--idempotency-key", f"l2-ticket-{run_id}", "--max-runtime", "20m", "--json"])
     if create.returncode != 0:
         try:
-            run_orchestrator(args, [
-                "--fail-run", "--run-id", run_id,
-                "--error-message",
-                f"Dispatcher could not create investigator task: {create.stderr.strip()[:400]}",
-                "--retry-after-minutes", "5",
-            ])
+            run_orchestrator(args, ["--fail-run", "--run-id", run_id, "--error-message", f"Dispatcher could not create investigator task: {create.stderr.strip()[:400]}", "--retry-after-minutes", "5"])
         except RuntimeError:
             pass
         raise RuntimeError(f"investigator create failed: {create.stderr.strip()[:500]}")
-
     try:
         investigator_id = (json.loads(create.stdout) or {}).get("id")
     except json.JSONDecodeError:
         investigator_id = None
     if not investigator_id:
         raise RuntimeError("investigator task was created but its id could not be parsed")
-
-    return {
-        "status": "CLAIMED",
-        "run_id": run_id,
-        "ticket_id": ticket_id,
-        "investigator_task_id": investigator_id,
-        "reviewer_creation": "deferred_until_normalized_completion",
-        "reconcile": reconciliation,
-    }
+    return {"status": "CLAIMED", "run_id": run_id, "ticket_id": ticket_id, "investigator_task_id": investigator_id, "reviewer_creation": "deferred_until_normalized_completion", "reconcile": reconciliation}
 
 
 def _sync_outcomes_best_effort(*, dry_run: bool = False) -> dict[str, Any]:
     script = Path(__file__).resolve().with_name("sync_l2_outcomes.py")
     if not script.exists():
         return {"ok": False, "warning": "sync_l2_outcomes.py not deployed"}
-    vault = os.environ.get(
-        "CHITRAGUPTA_L2_LEARNING_VAULT",
-        str(Path.home() / ".hermes" / "l2-learning"),
-    )
+    vault = os.environ.get("CHITRAGUPTA_L2_LEARNING_VAULT", str(Path.home() / ".hermes" / "l2-learning"))
     command = [sys.executable, str(script), "--vault", vault]
     if dry_run:
         command.append("--dry-run")
@@ -987,17 +638,8 @@ def pipeline_status(args: argparse.Namespace) -> dict[str, Any]:
     by_run: dict[str, list[dict[str, Any]]] = {}
     for task in tasks:
         run_id = task_run_id(task)
-        if not run_id:
-            continue
-        by_run.setdefault(run_id, []).append({
-            "id": task.get("id"),
-            "title": task.get("title"),
-            "status": task.get("status"),
-            "assignee": task.get("assignee"),
-            "pipeline_stage": body_field(task.get("body"), "pipeline_stage"),
-            "review_cycle": task_review_cycle(task),
-        })
-
+        if run_id:
+            by_run.setdefault(run_id, []).append({"id": task.get("id"), "title": task.get("title"), "status": task.get("status"), "assignee": task.get("assignee"), "pipeline_stage": body_field(task.get("body"), "pipeline_stage"), "review_cycle": task_review_cycle(task)})
     anomalies: list[dict[str, Any]] = []
     for row in active:
         run_id = str(row.get("ID"))
@@ -1015,34 +657,14 @@ def pipeline_status(args: argparse.Namespace) -> dict[str, Any]:
             anomalies.append({"run_id": run_id, "type": "REVIEW_APPROVED_PUBLISH_PENDING_OR_BLOCKED"})
         if any(t.get("status") == "blocked" for t in reviewers):
             anomalies.append({"run_id": run_id, "type": "REVIEW_REJECTED_REWORK_PENDING_OR_ACTIVE"})
-
     binding = load_workflow_binding()
     ready, reason = _binding_ready_for_claims(binding)
-    return {
-        "active_runs": active,
-        "tasks_by_run": by_run,
-        "anomalies": anomalies,
-        "binding": binding,
-        "binding_ready_for_new_claims": ready,
-        "binding_block_reason": reason,
-        "contract": {
-            "max_pipeline_wip": 1,
-            "priorities": {
-                "review": REVIEW_PRIORITY,
-                "rework": REWORK_PRIORITY,
-                "new_investigation": NEW_INVESTIGATION_PRIORITY,
-            },
-            "max_review_cycles": MAX_REVIEW_CYCLES,
-            "reviewer_creation": "after_normalized_investigator_completion",
-            "frozen_review_proposal": True,
-            "knowledge": "native_gbrain_mcp",
-        },
-    }
+    return {"active_runs": active, "tasks_by_run": by_run, "anomalies": anomalies, "binding": binding, "binding_ready_for_new_claims": ready, "binding_block_reason": reason, "contract": {"max_pipeline_wip": 1, "priorities": {"review": REVIEW_PRIORITY, "rework": REWORK_PRIORITY, "new_investigation": NEW_INVESTIGATION_PRIORITY}, "max_review_cycles": MAX_REVIEW_CYCLES, "reviewer_creation": "after_normalized_investigator_completion", "frozen_review_proposal": True, "knowledge": "native_gbrain_mcp"}}
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["scout", "reconcile", "status"])
+    parser.add_argument("mode", nargs="?", default="scout", choices=["scout", "reconcile", "status"])
     parser.add_argument("--server", default=os.environ.get("MSSQL_MCP_SERVER") or DEFAULT_SERVER)
     parser.add_argument("--database", default=DEFAULT_DATABASE)
     parser.add_argument("--username", default=os.environ.get("MSSQL_MCP_USER") or DEFAULT_USER)

@@ -39,6 +39,9 @@ class PipelineContractTests(unittest.TestCase):
         action = next(a for a in parser._actions if a.dest == "mode")
         self.assertEqual(set(action.choices), {"scout", "reconcile", "status"})
 
+    def test_no_argument_cron_invocation_defaults_to_scout(self):
+        self.assertEqual(mod.build_parser().parse_args([]).mode, "scout")
+
 
 if __name__ == "__main__":
     unittest.main()

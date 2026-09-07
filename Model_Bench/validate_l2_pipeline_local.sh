@@ -52,6 +52,17 @@ GBRAIN_HOME="$GBRAIN_HOME" gbrain sources list --json
 echo "== Hermes native GBrain MCP =="
 hermes mcp test gbrain
 
+echo "== Hermes L2 scout cron =="
+CRON_STATE="$(hermes -p l2-investigator cron list --all)"
+printf '%s\n' "$CRON_STATE"
+grep -q "L2 Ticket Scout" <<<"$CRON_STATE" || { echo "FAIL: L2 Ticket Scout cron missing" >&2; exit 1; }
+grep -q "l2_pipeline_runtime.py" <<<"$CRON_STATE" || { echo "FAIL: scout cron does not use l2_pipeline_runtime.py" >&2; exit 1; }
+if grep -q "ticket_scout.py" <<<"$CRON_STATE"; then
+  echo "FAIL: retired ticket_scout.py is still scheduled" >&2
+  exit 1
+fi
+hermes -p l2-investigator cron doctor
+
 echo "== Retired compatibility guard =="
 for path in \
   Model_Bench/kb_retrieval.py \
