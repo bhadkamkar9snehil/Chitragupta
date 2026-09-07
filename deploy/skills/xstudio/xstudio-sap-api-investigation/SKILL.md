@@ -32,7 +32,7 @@ documents, or any "did the API call even happen" question against
    `procedure = "XMES_Get_API_Transaction_Summary"` and
    `parameters = {"APIType": "<Type>"}` (values look like SAP operation
    names, e.g. `UsageDecision`), against
-   `database = "XStudio_Configuration_Xbatch"` — it reads
+   `database = "XStudio_Xbatch"` — the procedure object lives there and reads
    `XStudio_API_Error_Log_Mst_Tbl` there (a **different database** than
    `XStudio_Xbatch`), deduplicated to the latest row per `TransactionID`.
    This answers "did it happen and what was the result" faster than

@@ -19,3 +19,5 @@ provides_tools:
   - xstudio_get_ticket_context
   - xstudio_get_run_actions
   - xstudio_save_ledger
+  - xstudio_heat_context
+  - xstudio_sap_api_context

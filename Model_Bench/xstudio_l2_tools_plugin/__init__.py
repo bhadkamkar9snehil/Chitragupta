@@ -116,6 +116,14 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "Persist ticket-specific investigation findings for this L2 run.",
         {"run_id": _STRING, "ledger": {"type": "object"}}, ("ledger",),
     ),
+    "xstudio_heat_context": _tool_schema(
+        "Read canonical EAF/LRF/CCM, work-order, SAP and billet evidence for one heat.",
+        {"heat": _STRING, "database": _DATABASE}, ("heat",),
+    ),
+    "xstudio_sap_api_context": _tool_schema(
+        "Read the live reviewed SAP API transaction summary for one API type.",
+        {"api_type": _STRING, "database": _DATABASE}, ("api_type",),
+    ),
 }
 
 TOOL_OPERATIONS: dict[str, str] = {
@@ -130,6 +138,8 @@ TOOL_OPERATIONS: dict[str, str] = {
     "xstudio_get_ticket_context": "get_ticket_context",
     "xstudio_get_run_actions": "get_run_actions",
     "xstudio_save_ledger": "save_ledger",
+    "xstudio_heat_context": "heat_context",
+    "xstudio_sap_api_context": "sap_api_context",
 }
 _REQUIRED_FIELDS_BY_TOOL = {
     name: tuple(schema["parameters"]["required"])
@@ -147,6 +157,8 @@ _EFFECTIVE_REQUIRED_FIELDS_BY_TOOL: dict[str, tuple[str, ...]] = {
     "xstudio_get_ticket_context": ("ticket_id",),
     "xstudio_get_run_actions": ("run_id",),
     "xstudio_save_ledger": ("run_id", "ledger"),
+    "xstudio_heat_context": ("database", "run_id", "heat"),
+    "xstudio_sap_api_context": ("database", "run_id", "api_type"),
 }
 _CONTEXT_FIELD_RE = {
     "run_id": re.compile(r"(?:current\s+)?run_id\s*[:=]\s*[`\"']?([A-Za-z0-9-]+)", re.IGNORECASE),
@@ -210,6 +222,8 @@ _REQUIRED_FIELDS_BY_OPERATION: dict[str, tuple[str, ...]] = {
     "get_ticket_context": ("ticket_id",),
     "get_run_actions": ("run_id",),
     "save_ledger": ("run_id", "ledger"),
+    "heat_context": ("database", "run_id", "heat"),
+    "sap_api_context": ("database", "run_id", "api_type"),
     "resolve_heat": ("database", "heat"),
 }
 
@@ -296,7 +310,7 @@ def _repair_args(tool_name: str, args: dict[str, Any], session: str,
             changed[field] = context[field]
 
     operation = TOOL_OPERATIONS.get(tool_name)
-    if operation == "resolve_heat" and not effective.get("database"):
+    if operation in {"resolve_heat", "heat_context", "sap_api_context"} and not effective.get("database"):
         effective["database"] = "XStudio_Xbatch"
         changed["database"] = "XStudio_Xbatch"
     return effective, changed

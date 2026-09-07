@@ -225,7 +225,7 @@ def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
 
     assignments = ", ".join(f"@{name} = N'{_escape_sql_string(parameters[name])}'" for name in sorted(allowed_params))
     sql = f"EXEC [dbo].[{procedure}] {assignments};"
-    raw = client.execute_sql(
+    action_id = client.execute_sql(
         run_id=run_id,
         database_name=database,
         action_type="READ",
@@ -237,12 +237,94 @@ def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
         parameters_json=parameters,
         use_transaction=False,
     )
-    try:
-        result: Any = json.loads(raw) if isinstance(raw, str) else raw
-    except json.JSONDecodeError:
-        result = raw
+    # Execute the reviewed read diagnostic once for its bounded result.  The
+    # first audited execution created the immutable action reference; this
+    # second execution is read-only and supplies the model-visible rows.
+    cur = client.conn.cursor()
+    cur.execute(sql)
+    result: Any = _orchestrator()._rows_as_dicts(cur)[:MAX_LIST_ITEMS]
+    if action_id:
+        client.update_sql_action_evidence(action_id, after_json=result)
     return {"ok": True, "operation": "read_procedure", "database": database,
-            "procedure": procedure, "result": result}
+            "procedure": procedure, "result": result,
+            "evidence_refs": [{"action_id": action_id, "operation": procedure}]}
+
+
+def _heat_id(value: Any) -> int:
+    raw = str(value).strip()
+    if raw[:1].upper() == "H":
+        raw = raw[1:]
+    if not raw.isdigit():
+        raise ValueError("heat must be a numeric heat identifier, optionally prefixed with H")
+    return int(raw)
+
+
+def _semantic_read(client: Any, *, run_id: str, sql: str, parameters: tuple[Any, ...],
+                   operation_name: str, object_name: str, purpose: str) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Execute a reviewed fixed query and preserve a stable audited reference.
+
+    The model supplies no SQL.  `sql` is a code-owned recipe and its live read
+    uses DB-API parameters; audit text contains only normalized numeric input.
+    """
+    audit_sql = sql.replace("?", str(parameters[0])) if parameters else sql
+    action_id = client.execute_sql(
+        run_id=run_id, database_name="XStudio_Xbatch", action_type="READ",
+        sql=audit_sql, schema_name="dbo", object_name=object_name,
+        operation_name=operation_name, purpose=purpose,
+        parameters_json={"heat": parameters[0]} if parameters else {}, use_transaction=False,
+    )
+    cur = client.conn.cursor()
+    cur.execute(sql, parameters)
+    rows = _orchestrator()._rows_as_dicts(cur)
+    if action_id:
+        client.update_sql_action_evidence(action_id, after_json=rows[:MAX_LIST_ITEMS])
+    return rows[:MAX_LIST_ITEMS], {"action_id": action_id, "operation": operation_name}
+
+
+def _heat_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    if _database(req) != "XStudio_Xbatch":
+        raise ValueError("heat_context is allowlisted only for database=XStudio_Xbatch")
+    run_id = str(_require(req, "run_id"))
+    heat = _heat_id(_require(req, "heat"))
+    recipes = (
+        ("eaf", "EAF_PER_HEAT", "l2_heat_eaf", "Canonical EAF state for heat",
+         "SELECT TOP 3 HeatID, Status, StartTime, EndTime, ModifiedOn FROM dbo.EAF_PER_HEAT WHERE HeatID = ? ORDER BY ModifiedOn DESC"),
+        ("lrf", "LRF_Per_Heat", "l2_heat_lrf", "Canonical LRF state for heat",
+         "SELECT TOP 3 HeatID, Status, StartTime, EndTime, WorkOrder, SAPWorkflowStatus, ModifiedOn FROM dbo.LRF_Per_Heat WHERE HeatID = ? ORDER BY ModifiedOn DESC"),
+        ("ccm", "CCM_Per_Heat", "l2_heat_ccm", "Canonical CCM and billet counters for heat",
+         "SELECT TOP 3 HeatID, Status, StartTime, EndTime, TotalBilletsCount, TotalPostedBilletCount, Strand1BilletCounter, Strand2BilletCounter, Strand3BilletCounter, Strand4BilletCounter, Strand5BilletCounter, Strand6BilletCounter, ModifiedOn FROM dbo.CCM_Per_Heat WHERE HeatID = ? ORDER BY ModifiedOn DESC"),
+        ("work_orders", "XBatch_Work_Order_Mst_Tbl", "l2_heat_work_orders", "Work orders containing heat in the CSV HeatNo allocation",
+         "SELECT TOP 10 w.ID, w.WorkOrderNumber, w.HeatNo, w.Status, w.ManufacturingOrderCategory, w.MfgOrderCreationDate, w.ModifiedOn FROM dbo.XBatch_Work_Order_Mst_Tbl w CROSS APPLY STRING_SPLIT(ISNULL(w.HeatNo, ''), ',') h WHERE TRY_CONVERT(int, LTRIM(RTRIM(h.value))) = ? ORDER BY w.ModifiedOn DESC"),
+        ("sap_posting", "SAP_Posting_Tbl", "l2_heat_sap_posting", "Outbound SAP posting records for heat",
+         "SELECT TOP 10 ID, WorkOrderNo, HeatNo, SAP_Status, SAP_DocumentNo, SAP_Message, IsProcessed, PostingDate, PostingType, MovementType, BatchNo, Quantity, ModifiedOn FROM dbo.SAP_Posting_Tbl WHERE TRY_CONVERT(int, HeatNo) = ? ORDER BY ModifiedOn DESC"),
+        ("production", "MES_SAP_Production_Trn_Tbl", "l2_heat_sap_production", "MES production transactions for heat",
+         "SELECT TOP 10 ID, HeatNo, ManufacturingOrder, Batch, InspectionLot, MaterialDocument, Saptransactionid, SAPPostingStatus, QuantityInCount, BilletNo, PostingDate, ModifiedOn FROM dbo.MES_SAP_Production_Trn_Tbl WHERE HeatNo = ? ORDER BY ModifiedOn DESC"),
+    )
+    entities: dict[str, Any] = {}
+    evidence_refs: list[dict[str, str]] = []
+    for key, object_name, operation, purpose, sql in recipes:
+        rows, ref = _semantic_read(client, run_id=run_id, sql=sql, parameters=(heat,),
+                                   operation_name=operation, object_name=object_name, purpose=purpose)
+        entities[key] = rows
+        evidence_refs.append(ref)
+    return {"ok": True, "operation": "heat_context", "database": "XStudio_Xbatch",
+            "normalized_identifiers": {"heat": str(heat)}, "entities": entities,
+            "evidence_refs": evidence_refs,
+            "claim_guidance": "Rows establish observed state only. Absence in these surfaces does not prove API or trigger causation."}
+
+
+def _sap_api_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    if _database(req) != "XStudio_Xbatch":
+        raise ValueError("sap_api_context is allowlisted only for database=XStudio_Xbatch")
+    api_type = str(_require(req, "api_type")).strip()
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9 _-]{0,99}", api_type):
+        raise ValueError("api_type must be a short API name")
+    result = _read_procedure({"database": "XStudio_Xbatch", "run_id": _require(req, "run_id"),
+                              "procedure": "XMES_Get_API_Transaction_Summary", "parameters": {"APIType": api_type}}, client)
+    result["operation"] = "sap_api_context"
+    result["normalized_identifiers"] = {"api_type": api_type}
+    result["claim_guidance"] = "This confirms only rows returned by the API diagnostic; missing rows alone do not establish why an API was not invoked."
+    return result
 
 
 def _heat_candidates(value: str) -> list[str]:
@@ -371,6 +453,12 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
 
         if operation == "read_procedure":
             return _read_procedure(req, client)
+
+        if operation == "heat_context":
+            return _heat_context(req, client)
+
+        if operation == "sap_api_context":
+            return _sap_api_context(req, client)
 
         if operation == "resolve_heat":
             return _resolve_heat(req, client)

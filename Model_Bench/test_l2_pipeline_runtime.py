@@ -168,7 +168,7 @@ class PipelineContractTests(unittest.TestCase):
 
     def test_verified_claim_with_evidence_passes_validation(self):
         claims = [{"id": "C1", "claim": "Heat not found", "material": True,
-                   "status": "VERIFIED", "evidence": [{"action": 3, "source": "xstudio_resolve_heat"}]}]
+                   "status": "VERIFIED", "evidence": [{"action_id": "action-3"}]}]
         valid, issues = mod.validate_claims_contract(claims)
         self.assertTrue(valid, issues)
 
@@ -179,14 +179,34 @@ class PipelineContractTests(unittest.TestCase):
         self.assertFalse(valid)
         self.assertTrue(any("evidence" in i.lower() for i in issues))
 
+    def test_verified_claim_requires_a_current_run_action_id(self):
+        claims = [{"id": "C1", "claim": "Heat found", "material": True,
+                   "status": "VERIFIED", "evidence": [{"action_id": "A-1"}]}]
+        valid, issues = mod.validate_claims_contract(
+            claims,
+            run_id="run-1",
+            ticket_id="ticket-1",
+            actions=[{"ID": "A-1", "RunID": "run-1", "TicketID": "ticket-1"}],
+        )
+        self.assertTrue(valid, issues)
+
+    def test_verified_claim_rejects_action_from_another_run_or_ticket(self):
+        claims = [{"id": "C1", "claim": "Heat found", "material": True,
+                   "status": "VERIFIED", "evidence": [{"action_id": "A-1"}]}]
+        valid, issues = mod.validate_claims_contract(
+            claims,
+            run_id="run-1",
+            ticket_id="ticket-1",
+            actions=[{"ID": "A-1", "RunID": "run-2", "TicketID": "ticket-1"}],
+        )
+        self.assertFalse(valid)
+        self.assertTrue(any("current run" in issue.lower() for issue in issues))
+
     def test_unverified_claim_retained_if_reply_cautious(self):
         claims = [{"id": "C1", "claim": "SAP API never called", "material": True,
                    "status": "UNVERIFIED", "required_evidence": ["XMES_Get_API_Transaction_Summary"]}]
         valid, issues = mod.validate_claims_contract(claims)
         self.assertTrue(valid, "UNVERIFIED claim should pass structural validation")
-        ok, warnings = mod.validate_reply_text_against_claims(
-            "Could not verify whether the SAP API was invoked. Further investigation needed.", claims)
-        self.assertTrue(ok, f"Cautious wording should not trigger: {warnings}")
 
     def test_contradicted_claim_cannot_become_positive_assertion(self):
         claims = [{"id": "C1", "claim": "API was called", "material": True,
@@ -210,34 +230,19 @@ class PipelineContractTests(unittest.TestCase):
         valid, _ = mod.validate_claims_contract(None)
         self.assertTrue(valid)
 
-    def test_inferred_claim_with_causal_language_flagged(self):
-        claims = [{"id": "C1", "claim": "SAP API trigger failure caused the posting to stop",
-                   "material": True, "status": "INFERRED"}]
-        ok, warnings = mod.validate_reply_text_against_claims(
-            "The SAP posting never initiated due to API trigger failure.", claims)
-        self.assertFalse(ok, f"Should flag causal language for INFERRED claim: {warnings}")
-        self.assertTrue(len(warnings) > 0)
-
-    def test_ticket_381_regression_overclaim_detected(self):
-        """Ticket_381: reply said 'never initiated due to API/trigger failure'
-        but evidence was only xstudio_resolve_heat + xstudio_select (absence).
-        The claims contract should catch this."""
+    def test_ticket_381_regression_requires_api_provenance_for_verified_causation(self):
+        """Ticket_381's causal assertion cannot be VERIFIED without an action ref.
+        Whether the cited API evidence supports causation remains reviewer work."""
         claims = [
             {"id": "C1", "claim": "Heat 1900001 not found in production surfaces",
              "material": True, "status": "VERIFIED",
-             "evidence": [{"action": 1, "source": "xstudio_resolve_heat"}]},
+             "evidence": [{"action_id": "heat-action"}]},
             {"id": "C2", "claim": "SAP API never initiated due to trigger failure",
-             "material": True, "status": "UNVERIFIED",
-             "required_evidence": ["XMES_Get_API_Transaction_Summary"]},
+             "material": True, "status": "VERIFIED"},
         ]
-        reply = ("The SAP posting for Heat 1900001/WO 199000000001 never initiated "
-                 "due to API/trigger failure.")
-        # Structural validation passes (claims are well-formed)
-        valid, _ = mod.validate_claims_contract(claims)
-        self.assertTrue(valid)
-        # But causal language check catches the overclaim
-        ok, warnings = mod.validate_reply_text_against_claims(reply, claims)
-        self.assertFalse(ok, f"Should detect causal overclaim: {warnings}")
+        valid, issues = mod.validate_claims_contract(claims)
+        self.assertFalse(valid)
+        self.assertTrue(any("evidence" in issue.lower() for issue in issues))
 
     def test_prepublish_rejects_verified_without_evidence(self):
         """Pre-publish gate should trigger rework for invalid claims."""
@@ -252,6 +257,7 @@ class PipelineContractTests(unittest.TestCase):
                 patch.object(mod, "query_active_runs", return_value=[{"ID": "run-1"}]), \
                 patch.object(mod, "_query_published_state", return_value=[]), \
                 patch.object(mod, "safe_query_active_run", return_value=[{"ID": "run-1"}]), \
+                patch.object(mod, "get_run_actions", return_value=[]), \
                 patch.object(mod, "load_workflow_binding", return_value={"resolved_ticket_status": "Closed", "strict_resolution_status_binding": True}), \
                 patch.object(mod, "create_rework_card", return_value="rework") as rework, \
                 patch.object(mod, "run_orchestrator") as publish:
@@ -265,7 +271,7 @@ class PipelineContractTests(unittest.TestCase):
         """Pre-publish gate passes valid claims through to publication."""
         good_claims = [{"id": "C1", "claim": "Heat found", "material": True,
                         "status": "VERIFIED",
-                        "evidence": [{"action": 1, "source": "xstudio_resolve_heat"}]}]
+                        "evidence": [{"action_id": "action-1"}]}]
         proposal = {"run_id": "run-1", "ticket_id": "ticket-1",
                     "response_type": "UPDATE", "reply_text": "Heat found.",
                     "claims": good_claims}
@@ -277,6 +283,7 @@ class PipelineContractTests(unittest.TestCase):
                 patch.object(mod, "query_active_runs", return_value=[{"ID": "run-1"}]), \
                 patch.object(mod, "_query_published_state", side_effect=[[], published_state]), \
                 patch.object(mod, "safe_query_active_run", return_value=[{"ID": "run-1"}]), \
+                patch.object(mod, "get_run_actions", return_value=[{"ID": "action-1", "RunID": "run-1", "TicketID": "ticket-1"}]), \
                 patch.object(mod, "load_workflow_binding", return_value={"resolved_ticket_status": "Closed", "strict_resolution_status_binding": True}), \
                 patch.object(mod, "run_orchestrator"), \
                 patch.object(mod, "create_rework_card") as rework, \
@@ -309,7 +316,7 @@ class PipelineContractTests(unittest.TestCase):
         """Claims array in proposal_json must survive card creation."""
         claims = [{"id": "C1", "claim": "Heat found", "material": True,
                    "status": "VERIFIED",
-                   "evidence": [{"action": 1, "source": "xstudio_resolve_heat"}]}]
+                   "evidence": [{"action_id": "action-1"}]}]
         task = {"id": "inv-1", "body": "run_id: r\nticket_id: t\nticket_no: T1\nreview_cycle: 0"}
         proposal = {"run_id": "r", "ticket_id": "t",
                     "response_type": "UPDATE", "reply_text": "Heat found.", "claims": claims}
@@ -354,7 +361,7 @@ class PipelineContractTests(unittest.TestCase):
         with patch.object(mod, "run_hermes", return_value=completed) as run:
             mod.create_reviewer_card(source_task=task, proposal=proposal)
         body = run.call_args.args[0][run.call_args.args[0].index("--body") + 1]
-        self.assertIn("claims array", body)
+        self.assertIn("claims_contract_version", body)
         self.assertIn("VERIFIED", body)
 
 

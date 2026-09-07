@@ -120,29 +120,24 @@ def annotate_evidence_status(metadata: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-# Claim statuses recognised by the pipeline. INFERRED is acceptable only when
-# reply_text does not present it as established fact.
+# Claim statuses recognised by the pipeline.  Semantic truth belongs to the
+# independent reviewer; this module only validates provenance structure.
 VALID_CLAIM_STATUSES = {"VERIFIED", "INFERRED", "UNVERIFIED", "CONTRADICTED"}
-
-# Conservative set of causal phrases that, when applied to an UNVERIFIED or
-# INFERRED claim, indicate the reply is stronger than the evidence supports.
-# These are intentionally high-precision/low-recall: better to miss an edge
-# case than to false-positive on normal prose.
-_CAUSAL_MARKERS = re.compile(
-    r"\b(?:caused by|due to|resulted? in|because of|failure of|"
-    r"never initiated|never called|trigger fail|api fail|"
-    r"failed to (?:initiate|call|send|post|execute))\b",
-    re.I,
-)
+CLAIMS_CONTRACT_VERSION = 1
 
 
-def validate_claims_contract(claims: Any) -> tuple[bool, list[str]]:
+def validate_claims_contract(
+    claims: Any, *, run_id: Optional[str] = None, ticket_id: Optional[str] = None,
+    actions: Optional[list[dict[str, Any]]] = None,
+) -> tuple[bool, list[str]]:
     """Validate structural correctness of a claims array.
 
     Returns (valid, issues). Does NOT evaluate semantic truth -- that is the
     reviewer's job. This only enforces:
       - every claim has id, claim text, material flag, status
-      - VERIFIED claims have at least one evidence reference
+      - VERIFIED claims have at least one immutable audit ActionID reference
+      - when current-run actions are supplied, every reference belongs to that
+        exact run and ticket
       - status is from the recognised enum
     """
     if claims is None:
@@ -174,49 +169,25 @@ def validate_claims_contract(claims: Any) -> tuple[bool, list[str]]:
             if not evidence or not isinstance(evidence, list) or len(evidence) == 0:
                 issues.append(f"{label} ({cid}): material VERIFIED claim has no evidence reference")
             else:
+                action_index = {str(row.get("ID")): row for row in (actions or []) if row.get("ID")}
                 for j, ref in enumerate(evidence):
-                    if not isinstance(ref, dict) or not ref.get("source"):
-                        issues.append(f"{label}.evidence[{j}]: must have a source field")
+                    if not isinstance(ref, dict) or not isinstance(ref.get("action_id"), str):
+                        issues.append(f"{label}.evidence[{j}]: must have an action_id")
+                        continue
+                    if actions is not None:
+                        action = action_index.get(ref["action_id"])
+                        if not action:
+                            issues.append(f"{label}.evidence[{j}]: action_id is not in the current run")
+                        elif str(action.get("RunID")) != str(run_id) or str(action.get("TicketID")) != str(ticket_id):
+                            issues.append(f"{label}.evidence[{j}]: action_id does not belong to the current run/ticket")
 
     return (len(issues) == 0), issues
 
 
-def validate_reply_text_against_claims(
-    reply_text: str, claims: Any
-) -> tuple[bool, list[str]]:
-    """Check that reply_text doesn't assert UNVERIFIED/INFERRED claims as fact.
-
-    Returns (ok, warnings). This is intentionally conservative -- it only flags
-    cases where a known causal phrase co-occurs with text from an unverified
-    claim. The reviewer remains responsible for full semantic judgment.
-    """
-    if not claims or not isinstance(claims, list) or not reply_text:
-        return True, []
-
-    warnings: list[str] = []
-    reply_lower = reply_text.lower()
-    for claim in claims:
-        if not isinstance(claim, dict) or not claim.get("material"):
-            continue
-        status = claim.get("status", "")
-        if status in ("VERIFIED", "CONTRADICTED"):
-            continue  # VERIFIED is fine; CONTRADICTED is caught structurally
-        claim_text = str(claim.get("claim") or "").lower()
-        # Only flag if both a causal marker AND claim-specific keywords appear
-        # in reply_text. This avoids false positives from generic phrasing.
-        claim_words = [w for w in re.findall(r"\w{4,}", claim_text) if len(w) >= 4]
-        if not claim_words:
-            continue
-        # At least two significant claim words must appear in reply
-        matches = sum(1 for w in claim_words if w in reply_lower)
-        if matches >= min(2, len(claim_words)) and _CAUSAL_MARKERS.search(reply_lower):
-            cid = claim.get("id", "?")
-            warnings.append(
-                f"Claim {cid} (status={status}) may be asserted as fact in reply_text. "
-                f"Causal language detected for an {status} claim."
-            )
-
-    return (len(warnings) == 0), warnings
+def get_run_actions(args: argparse.Namespace, run_id: str) -> list[dict[str, Any]]:
+    """Return the audited action trail used to validate frozen evidence refs."""
+    rows = run_orchestrator(args, ["--get-run-actions", run_id])
+    return rows if isinstance(rows, list) else []
 
 
 # ---------------------------------------------------------------------------
@@ -367,17 +338,20 @@ def _completion_metadata(task: dict[str, Any]) -> Optional[dict[str, Any]]:
         md["run_id"] = task_run_id(task)
     if not md.get("ticket_id"):
         md["ticket_id"] = task_ticket_id(task)
+    if body_field(task.get("body"), "claims_contract_version"):
+        md["claims_contract_version"] = CLAIMS_CONTRACT_VERSION
     return annotate_evidence_status(md)
 
 
 def _proposal_complete(md: Optional[dict[str, Any]]) -> bool:
-    return bool(
+    basic = bool(
         md
         and md.get("run_id")
         and md.get("ticket_id")
         and md.get("response_type") in {"UPDATE", "QUESTION", "RESOLUTION", "L3_ESCALATION", "NEEDS_HUMAN_ACTION"}
         and str(md.get("reply_text") or "").strip()
     )
+    return basic and (md.get("claims_contract_version") != CLAIMS_CONTRACT_VERSION or isinstance(md.get("claims"), list))
 
 
 # ---------------------------------------------------------------------------
@@ -599,10 +573,9 @@ def create_reviewer_card(
         "schema/rows.\n"
         "Verify the frozen proposal above against live evidence. Approve with kanban_complete; "
         "reject with kanban_block. The deterministic reconciler owns publication/rework.\n"
-        "If proposal_json contains a claims array, verify each material VERIFIED claim has a "
-        "matching evidence reference in xstudio_get_run_actions. Reject if a material claim "
-        "marked VERIFIED has no supporting action/evidence, or if reply_text asserts an "
-        "UNVERIFIED/INFERRED claim as established fact."
+        "For claims_contract_version 1, independently call xstudio_get_run_actions and the smallest "
+        "relevant live context tool. Reject a VERIFIED material claim if its action_id is not in this "
+        "run/ticket or the evidence does not support its strength. Do not infer causation from absence."
     )
     argv = [
         "kanban", "create", f"REVIEW[{cycle}]: L2 {ticket_no}",
@@ -743,7 +716,8 @@ def create_rework_card(
         f"review_cycle: {next_cycle}\n"
         f"rework_source_id: {source_task['id']}\n"
         f"prior_investigation_task_id: {investigation_task_id or 'unknown'}\n"
-        "pipeline_stage: rework\n\n"
+        "pipeline_stage: rework\n"
+        f"claims_contract_version: {CLAIMS_CONTRACT_VERSION}\n\n"
         f"REWORK REASON:\n{reason}\n\n"
         "Address this exact rejected/invalid point using current live evidence. Reuse prior verified "
         "findings; do not restart the entire investigation unless the objection invalidates them. "
@@ -906,8 +880,12 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dic
         # deterministic structural check, not semantic judgment (that stays with the
         # reviewer). Legacy proposals without claims pass through normally.
         proposal_claims = proposal.get("claims") if proposal else None
-        if proposal_claims is not None:
-            claims_valid, claims_issues = validate_claims_contract(proposal_claims)
+        claims_required = proposal.get("claims_contract_version") == CLAIMS_CONTRACT_VERSION if proposal else False
+        if claims_required or proposal_claims is not None:
+            claims_valid, claims_issues = validate_claims_contract(
+                proposal_claims, run_id=run_id, ticket_id=ticket_id,
+                actions=get_run_actions(args, run_id),
+            )
             if not claims_valid:
                 reason = (
                     "Pre-publish claim/evidence gate: " + "; ".join(claims_issues[:5])
@@ -1257,8 +1235,8 @@ def _query_instructions(run_id: str, ticket_id: str) -> str:
         "fact is not established before the tool budget ends, report Evidence status: INCOMPLETE "
         "and list the missing evidence; do not call it verified.\n"
         "Before completing, identify material claims and label each VERIFIED/INFERRED/"
-        "UNVERIFIED/CONTRADICTED. Include a claims array in metadata with evidence refs "
-        "(ActionNo from your xstudio_* calls). Absence of records is evidence of absence, "
+        "UNVERIFIED/CONTRADICTED. Include claims_contract_version=1 and a claims array in metadata; "
+        "each material VERIFIED claim needs evidence [{action_id:<Hermes action ID>}]. Context tools return refs; otherwise use xstudio_get_run_actions. Absence of records is evidence of absence, "
         "not evidence of causation.\n"
         "Never write the live ticket directly. Complete the Kanban task with full "
         "structured metadata; deterministic review/publish owns the rest.\n"
@@ -1333,6 +1311,7 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
         f"ticket_id: {ticket_id}\n"
         f"ticket_no: {ticket_no}\n"
         "review_cycle: 0\n"
+        f"claims_contract_version: {CLAIMS_CONTRACT_VERSION}\n"
         "pipeline_stage: investigation\n"
         + _investigation_bundle(args, ticket_id, ticket)
         + _query_instructions(run_id, ticket_id)

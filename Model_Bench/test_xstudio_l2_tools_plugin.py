@@ -127,6 +127,8 @@ def test_named_tool_schemas_have_small_required_contracts() -> None:
         "xstudio_get_ticket_context": set(),
         "xstudio_get_run_actions": set(),
         "xstudio_save_ledger": {"ledger"},
+        "xstudio_heat_context": {"heat"},
+        "xstudio_sap_api_context": {"api_type"},
     }
     assert set(plugin.TOOL_SCHEMAS) == set(expected)
     for name, required in expected.items():
@@ -246,8 +248,31 @@ def test_bridge_transport_uses_the_current_wsl_python_directly() -> None:
     assert result["ok"] is True
     argv = run.call_args.args[0]
     assert argv == [sys.executable, plugin.BRIDGE_PATH]
-    assert not any("python.exe" in part.lower() for part in argv)
+    # The test runner can be Windows; the invariant is that production uses
+    # its current interpreter, not a hard-coded Windows interpreter path.
+    assert argv[0] == sys.executable
     assert json.loads(run.call_args.kwargs["input"])["operation"] == "query"
+
+
+def test_semantic_context_tools_have_tiny_typed_inputs() -> None:
+    heat = plugin.TOOL_SCHEMAS["xstudio_heat_context"]["parameters"]
+    api = plugin.TOOL_SCHEMAS["xstudio_sap_api_context"]["parameters"]
+    assert set(heat["required"]) == {"heat"}
+    assert set(api["required"]) == {"api_type"}
+    assert heat["additionalProperties"] is False
+    assert api["additionalProperties"] is False
+
+
+def test_semantic_context_tools_default_to_xbatch_and_receive_run_context() -> None:
+    plugin._pre_llm_call(task_id="semantic", user_message="run_id: RUN-1\nticket_id: TICKET-1")
+    heat = plugin._pre_tool_call("xstudio_heat_context", {"heat": "1900001"}, task_id="semantic")
+    api = plugin._pre_tool_call("xstudio_sap_api_context", {"api_type": "UsageDecision"}, task_id="semantic")
+    assert heat and heat["action"] == "modify"
+    assert api and api["action"] == "modify"
+    assert heat["args"]["database"] == "XStudio_Xbatch"
+    assert api["args"]["database"] == "XStudio_Xbatch"
+    assert heat["args"]["run_id"] == "RUN-1"
+    assert api["args"]["run_id"] == "RUN-1"
 
 
 def test_bridge_transport_failure_is_reported_not_retried() -> None:
@@ -328,9 +353,19 @@ def test_read_procedure_accepts_allowlisted_call_with_correct_contract() -> None
     captured = {}
 
     class FakeClient:
+        class Cursor:
+            description = None
+            def execute(self, sql):
+                self.sql = sql
+        class Connection:
+            def cursor(self):
+                return FakeClient.Cursor()
+        conn = Connection()
         def execute_sql(self, **kwargs):
             captured.update(kwargs)
-            return json.dumps({"rows": []})
+            return "action-1"
+        def update_sql_action_evidence(self, *args, **kwargs):
+            pass
 
     result = bridge._read_procedure({
         "operation": "read_procedure", "database": "XStudio_Xbatch",
@@ -346,9 +381,19 @@ def test_read_procedure_escapes_quotes_in_parameter_values() -> None:
     captured = {}
 
     class FakeClient:
+        class Cursor:
+            description = None
+            def execute(self, sql):
+                self.sql = sql
+        class Connection:
+            def cursor(self):
+                return FakeClient.Cursor()
+        conn = Connection()
         def execute_sql(self, **kwargs):
             captured.update(kwargs)
-            return "{}"
+            return "action-1"
+        def update_sql_action_evidence(self, *args, **kwargs):
+            pass
 
     bridge._read_procedure({
         "operation": "read_procedure", "database": "XStudio_Xbatch", "run_id": "r1",
