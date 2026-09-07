@@ -67,6 +67,21 @@ SAFE_READ_PROCEDURES: dict[str, set[str]] = {
     "XMES_Get_API_Transaction_Summary": {"APIType"},
 }
 
+# Curated, read-only heat surfaces used by the deterministic resolver. The
+# worker can ask for one resolver call instead of spending several turns
+# guessing whether a ticket's H-prefixed identifier maps to a numeric key.
+HEAT_RESOLUTION_SURFACES: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("dbo.XMES_CCM_Billet_Genealogy_Trn_Tbl", ("HeatNo", "StrandNo"), ("HeatNo",)),
+    ("dbo.XStudio_List_XMES_CCM_Billet_Genealogy_Trn_Tbl_Vw", ("HeatNo", "StrandNo"), ("HeatNo",)),
+    ("dbo.CCM_Per_Heat", ("HeatID", "Strand1BilletCounter", "Strand2BilletCounter",
+                           "Strand3BilletCounter", "Strand4BilletCounter",
+                           "Strand5BilletCounter", "Strand6BilletCounter"), ("HeatID",)),
+    ("dbo.XStudio_List_CCM_Per_Heat_Vw", ("HeatNo", "HeatID", "Strand1BilletCounter",
+                                            "Strand2BilletCounter", "Strand3BilletCounter",
+                                            "Strand4BilletCounter", "Strand5BilletCounter",
+                                            "Strand6BilletCounter"), ("HeatNo", "HeatID")),
+)
+
 _WRITE_OR_EXEC = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|EXEC|EXECUTE|MERGE|CREATE|GRANT|REVOKE|DENY)\b",
     re.IGNORECASE,
@@ -230,6 +245,58 @@ def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
             "procedure": procedure, "result": result}
 
 
+def _heat_candidates(value: str) -> list[str]:
+    raw = str(value).strip()
+    candidates = [raw]
+    if raw[:1].upper() == "H" and raw[1:].isdigit():
+        candidates.append(raw[1:])
+    elif raw.isdigit():
+        candidates.append(f"H{raw}")
+    return list(dict.fromkeys(candidates))
+
+
+def _resolve_heat(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    database = _database(req)
+    if database != "XStudio_Xbatch":
+        raise ValueError("resolve_heat is allowlisted only for database=XStudio_Xbatch")
+    heat = str(_require(req, "heat")).strip()
+    candidates = _heat_candidates(heat)
+    escaped = ", ".join(f"N'{_escape_sql_string(value)}'" for value in candidates)
+    orchestrator = _orchestrator()
+    matches: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for table, columns, key_columns in HEAT_RESOLUTION_SURFACES:
+        select_list = ", ".join(f"[{column}]" for column in columns)
+        key_expr = " OR ".join(
+            f"CONVERT(NVARCHAR(100), [{column}]) IN ({escaped})"
+            for column in key_columns
+        )
+        sql = f"SELECT TOP 25 {select_list} FROM [{database}].{table} WHERE {key_expr}"
+        try:
+            rows = orchestrator.run_readonly_query(
+                client, sql, database=database, run_id=req.get("run_id"))
+        except Exception as exc:  # a missing optional view must not hide other surfaces
+            errors.append({"table": table, "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        if rows:
+            matches.append({
+                "object": table,
+                "key_columns": list(key_columns),
+                "rows": len(rows),
+                "sample": rows[:MAX_LIST_ITEMS],
+            })
+    return {
+        "ok": True,
+        "operation": "resolve_heat",
+        "database": database,
+        "input": heat,
+        "candidates": candidates,
+        "matches": matches,
+        "checked_surfaces": [surface[0] for surface in HEAT_RESOLUTION_SURFACES],
+        "errors": errors,
+    }
+
+
 def dispatch(req: dict[str, Any]) -> dict[str, Any]:
     operation = str(_require(req, "operation"))
 
@@ -304,6 +371,9 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
 
         if operation == "read_procedure":
             return _read_procedure(req, client)
+
+        if operation == "resolve_heat":
+            return _resolve_heat(req, client)
 
         raise ValueError(f"unsupported operation: {operation}")
     finally:

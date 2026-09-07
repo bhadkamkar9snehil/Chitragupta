@@ -30,6 +30,7 @@ class PipelineContractTests(unittest.TestCase):
             ({"status": "running", "ended_at": None}, 0),
             ({"status": "blocked", "ended_at": 1}, 0),
             ({"status": "crashed", "ended_at": None}, 0),
+            ({"status": "gave_up", "ended_at": 1, "error": "iteration budget exhausted"}, 1),
         ]:
             with self.subTest(attempt=attempt), \
                     patch.object(mod, "list_tasks", return_value=[task]), \
@@ -139,6 +140,27 @@ class PipelineContractTests(unittest.TestCase):
         )
         self.assertEqual(expected, "REAL_RESOLVED")
         self.assertEqual(argv, ["--new-ticket-status", "REAL_RESOLVED"])
+
+    def test_incomplete_investigator_evidence_is_marked_without_claiming_verification(self):
+        proposal = {
+            "response_type": "UPDATE",
+            "reply_text": "Verified heat format, but could not complete the genealogy query due to budget exhaustion.",
+        }
+        result = mod.annotate_evidence_status(proposal)
+        self.assertEqual(result["evidence_status"], "INCOMPLETE")
+        self.assertIn("Evidence status: INCOMPLETE", result["reply_text"])
+        self.assertIn("could not complete", result["reply_text"].lower())
+
+    def test_reviewer_prompt_does_not_treat_ticket_identifier_as_storage_proof(self):
+        task = {"id": "investigation-1", "body":
+                "run_id: run-1\nticket_id: ticket-1\nticket_no: Ticket_377\nreview_cycle: 0"}
+        proposal = {"run_id": "run-1", "ticket_id": "ticket-1",
+                    "response_type": "UPDATE", "reply_text": "Evidence status: INCOMPLETE."}
+        completed = type("Completed", (), {"returncode": 0, "stdout": '{"id":"review-1"}', "stderr": ""})()
+        with patch.object(mod, "run_hermes", return_value=completed) as run:
+            mod.create_reviewer_card(source_task=task, proposal=proposal)
+        body = run.call_args.args[0][run.call_args.args[0].index("--body") + 1]
+        self.assertIn("ticket identifier is not proof of database storage representation", body)
 
 
 if __name__ == "__main__":

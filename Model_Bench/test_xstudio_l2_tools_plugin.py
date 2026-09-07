@@ -95,6 +95,30 @@ def test_terminal_guard_leaves_benign_inspection_available() -> None:
         assert plugin._pre_tool_call("terminal", {"command": command}, task_id="s") is None, command
 
 
+def test_typed_tool_guard_rejects_operation_without_required_fields_before_budget() -> None:
+    blocked = plugin._pre_tool_call(plugin.TOOL_NAME, {
+        "operation": "select", "table": "dbo.CCM_Per_Heat", "columns": ["HeatID"]
+    }, task_id="shape")
+    assert blocked and blocked["action"] == "block"
+    assert "database" in blocked["message"]
+    with plugin._lock:
+        assert plugin._session_calls["shape"] == 0
+
+
+def test_typed_tool_guard_requires_operation_specific_arguments() -> None:
+    blocked = plugin._pre_tool_call(plugin.TOOL_NAME, {
+        "operation": "get_definition", "database": "XStudio_Xbatch"
+    }, task_id="shape-definition")
+    assert blocked and blocked["action"] == "block"
+    assert "object_name" in blocked["message"]
+
+
+def test_plugin_manifest_declares_registered_toolset() -> None:
+    manifest = (ROOT / "xstudio_l2_tools_plugin" / "plugin.yaml").read_text(encoding="utf-8")
+    assert "provides_tools:" in manifest
+    assert "  - xstudio_l2" in manifest
+
+
 def test_terminal_guard_inspects_alternate_argument_keys() -> None:
     assert plugin._pre_tool_call("terminal", {"cmd": "sqlcmd -Q 'SELECT 1'"}, task_id="s")["action"] == "block"
 
@@ -253,6 +277,33 @@ def test_oversized_result_is_replaced_with_a_narrowing_instruction() -> None:
     assert "narrow" in bounded["message"].lower() or "refine" in bounded["message"].lower()
 
 
+def test_resolve_heat_checks_known_numeric_and_prefixed_surfaces() -> None:
+    class Client:
+        def close(self):
+            pass
+
+    class Orchestrator:
+        @staticmethod
+        def run_readonly_query(client, sql, *, database, run_id):
+            return next(Orchestrator.rows)
+
+    Orchestrator.rows = iter([
+             [{"HeatNo": "H99328", "StrandNo": 1}], [], [], []
+    ])
+    with mock.patch.object(bridge, "_client", return_value=Client()), \
+         mock.patch.object(bridge, "_orchestrator", return_value=Orchestrator), \
+         mock.patch.object(Orchestrator, "run_readonly_query", wraps=Orchestrator.run_readonly_query) as run:
+        result = bridge.dispatch({
+            "operation": "resolve_heat", "database": "XStudio_Xbatch",
+            "heat": "H99328", "run_id": "run-1",
+        })
+    assert result["ok"] is True
+    assert result["input"] == "H99328"
+    assert result["matches"][0]["rows"] == 1
+    assert run.call_count == len(bridge.HEAT_RESOLUTION_SURFACES)
+    assert all("99328" in call.args[1] for call in run.call_args_list)
+
+
 def test_long_strings_are_truncated_with_a_marker() -> None:
     compact = bridge._compact({"definition": "y" * (bridge.MAX_STRING_CHARS + 100)})
     assert compact["definition"].endswith("chars]")
@@ -284,7 +335,8 @@ def test_successful_calls_never_trip_the_failure_breaker() -> None:
 
 
 def test_failure_breaker_is_scoped_per_session() -> None:
-    args = {"operation": "select", "table": "dbo.X", "columns": ["ID"]}
+    args = {"operation": "select", "database": "XStudio_Xbatch",
+            "table": "dbo.X", "columns": ["ID"]}
     for _ in range(plugin.MAX_IDENTICAL_FAILURES):
         plugin._pre_tool_call(plugin.TOOL_NAME, args, task_id="session-x")
         plugin._post_tool_call(plugin.TOOL_NAME, args, '{"ok":false}', task_id="session-x")
@@ -332,6 +384,8 @@ def test_production_cards_render_typed_contract_and_no_raw_interpreter_recipe() 
     body = runtime._query_instructions("RUN-1", "TICKET-1")
     assert "xstudio_l2" in body
     assert "RUN-1" in body and "TICKET-1" in body
+    assert "resolve_heat" in body
+    assert "Evidence status: INCOMPLETE" in body
     for retired in ("/mnt/c/Python314/python.exe", "Hermes_Orchestrator.py", "sqlcmd",
                     "--build-query", "--save-ledger", "pip install"):
         assert retired not in body, f"fresh card still teaches {retired!r}"

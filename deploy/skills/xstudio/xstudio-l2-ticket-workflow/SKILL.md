@@ -59,6 +59,7 @@ validate_identifiers
 select
 query
 read_procedure
+resolve_heat
 get_run_actions
 save_ledger
 ```
@@ -66,6 +67,14 @@ save_ledger
 Do not use terminal to run the orchestrator, Windows Python, sqlcmd, pyodbc, or package installation. The harness owns transport.
 
 Raw `query` is read-only. Arbitrary `EXEC` and arbitrary SQL mutation are not available.
+
+The typed interface validates operation-specific arguments before opening SQL. Always provide
+the required fields for the selected operation (including the explicit database for every
+schema/table/query operation); do not spend turns retrying a call that reports a missing field.
+
+Ticket/user identifiers are not proof of database storage representation. For example, `H99328`
+may map to numeric `99328`, another normalized key, or no live row. Establish the mapping from
+live schema and rows before claiming a format or count.
 
 ## Investigation procedure
 
@@ -92,6 +101,10 @@ Use only when a specific requester fact is genuinely required and cannot be esta
 ### `UPDATE`
 
 Use when there is verified progress but no final outcome yet. This is safer than inventing a terminal result.
+
+If a material fact was not established before the typed-tool budget ended, mark the proposal as
+`Evidence status: INCOMPLETE`, list what was observed, and list what remains unverified. Do not
+write “verified” for a fact that the same proposal says could not be queried or confirmed.
 
 ### `NEEDS_HUMAN_ACTION`
 

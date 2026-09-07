@@ -70,6 +70,7 @@ query
 find_objects
 get_definition
 read_procedure
+resolve_heat
 ```
 
 Do not use terminal to recreate SQL transport. Raw writes and arbitrary stored procedures are outside the reviewer interface.
@@ -83,6 +84,12 @@ Do not use terminal to recreate SQL transport. Raw writes and arbitrary stored p
 5. **Check identifiers.** Reject plausible-sounding table/column/object claims that are not real or were never verified.
 6. **Check response-type safety.** A correct fact can still have the wrong workflow outcome.
 7. **Approve or reject exactly once.**
+
+Do not infer a database storage format from a ticket's extracted identifier. `H99328` in
+`ExtractedEntitiesJson` describes the user-facing/ticket identifier; it does not contradict a
+numeric `HeatID` column. Verify the physical representation and the row mapping independently.
+When a proposal is marked `Evidence status: INCOMPLETE`, reject it unless the reply is explicitly
+limited to the observed facts and the missing evidence is not material to the proposed outcome.
 
 ## Approval standard
 

@@ -68,6 +68,7 @@ L2 workers do not build SQL transport themselves. They use one typed plugin tool
 | Read one object definition | `get_definition` |
 | Validate table/column identifiers | `validate_identifiers` |
 | Execute an explicitly allowlisted read procedure | `read_procedure` |
+| Resolve a ticket heat identifier across curated XStudio_Xbatch surfaces | `resolve_heat` |
 | Refresh the live ticket row | `get_ticket_context` |
 | Inspect the run's SQL audit trail | `get_run_actions` |
 | Persist ticket-specific findings | `save_ledger` |

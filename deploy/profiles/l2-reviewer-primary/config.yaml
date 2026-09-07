@@ -5,7 +5,7 @@ model:
   context_length: 75776
   max_tokens: 8192
 agent:
-  reasoning_effort: minimal
+  reasoning_effort: none
   max_turns: 20
 memory:
   provider: mem0

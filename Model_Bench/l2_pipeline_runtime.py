@@ -78,6 +78,37 @@ _RESPONSE_TYPE_PATTERNS = [
     ("QUESTION", re.compile(r"\?\s*$|need(?:s)? (?:more info|clarification) from|requester\b.*\bconfirm", re.I)),
 ]
 
+_INCOMPLETE_EVIDENCE_MARKERS = re.compile(
+    r"\b(?:could not|unable to|not established|not verified|unverified|"
+    r"budget exhaustion|budget exhausted|need(?:s)? to verify|insufficient evidence|"
+    r"unclear|unknown|cannot confirm)\b",
+    re.I,
+)
+
+
+def annotate_evidence_status(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Make incomplete evidence explicit before a reviewer sees a proposal.
+
+    A bounded worker may run out of typed-tool budget after discovering useful
+    facts but before proving the material claim. Preserve its wording, while
+    adding a machine-readable status and an unmistakable reviewer-facing
+    limitation so an incomplete UPDATE cannot read like a verified result.
+    """
+    out = dict(metadata)
+    text = " ".join(
+        str(out.get(key) or "")
+        for key in ("reply_text", "findings", "root_cause", "resolution", "summary")
+    )
+    if _INCOMPLETE_EVIDENCE_MARKERS.search(text):
+        out["evidence_status"] = "INCOMPLETE"
+        reply = str(out.get("reply_text") or "").strip()
+        if reply and not reply.lower().startswith("evidence status: incomplete"):
+            out["reply_text"] = (
+                "Evidence status: INCOMPLETE. No material claim below should be treated "
+                "as verified until the missing live evidence is obtained.\n\n" + reply
+            )
+    return out
+
 
 # ---------------------------------------------------------------------------
 # Process / transport helpers
@@ -227,7 +258,7 @@ def _completion_metadata(task: dict[str, Any]) -> Optional[dict[str, Any]]:
         md["run_id"] = task_run_id(task)
     if not md.get("ticket_id"):
         md["ticket_id"] = task_ticket_id(task)
-    return md
+    return annotate_evidence_status(md)
 
 
 def _proposal_complete(md: Optional[dict[str, Any]]) -> bool:
@@ -414,6 +445,7 @@ def normalize_investigator_completions(*, dry_run: bool = False, active_run_ids:
             "reply_text": metadata.get("reply_text") or summary,
             "normalized_by": "l2_pipeline_runtime.py",
         })
+        metadata = annotate_evidence_status(metadata)
         if dry_run:
             print(f"[DRY RUN] normalize investigator task {task['id']}")
             repaired += 1
@@ -453,6 +485,9 @@ def create_reviewer_card(
         f"review_cycle: {cycle}\n"
         "pipeline_stage: review\n"
         f"proposal_json: {proposal_json}\n\n"
+        "The ticket identifier is not proof of database storage representation (for example, "
+        "H99328 may map to a numeric key); establish the physical key and format from live "
+        "schema/rows.\n"
         "Verify the frozen proposal above against live evidence. Approve with kanban_complete; "
         "reject with kanban_block. The deterministic reconciler owns publication/rework."
     )
@@ -929,7 +964,7 @@ def recover_failed_workers(args: argparse.Namespace, *, dry_run: bool = False) -
         if not attempts or any(r.get("status") == "running" for r in attempts):
             continue
         latest = attempts[-1]
-        if latest.get("status") not in {"crashed", "timed_out", "failed"}:
+        if latest.get("status") not in {"crashed", "timed_out", "failed", "gave_up"}:
             continue
         if not latest.get("ended_at"):
             continue
@@ -1073,9 +1108,13 @@ def _query_instructions(run_id: str, ticket_id: str) -> str:
         "  get_definition      full definition text for one object\n"
         "  validate_identifiers  confirm a table/column exists before relying on it\n"
         "  read_procedure      explicitly allowlisted diagnostic procedures only\n"
+        "  resolve_heat        map a ticket heat identifier across curated XStudio_Xbatch surfaces\n"
         "  get_ticket_context  refresh this ticket's live row\n"
         "  get_run_actions     this run's recorded SQL/action trail\n"
         "  save_ledger         persist findings before completing or handing to rework\n\n"
+        "Operation shapes: select(database,table,columns); query(database,sql); "
+        "suggest_tables/find_objects(database,search); get_definition(database,object_name); "
+        "resolve_heat(database,heat); get_ticket_context(ticket_id); get_run_actions(run_id).\n"
         "Pass database explicitly: XStudio_Helpdesk for ticket/Hermes runtime data, "
         "XStudio_Xbatch for production/heat/billet/quality/delay/SAP data.\n"
         "There is no shell path to the database. Do not use terminal to reach SQL, to run "
@@ -1083,6 +1122,9 @@ def _query_instructions(run_id: str, ticket_id: str) -> str:
         "blocked by the harness and will waste your budget. Do not retry an identical "
         "failing call with wrappers or timeouts; correct its typed arguments or change the "
         "evidence path. If a result is truncated, narrow the query rather than repeating it.\n"
+        "A ticket/user identifier is not proof of database storage representation. If a material "
+        "fact is not established before the tool budget ends, report Evidence status: INCOMPLETE "
+        "and list the missing evidence; do not call it verified.\n"
         "Never write the live ticket directly. Complete the Kanban task with full "
         "structured metadata; deterministic review/publish owns the rest.\n"
     )

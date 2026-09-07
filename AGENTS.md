@@ -213,6 +213,8 @@ Preferred investigation path, all through the typed `xstudio_l2` tool (see §8a)
 - `find_objects` / `get_definition` for live metadata when necessary;
 - `query` only for read-only SQL, with `database` specified explicitly;
 - `read_procedure` only for the explicitly allowlisted diagnostics;
+- `resolve_heat` for deterministic, read-only mapping of a ticket heat identifier
+  (for example `H99328`) across curated XStudio_Xbatch heat/genealogy surfaces;
 - persist meaningful per-ticket state with `save_ledger`.
 
 Do not put per-ticket facts into shared mem0.

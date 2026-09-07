@@ -8,6 +8,7 @@ def configure(text: str) -> str:
     lines = text.splitlines()
     for section, key, value in [("model", "context_length", "75776"),
                                 ("model", "max_tokens", "8192"),
+                                ("agent", "reasoning_effort", "none"),
                                 ("agent", "max_turns", "20")]:
         parent = _find_key_line(lines, section, 0, len(lines), 0)
         if parent < 0:

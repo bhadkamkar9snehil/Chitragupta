@@ -7,3 +7,5 @@ provides_hooks:
   - pre_tool_call
   - post_tool_call
   - pre_llm_call
+provides_tools:
+  - xstudio_l2

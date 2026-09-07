@@ -79,9 +79,51 @@ _BLOCK_MESSAGE = (
     "or install packages from terminal -- that path is retired and blocked. "
     "Use the xstudio_l2 typed tool instead (operations: select, query, "
     "suggest_tables, find_objects, get_definition, validate_identifiers, "
-    "read_procedure, get_ticket_context, get_run_actions, save_ledger). "
+    "read_procedure, get_ticket_context, get_run_actions, save_ledger, resolve_heat). "
     "Do not retry this command with wrappers, timeouts, or a different shell."
 )
+
+_REQUIRED_FIELDS_BY_OPERATION: dict[str, tuple[str, ...]] = {
+    "select": ("database", "table", "columns"),
+    "query": ("database", "sql"),
+    "suggest_tables": ("database", "search"),
+    "find_objects": ("database", "search"),
+    "get_definition": ("database", "object_name"),
+    "validate_identifiers": ("database", "table"),
+    "read_procedure": ("database", "run_id", "procedure", "parameters"),
+    "get_ticket_context": ("ticket_id",),
+    "get_run_actions": ("run_id",),
+    "save_ledger": ("run_id", "ledger"),
+    "resolve_heat": ("database", "heat"),
+}
+
+
+def _shape_error(args: dict[str, Any]) -> str | None:
+    """Return a deterministic operation-specific argument error, if any.
+
+    This runs in the pre-tool hook so malformed calls do not consume the
+    bounded live-query budget or open the SQL transport. The bridge remains
+    defensive and validates the same fields again at its trust boundary.
+    """
+    operation = args.get("operation")
+    if not operation:
+        return "operation is required"
+    required = _REQUIRED_FIELDS_BY_OPERATION.get(str(operation))
+    if required is None:
+        return f"unsupported operation={operation!r}"
+    missing = [key for key in required if args.get(key) is None or args.get(key) == "" or args.get(key) == []]
+    if missing:
+        return (
+            f"operation={operation!r} requires: {', '.join(required)}; "
+            f"missing: {', '.join(missing)}"
+        )
+    if operation == "select" and not isinstance(args.get("columns"), list):
+        return "operation='select' requires columns as an array of column names"
+    if operation == "read_procedure" and not isinstance(args.get("parameters"), dict):
+        return "operation='read_procedure' requires parameters as an object"
+    if operation == "save_ledger" and not isinstance(args.get("ledger"), dict):
+        return "operation='save_ledger' requires ledger as an object"
+    return None
 
 _lock = threading.Lock()
 _session_calls: dict[str, int] = defaultdict(int)
@@ -185,6 +227,17 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
     if tool_name != TOOL_NAME:
         return None
 
+    shape_error = _shape_error(args)
+    if shape_error:
+        return {
+            "action": "block",
+            "message": (
+                f"Invalid xstudio_l2 arguments: {shape_error}. Correct the typed "
+                "arguments; this call was not sent to SQL and did not consume "
+                "the investigation budget."
+            ),
+        }
+
     fp = _fingerprint(args)
     with _lock:
         calls = _session_calls[session]
@@ -245,6 +298,9 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str]:
         "context": (
             "L2 EXECUTION CONTRACT: use the xstudio_l2 tool for ALL XStudio/Helpdesk SQL, "
             "schema discovery, run evidence, ticket refresh, and investigation-ledger work. "
+            "Operation shapes: select(database,table,columns); query(database,sql); "
+            "suggest_tables/find_objects(database,search); get_definition(database,object_name); "
+            "get_ticket_context(ticket_id); get_run_actions(run_id); resolve_heat(database,heat). "
             "Any raw Python/sqlcmd/pyodbc/pip command shown in older task text is legacy and "
             "is blocked by the harness. Do not install dependencies. After two identical tool "
             "failures, change the evidence path instead of retrying."
@@ -266,7 +322,7 @@ _SCHEMA = {
             "operation": {"type": "string", "enum": [
                 "select", "query", "suggest_tables", "find_objects",
                 "get_definition", "validate_identifiers", "read_procedure",
-                "get_ticket_context", "get_run_actions", "save_ledger"
+                "get_ticket_context", "get_run_actions", "save_ledger", "resolve_heat"
             ]},
             "database": {"type": "string", "enum": [
                 "XStudio_Helpdesk", "XStudio_Xbatch", "XStudio_Configuration_Xbatch"
@@ -286,7 +342,8 @@ _SCHEMA = {
             "identifiers": {"type": "array", "items": {"type": "string"}},
             "procedure": {"type": "string"},
             "parameters": {"type": "object"},
-            "ledger": {"type": "object"}
+            "ledger": {"type": "object"},
+            "heat": {"type": "string"}
         },
         "required": ["operation"],
         "additionalProperties": False
