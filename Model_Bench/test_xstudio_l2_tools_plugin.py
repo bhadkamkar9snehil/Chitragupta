@@ -103,15 +103,15 @@ def test_terminal_guard_inspects_alternate_argument_keys() -> None:
 # Bridge transport
 # --------------------------------------------------------------------------
 
-def test_bridge_transport_never_prefixes_windows_python_with_python3() -> None:
+def test_bridge_transport_uses_the_current_wsl_python_directly() -> None:
     completed = mock.Mock(returncode=0, stdout='{"ok":true,"rows":[]}', stderr="")
     with mock.patch.object(plugin.subprocess, "run", return_value=completed) as run:
         result = json.loads(plugin._invoke_bridge(
             {"operation": "query", "database": "XStudio_Xbatch", "sql": "SELECT 1"}))
     assert result["ok"] is True
     argv = run.call_args.args[0]
-    assert argv == [plugin.WINDOWS_PYTHON, plugin.BRIDGE_WIN]
-    assert "python3" not in argv
+    assert argv == [sys.executable, plugin.BRIDGE_PATH]
+    assert not any("python.exe" in part.lower() for part in argv)
     assert json.loads(run.call_args.kwargs["input"])["operation"] == "query"
 
 

@@ -221,8 +221,9 @@ Do not put per-ticket facts into shared mem0.
 
 L2 agents do not build database transport. They call one typed tool,
 `xstudio_l2`, registered by the `xstudio-l2-tools` plugin
-(`Model_Bench/xstudio_l2_tools_plugin/`), which invokes the Windows-side
-bridge (`Model_Bench/xstudio_l2_tool_bridge.py`) internally. The bridge reuses
+(`Model_Bench/xstudio_l2_tools_plugin/`), which invokes the native WSL
+bridge (`Model_Bench/xstudio_l2_tool_bridge.py`) internally using the backend
+Hermes Python and Microsoft ODBC Driver 18. The bridge reuses
 the guarded primitives already in `Hermes_Orchestrator.py` rather than being a
 parallel SQL implementation.
 

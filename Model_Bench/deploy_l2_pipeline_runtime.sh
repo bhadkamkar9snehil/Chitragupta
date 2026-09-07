@@ -12,40 +12,46 @@ set -euo pipefail
 # `xstudio_l2` tool, and the retired shell paths are blocked.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRIPTS_DIR="$HOME/.hermes/profiles/l2-investigator/scripts"
 ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
 INVESTIGATOR_PROFILES=(l2-investigator l2-investigator-primary)
 REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
+HERMES_PYTHON="$HOME/.hermes/hermes-agent/venv/bin/python"
 
-mkdir -p "$SCRIPTS_DIR"
+test -x "$HERMES_PYTHON" \
+  || { echo "FATAL: Hermes Python not found at $HERMES_PYTHON" >&2; exit 1; }
+odbcinst -q -d -n "ODBC Driver 18 for SQL Server" >/dev/null 2>&1 \
+  || { echo "FATAL: ODBC Driver 18 for SQL Server is not installed in WSL" >&2; exit 1; }
+if ! "$HERMES_PYTHON" -c 'import pyodbc' >/dev/null 2>&1; then
+  "$HERMES_PYTHON" -m pip install pyodbc
+fi
 
-for f in \
-  l2_pipeline_runtime.py \
-  ticket_scout.py \
-  reconcile_l2_pipeline.py \
-  kanban_approval_publisher.py \
-  kanban_reject_bridge.py \
-  repair_incomplete_completions.py \
-  audit_kanban_completions.py \
-  enforce_publish_safety_net.py \
-  run_coalesced.py \
-  drain_and_summarize.py
- do
-  cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
- done
+for profile in "${ACTIVE_PROFILES[@]}"; do
+  scripts_dir="$HOME/.hermes/profiles/$profile/scripts"
+  mkdir -p "$scripts_dir"
+  for f in \
+    l2_pipeline_runtime.py \
+    ticket_scout.py \
+    reconcile_l2_pipeline.py \
+    kanban_approval_publisher.py \
+    kanban_reject_bridge.py \
+    repair_incomplete_completions.py \
+    audit_kanban_completions.py \
+    enforce_publish_safety_net.py \
+    run_coalesced.py \
+    drain_and_summarize.py
+  do
+    cp "$ROOT/Model_Bench/$f" "$scripts_dir/$f"
+  done
+  chmod +x "$scripts_dir"/*.py
+  cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$scripts_dir/helpdesk_workflow_binding.json"
+done
 
-chmod +x "$SCRIPTS_DIR"/*.py
-
-# The typed-tool bridge is invoked by the plugin at its REPO path (it needs the
-# Windows interpreter and the repo's Hermes_Orchestrator module), so it is not
+# The typed-tool bridge is invoked by the plugin at its repo path using the
+# current Hermes WSL Python and its native ODBC driver, so it is not
 # copied into the profile. Fail loudly if it is missing rather than deploying a
 # plugin whose transport cannot start.
 test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
   || { echo "FATAL: Model_Bench/xstudio_l2_tool_bridge.py is missing" >&2; exit 1; }
-
-# Keep the workflow binding beside the deployed scripts as a fallback. The
-# runtime also reads the canonical repo copy directly.
-cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
 
 # Deploy both observer plugins to every active role. The orchestrator plugin
 # only triggers reconciliation; the tools plugin registers `xstudio_l2` and
@@ -151,6 +157,7 @@ fi
 
 echo
 echo "Deployed deterministic L2 lifecycle + typed XStudio investigation harness."
-echo "Typed tool: xstudio_l2. Retired terminal transports (Hermes_Orchestrator.py,"
-echo "Windows Python, sqlcmd, pyodbc, pip) are blocked by plugin hook + approvals.deny."
+echo "Typed tool: xstudio_l2. SQL transport runs natively in WSL behind the harness."
+echo "Model-driven terminal transports (Hermes_Orchestrator.py, Windows Python,"
+echo "sqlcmd, pyodbc, pip) remain blocked by plugin hook + approvals.deny."
 echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"

@@ -403,7 +403,16 @@ except ImportError:
     print("ERROR: pyodbc is required. Install with: pip install pyodbc", file=sys.stderr)
     sys.exit(1)
 
-DEFAULT_DRIVER = "ODBC Driver 17 for SQL Server"
+def select_default_driver(available: Optional[List[str]] = None) -> str:
+    """Select an installed Microsoft SQL Server driver, preferring v18."""
+    installed = available if available is not None else pyodbc.drivers()
+    for candidate in ("ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server"):
+        if candidate in installed:
+            return candidate
+    return "ODBC Driver 18 for SQL Server"
+
+
+DEFAULT_DRIVER = select_default_driver()
 DEFAULT_DATABASE = "XStudio_Helpdesk"
 
 

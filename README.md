@@ -72,7 +72,7 @@ L2 workers do not build SQL transport themselves. They use one typed plugin tool
 | Inspect the run's SQL audit trail | `get_run_actions` |
 | Persist ticket-specific findings | `save_ledger` |
 
-`Model_Bench/xstudio_l2_tools_plugin/` registers and guards the tool. `Model_Bench/xstudio_l2_tool_bridge.py` owns the Windows-side interpreter/driver transport and returns bounded JSON.
+`Model_Bench/xstudio_l2_tools_plugin/` registers and guards the tool. `Model_Bench/xstudio_l2_tool_bridge.py` runs under the backend Hermes Python in WSL, owns the native ODBC transport, and returns bounded JSON.
 
 The worker-facing safety contract is structural:
 

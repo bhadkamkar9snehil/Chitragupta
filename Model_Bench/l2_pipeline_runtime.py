@@ -33,7 +33,6 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-WINDOWS_PYTHON = "/mnt/c/Python314/python.exe"
 ORCHESTRATOR_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Hermes_Orchestrator.py"
 KB_RETRIEVER_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\kb_retrieval.py"
 DEFAULT_SERVER = "10.2.6.204"
@@ -88,19 +87,26 @@ def _is_windows() -> bool:
 
 
 def _orch_python() -> str:
-    return sys.executable if _is_windows() else WINDOWS_PYTHON
+    return sys.executable
+
+
+def _orch_path() -> str:
+    return ORCHESTRATOR_WIN if _is_windows() else str(REPO_ROOT_WSL / "Hermes_Orchestrator.py")
+
+
+def _kb_retriever_path() -> str:
+    return KB_RETRIEVER_WIN if _is_windows() else str(REPO_ROOT_WSL / "Model_Bench" / "kb_retrieval.py")
 
 
 def _base_orchestrator_args(args: argparse.Namespace) -> list[str]:
     cmd = [
-        _orch_python(), ORCHESTRATOR_WIN,
+        _orch_python(), _orch_path(),
         "--server", args.server,
         "--database", args.database,
         "--username", args.username,
     ]
-    # WSL-native cron/hook processes may not see the Windows environment variable.
-    # Passing a literal None in argv crashes subprocess before the Windows interpreter
-    # can read its own environment, so omit the flag when absent.
+    # Passing a literal None in argv crashes subprocess before the native
+    # interpreter can start, so omit the flag when the environment lacks it.
     if args.password:
         cmd += ["--password", args.password]
     return cmd
@@ -907,7 +913,7 @@ def _run_kb_retrieval(args: argparse.Namespace, ticket: dict[str, Any]) -> dict[
         return {"solutions": [], "abstained": True, "abstention_reason": "Ticket contains no searchable problem text."}
 
     cmd = [
-        _orch_python(), KB_RETRIEVER_WIN,
+        _orch_python(), _kb_retriever_path(),
         "--server", args.server,
         "--database", args.database,
         "--username", args.username,
