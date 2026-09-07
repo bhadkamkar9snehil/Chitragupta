@@ -6,7 +6,7 @@ from patch_profile_config import _find_key_line, _block_end
 
 def configure(text: str) -> str:
     lines = text.splitlines()
-    for section, key, value in [("model", "context_length", "32768"),
+    for section, key, value in [("model", "context_length", "75776"),
                                 ("model", "max_tokens", "8192"),
                                 ("agent", "max_turns", "20")]:
         parent = _find_key_line(lines, section, 0, len(lines), 0)
