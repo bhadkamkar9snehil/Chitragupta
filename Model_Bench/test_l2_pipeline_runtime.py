@@ -16,6 +16,60 @@ ORCH_SPEC.loader.exec_module(orchestrator)
 
 
 class PipelineContractTests(unittest.TestCase):
+    def test_sql_failure_is_not_an_inactive_run(self):
+        with patch.object(mod, "run_orchestrator", side_effect=RuntimeError("SQL unavailable")):
+            with self.assertRaises(RuntimeError):
+                mod.safe_query_active_run("run", mod.default_args())
+
+    def test_failed_worker_recovery_requires_terminal_attempt(self):
+        task = {"id": "task", "status": "blocked", "assignee": mod.INVESTIGATOR_PROFILE,
+                "body": "run_id: run\nticket_id: ticket\nreview_cycle: 1"}
+        for attempt, expected in [
+            ({"status": "crashed", "ended_at": 1, "error": "protocol violation"}, 1),
+            ({"status": "timed_out", "ended_at": 1}, 1),
+            ({"status": "running", "ended_at": None}, 0),
+            ({"status": "blocked", "ended_at": 1}, 0),
+            ({"status": "crashed", "ended_at": None}, 0),
+        ]:
+            with self.subTest(attempt=attempt), \
+                    patch.object(mod, "list_tasks", return_value=[task]), \
+                    patch.object(mod, "query_active_runs", return_value=[{"ID": "run"}]), \
+                    patch.object(mod, "get_runs", return_value=[attempt]), \
+                    patch.object(mod, "check_worker_dependencies"), \
+                    patch.object(mod, "create_rework_card", return_value="rework") as create:
+                self.assertEqual(mod.recover_failed_workers(mod.default_args()), expected)
+                self.assertEqual(create.call_count, expected)
+
+    def test_failed_worker_recovery_does_not_duplicate_rework(self):
+        task = {"id": "task", "status": "blocked", "assignee": mod.INVESTIGATOR_PROFILE,
+                "body": "run_id: run\nticket_id: ticket"}
+        successor = {"id": "next", "body": "rework_source_id: task"}
+        with patch.object(mod, "list_tasks", return_value=[task, successor]), \
+                patch.object(mod, "query_active_runs", return_value=[{"ID": "run"}]), \
+                patch.object(mod, "create_rework_card") as create:
+            self.assertEqual(mod.recover_failed_workers(mod.default_args()), 0)
+            create.assert_not_called()
+
+    def test_dependency_failure_prevents_worker_retry(self):
+        task = {"id": "task", "status": "blocked", "assignee": mod.INVESTIGATOR_PROFILE,
+                "body": "run_id: run\nticket_id: ticket"}
+        with patch.object(mod, "list_tasks", return_value=[task]), \
+                patch.object(mod, "query_active_runs", return_value=[{"ID": "run"}]), \
+                patch.object(mod, "get_runs", return_value=[{"status": "crashed", "ended_at": 1}]), \
+                patch.object(mod, "check_worker_dependencies", side_effect=RuntimeError("model down")), \
+                patch.object(mod, "create_rework_card") as create:
+            with self.assertRaises(RuntimeError):
+                mod.recover_failed_workers(mod.default_args())
+            create.assert_not_called()
+
+    def test_failed_escalation_does_not_release_run(self):
+        with patch.object(mod, "_l3_exists", return_value=False), \
+                patch.object(mod, "run_orchestrator", side_effect=RuntimeError("handoff unavailable")) as run:
+            self.assertFalse(mod._escalate_run(mod.default_args(), run_id="run", ticket_id="ticket",
+                                              reason="test", cycle=2, dry_run=False))
+            self.assertEqual(run.call_count, 1)
+            self.assertIn("--escalate-blocked", run.call_args.args[1])
+
     def test_odbc_driver_selection_prefers_installed_driver_18(self):
         self.assertEqual(
             orchestrator.select_default_driver(["ODBC Driver 18 for SQL Server"]),
@@ -24,9 +78,9 @@ class PipelineContractTests(unittest.TestCase):
 
     def test_wsl_orchestrator_transport_stays_native(self):
         args = mod.default_args()
-        with patch.object(mod, "_is_windows", return_value=False):
+        with patch.object(mod, "_is_windows", return_value=False), patch.object(mod.sys, "executable", "/usr/bin/python3"):
             command = mod._base_orchestrator_args(args)
-        self.assertEqual(command[0], sys.executable)
+        self.assertEqual(command[0], "/usr/bin/python3")
         self.assertEqual(command[1], str(mod.REPO_ROOT_WSL / "Hermes_Orchestrator.py"))
         self.assertFalse(any("python.exe" in part.lower() for part in command[:2]))
 

@@ -2,9 +2,11 @@ model:
   default: qwen/qwen3.5-9b
   provider: lmstudio
   base_url: http://100.111.69.102:1235/v1
-  context_length: 65600
+  context_length: 32768
+  max_tokens: 4096
 agent:
   reasoning_effort: minimal
+  max_turns: 20
 memory:
   provider: mem0
 approvals:
@@ -47,16 +49,9 @@ platforms:
     port: 8646
 platform_toolsets:
   cli:
-    - clarify
-    - cronjob
-    - delegation
     - file
     - kanban
-    - memory
-    - session_search
     - skills
-    - terminal
-    - todo
     - xstudio_l2
 known_plugin_toolsets:
   cli:

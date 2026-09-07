@@ -1,12 +1,36 @@
 # Chitragupta L2 Pipeline State Machine
 
-Status: **runtime contract**  
+Status: **runtime contract**
 Branch: `main`
 
 This document defines the lifecycle implemented by `Model_Bench/l2_pipeline_runtime.py`.
 If this document and the runtime disagree, fix the drift immediately; neither should be allowed to remain stale.
 
 ## 1. Core invariant
+
+### Worker failure recovery (2026-09-07)
+
+All mutating CLI entrypoints take the same WSL process lock, including scout,
+completion hooks and operator reconciliation. SQL lookup failure aborts the pass;
+it is never evidence that a run is inactive. Windows mutation entrypoints refuse
+execution; invoke the configured WSL environment to share ownership.
+
+New cards allow one Hermes process attempt. A blocked card with an ended crashed,
+failed or timed-out attempt is recovered by central reconciliation into a fresh
+rework card under the same SQL run. Running attempts and explicit reviewer
+rejections do not enter this path. Rework uses the existing bounded cycle budget
+and exact-source idempotency key. The escalation handoff is persisted before
+failing/releasing the SQL run, so a failed handoff remains retryable.
+
+Before new claims or failed-worker rework, the runtime probes the typed SQL bridge
+and configured models' structured tool calling. A failed dependency probe pauses
+that tick; subsequent scout ticks retry the probe. This is a dependency gate,
+not proof that a model will solve an arbitrary ticket.
+
+Primary investigator and reviewer sessions have a 24,576-token context budget,
+2,048-token output cap and 20-turn limit. Their available tools are file, skills,
+Kanban and typed XStudio evidence. These bounds must be validated against actual
+worker traces whenever the model deployment changes.
 
 The current LM Studio deployment has one safe inference slot (`max_in_progress: 1`). Throughput therefore comes from **finishing the active ticket before claiming another one**.
 

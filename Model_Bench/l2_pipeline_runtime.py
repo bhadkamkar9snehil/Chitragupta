@@ -30,6 +30,7 @@ import re
 import shlex
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -155,11 +156,11 @@ def list_tasks(status: Optional[str] = None) -> list[dict[str, Any]]:
 def get_runs(task_id: str) -> list[dict[str, Any]]:
     r = run_hermes(["kanban", "runs", task_id, "--json"])
     if r.returncode != 0:
-        return []
+        raise RuntimeError(f"Kanban attempt history unavailable for {task_id}")
     try:
         data = json.loads(r.stdout)
-    except json.JSONDecodeError:
-        return []
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid Kanban attempt history for {task_id}") from exc
     return data if isinstance(data, list) else []
 
 
@@ -234,7 +235,7 @@ def _proposal_complete(md: Optional[dict[str, Any]]) -> bool:
         md
         and md.get("run_id")
         and md.get("ticket_id")
-        and md.get("response_type")
+        and md.get("response_type") in {"UPDATE", "QUESTION", "RESOLUTION", "L3_ESCALATION", "NEEDS_HUMAN_ACTION"}
         and str(md.get("reply_text") or "").strip()
     )
 
@@ -328,10 +329,7 @@ def safe_query_active_run(run_id: str, args: Optional[argparse.Namespace] = None
         "FROM dbo.Hermes_L2_Response_Trn_Tbl "
         f"WHERE ID = '{safe}' AND IsDeleted = 0 AND IsActive = 1"
     )
-    try:
-        rows = run_orchestrator(args, ["--query", sql])
-    except RuntimeError:
-        return []
+    rows = run_orchestrator(args, ["--query", sql])
     return rows if isinstance(rows, list) else []
 
 
@@ -385,9 +383,11 @@ def infer_response_type(summary: str) -> str:
     return "UPDATE"
 
 
-def normalize_investigator_completions(*, dry_run: bool = False) -> int:
+def normalize_investigator_completions(*, dry_run: bool = False, active_run_ids: Optional[set[str]] = None) -> int:
     repaired = 0
     for task in list_tasks("done"):
+        if active_run_ids is not None and task_run_id(task) not in active_run_ids:
+            continue
         if (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
             continue
         latest = latest_done_run(task["id"])
@@ -465,6 +465,7 @@ def create_reviewer_card(
         "--skill", "xstudio-sql-write-discipline",
         "--idempotency-key", f"review-{run_id}-{cycle}-{source_task['id']}",
         "--max-runtime", "15m",
+        "--max-retries", "1",
         "--json",
     ]
     if dry_run:
@@ -537,17 +538,19 @@ def _escalate_run(
         print(f"[DRY RUN] escalate run {run_id} after cycle {cycle}: {reason[:160]}")
         return True
     try:
-        if safe_query_active_run(run_id, args):
-            run_orchestrator(args, [
-                "--fail-run", "--run-id", run_id,
-                "--error-message", f"Automated review cycle cap reached after {cycle + 1} cycles. {reason[:500]}",
-                "--retry-after-minutes", "999999",
-            ])
+        # Persist the handoff before releasing SQL ownership. If this fails,
+        # reconciliation can retry while the run remains active.
         if not _l3_exists(args, run_id):
             run_orchestrator(args, [
                 "--escalate-blocked", "--run-id", run_id,
                 "--ticket-id", ticket_id,
                 "--block-reason", f"Automated review cycle cap reached after {cycle + 1} cycles. {reason[:1500]}",
+            ])
+        if safe_query_active_run(run_id, args):
+            run_orchestrator(args, [
+                "--fail-run", "--run-id", run_id,
+                "--error-message", f"Automated review cycle cap reached after {cycle + 1} cycles. {reason[:500]}",
+                "--retry-after-minutes", "999999",
             ])
     except RuntimeError as exc:
         print(f"WARNING: escalation failed for {run_id}: {exc}")
@@ -610,6 +613,7 @@ def create_rework_card(
         "--skill", "xstudio-sql-write-discipline",
         "--idempotency-key", f"rework-{source_task['id']}",
         "--max-runtime", "20m",
+        "--max-retries", "1",
         "--json",
     ]
     if dry_run:
@@ -719,12 +723,13 @@ def _post_publish_activity(args: argparse.Namespace, run_id: str, ticket_id: str
 def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
     binding = load_workflow_binding()
     counts = {"published": 0, "blocked_configuration": 0, "rework_created": 0}
+    active = {str(row["ID"]) for row in query_active_runs(args)}
 
     for task in list_tasks("done"):
         if (task.get("assignee") or "") not in REVIEWER_PROFILES:
             continue
         run_id, ticket_id = task_run_id(task), task_ticket_id(task)
-        if not run_id or not ticket_id:
+        if run_id not in active or not ticket_id:
             continue
 
         state = _query_published_state(args, run_id)
@@ -881,7 +886,9 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
     # Synchronous ordering removes the old Popen race (publisher reading metadata before
     # repair completed). Reviewers do not exist until normalization/unreviewable handling
     # has finished for their source completion.
-    normalized = normalize_investigator_completions(dry_run=dry_run)
+    failed_workers = recover_failed_workers(args, dry_run=dry_run)
+    active = {str(row["ID"]) for row in query_active_runs(args)}
+    normalized = normalize_investigator_completions(dry_run=dry_run, active_run_ids=active)
     unreviewable = process_unreviewable_completions(args, dry_run=dry_run)
     reviewers = ensure_missing_reviewers(args, dry_run=dry_run)
     rejections = process_rejections(args, dry_run=dry_run)
@@ -890,6 +897,7 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
         args, dry_run=dry_run, stale_after_minutes=args.stale_after_minutes,
     )
     return {
+        "failed_workers_reworked": failed_workers,
         "normalized": normalized,
         "unreviewable_reworked": unreviewable,
         "reviewers_created": reviewers,
@@ -897,6 +905,86 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
         "approvals": approvals,
         "orphans_recovered": orphans,
     }
+
+
+def recover_failed_workers(args: argparse.Namespace, *, dry_run: bool = False) -> int:
+    """Recover terminal worker failures, never a merely old/live task.
+
+    Hermes owns process termination. Only a blocked card whose latest attempt
+    has ended is eligible. Fresh rework retains the same SQL run and advances
+    the existing bounded review cycle instead of resetting the retry budget.
+    """
+    tasks = list_tasks()
+    active = {str(row["ID"]) for row in query_active_runs(args)}
+    recovered = 0
+    health_checked = False
+    for task in tasks:
+        if task.get("status") != "blocked":
+            continue
+        if task.get("assignee") not in INVESTIGATOR_PROFILES | REVIEWER_PROFILES:
+            continue
+        if task_run_id(task) not in active or _source_has_rework(tasks, task["id"]):
+            continue
+        attempts = get_runs(task["id"])
+        if not attempts or any(r.get("status") == "running" for r in attempts):
+            continue
+        latest = attempts[-1]
+        if latest.get("status") not in {"crashed", "timed_out", "failed"}:
+            continue
+        if not latest.get("ended_at"):
+            continue
+        if not dry_run and not health_checked:
+            check_worker_dependencies()
+            health_checked = True
+        reason = "Worker infrastructure failure: " + str(latest.get("error") or latest["status"])
+        source_id = body_field(task.get("body"), "investigation_task_id") or task["id"]
+        if create_rework_card(args, source_task=task, reason=reason,
+                              investigation_task_id=source_id, dry_run=dry_run):
+            recovered += 1
+    return recovered
+
+
+def check_worker_dependencies() -> None:
+    """Exercise the configured worker transport/model before consuming work.
+
+    Probe output is synthetic and never written to a ticket. Dependency failure
+    stops the scout/recovery tick; its next scheduled invocation probes again.
+    """
+    import urllib.request
+    import yaml
+    bridge = REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py"
+    probe = subprocess.run([sys.executable, str(bridge)],
+        input=json.dumps({"operation": "query", "database": DEFAULT_DATABASE,
+                          "sql": "SELECT 1 AS Healthy"}),
+        capture_output=True, text=True, timeout=25)
+    if probe.returncode or not json.loads(probe.stdout).get("ok"):
+        raise RuntimeError("WORKER_DEPENDENCY_UNAVAILABLE: typed SQL probe failed; claims paused")
+    checked = set()
+    for profile in (INVESTIGATOR_PROFILE, REVIEWER_PROFILE):
+        config_path = Path.home() / ".hermes" / "profiles" / profile / "config.yaml"
+        config = yaml.safe_load(config_path.read_text())
+        toolsets = config.get("platform_toolsets", {}).get("cli", [])
+        if not {"xstudio_l2", "kanban"}.issubset(toolsets):
+            raise RuntimeError(f"WORKER_DEPENDENCY_UNAVAILABLE: required tools absent in {profile}")
+        model = config["model"]
+        key = (model["base_url"], model["default"])
+        if key in checked:
+            continue
+        payload = {"model": key[1], "max_tokens": 256, "temperature": 0,
+            "messages": [{"role": "user", "content": "Call l2_health with operation ping."}],
+            "tools": [{"type": "function", "function": {"name": "l2_health",
+                "description": "Synthetic health probe", "parameters": {"type": "object",
+                "properties": {"operation": {"type": "string", "enum": ["ping"]}},
+                "required": ["operation"]}}}],
+            "tool_choice": "required"}
+        req = urllib.request.Request(key[0].rstrip("/") + "/chat/completions",
+            data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=25) as response:
+            data = json.load(response)
+        calls = data["choices"][0]["message"].get("tool_calls", [])
+        if not calls or calls[0]["function"]["name"] != "l2_health" or json.loads(calls[0]["function"]["arguments"]).get("operation") != "ping":
+            raise RuntimeError("WORKER_DEPENDENCY_UNAVAILABLE: model tool-call probe failed; claims paused")
+        checked.add(key)
 
 
 # ---------------------------------------------------------------------------
@@ -1042,6 +1130,8 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
     if active:
         return {"status": "WIP_LIMIT", "active_runs": active, "reconcile": reconciliation}
 
+    check_worker_dependencies()
+
     eligible = str(binding.get("eligible_ticket_status") or args.eligible_status or DEFAULT_ELIGIBLE_STATUS)
     poll = run_orchestrator(
         args,
@@ -1079,6 +1169,7 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
         "--priority", str(NEW_INVESTIGATION_PRIORITY),
         "--idempotency-key", f"l2-ticket-{run_id}",
         "--max-runtime", "20m",
+        "--max-retries", "1",
         "--json",
     ])
     if create.returncode != 0:
@@ -1201,7 +1292,39 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+@contextmanager
+def lifecycle_lock(args: argparse.Namespace):
+    """One process owns mutations across scout, hooks and operator commands."""
+    if args.dry_run or args.mode in {"status", "audit"}:
+        yield
+        return
+    if _is_windows():
+        raise RuntimeError("Lifecycle mutation must run in the configured WSL service environment so it shares the lifecycle lock")
+    import fcntl
+    path = Path.home() / ".hermes" / "plugin-data" / "xstudio-l2-orchestrator" / "lifecycle.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("LIFECYCLE_BUSY: another reconciler owns mutations; next scout tick will retry") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def cli(argv: Optional[list[str]] = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        with lifecycle_lock(args):
+            return _cli_owned(argv)
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}))
+        return 1
+
+
+def _cli_owned(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.mode == "scout":
