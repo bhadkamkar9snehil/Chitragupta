@@ -14,6 +14,8 @@ This is not lifecycle authority, a deployment plan, or a ticket queue.
 | KB-001 | Done | Knowledge | Make committed GBrain knowledge complete, bounded, provenance-rich, and automatic in initial L2 context. | Live validated 2026-09-08: 100% embeddings, 10/10 retrieval cases, bundle/deploy/runtime gates; `31c271d..a49eb45`. |
 | KB-002 | Open | Knowledge | Expand the fixed XBatch table/view relationship atlas without creating a second registry. | Write a focused incremental plan against existing atlas builders and configuration relations. |
 | KB-003 | Open | Knowledge | Add deterministic domain investigation recipes and reviewer evidence context on top of the verified GBrain interface. | Plan separately; preserve typed tools and frozen-proposal lifecycle. |
+| KB-004 | Open | Reliability | Probe live query-embedding health before new claims and never run embedding backfill while L2 model work is active. | Add a cheap semantic canary, maintenance/WIP interlock, and timeout telemetry. |
+| KPI-002 | Open | Measurement | Establish a post-GBrain ticket benchmark for retrieval latency, tokens, tool errors, review cycles, and resolution outcome. | Measure naturally arriving tickets against the existing SQL/trace baseline. |
 | KPI-001 | Good-to-have | Reporting | Add a concise Helpdesk-facing L2 operations scorecard using existing metric views. | Agree audience and KPI definitions. |
 
 ## Maintenance rule
