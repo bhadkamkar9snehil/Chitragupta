@@ -25,6 +25,9 @@ if ! "$HERMES_PYTHON" -c 'import pyodbc' >/dev/null 2>&1; then
   "$HERMES_PYTHON" -m pip install pyodbc
 fi
 
+echo "== GBrain knowledge sync and readiness =="
+bash "$ROOT/Model_Bench/sync_gbrain_knowledge.sh"
+
 for profile in "${ACTIVE_PROFILES[@]}"; do
   scripts_dir="$HOME/.hermes/profiles/$profile/scripts"
   mkdir -p "$scripts_dir"

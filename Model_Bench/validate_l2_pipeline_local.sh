@@ -27,6 +27,9 @@ PY_FILES=(
   Model_Bench/xstudio_l2_tools_plugin/__init__.py
   Model_Bench/xstudio_l2_tool_bridge.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
+  Model_Bench/kb_retrieval.py
+  Model_Bench/validate_gbrain_knowledge.py
+  Model_Bench/test_validate_gbrain_knowledge.py
 )
 
 echo "== Python syntax =="
@@ -41,6 +44,8 @@ python3 Model_Bench/test_xstudio_l2_tools_plugin.py
 echo "== Knowledge/skill validation =="
 python3 Model_Bench/validate_knowledge_manifest.py
 python3 Model_Bench/test_kb_retrieval.py
+python3 Model_Bench/test_validate_gbrain_knowledge.py
+python3 Model_Bench/validate_gbrain_knowledge.py
 
 echo "== Live workflow discovery (read-only) =="
 python3 Model_Bench/configure_helpdesk_workflow.py
