@@ -143,23 +143,15 @@ def build_summary(events, compute_row) -> str:
 
 
 def _find_block_reason(events):
-    """None unless this run's terminal event was a real kanban_block (not
-    kanban_complete) -- that's the "genuinely stuck, needs a human" signal
-    Hermes_L2_Log_Blocked_Escalation_Usp exists for. Returns the block's own
-    reason text, exactly as the agent gave it.
+    """Compatibility no-op: a Kanban block is audit evidence, not an L3 decision.
 
-    The reason lives in the PRE-call event's ArgsJson (what the agent
-    passed in), not the post-call ResultJson (just an {"ok": true, ...}
-    ack with no reason field) -- confirmed live 2026-09-04 against a real
-    kanban_block trace pair for the same tool_call_id."""
-    for e in events:
-        if e.tool_name == "kanban_block" and e.event_type == "pre_tool_call":
-            args = _safe_json(e.args_json) or {}
-            if isinstance(args, dict) and args.get("reason"):
-                return args["reason"]
-    for e in events:
-        if e.tool_name == "kanban_block" and e.event_type == "post_tool_call":
-            return "Blocked (no reason text captured)."
+    A reviewer uses ``kanban_block`` to request the next bounded rework cycle.
+    Escalation is instead created only by the deterministic lifecycle after the
+    review/rework budget is exhausted, via ``_escalate_run``.  Looking for a
+    block anywhere in this run's historical trace used to convert an ordinary
+    first reviewer rejection into a permanent phantom L3 queue item.
+    """
+    del events
     return None
 
 
@@ -255,14 +247,6 @@ def main():
                     ticket_id, summary[:3900], run_id,
                 )
 
-                block_reason = _find_block_reason(events)
-                if block_reason:
-                    cur.execute(
-                        "EXEC dbo.Hermes_L2_Log_Blocked_Escalation_Usp "
-                        "@RunID=?, @TicketID=?, @BlockReason=?, @Findings=?;",
-                        run_id, ticket_id, block_reason[:3900], summary[:3900],
-                    )
-                    print(f"  -> blocked on a real gap, escalated to L3: {block_reason[:120]}")
                 conn.commit()
             state.add(run_id)
 

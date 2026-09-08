@@ -14,8 +14,24 @@ orchestrator = importlib.util.module_from_spec(ORCH_SPEC)
 assert ORCH_SPEC.loader
 ORCH_SPEC.loader.exec_module(orchestrator)
 
+SUMMARY_SPEC = importlib.util.spec_from_file_location(
+    "generate_readable_trace_summary", "Model_Bench/generate_readable_trace_summary.py"
+)
+summary = importlib.util.module_from_spec(SUMMARY_SPEC)
+assert SUMMARY_SPEC.loader
+SUMMARY_SPEC.loader.exec_module(summary)
+
 
 class PipelineContractTests(unittest.TestCase):
+    def test_reviewer_block_is_audit_only_not_an_l3_escalation(self):
+        """A normal reviewer rejection must stay inside the bounded rework loop."""
+        event = type("Event", (), {
+            "tool_name": "kanban_block",
+            "event_type": "pre_tool_call",
+            "args_json": json.dumps({"reason": "Need one more evidence query."}),
+        })()
+        self.assertIsNone(summary._find_block_reason([event]))
+
     def test_sql_failure_is_not_an_inactive_run(self):
         with patch.object(mod, "run_orchestrator", side_effect=RuntimeError("SQL unavailable")):
             with self.assertRaises(RuntimeError):
