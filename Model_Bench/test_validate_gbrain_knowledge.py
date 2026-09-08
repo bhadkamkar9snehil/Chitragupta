@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
+import sys
 import unittest
+from pathlib import Path
 
-from Model_Bench.validate_gbrain_knowledge import evaluate_case
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from validate_gbrain_knowledge import evaluate_case  # noqa: E402
 
 
 class GBrainEvaluationTests(unittest.TestCase):
