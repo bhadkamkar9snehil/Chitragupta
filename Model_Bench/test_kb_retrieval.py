@@ -112,6 +112,13 @@ class GBrainAdapterTests(unittest.TestCase):
             {"slug":"knowledge/weak","source_id":"xstudio-knowledge","score":.95, "evidence":"weak_semantic"}])) )
         self.assertEqual((failed["status"], failed["hits"], weak["abstained"]), ("UNAVAILABLE", [], True))
 
+    def test_weak_semantic_label_is_accepted_only_with_two_literal_ticket_terms(self):
+        rows = [{"slug":"knowledge/work-order", "source_id":"xstudio-knowledge", "score":.90,
+                 "title":"Work order execution", "chunk_text":"campaign status", "evidence":"weak_semantic"}]
+        result = kb.retrieve_gbrain("work order missing", self.cfg,
+                                    runner=lambda *a, **k: _Result(json.dumps(rows)))
+        self.assertFalse(result["abstained"])
+
 
 class RouteTests(unittest.TestCase):
     def test_strong_identifier_beats_vague_language(self):

@@ -108,11 +108,13 @@ def retrieve_gbrain(query: str, config: dict, runner=None) -> dict:
         if not isinstance(rows, list):
             raise ValueError("gbrain search returned a non-list")
         hits = []
+        query_tokens = tokenize(query)
         for row in rows:
             slug, score = str(row.get("slug") or ""), float(row.get("score") or 0)
+            literal_overlap = query_tokens & tokenize(f"{row.get('title') or ''} {row.get('chunk_text') or ''}")
             if (row.get("source_id") != config["source_id"] or not _slug_allowed(slug, config)
                     or score < float(config["min_retrieval_score"])
-                    or row.get("evidence") == "weak_semantic"):
+                    or (row.get("evidence") == "weak_semantic" and len(literal_overlap) < 2)):
                 continue
             hits.append({"kb_id": f"gbrain:{config['source_id']}:{slug}", "source_type": "gbrain_page",
                          "source_ref": f"{config['source_id']}:{slug}", "slug": slug, "title": row.get("title"),
