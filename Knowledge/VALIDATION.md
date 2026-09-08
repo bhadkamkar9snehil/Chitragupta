@@ -132,6 +132,7 @@ python3 Model_Bench/validate_gbrain_knowledge.py
 ```
 
 Production requires `source_id=xstudio-knowledge`, 100% embedding coverage, and
-zero failed retrieval cases. Maintenance indexes committed files only. It does not
+zero failed retrieval cases. The backfill also re-embeds legacy chunks without a
+recorded embedding signature into the configured current model space. Maintenance indexes committed files only. It does not
 use the working tree, upgrade GBrain, extract atoms, delete source data, or invoke
 an LLM query-expansion path.

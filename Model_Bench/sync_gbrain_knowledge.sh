@@ -10,5 +10,5 @@ test -x "$GBRAIN_BIN" || { echo "FATAL: GBrain binary not found: $GBRAIN_BIN" >&
 
 "$GBRAIN_BIN" sources current --source xstudio-knowledge --json
 "$GBRAIN_BIN" sync --source xstudio-knowledge --repo "$ROOT" --no-pull --no-extract --yes --json
-"$GBRAIN_BIN" embed --stale
+"$GBRAIN_BIN" embed --stale --include-null-signature
 python3 "$ROOT/Model_Bench/validate_gbrain_knowledge.py"
