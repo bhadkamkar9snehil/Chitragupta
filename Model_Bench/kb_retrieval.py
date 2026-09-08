@@ -354,19 +354,22 @@ def retrieve(
         min_score=min_score,
         min_matched_terms=min_matched_terms,
     )
+    gbrain = retrieve_gbrain(query, manifest["gbrain"])
 
     return {
         "query": query,
         "route_candidates": routes,
         "knowledge_documents": knowledge_docs_for_routes(manifest, routes),
         "solutions": ranked,
-        "abstained": not bool(ranked),
-        "abstention_reason": None if ranked else "No active solution article met the relevance threshold.",
+        "gbrain": gbrain,
+        "abstained": not ranked and gbrain.get("abstained", True),
+        "abstention_reason": None if ranked or not gbrain.get("abstained", True) else "No reusable knowledge met the relevance threshold.",
         "retrieval_policy": {
             "route_only_match_allowed": False,
             "min_score": min_score,
             "min_matched_terms": min_matched_terms,
             "top": top,
+            "gbrain_max_hits": int(manifest["gbrain"]["return_limit"]),
             "provenance_required": True,
             "live_verification_required": True,
         },
@@ -379,13 +382,19 @@ def main() -> int:
     ap.add_argument("--database", default="XStudio_Helpdesk")
     ap.add_argument("--username", default=os.environ.get("MSSQL_MCP_USER", "sa"))
     ap.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))
-    ap.add_argument("--query", required=True, help="Ticket text/problem description to retrieve against")
+    group = ap.add_mutually_exclusive_group(required=True)
+    group.add_argument("--query", help="Ticket text/problem description to retrieve against")
+    group.add_argument("--check-gbrain", action="store_true")
     ap.add_argument("--top", type=int, default=5)
     ap.add_argument("--min-score", type=float, default=7.0)
     ap.add_argument("--min-matched-terms", type=int, default=MIN_MATCHED_TERMS)
     args = ap.parse_args()
 
     manifest = load_manifest()
+    if args.check_gbrain:
+        status = get_gbrain_status(manifest["gbrain"])
+        print(json.dumps(status, indent=2, default=str))
+        return 0 if status.get("status") == "READY" else 1
     conn = connect(args.server, args.database, args.username, args.password)
     try:
         result = retrieve(

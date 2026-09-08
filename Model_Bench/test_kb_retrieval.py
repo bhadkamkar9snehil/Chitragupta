@@ -4,6 +4,7 @@ from __future__ import annotations
 import sys
 import json
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -195,6 +196,23 @@ class ArticleRankingTests(unittest.TestCase):
         self.assertEqual(ranked[0]["source_ref"], "Hermes_Solution_Article_Mst_Tbl:C")
         self.assertTrue(ranked[0]["verification_required"])
         self.assertGreaterEqual(len(ranked[0]["matched_terms"]), 2)
+
+
+class CombinedRetrievalTests(unittest.TestCase):
+    def test_retrieve_keeps_routes_solutions_and_gbrain_separate(self):
+        gbrain = {"status":"READY", "hits":[{"kb_id":"gbrain:x:y"}], "abstained":False}
+        with patch.object(kb, "fetch_articles", return_value=[]), patch.object(kb, "retrieve_gbrain", return_value=gbrain):
+            result = kb.retrieve(None, "heat issue", MANIFEST)
+        self.assertEqual(result["gbrain"], gbrain)
+        self.assertEqual(result["solutions"], [])
+        self.assertIn("route_candidates", result)
+
+    def test_gbrain_failure_preserves_routes_and_explicit_unavailability(self):
+        unavailable = {"status":"UNAVAILABLE", "hits":[], "abstained":True, "abstention_reason":"timeout"}
+        with patch.object(kb, "fetch_articles", return_value=[]), patch.object(kb, "retrieve_gbrain", return_value=unavailable):
+            result = kb.retrieve(None, "HeatNo H123", MANIFEST)
+        self.assertEqual(result["route_candidates"][0]["route"], "heat_execution")
+        self.assertEqual(result["gbrain"]["status"], "UNAVAILABLE")
 
 
 if __name__ == "__main__":
