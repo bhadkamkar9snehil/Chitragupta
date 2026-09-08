@@ -1,6 +1,23 @@
 {
   "_comment": "Machine-readable routing manifest for the current deterministic L2 pipeline. task-router.md is the human-readable mirror. Git-tracked documents route investigation; ticket-specific claims still require live evidence through xstudio_l2.",
   "verified": "2026-09-05",
+  "gbrain": {
+    "source_id": "xstudio-knowledge",
+    "allowed_slug_prefixes": ["knowledge/", "deploy/skills/xstudio/"],
+    "excluded_slug_prefixes": ["agent_comms/", "plans/", "attachments/", "knowledge/eval/", ".env"],
+    "excluded_slugs": [
+      "knowledge/atlas/xstudio_xbatch-schema-atlas",
+      "knowledge/atlas/xstudio_xbatch-procedure-atlas",
+      "knowledge/atlas/xstudio_helpdesk-schema-atlas",
+      "knowledge/atlas/xstudio_helpdesk-procedure-atlas"
+    ],
+    "candidate_limit": 12,
+    "return_limit": 3,
+    "snippet_chars": 600,
+    "timeout_seconds": 20,
+    "min_retrieval_score": 0.70,
+    "min_embedding_coverage_pct": 100.0
+  },
   "always_load": [
     "mental-model.md",
     "execution-model.md"

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import json
 import unittest
 from pathlib import Path
 
@@ -10,6 +11,12 @@ import kb_retrieval as kb  # noqa: E402
 
 
 MANIFEST = {
+    "gbrain": {
+        "source_id": "xstudio-knowledge", "allowed_slug_prefixes": ["knowledge/", "deploy/skills/xstudio/"],
+        "excluded_slug_prefixes": ["agent_comms/", "knowledge/eval/"], "excluded_slugs": ["knowledge/atlas/old"],
+        "candidate_limit": 12, "return_limit": 3, "snippet_chars": 600, "timeout_seconds": 20,
+        "min_retrieval_score": 0.70, "min_embedding_coverage_pct": 100.0,
+    },
     "always_load": ["mental-model.md"],
     "identifier_routing": {
         "HeatNo": ["heat_execution"],
@@ -37,6 +44,20 @@ MANIFEST = {
         },
     ],
 }
+
+
+class GBrainManifestTests(unittest.TestCase):
+    def test_production_manifest_has_bounded_source_scoped_gbrain_contract(self):
+        cfg = kb.load_manifest()["gbrain"]
+        self.assertEqual((cfg["source_id"], cfg["candidate_limit"], cfg["return_limit"]),
+                         ("xstudio-knowledge", 12, 3))
+        self.assertEqual((cfg["snippet_chars"], cfg["min_retrieval_score"], cfg["min_embedding_coverage_pct"]),
+                         (600, 0.70, 100.0))
+
+    def test_gbrain_contract_never_allows_non_authority_surfaces(self):
+        cfg = kb.load_manifest()["gbrain"]
+        self.assertIn("knowledge/", cfg["allowed_slug_prefixes"])
+        self.assertTrue({"agent_comms/", "plans/", "attachments/", ".env"} <= set(cfg["excluded_slug_prefixes"]))
 
 
 class RouteTests(unittest.TestCase):
