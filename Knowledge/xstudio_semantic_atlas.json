@@ -1,5 +1,15 @@
 {
   "authority": "static routing/query-construction knowledge only; live reads are required for ticket claims",
+  "catalog_sources": {
+    "manifest": {
+      "path": "Knowledge/manifest.json",
+      "sha256": "53688e6f271976235a53e0004897ecdba9b4b7acf0cd8ca5cd0d2924fd82caba"
+    },
+    "recipes": {
+      "path": "Knowledge/xbatch_investigation_recipes.json",
+      "sha256": "935bc5ce13c8379c6d3c5a3993a32520b5a4892528a2c82019588a5901eedd2c"
+    }
+  },
   "databases": {
     "XStudio_Helpdesk": {
       "objects": {
@@ -132675,7 +132685,862 @@
       }
     }
   },
+  "domains": {
+    "api_transaction": {
+      "description": "API failed, response error, transaction ID mentioned, or whether an API call happened at all.",
+      "keywords": [
+        "API",
+        "transaction ID",
+        "UsageDecision",
+        "API call",
+        "response error",
+        "goods movement",
+        "batch creation",
+        "inventory API"
+      ],
+      "knowledge_documents": [
+        "xbatch-investigation-surfaces.md#api-transaction-summary-cross-cutting-diagnostic-surface",
+        "view_catalog.md"
+      ],
+      "preferred_live_objects": [
+        "XMES_SAP_API_GoodsMovement_Error_Vw",
+        "XMES_SAP_API_Batch_Creation_Error_Vw",
+        "XMES_SAP_API_WorkOrderCreation_Error_Vw",
+        "XMES_SAP_API_UsageDecision_Error_Vw",
+        "XMES_SAP_API_Inventory_Error_Vw",
+        "XMES_Get_API_Transaction_Summary",
+        "XStudio_API_Error_Log_Mst_Tbl",
+        "XMES_API_Transaction_Summary_Fact_Tbl"
+      ],
+      "recipe_id": "xbatch.api-transaction.v1"
+    },
+    "billet_inventory": {
+      "description": "Billet missing, wrong location/furnace/yard/transfer, genealogy, count, or weight issue.",
+      "keywords": [
+        "billet",
+        "yard",
+        "furnace position",
+        "billet count",
+        "billet weight",
+        "cross section",
+        "transfer history",
+        "genealogy"
+      ],
+      "knowledge_documents": [
+        "xbatch-investigation-surfaces.md#billet--yard--inventory",
+        "sohar-sms-event-workflows.md#billets-cast-count--data-insert-flow",
+        "view_catalog.md"
+      ],
+      "preferred_live_objects": [
+        "XStudio_List_Billet_Inventory_Vw",
+        "XStudio_List_XBatch_Billets_Transfer_History_Tbl_Vw",
+        "XStudio_List_XMES_CCM_Billet_Genealogy_Trn_Tbl_Vw",
+        "Billet_Inventory",
+        "BilletsCastCount",
+        "Billet_Cross_Section"
+      ],
+      "recipe_id": "xbatch.billet-inventory.v1"
+    },
+    "discover": {
+      "description": "Unknown or cross-domain symptom with no clear route match.",
+      "keywords": [],
+      "knowledge_documents": [
+        "xbatch-investigation-surfaces.md",
+        "view_catalog.md"
+      ],
+      "preferred_live_objects": [
+        "sys.tables",
+        "sys.columns",
+        "sys.procedures",
+        "sys.parameters",
+        "sys.sql_modules"
+      ],
+      "recipe_id": "xbatch.discover.v1"
+    },
+    "heat_execution": {
+      "description": "Heat missing, wrong EAF/LRF/CCM state, per-heat value wrong, timing, alloy, power, yield, or attribution question.",
+      "keywords": [
+        "heat",
+        "EAF",
+        "LRF",
+        "CCM",
+        "tapping",
+        "arcing",
+        "casting position",
+        "lot number",
+        "SMS Plant Process Time",
+        "turret",
+        "alloy",
+        "yield",
+        "power"
+      ],
+      "knowledge_documents": [
+        "sohar-sms-event-workflows.md",
+        "xbatch-investigation-surfaces.md#production--tracking-heat-billet-furnace",
+        "view_catalog.md"
+      ],
+      "preferred_live_objects": [
+        "XBatch_Tracability_Heat_Details_Vw",
+        "Vw_XBatch_Tracability_SMS_Process_Time",
+        "EAF_PER_HEAT",
+        "LRF_Per_Heat",
+        "CCM_Per_Heat",
+        "SMS_Plant_Process_EventTime"
+      ],
+      "recipe_id": "xbatch.heat-execution.v1"
+    },
+    "helpdesk_ticket": {
+      "description": "Ticket workflow, requester, category, priority, assignment, response/close.",
+      "keywords": [
+        "ticket status",
+        "priority",
+        "assignment",
+        "workflow",
+        "close ticket",
+        "response type"
+      ],
+      "knowledge_documents": [
+        "helpdesk-workflow-binding.md"
+      ],
+      "preferred_live_objects": [
+        "XStudio_Helpdesk.dbo.Complaint_Mst_Tbl",
+        "ComplaintType_Mst_Tbl",
+        "priority_mst"
+      ],
+      "recipe_id": "xbatch.helpdesk-ticket.v1"
+    },
+    "hermes_runtime": {
+      "description": "Question about Hermes runtime tables/procedures, L2 audit trail, investigation runs, memory, or orchestration state.",
+      "keywords": [
+        "Hermes response",
+        "Hermes SQL action",
+        "L2 audit",
+        "investigation run",
+        "kanban",
+        "mem0",
+        "orchestrator"
+      ],
+      "knowledge_documents": [
+        "hermes-runtime-database-design.md",
+        "hermes-sp-catalog.md"
+      ],
+      "preferred_live_objects": [
+        "Hermes_L2_Response_Trn_Tbl",
+        "Hermes_L2_SQL_Action_Trn_Tbl",
+        "Hermes_Agent_Trace_Trn_Tbl"
+      ],
+      "recipe_id": "xbatch.hermes-runtime.v1"
+    },
+    "performance": {
+      "description": "Delay, OEE, downtime, shift-delay, equipment-delay, agency-delay, or performance issue.",
+      "keywords": [
+        "delay",
+        "OEE",
+        "downtime",
+        "equipment delay",
+        "agency delay",
+        "shift delay",
+        "performance",
+        "stoppage"
+      ],
+      "knowledge_documents": [
+        "xbatch-investigation-surfaces.md#delay--oee",
+        "view_catalog.md"
+      ],
+      "preferred_live_objects": [
+        "XBatch_Delay_Analysis_Vw",
+        "Delay_Trn_Tbl",
+        "ShiftDelayEntry",
+        "DelayTypeMST",
+        "DelayCategory_Master",
+        "DelayAgency_Master"
+      ],
+      "recipe_id": "xbatch.performance.v1"
+    },
+    "quality": {
+      "description": "Chemistry, spectro sample, result recording, Usage Decision, Repeat Result, or quality-deviation issue.",
+      "keywords": [
+        "chemistry",
+        "spectro",
+        "sample",
+        "result",
+        "usage decision",
+        "UD",
+        "RR",
+        "deviation",
+        "inspection lot",
+        "quality limits"
+      ],
+      "knowledge_documents": [
+        "xbatch-investigation-surfaces.md#quality-rr--ud--spectro--chemistry",
+        "view_catalog.md"
+      ],
+      "preferred_live_objects": [
+        "XStudio_List_Heat_Chemistry_Quality_Data_Vw",
+        "XStudio_List_Quality_Spectro_Result_Vw",
+        "XStudio_List_Quality_Deviation_Master_Vw",
+        "XStudio_List_XMES_SAP_API_UsageDecision_Error_Vw",
+        "Heat_Chemistry_Quality_Data",
+        "Quality_Spectro_Result",
+        "MES_SAP_UsageDecision_Trn_Tbl",
+        "MES_SAP_RR_Trn_Tbl"
+      ],
+      "recipe_id": "xbatch.quality.v1"
+    },
+    "sap_posting": {
+      "description": "SAP production/consumption/by-product posting failed, pending, duplicate, or missing a material document.",
+      "keywords": [
+        "SAP",
+        "posting stuck",
+        "pending",
+        "material document",
+        "no document number",
+        "goods movement",
+        "production posting",
+        "consumption posting",
+        "by-product"
+      ],
+      "knowledge_documents": [
+        "xbatch-investigation-surfaces.md#sap-posting--integration-errors",
+        "view_catalog.md"
+      ],
+      "preferred_live_objects": [
+        "XStudio_List_SAP_Posting_Tbl_Vw",
+        "XStudio_List_MES_SAP_Production_Trn_Tbl_SAPPostingFail_Vw",
+        "XStudio_List_MES_SAP_Consumption_Trn_Tbl_Vw",
+        "SAP_Posting_Tbl",
+        "MES_SAP_Production_Trn_Tbl",
+        "MES_SAP_Consumption_Trn_Tbl"
+      ],
+      "recipe_id": "xbatch.sap-posting.v1"
+    },
+    "work_order": {
+      "description": "Work order missing, wrong state, cancelled/aborted, campaign-linked, or order-creation issue.",
+      "keywords": [
+        "work order",
+        "WO",
+        "campaign",
+        "order creation",
+        "cancelled order",
+        "aborted order",
+        "manufacturing order"
+      ],
+      "knowledge_documents": [
+        "xbatch-investigation-surfaces.md#work-order-execution",
+        "view_catalog.md"
+      ],
+      "preferred_live_objects": [
+        "XStudio_List_XBatch_Work_Order_Mst_Tbl_Vw",
+        "XStudio_List_XBatch_Cancelled_and_Aborted_Work_Order_Mst_Tbl_Vw",
+        "XStudio_XMes_Campaign_Plan_work_order_Vw",
+        "XBatch_Work_Order_Mst_Tbl",
+        "XMES_WorkOrders_Creation",
+        "MES_SAP_WO_Trn_Tbl"
+      ],
+      "recipe_id": "xbatch.work-order.v1"
+    }
+  },
   "procedure_policy": "Only READ_ONLY_REVIEWED procedures may be exposed by the bridge allowlist.",
+  "recipes": [
+    {
+      "description": "Verify ticket, workflow and response state through the audited Helpdesk context.",
+      "escalation_conditions": [
+        "Workflow binding is absent or contradictory."
+      ],
+      "identifiers": [
+        "ticket_id",
+        "ticket_no"
+      ],
+      "interpretation_rules": [
+        "Helpdesk and Hermes terminal state must agree."
+      ],
+      "preferred_objects": [
+        "Complaint_Mst_Tbl",
+        "Hermes_L2_Response_Trn_Tbl",
+        "Hermes_Ticket_Activity_Trn_Tbl"
+      ],
+      "probes": [
+        {
+          "arguments": {
+            "ticket_id": "$ticket_id"
+          },
+          "tool": "xstudio_get_ticket_context"
+        }
+      ],
+      "recipe_id": "xbatch.helpdesk-ticket.v1",
+      "required_evidence": [
+        {
+          "category": "ticket_state",
+          "objects": [
+            "Complaint_Mst_Tbl",
+            "Hermes_L2_Response_Trn_Tbl"
+          ],
+          "operations": [
+            "get_ticket_context"
+          ]
+        }
+      ],
+      "review_checks": [
+        "Material status claims cite ticket_state evidence."
+      ],
+      "route": "helpdesk_ticket",
+      "stop_conditions": [
+        "Current ticket and response state are established."
+      ],
+      "ticket_signals": [
+        "ticket status",
+        "assignment",
+        "workflow",
+        "response",
+        "close ticket"
+      ]
+    },
+    {
+      "description": "Trace a production or consumption posting from MES state to outbound SAP result.",
+      "escalation_conditions": [
+        "Required correction is a production write or identifier remains ambiguous."
+      ],
+      "identifiers": [
+        "heat",
+        "work_order",
+        "transaction_id"
+      ],
+      "interpretation_rules": [
+        "Pending, failed and never-created are different states.",
+        "Absence from one surface does not prove causation."
+      ],
+      "preferred_objects": [
+        "SAP_Posting_Tbl",
+        "MES_SAP_Production_Trn_Tbl",
+        "MES_SAP_Consumption_Trn_Tbl",
+        "XStudio_API_Error_Log_Mst_Tbl"
+      ],
+      "probes": [
+        {
+          "arguments": {
+            "heat": "$heat"
+          },
+          "tool": "xstudio_heat_context"
+        },
+        {
+          "arguments": {
+            "api_type": "$api_type"
+          },
+          "tool": "xstudio_sap_api_context"
+        }
+      ],
+      "recipe_id": "xbatch.sap-posting.v1",
+      "required_evidence": [
+        {
+          "category": "sap_posting_state",
+          "objects": [
+            "SAP_Posting_Tbl",
+            "MES_SAP_Production_Trn_Tbl",
+            "MES_SAP_Consumption_Trn_Tbl"
+          ],
+          "operations": [
+            "l2_heat_sap_posting",
+            "l2_heat_sap_production"
+          ]
+        },
+        {
+          "category": "sap_api_result",
+          "objects": [
+            "XStudio_API_Error_Log_Mst_Tbl"
+          ],
+          "operations": [
+            "l2_api_transaction_summary"
+          ]
+        }
+      ],
+      "review_checks": [
+        "Posting diagnosis cites sap_posting_state.",
+        "API-cause claims cite sap_api_result."
+      ],
+      "route": "sap_posting",
+      "stop_conditions": [
+        "MES record, outbound posting and API outcome are reconciled."
+      ],
+      "ticket_signals": [
+        "SAP",
+        "posting",
+        "material document",
+        "goods movement",
+        "pending"
+      ]
+    },
+    {
+      "description": "Determine whether a named API transaction ran and its latest recorded result.",
+      "escalation_conditions": [
+        "API type cannot be identified safely."
+      ],
+      "identifiers": [
+        "transaction_id",
+        "api_type",
+        "inspection_lot"
+      ],
+      "interpretation_rules": [
+        "Use the latest row per transaction and exclude test/configuration noise."
+      ],
+      "preferred_objects": [
+        "XStudio_API_Error_Log_Mst_Tbl",
+        "XMES_API_Transaction_Summary_Fact_Tbl"
+      ],
+      "probes": [
+        {
+          "arguments": {
+            "api_type": "$api_type"
+          },
+          "tool": "xstudio_sap_api_context"
+        }
+      ],
+      "recipe_id": "xbatch.api-transaction.v1",
+      "required_evidence": [
+        {
+          "category": "sap_api_result",
+          "objects": [
+            "XStudio_API_Error_Log_Mst_Tbl"
+          ],
+          "operations": [
+            "l2_api_transaction_summary"
+          ]
+        }
+      ],
+      "review_checks": [
+        "Claims that an API ran or failed cite sap_api_result."
+      ],
+      "route": "api_transaction",
+      "stop_conditions": [
+        "Latest live API result for the requested identifier is established."
+      ],
+      "ticket_signals": [
+        "API",
+        "transaction ID",
+        "response error",
+        "usage decision",
+        "batch creation"
+      ]
+    },
+    {
+      "description": "Trace campaign membership, work-order master state and SAP-side creation state.",
+      "escalation_conditions": [
+        "Creation logic requires mutation or product branch is not safely identifiable."
+      ],
+      "identifiers": [
+        "work_order",
+        "campaign",
+        "heat"
+      ],
+      "interpretation_rules": [
+        "Internal ID, WorkOrderNumber and MESWorkOrderNumber are distinct identifiers.",
+        "HeatNo may contain a comma-separated allocation."
+      ],
+      "preferred_objects": [
+        "XBatch_Work_Order_Mst_Tbl",
+        "XStudio_XMes_Campaign_Plan_work_order_Vw",
+        "MES_SAP_WO_Trn_Tbl"
+      ],
+      "probes": [
+        {
+          "arguments": {
+            "campaign": "$campaign",
+            "work_order": "$work_order"
+          },
+          "tool": "xstudio_work_order_context"
+        }
+      ],
+      "recipe_id": "xbatch.work-order.v1",
+      "required_evidence": [
+        {
+          "category": "work_order_state",
+          "objects": [
+            "XBatch_Work_Order_Mst_Tbl",
+            "XStudio_XMes_Campaign_Plan_work_order_Vw"
+          ],
+          "operations": [
+            "l2_work_order_master",
+            "l2_work_order_campaign",
+            "l2_campaign_work_orders"
+          ]
+        }
+      ],
+      "review_checks": [
+        "Work-order existence and state claims cite work_order_state."
+      ],
+      "route": "work_order",
+      "stop_conditions": [
+        "Campaign, master and external work-order identity are reconciled."
+      ],
+      "ticket_signals": [
+        "work order",
+        "manufacturing order",
+        "campaign",
+        "order creation"
+      ]
+    },
+    {
+      "description": "Trace a heat through EAF, LRF, CCM, billet and related work-order state.",
+      "escalation_conditions": [
+        "Heat identity is ambiguous or correction requires a write."
+      ],
+      "identifiers": [
+        "heat",
+        "work_order"
+      ],
+      "interpretation_rules": [
+        "Multiple rows may represent workflow stages.",
+        "Reference formulas require current-definition verification before causal use."
+      ],
+      "preferred_objects": [
+        "EAF_PER_HEAT",
+        "LRF_Per_Heat",
+        "CCM_Per_Heat",
+        "SMS_Plant_Process_EventTime",
+        "XBatch_Work_Order_Mst_Tbl"
+      ],
+      "probes": [
+        {
+          "arguments": {
+            "heat": "$heat"
+          },
+          "tool": "xstudio_heat_context"
+        }
+      ],
+      "recipe_id": "xbatch.heat-execution.v1",
+      "required_evidence": [
+        {
+          "category": "heat_process_state",
+          "objects": [
+            "EAF_PER_HEAT",
+            "LRF_Per_Heat",
+            "CCM_Per_Heat"
+          ],
+          "operations": [
+            "l2_heat_eaf",
+            "l2_heat_lrf",
+            "l2_heat_ccm"
+          ]
+        }
+      ],
+      "review_checks": [
+        "Per-heat state claims cite heat_process_state."
+      ],
+      "route": "heat_execution",
+      "stop_conditions": [
+        "The heat stage and disputed value are established from current rows."
+      ],
+      "ticket_signals": [
+        "heat",
+        "EAF",
+        "LRF",
+        "CCM",
+        "tapping",
+        "casting"
+      ]
+    },
+    {
+      "description": "Trace billet genealogy, count, transfer and inventory/master relationships.",
+      "escalation_conditions": [
+        "Genealogy is absent across all canonical surfaces or repair requires mutation."
+      ],
+      "identifiers": [
+        "heat",
+        "billet",
+        "sub_lot"
+      ],
+      "interpretation_rules": [
+        "Billet yard and electrical switchyard are unrelated domains.",
+        "Operator and tag-driven billet counts may differ."
+      ],
+      "preferred_objects": [
+        "Billet_Inventory",
+        "XMES_CCM_Billet_Genealogy_Trn_Tbl",
+        "XStudio_List_XMES_CCM_Billet_Genealogy_Trn_Tbl_Vw",
+        "BilletsCastCount"
+      ],
+      "probes": [
+        {
+          "arguments": {
+            "heat": "$heat"
+          },
+          "tool": "xstudio_heat_context"
+        }
+      ],
+      "recipe_id": "xbatch.billet-inventory.v1",
+      "required_evidence": [
+        {
+          "category": "billet_genealogy",
+          "objects": [
+            "XMES_CCM_Billet_Genealogy_Trn_Tbl",
+            "XStudio_List_XMES_CCM_Billet_Genealogy_Trn_Tbl_Vw",
+            "Billet_Inventory"
+          ],
+          "operations": [
+            "l2_heat_billet_genealogy"
+          ]
+        }
+      ],
+      "review_checks": [
+        "Genealogy and count claims cite billet_genealogy."
+      ],
+      "route": "billet_inventory",
+      "stop_conditions": [
+        "Heat, strand, billet and current inventory identity are reconciled."
+      ],
+      "ticket_signals": [
+        "billet",
+        "yard",
+        "genealogy",
+        "strand",
+        "transfer"
+      ]
+    },
+    {
+      "description": "Trace chemistry, spectro, quality deviation and SAP quality-decision evidence.",
+      "escalation_conditions": [
+        "The relevant product/quality path is ambiguous or needs configuration mutation."
+      ],
+      "identifiers": [
+        "heat",
+        "inspection_lot",
+        "transaction_id"
+      ],
+      "interpretation_rules": [
+        "File, sample and result are separate stages.",
+        "Configuration thresholds are not transaction results."
+      ],
+      "preferred_objects": [
+        "Quality_Spectro_File",
+        "Quality_Spectro_Sample",
+        "Quality_Spectro_Result",
+        "Heat_Chemistry_Quality_Data",
+        "MES_SAP_UsageDecision_Trn_Tbl"
+      ],
+      "probes": [
+        {
+          "arguments": {
+            "heat": "$heat"
+          },
+          "tool": "xstudio_heat_context"
+        },
+        {
+          "arguments": {
+            "api_type": "UsageDecision"
+          },
+          "tool": "xstudio_sap_api_context"
+        }
+      ],
+      "recipe_id": "xbatch.quality.v1",
+      "required_evidence": [
+        {
+          "category": "quality_result",
+          "objects": [
+            "Quality_Spectro_File",
+            "Quality_Spectro_Sample",
+            "Quality_Spectro_Result",
+            "Heat_Chemistry_Quality_Data"
+          ],
+          "operations": [
+            "select",
+            "query"
+          ]
+        },
+        {
+          "category": "sap_api_result",
+          "objects": [
+            "XStudio_API_Error_Log_Mst_Tbl"
+          ],
+          "operations": [
+            "l2_api_transaction_summary"
+          ]
+        }
+      ],
+      "review_checks": [
+        "Quality-result claims cite quality_result.",
+        "Usage-decision API claims cite sap_api_result."
+      ],
+      "route": "quality",
+      "stop_conditions": [
+        "The failed or completed quality stage is identified."
+      ],
+      "ticket_signals": [
+        "quality",
+        "chemistry",
+        "spectro",
+        "usage decision",
+        "inspection lot",
+        "deviation"
+      ]
+    },
+    {
+      "description": "Trace delay/OEE events, classification, equipment and aggregate projections.",
+      "escalation_conditions": [
+        "Affected time window or equipment identity is missing."
+      ],
+      "identifiers": [
+        "equipment",
+        "report_date"
+      ],
+      "interpretation_rules": [
+        "Event rows and aggregate rows are not interchangeable.",
+        "Area determines the applicable shift-delay family."
+      ],
+      "preferred_objects": [
+        "Delay_Trn_Tbl",
+        "ShiftDelayEntry",
+        "DelayTypeMST",
+        "DelayCategory_Master",
+        "DelayAgency_Master",
+        "Equipment_Wise_Delay",
+        "Agency_Wise_Delay"
+      ],
+      "probes": [
+        {
+          "arguments": {
+            "database": "XStudio_Xbatch",
+            "search": "delay equipment OEE"
+          },
+          "tool": "xstudio_suggest_tables"
+        }
+      ],
+      "recipe_id": "xbatch.performance.v1",
+      "required_evidence": [
+        {
+          "category": "delay_event",
+          "objects": [
+            "Delay_Trn_Tbl",
+            "ShiftDelayEntry",
+            "SMS_Delay_Trn_Tbl",
+            "RM_Delays"
+          ],
+          "operations": [
+            "select",
+            "query"
+          ]
+        },
+        {
+          "category": "delay_classification",
+          "objects": [
+            "DelayTypeMST",
+            "DelayCategory_Master",
+            "DelayAgency_Master"
+          ],
+          "operations": [
+            "select",
+            "query"
+          ]
+        }
+      ],
+      "review_checks": [
+        "Downtime claims cite delay_event.",
+        "Agency/category claims cite delay_classification."
+      ],
+      "route": "performance",
+      "stop_conditions": [
+        "Event, equipment, classification and report window are reconciled."
+      ],
+      "ticket_signals": [
+        "delay",
+        "OEE",
+        "downtime",
+        "shift delay",
+        "equipment delay"
+      ]
+    },
+    {
+      "description": "Inspect the audited run, action, trace, response and escalation lifecycle.",
+      "escalation_conditions": [
+        "A lifecycle mutation is required outside reconciliation."
+      ],
+      "identifiers": [
+        "run_id",
+        "ticket_id"
+      ],
+      "interpretation_rules": [
+        "SQL/Helpdesk state outranks Kanban narration."
+      ],
+      "preferred_objects": [
+        "Hermes_L2_Response_Trn_Tbl",
+        "Hermes_L2_SQL_Action_Trn_Tbl",
+        "Hermes_Agent_Trace_Trn_Tbl",
+        "Hermes_L3_Escalation_Trn_Tbl"
+      ],
+      "probes": [
+        {
+          "arguments": {
+            "run_id": "$run_id"
+          },
+          "tool": "xstudio_get_run_actions"
+        },
+        {
+          "arguments": {
+            "ticket_id": "$ticket_id"
+          },
+          "tool": "xstudio_get_ticket_context"
+        }
+      ],
+      "recipe_id": "xbatch.hermes-runtime.v1",
+      "required_evidence": [
+        {
+          "category": "hermes_run_state",
+          "objects": [
+            "Hermes_L2_Response_Trn_Tbl",
+            "Hermes_L2_SQL_Action_Trn_Tbl",
+            "Hermes_Agent_Trace_Trn_Tbl"
+          ],
+          "operations": [
+            "get_run_actions",
+            "get_ticket_context"
+          ]
+        }
+      ],
+      "review_checks": [
+        "Lifecycle claims cite hermes_run_state."
+      ],
+      "route": "hermes_runtime",
+      "stop_conditions": [
+        "Run and Helpdesk state agree or the divergence is identified."
+      ],
+      "ticket_signals": [
+        "Hermes",
+        "run",
+        "kanban",
+        "review",
+        "escalation",
+        "L2 audit"
+      ]
+    },
+    {
+      "description": "Narrow an unclassified symptom through deterministic metadata without assuming a domain.",
+      "escalation_conditions": [
+        "No supported domain can be established within the bounded investigation."
+      ],
+      "identifiers": [],
+      "interpretation_rules": [
+        "Metadata matches are leads, not ticket facts."
+      ],
+      "preferred_objects": [],
+      "probes": [
+        {
+          "arguments": {
+            "database": "XStudio_Xbatch",
+            "search": "$ticket_terms"
+          },
+          "tool": "xstudio_suggest_tables"
+        }
+      ],
+      "recipe_id": "xbatch.discover.v1",
+      "required_evidence": [],
+      "review_checks": [
+        "Do not approve causal claims supported only by metadata discovery."
+      ],
+      "route": "discover",
+      "stop_conditions": [
+        "A supported domain and current evidence surface are identified."
+      ],
+      "ticket_signals": []
+    }
+  ],
   "relationship_source": {
     "path": "Reference Documents/XStudio_Configuration_Xbatch_Relationships.json",
     "sha256": "49b10b84eb5f146cfcdf8d39bff9be6347bfcd5c5de1ce7867ee464827b099de"

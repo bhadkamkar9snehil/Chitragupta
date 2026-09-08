@@ -52,6 +52,7 @@
   "routes": [
     {
       "route": "helpdesk_ticket",
+      "recipe": "xbatch.helpdesk-ticket.v1",
       "description": "Ticket workflow, requester, category, priority, assignment, response/close.",
       "keywords": ["ticket status", "priority", "assignment", "workflow", "close ticket", "response type"],
       "skill": "xstudio-l2-ticket-workflow",
@@ -60,6 +61,7 @@
     },
     {
       "route": "sap_posting",
+      "recipe": "xbatch.sap-posting.v1",
       "description": "SAP production/consumption/by-product posting failed, pending, duplicate, or missing a material document.",
       "keywords": ["SAP", "posting stuck", "pending", "material document", "no document number", "goods movement", "production posting", "consumption posting", "by-product"],
       "skill": "xstudio-sap-api-investigation",
@@ -68,6 +70,7 @@
     },
     {
       "route": "api_transaction",
+      "recipe": "xbatch.api-transaction.v1",
       "description": "API failed, response error, transaction ID mentioned, or whether an API call happened at all.",
       "keywords": ["API", "transaction ID", "UsageDecision", "API call", "response error", "goods movement", "batch creation", "inventory API"],
       "skill": "xstudio-sap-api-investigation",
@@ -76,6 +79,7 @@
     },
     {
       "route": "work_order",
+      "recipe": "xbatch.work-order.v1",
       "description": "Work order missing, wrong state, cancelled/aborted, campaign-linked, or order-creation issue.",
       "keywords": ["work order", "WO", "campaign", "order creation", "cancelled order", "aborted order", "manufacturing order"],
       "skill": "xstudio-quality-delay-workorder",
@@ -84,6 +88,7 @@
     },
     {
       "route": "heat_execution",
+      "recipe": "xbatch.heat-execution.v1",
       "description": "Heat missing, wrong EAF/LRF/CCM state, per-heat value wrong, timing, alloy, power, yield, or attribution question.",
       "keywords": ["heat", "EAF", "LRF", "CCM", "tapping", "arcing", "casting position", "lot number", "SMS Plant Process Time", "turret", "alloy", "yield", "power"],
       "skill": "xstudio-sohar-heat-execution",
@@ -92,6 +97,7 @@
     },
     {
       "route": "billet_inventory",
+      "recipe": "xbatch.billet-inventory.v1",
       "description": "Billet missing, wrong location/furnace/yard/transfer, genealogy, count, or weight issue.",
       "keywords": ["billet", "yard", "furnace position", "billet count", "billet weight", "cross section", "transfer history", "genealogy"],
       "skill": "xstudio-sohar-heat-execution",
@@ -100,6 +106,7 @@
     },
     {
       "route": "quality",
+      "recipe": "xbatch.quality.v1",
       "description": "Chemistry, spectro sample, result recording, Usage Decision, Repeat Result, or quality-deviation issue.",
       "keywords": ["chemistry", "spectro", "sample", "result", "usage decision", "UD", "RR", "deviation", "inspection lot", "quality limits"],
       "skill": "xstudio-quality-delay-workorder",
@@ -108,6 +115,7 @@
     },
     {
       "route": "performance",
+      "recipe": "xbatch.performance.v1",
       "description": "Delay, OEE, downtime, shift-delay, equipment-delay, agency-delay, or performance issue.",
       "keywords": ["delay", "OEE", "downtime", "equipment delay", "agency delay", "shift delay", "performance", "stoppage"],
       "skill": "xstudio-quality-delay-workorder",
@@ -116,6 +124,7 @@
     },
     {
       "route": "hermes_runtime",
+      "recipe": "xbatch.hermes-runtime.v1",
       "description": "Question about Hermes runtime tables/procedures, L2 audit trail, investigation runs, memory, or orchestration state.",
       "keywords": ["Hermes response", "Hermes SQL action", "L2 audit", "investigation run", "kanban", "mem0", "orchestrator"],
       "skill": "xstudio-l2-ticket-workflow",
@@ -124,6 +133,7 @@
     },
     {
       "route": "discover",
+      "recipe": "xbatch.discover.v1",
       "description": "Unknown or cross-domain symptom with no clear route match.",
       "keywords": [],
       "skill": "xstudio-sql-write-discipline",

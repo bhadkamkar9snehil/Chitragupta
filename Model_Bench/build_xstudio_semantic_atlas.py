@@ -27,6 +27,8 @@ SOURCES = {
     },
 }
 RELATIONSHIP_SOURCE = REFERENCE / "XStudio_Configuration_Xbatch_Relationships.json"
+MANIFEST_SOURCE = ROOT / "Knowledge" / "manifest.json"
+RECIPE_SOURCE = ROOT / "Knowledge" / "xbatch_investigation_recipes.json"
 REVIEWED_READ_ONLY = {("XStudio_Xbatch", "XMES_Get_API_Transaction_Summary")}
 WRITE_RE = re.compile(r"\b(?:INSERT|UPDATE|DELETE|MERGE|TRUNCATE|ALTER|CREATE|DROP)\b", re.I)
 OBJECT_RE = re.compile(
@@ -167,15 +169,36 @@ def build() -> dict[str, Any]:
             **parse_procedures(database, paths["procedures"]),
             "sources": {key: str(path.relative_to(ROOT)).replace("\\", "/") for key, path in paths.items()},
         }
+    manifest = json.loads(MANIFEST_SOURCE.read_text(encoding="utf-8"))
+    recipes = json.loads(RECIPE_SOURCE.read_text(encoding="utf-8"))["recipes"]
+    recipes_by_id = {recipe["recipe_id"]: recipe for recipe in recipes}
+    domains = {}
+    for route in manifest.get("routes", []):
+        recipe_id = route.get("recipe")
+        if recipe_id not in recipes_by_id:
+            raise ValueError(f"manifest route {route.get('route')} has unknown recipe {recipe_id}")
+        domains[route["route"]] = {
+            "description": route.get("description"),
+            "keywords": route.get("keywords", []),
+            "knowledge_documents": route.get("load", []),
+            "preferred_live_objects": route.get("live_sql_leads", []),
+            "recipe_id": recipe_id,
+        }
     return {
         "schema_version": 2,
         "authority": "static routing/query-construction knowledge only; live reads are required for ticket claims",
         "procedure_policy": "Only READ_ONLY_REVIEWED procedures may be exposed by the bridge allowlist.",
         "databases": databases,
         "relationships": load_relationships(),
+        "domains": domains,
+        "recipes": recipes,
         "relationship_source": {
             "path": str(RELATIONSHIP_SOURCE.relative_to(ROOT)).replace("\\", "/"),
             "sha256": hashlib.sha256(RELATIONSHIP_SOURCE.read_bytes()).hexdigest(),
+        },
+        "catalog_sources": {
+            "manifest": {"path": "Knowledge/manifest.json", "sha256": hashlib.sha256(MANIFEST_SOURCE.read_bytes()).hexdigest()},
+            "recipes": {"path": "Knowledge/xbatch_investigation_recipes.json", "sha256": hashlib.sha256(RECIPE_SOURCE.read_bytes()).hexdigest()},
         },
     }
 
@@ -213,6 +236,42 @@ def render_gbrain_pages(atlas: dict[str, Any]) -> dict[str, str]:
                 "Safety is fail-closed. Only READ_ONLY_REVIEWED procedures may be exposed as diagnostics.", "",
             ]
             pages[f"{database.lower()}-procedure-{key}-atlas.md"] = "\n".join(header + lines) + "\n"
+
+    relationship_groups: dict[str, list[str]] = {}
+    for edge in atlas.get("relationships", []):
+        source = edge["source"]
+        target = edge["target"]
+        key = source["object"][0].lower() if source["object"][:1].isalnum() else "other"
+        relationship_groups.setdefault(key, []).extend((
+            f"## {source['object']}.{source['attribute']} -> {target['object']}.{target['attribute']}",
+            f"Databases: {source['database']} -> {target['database']}",
+            f"Cardinality: {edge['cardinality']['source']} -> {edge['cardinality']['target']}",
+            f"Relation: {edge.get('name') or edge['id']}",
+            f"Provenance: {edge['provenance']['kind']} ({edge['provenance']['source_row_count']} source row(s))",
+            "",
+        ))
+    for key, lines in relationship_groups.items():
+        header = [
+            "---", "type: Reference", "database: XStudio_Configuration_Xbatch",
+            "authority: configuration-observed", "---",
+            f"# XBatch configured relationships: {key.upper()}", "",
+            "Configured joins and cardinality. They are routing knowledge; verify current ticket rows live.", "",
+        ]
+        pages[f"xstudio_xbatch-relationship-{key}-atlas.md"] = "\n".join(header + lines) + "\n"
+
+    for recipe in atlas.get("recipes", []):
+        evidence = ", ".join(item["category"] for item in recipe.get("required_evidence", [])) or "none"
+        probes = ", ".join(item["tool"] for item in recipe.get("probes", [])) or "none"
+        lines = [
+            "---", "type: Diagnostic", f"route: {recipe['route']}",
+            "authority: harness-contract", "---", f"# {recipe['description']}", "",
+            f"Recipe ID: {recipe['recipe_id']}", f"Typed probes: {probes}",
+            f"Required evidence: {evidence}", "", "## Interpretation rules",
+            *[f"- {item}" for item in recipe.get("interpretation_rules", [])],
+            "", "## Stop conditions", *[f"- {item}" for item in recipe.get("stop_conditions", [])],
+            "", "## Escalation conditions", *[f"- {item}" for item in recipe.get("escalation_conditions", [])], "",
+        ]
+        pages[f"xstudio_xbatch-recipe-{recipe['route'].replace('_', '-')}.md"] = "\n".join(lines) + "\n"
     return pages
 
 
