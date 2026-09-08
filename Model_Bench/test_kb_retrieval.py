@@ -60,6 +60,51 @@ class GBrainManifestTests(unittest.TestCase):
         self.assertTrue({"agent_comms/", "plans/", "attachments/", ".env"} <= set(cfg["excluded_slug_prefixes"]))
 
 
+class _Result:
+    def __init__(self, stdout="", stderr="", returncode=0):
+        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
+
+
+class GBrainAdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.cfg = MANIFEST["gbrain"]
+
+    def test_status_requires_exact_source_full_coverage_and_drained_jobs(self):
+        payload = {"sources": [{"source_id": "xstudio-knowledge", "total_pages": 142,
+                    "total_chunks": 601, "embedded_chunks": 601, "embed_coverage_pct": 100,
+                    "failed_jobs_24h": 0, "queue_depth": 0}]}
+        status = kb.get_gbrain_status(self.cfg, runner=lambda *a, **k: _Result(json.dumps(payload)))
+        self.assertEqual(status["status"], "READY")
+
+    def test_status_reports_incomplete_embeddings(self):
+        payload = {"sources": [{"source_id": "xstudio-knowledge", "total_pages": 142,
+                    "total_chunks": 601, "embedded_chunks": 227, "embed_coverage_pct": 37.8,
+                    "failed_jobs_24h": 0, "queue_depth": 0}]}
+        status = kb.get_gbrain_status(self.cfg, runner=lambda *a, **k: _Result(json.dumps(payload)))
+        self.assertEqual(status["status"], "DEGRADED")
+
+    def test_search_is_scoped_bounded_and_filters_weak_or_forbidden_hits(self):
+        rows = [
+            {"slug":"agent_comms/old","source_id":"xstudio-knowledge","score":.99},
+            {"slug":"knowledge/xbatch-investigation-surfaces","source_id":"xstudio-knowledge",
+             "title":"Xbatch", "chunk_text":"SAP posting", "score":.91, "keyword_hit":True},
+            {"slug":"knowledge/weak","source_id":"xstudio-knowledge","score":.42},
+        ]
+        calls = []
+        def runner(cmd, **kwargs):
+            calls.append(cmd); return _Result(json.dumps(rows))
+        result = kb.retrieve_gbrain("SAP posting pending", self.cfg, runner=runner)
+        request = json.loads(calls[0][3])
+        self.assertEqual(request["source_id"], "xstudio-knowledge")
+        self.assertEqual([h["slug"] for h in result["hits"]], ["knowledge/xbatch-investigation-surfaces"])
+
+    def test_search_failure_and_weak_neighbour_abstain(self):
+        failed = kb.retrieve_gbrain("SAP", self.cfg, runner=lambda *a, **k: _Result(stderr="closed", returncode=1))
+        weak = kb.retrieve_gbrain("leave policy", self.cfg, runner=lambda *a, **k: _Result(json.dumps([
+            {"slug":"knowledge/weak","source_id":"xstudio-knowledge","score":.42}])) )
+        self.assertEqual((failed["status"], failed["hits"], weak["abstained"]), ("UNAVAILABLE", [], True))
+
+
 class RouteTests(unittest.TestCase):
     def test_strong_identifier_beats_vague_language(self):
         routes = kb.route_candidates("HeatNo 1604015 delay value looks wrong", MANIFEST)
