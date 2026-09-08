@@ -16,7 +16,46 @@ The model interprets evidence and drafts or reviews a response. It does not own
 knowledge indexing, route selection, SQL transport, lifecycle transitions, or
 publication.
 
-## 2. Non-goals
+## 2. Existing baseline and change strategy
+
+This is an incremental hardening of the live harness, not a greenfield knowledge
+platform. The implementation must extend the current owners in place:
+
+| Existing asset | Current responsibility | Required change |
+|---|---|---|
+| `Model_Bench/build_xstudio_semantic_atlas.py` | Builds schema/SP atlas from authoritative exports | Add configuration relations and resolved graph edges |
+| `Knowledge/xstudio_semantic_atlas.json` and `Knowledge/atlas/` | Checked-in machine and compact Markdown atlas | Extend format/version; do not create a parallel registry |
+| `Knowledge/schema_allowlist.json` | Validates model-visible objects and columns | Add verified `XStudio_Configuration_Xbatch` surfaces |
+| `Model_Bench/kb_retrieval.py` | Deterministic routes plus approved SQL solution matches | Add bounded, source-scoped GBrain results and health/abstention metadata |
+| `deterministic_ticket_route()` | Routes SAP API, work-order/campaign, and heat tickets | Extend from atlas/domain recipes; retain exact current routes |
+| `_investigation_bundle()` / `_dispatch_route_context()` | Produces compact dispatch context and executes first recipes | Enrich the existing package; do not add a second planner pipeline |
+| `Model_Bench/xstudio_l2_tool_bridge.py` | Guarded SQL transport, auditing, macros, result bounds | Resolve tools/recipes through the extended atlas and add only proven domain macros |
+| `xstudio-l2-tools` plugin | Small typed tool schemas, context repair, budgets | Reuse schemas and enforcement; add tools only where a macro earns one |
+| Existing reviewer/reconciler | Frozen proposal, independent evidence, bounded rework | Add registry/retrieval provenance and mechanical pre-review checks in place |
+| Existing ticket scout | WIP gate, reconciliation, dependency checks, observability flush | Add knowledge-readiness check here; no new daemon or cron |
+| Existing Hermes SQL procedures | Claim, context, audit, evidence, ledger, publish | Preserve; revise/add read procedures only when existing audited reads cannot express a recipe |
+
+The implementation starts with call-site and live-use audits. Existing code is kept
+when it already owns the responsibility. Historical compatibility entrypoints are
+not revived merely because they exist in the repository.
+
+### Ponytail constraint
+
+For every proposed file, abstraction, procedure, tool, or process, stop at the first
+rung that works:
+
+1. reuse an existing owner;
+2. use Python/SQL/JSON capabilities already present;
+3. extend an installed dependency such as GBrain;
+4. add the smallest implementation that satisfies a tested gap.
+
+Do not create duplicate stores, wrappers, managers, services, schedulers, generic
+frameworks, or speculative extension points. This minimalism never removes
+trust-boundary validation, auditing, data-loss protection, deterministic lifecycle
+ownership, provenance, or tests. This follows Ponytail's actual YAGNI/stdlib/native/
+installed-dependency/minimum-code ladder, not a project-specific reinterpretation.
+
+## 3. Non-goals
 
 - Do not train schema facts into Qwen as the primary knowledge store.
 - Do not send the full Markdown corpus or full schema atlas to the model.
@@ -25,8 +64,12 @@ publication.
 - Do not replace the existing WIP=1 lifecycle, frozen proposal, bounded rework,
   deterministic publisher, auditing, or SQL safety rules.
 - Do not expose arbitrary stored-procedure execution or database writes to workers.
+- Do not introduce another vector database, knowledge service, registry database,
+  queue, daemon, or lifecycle authority.
+- Do not rewrite working typed tools or lifecycle procedures to make their names fit
+  a new design.
 
-## 3. Authority model
+## 4. Authority model
 
 Knowledge remains separated into four planes:
 
@@ -40,9 +83,11 @@ Knowledge remains separated into four planes:
 `mem0` remains operational memory. It cannot contain ticket-specific facts and is
 not part of the reusable KB index.
 
-## 4. Canonical knowledge registry
+## 5. Extend the existing semantic atlas
 
-Create one versioned, machine-readable registry generated from:
+Extend `Model_Bench/build_xstudio_semantic_atlas.py` and its existing checked-in
+outputs. These remain the single versioned machine-readable structural registry.
+The extended build consumes:
 
 1. `XStudio_Helpdesk` schema, views, procedures, and Hermes runtime objects;
 2. `XStudio_Xbatch` schema, views, procedures, and dependencies;
@@ -70,15 +115,21 @@ join edges only when both endpoint objects/columns are validated and an explicit
 join recipe is reviewed. Non-relational identifiers such as CSV heat allocations
 remain explicit code-owned recipes.
 
-The generated JSON and compact Markdown pages are committed. A deterministic gate
+The existing generated JSON and compact Markdown pages remain committed. A deterministic gate
 fails if counts unexpectedly collapse, endpoints cannot be resolved, duplicate
 identities appear, required domains lose all surfaces, or generated files differ
 from the checked-in version.
 
-## 5. GBrain contract
+No SQL registry tables are added unless a later measured runtime constraint proves
+the checked-in atlas cannot serve this responsibility. The current scale does not
+justify another persistence layer.
 
-GBrain is the harness-owned retriever for unstructured and semi-structured
-knowledge. It is not exposed as an unrestricted worker tool.
+## 6. Extend the current GBrain/KB retriever
+
+GBrain becomes the harness-owned retriever for unstructured and semi-structured
+knowledge by extending `Model_Bench/kb_retrieval.py`. It is not exposed as an
+unrestricted worker tool and does not replace that module's current deterministic
+route and approved-solution logic.
 
 Before enabling production hybrid retrieval:
 
@@ -89,7 +140,8 @@ Before enabling production hybrid retrieval:
 - source sync, embedding coverage, and retrieval probes pass;
 - an evaluation set demonstrates identifier, symptom, domain, and abstention cases.
 
-The harness calls a bounded adapter and receives at most three compact hits:
+The existing retriever calls GBrain through one bounded internal adapter and receives
+at most three compact hits:
 
 ```json
 {
@@ -109,9 +161,15 @@ The harness calls a bounded adapter and receives at most three compact hits:
 GBrain failure, partial coverage, timeout, or low relevance causes an explicit
 abstention. It cannot block deterministic atlas routing or ticket reconciliation.
 
-## 6. Deterministic ticket planning
+Do not add Qdrant: GBrain's current PostgreSQL/pgvector store and the configured LM
+Studio embedder already satisfy the retrieval requirement. Do not add an LLM query
+expansion dependency; exact terms, lexical retrieval, embeddings, and deterministic
+route boosts are sufficient until evaluation proves otherwise.
 
-Add a harness-owned planner with this sequence:
+## 7. Extend deterministic ticket routing
+
+Extend `deterministic_ticket_route()`, `_investigation_bundle()`, and
+`_dispatch_route_context()` with this sequence:
 
 ```text
 ticket-owned text and structured fields
@@ -132,7 +190,10 @@ visible rather than being forced into one route.
 The planner must abstain from live recipe execution when required identifiers are
 absent or ambiguous. It still returns the likely areas and the precise missing fact.
 
-## 7. Investigation context contract
+The result remains one investigation bundle rendered into the existing investigator
+card. There is no new planner service or second dispatch format.
+
+## 8. Investigation context contract
 
 The investigator receives one compact structured package:
 
@@ -156,18 +217,19 @@ Every candidate domain states its score and reasons. Every live evidence item ha
 an audited `action_id`. Context is size-capped and deterministic. Raw procedure
 definitions, broad schema dumps, and irrelevant ticket history are excluded.
 
-During investigation, the model can call small typed tools that resolve against the
-same registry. The adapter supplies database, run, ticket, validated object names,
+During investigation, the model continues to call the existing small typed tools,
+which resolve against the extended atlas. The bridge supplies database, run, ticket, validated object names,
 and reviewed query templates whenever those values are deterministic. Repeated
 semantic mistakes trigger argument repair, route narrowing, or explicit give-up;
 they do not consume unbounded model turns.
 
-## 8. Deterministic evidence recipes
+## 9. Extend deterministic evidence recipes
 
-Recipes are reviewed, parameterized, read-only operations. The preferred
-implementation is small bridge functions backed by fixed SQL or narrowly scoped
-read-only stored procedures. The model never supplies procedure names or SQL for a
-recipe.
+Recipes remain reviewed, parameterized, read-only operations in
+`xstudio_l2_tool_bridge.py`. Prefer extending its existing fixed-query functions.
+Use a narrowly scoped read-only stored procedure only when it materially simplifies
+multi-result/database work or makes the audit boundary safer. The model never
+supplies procedure names or SQL for a recipe.
 
 Initial recipe families must cover the domains present in the atlas/evaluation set,
 not only EAF/LRF/CCM:
@@ -188,12 +250,15 @@ Each recipe declares identifiers, databases, surfaces, safety, maximum rows,
 absence semantics, and claim guidance. A recipe is unavailable unless all referenced
 objects and columns exist in the active registry version.
 
-## 9. Review contract
+Do not create one macro per table. Add a domain macro only when multiple ticket
+fixtures share the same identifiers, surfaces, and absence semantics.
+
+## 10. Extend the existing review contract
 
 Keep the independent reviewer. Better routing reduces review cost but does not prove
 causality, resolution, applicability, or safe customer wording.
 
-The reviewer receives:
+The existing frozen reviewer card additionally receives:
 
 - the frozen proposal;
 - the exact registry version used by the investigator;
@@ -220,12 +285,14 @@ No review bypass is introduced in this version. Any future automatic approval mu
 be limited to a separately evaluated, mechanically provable ticket class and first
 run in shadow-review mode.
 
-## 10. Stored-procedure boundary
+## 11. Stored-procedure boundary and staleness audit
 
-Retain the currently used lifecycle and auditing procedures. Add or revise only
-read-only discovery/context procedures needed by approved recipes. Updating a
-procedure is insufficient unless the bridge and planner invoke it through a tested
-typed contract.
+Retain the currently used lifecycle and auditing procedures. Before changing any SP,
+trace its current Python/bridge caller, compare the numbered SQL source with the live
+definition, and classify it as active, compatibility-only, or unused. Add or revise
+only read-only discovery/context procedures needed by an approved recipe. Updating a
+procedure is insufficient unless the existing bridge and route path invoke it through
+a tested typed contract.
 
 Normal worker access continues through:
 
@@ -239,11 +306,11 @@ Hermes_L2_Get_Run_Actions_Usp
 Hermes_L2_Save_Investigation_State_Usp
 ```
 
-Lifecycle mutation continues through the central runtime and existing claim,
+Lifecycle mutation continues unchanged through the central runtime and existing claim,
 recovery, fail, and publish procedures. Convenience and compatibility procedures
 remain outside the normal model path.
 
-## 11. Failure and self-healing behavior
+## 12. Failure and self-healing behavior
 
 - Registry build failure keeps the last verified registry active.
 - Registry version mismatch fails closed for recipe execution and permits only live
@@ -254,12 +321,15 @@ remain outside the normal model path.
 - Missing live recipe surfaces disable only that recipe/domain path.
 - Retrieval and recipe failures are audited with reason, version, duration, and
   fallback used.
-- The two-minute scout remains the lifecycle backstop and also checks knowledge
-  health before claiming new work.
+- The two-minute scout remains the lifecycle backstop and uses the existing dependency
+  gate to check knowledge health before claiming new work.
 - Claims pause when no verified registry exists, required worker dependencies fail,
   or mandatory route coverage falls below the configured gate.
 
-## 12. Observability
+No separate knowledge watchdog is introduced. Existing scout/trace/activity plumbing
+owns the new health and retrieval events.
+
+## 13. Observability
 
 Record per run:
 
@@ -280,18 +350,18 @@ precision/recall, abstention correctness, recipe success, unsupported-domain rat
 evidence completeness, reviewer rejection rate, rework rate, resolution rate,
 time/compute per ticket, and failures by layer.
 
-## 13. Verification and rollout
+## 14. Verification and rollout
 
 Testing proceeds from fixtures to live shadow validation:
 
-1. registry parser and relation-resolution unit tests;
+1. extend existing atlas tests with configuration-relation resolution;
 2. deterministic rebuild/hash/count tests;
 3. ticket-to-domain golden evaluation cases, including multi-domain and abstention;
 4. GBrain retrieval relevance, provenance, and abstention tests;
 5. recipe schema, safety, result-bound, and missing-surface tests;
 6. reviewer evidence/provenance regression tests;
 7. full existing lifecycle and typed-tool suites;
-8. deploy to WSL with claims paused;
+8. deploy through the existing idempotent WSL deployment script with claims paused;
 9. shadow planner against historical real tickets without publication;
 10. compare proposed routes/evidence with known outcomes;
 11. enable one natural-ticket live run at WIP=1;
@@ -309,16 +379,17 @@ Acceptance requires:
 - lifecycle and publication invariants remain unchanged;
 - one naturally arriving ticket completes with persisted evidence and observability.
 
-## 14. Delivery slices
+## 15. Incremental delivery slices
 
-1. Registry and relation atlas.
-2. GBrain health, complete embedding, bounded adapter, and retrieval evaluation.
-3. Deterministic planner and investigation bundle v2.
-4. Expanded domain recipes and typed investigation retrieval.
-5. Reviewer evidence package and mechanical pre-review gates.
-6. Deployment, shadow evaluation, natural-ticket validation, and operational KPIs.
+1. Extend the existing atlas and schema allowlist with configuration relations.
+2. Repair GBrain coverage and extend `kb_retrieval.py` with bounded retrieval.
+3. Extend the existing route/bundle functions and their golden cases.
+4. Add only evidence-backed domain recipes to the existing bridge/toolset.
+5. Enrich the existing reviewer package and mechanical gates.
+6. Deploy with the existing scripts, shadow historical tickets, then validate one
+   naturally arriving ticket and its operational KPIs.
 
-Each slice is independently testable and committed. The old bundle remains available
-behind a temporary rollback switch until the v2 bundle completes live validation;
-the switch is removed after cutover so failures remain visible rather than silently
-falling back forever.
+Each slice is independently testable and committed. Changes are additive within the
+current owners until live validation passes. Compatibility is retained only where a
+real current caller requires it; do not add a broad fallback switch that can silently
+hide a broken new path.

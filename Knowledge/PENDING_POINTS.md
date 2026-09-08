@@ -11,6 +11,7 @@ This is not lifecycle authority, a deployment plan, or a ticket queue.
 | OBS-004 | Done | KPI integrity | Attribute hardware samples to the investigator/reviewer profile. | Implemented in `f93daa1`; historical `unknown` rows remain. |
 | L3-001 | Open | Workflow | Bind a verified visible Helpdesk status for L3 / human action. | Demonstrate one unambiguous live workflow status; do not guess. |
 | L3-002 | Done | Lifecycle | Prevent reviewer rework blocks from opening L3 escalations. | Runtime fix in `025be8c`; legacy SP now fails closed unless a terminal L3 outcome exists. |
+| KB-001 | WIP | Knowledge | Harden the existing atlas, GBrain retrieval, deterministic routing, and reviewer context in place. | Approve incremental design, then implement and shadow-test. |
 | KPI-001 | Good-to-have | Reporting | Add a concise Helpdesk-facing L2 operations scorecard using existing metric views. | Agree audience and KPI definitions. |
 
 ## Maintenance rule
