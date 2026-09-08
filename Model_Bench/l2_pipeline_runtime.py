@@ -1356,16 +1356,24 @@ def _investigation_bundle(args: argparse.Namespace, ticket_id: str, fallback_tic
         "kb": {
             "solutions": list(kb.get("solutions") or [])[:2],
             "route_candidates": list(kb.get("route_candidates") or [])[:2],
+            "gbrain": {
+                "status": (kb.get("gbrain") or {}).get("status"),
+                "source_id": (kb.get("gbrain") or {}).get("source_id"),
+                "hits": [{key: hit.get(key) for key in ("kb_id", "source_ref", "title", "excerpt", "retrieval_score", "verification_required")
+                          if hit.get(key) is not None} for hit in list((kb.get("gbrain") or {}).get("hits") or [])[:3]],
+                "abstained": (kb.get("gbrain") or {}).get("abstained"),
+                "abstention_reason": (kb.get("gbrain") or {}).get("abstention_reason"),
+            },
             "abstained": kb.get("abstained"),
             "abstention_reason": kb.get("abstention_reason"),
         },
     }
     rendered = json.dumps(compact, indent=2, default=str)
-    if len(rendered) > 5000:
-        rendered = rendered[:5000] + "\n... [bundle truncated at 5,000 chars]"
+    if len(rendered) > 8000:
+        rendered = rendered[:8000] + "\n... [bundle truncated at 8,000 chars]"
     return (
         "\n--- Investigation bundle (single dispatch-time package) ---\n"
-        "KB hits, prior findings, and suggested tables are leads, not proof. Final claims require current live SQL or verified Knowledge/ evidence.\n"
+        "KB/GBrain hits, prior findings, relationships, and suggested tables are leads, not ticket proof. Use source_ref for provenance. Material current claims still require current audited SQL evidence.\n"
         f"{rendered}\n"
     )
 

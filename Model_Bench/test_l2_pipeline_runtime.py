@@ -23,6 +23,27 @@ SUMMARY_SPEC.loader.exec_module(summary)
 
 
 class PipelineContractTests(unittest.TestCase):
+    def test_investigation_bundle_contains_bounded_gbrain_provenance(self):
+        ticket = {"ID": "ticket-1", "BriefDetails": "SAP posting pending"}
+        kb_result = {"solutions": [], "route_candidates": [], "gbrain": {"status": "READY",
+            "source_id": "xstudio-knowledge", "hits": [{"kb_id": "gbrain:x:k", "source_ref": "xstudio-knowledge:knowledge/sap",
+            "title": "SAP", "excerpt": "lead", "retrieval_score": .9, "verification_required": True}], "abstained": False}}
+        with patch.object(mod, "run_orchestrator", return_value={"ticket": {"ticket": ticket}}), \
+             patch.object(mod, "_run_kb_retrieval", return_value=kb_result):
+            rendered = mod._investigation_bundle(mod.default_args(), "ticket-1", ticket)
+        self.assertIn('"source_id": "xstudio-knowledge"', rendered)
+        self.assertIn('"source_ref": "xstudio-knowledge:knowledge/sap"', rendered)
+        self.assertIn('"verification_required": true', rendered)
+
+    def test_investigation_bundle_preserves_explicit_gbrain_failure(self):
+        ticket = {"ID": "ticket-1", "BriefDetails": "unknown"}
+        kb_result = {"solutions": [], "route_candidates": [], "gbrain": {"status": "UNAVAILABLE", "hits": [],
+                     "abstained": True, "abstention_reason": "GBrain retrieval failed: timeout"}}
+        with patch.object(mod, "run_orchestrator", return_value={"ticket": {"ticket": ticket}}), \
+             patch.object(mod, "_run_kb_retrieval", return_value=kb_result):
+            rendered = mod._investigation_bundle(mod.default_args(), "ticket-1", ticket)
+        self.assertIn("GBrain retrieval failed: timeout", rendered)
+
     def test_reviewer_block_is_audit_only_not_an_l3_escalation(self):
         """A normal reviewer rejection must stay inside the bounded rework loop."""
         event = type("Event", (), {
