@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""Compile authoritative schema/SP exports into a deterministic XStudio atlas.
+
+The atlas is routing knowledge, never ticket evidence. Procedure safety is
+deliberately conservative: observed writes are MUTATING; reviewed diagnostics
+are READ_ONLY; everything else stays UNKNOWN_UNSAFE and cannot be executed.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+REFERENCE = ROOT / "Reference Documents"
+SOURCES = {
+    "XStudio_Helpdesk": {
+        "schema": REFERENCE / "XStudio_Helpdesk_Schema.md",
+        "procedures": REFERENCE / "XStudio_Helpdesk_StoredProcedures.md",
+    },
+    "XStudio_Xbatch": {
+        "schema": REFERENCE / "XStudio_Xbatch_Schema.md",
+        "procedures": REFERENCE / "XStudio_Xbatch_StoredProcedures.md",
+    },
+}
+REVIEWED_READ_ONLY = {("XStudio_Xbatch", "XMES_Get_API_Transaction_Summary")}
+WRITE_RE = re.compile(r"\b(?:INSERT|UPDATE|DELETE|MERGE|TRUNCATE|ALTER|CREATE|DROP)\b", re.I)
+OBJECT_RE = re.compile(
+    r"(?:(?:\[?([A-Za-z0-9_]+)\]?\.)?\[?dbo\]?\.)\[?([A-Za-z_][A-Za-z0-9_]*)\]?",
+    re.I,
+)
+
+
+def _sections(text: str) -> list[tuple[str, str]]:
+    matches = list(re.finditer(r"(?m)^## dbo\.([^\r\n]+)\s*$", text))
+    return [
+        (match.group(1).strip(), text[match.end():matches[i + 1].start() if i + 1 < len(matches) else len(text)])
+        for i, match in enumerate(matches)
+    ]
+
+
+def _table_rows(block: str, heading: str) -> list[list[str]]:
+    match = re.search(rf"(?ms)^### {re.escape(heading)}\s*$\s*(.*?)(?=^### |^---\s*$|\Z)", block)
+    if not match:
+        return []
+    rows = []
+    for line in match.group(1).splitlines():
+        if not line.startswith("|") or re.match(r"^\|\s*---", line):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if cells and cells[0] not in {"Column", "Parameter"}:
+            rows.append(cells)
+    return rows
+
+
+def parse_schema(path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8-sig")
+    objects = {}
+    for name, block in _sections(text):
+        columns = []
+        for row in _table_rows(block, "Schema"):
+            if len(row) >= 3:
+                columns.append({"name": row[0], "type": row[1], "nullable": row[2] == "YES"})
+        row_count = re.search(r"\*\*Row Count:\*\*\s*([0-9,]+)", block)
+        objects[name] = {
+            "schema": "dbo", "columns": columns,
+            "documented_row_count": int(row_count.group(1).replace(",", "")) if row_count else None,
+        }
+    return {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "objects": objects}
+
+
+def _definition(block: str) -> str:
+    match = re.search(r"(?ms)^### Full Definition\s*$.*?```sql\s*(.*?)```", block)
+    return match.group(1) if match else ""
+
+
+def parse_procedures(database: str, path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8-sig")
+    procedures = {}
+    for name, block in _sections(text):
+        definition = _definition(block)
+        parameters = []
+        for row in _table_rows(block, "Parameters"):
+            if len(row) >= 3:
+                parameters.append({"name": row[0].lstrip("@"), "type": row[1], "output": row[2] == "YES"})
+        writes = sorted(set(token.upper() for token in WRITE_RE.findall(definition)))
+        if (database, name) in REVIEWED_READ_ONLY:
+            safety = "READ_ONLY_REVIEWED"
+        elif writes:
+            safety = "MUTATING"
+        else:
+            safety = "UNKNOWN_UNSAFE"
+        refs = sorted({
+            f"{db or database}.dbo.{obj}"
+            for db, obj in OBJECT_RE.findall(definition)
+            if obj.casefold() != name.casefold()
+        }, key=lambda value: (value.casefold(), value))
+        procedures[name] = {
+            "schema": "dbo", "parameters": parameters, "safety": safety,
+            "observed_write_tokens": writes, "referenced_objects": refs,
+        }
+    return {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "procedures": procedures}
+
+
+def build() -> dict[str, Any]:
+    databases = {}
+    for database, paths in SOURCES.items():
+        databases[database] = {
+            **parse_schema(paths["schema"]),
+            **parse_procedures(database, paths["procedures"]),
+            "sources": {key: str(path.relative_to(ROOT)).replace("\\", "/") for key, path in paths.items()},
+        }
+    return {
+        "schema_version": 1,
+        "authority": "static routing/query-construction knowledge only; live reads are required for ticket claims",
+        "procedure_policy": "Only READ_ONLY_REVIEWED procedures may be exposed by the bridge allowlist.",
+        "databases": databases,
+    }
+
+
+def render_gbrain_pages(atlas: dict[str, Any]) -> dict[str, str]:
+    """Render compact searchable pages; the model never receives them wholesale."""
+    pages: dict[str, str] = {}
+    for database, data in atlas["databases"].items():
+        schema_groups: dict[str, list[str]] = {}
+        for name, item in data["objects"].items():
+            columns = ", ".join(f"{col['name']}:{col['type']}" for col in item["columns"])
+            key = name[0].lower() if name[:1].isalnum() else "other"
+            schema_groups.setdefault(key, []).extend((f"## dbo.{name}", columns or "No exported columns.", ""))
+        for key, lines in schema_groups.items():
+            header = [
+                "---", "type: Reference", f"database: {database}", "authority: static-advisory", "---",
+                f"# {database} schema atlas: {key.upper()}", "",
+                "Static routing knowledge generated from the authoritative export. Current ticket facts require live SQL.", "",
+            ]
+            pages[f"{database.lower()}-schema-{key}-atlas.md"] = "\n".join(header + lines) + "\n"
+
+        sp_groups: dict[str, list[str]] = {}
+        for name, item in data["procedures"].items():
+            params = ", ".join(f"@{p['name']}:{p['type']}" for p in item["parameters"]) or "none"
+            refs = ", ".join(item["referenced_objects"]) or "none detected"
+            key = name[0].lower() if name[:1].isalnum() else "other"
+            sp_groups.setdefault(key, []).extend((
+                f"## dbo.{name}", f"Safety: {item['safety']}", f"Parameters: {params}",
+                f"Referenced objects: {refs}", "",
+            ))
+        for key, lines in sp_groups.items():
+            header = [
+                "---", "type: Reference", f"database: {database}", "authority: static-advisory", "---",
+                f"# {database} stored-procedure atlas: {key.upper()}", "",
+                "Safety is fail-closed. Only READ_ONLY_REVIEWED procedures may be exposed as diagnostics.", "",
+            ]
+            pages[f"{database.lower()}-procedure-{key}-atlas.md"] = "\n".join(header + lines) + "\n"
+    return pages
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, default=ROOT / "Knowledge" / "xstudio_semantic_atlas.json")
+    parser.add_argument("--markdown-dir", type=Path, default=ROOT / "Knowledge" / "atlas")
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    rendered = json.dumps(build(), indent=2, sort_keys=True) + "\n"
+    pages = render_gbrain_pages(build())
+    if args.check:
+        json_ok = args.output.exists() and args.output.read_text(encoding="utf-8") == rendered
+        pages_ok = all((args.markdown_dir / name).exists() and
+                       (args.markdown_dir / name).read_text(encoding="utf-8") == content
+                       for name, content in pages.items())
+        return 0 if json_ok and pages_ok else 1
+    args.output.write_text(rendered, encoding="utf-8", newline="\n")
+    args.markdown_dir.mkdir(parents=True, exist_ok=True)
+    for stale in args.markdown_dir.glob("*-atlas.md"):
+        stale.unlink()
+    for name, content in pages.items():
+        (args.markdown_dir / name).write_text(content, encoding="utf-8", newline="\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

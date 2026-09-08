@@ -1433,11 +1433,12 @@ def deterministic_ticket_route(ticket: dict[str, Any]) -> dict[str, Any]:
     if not heat_match:
         return {"domain": "generic", "recommended_tool": None, "reason": "No unambiguous numeric heat identifier."}
     sap = "SAP" in category or "SAP" in summary.upper()
+    billet = "BILLET" in category or "BILLET" in summary.upper() or "STRAND" in summary.upper()
     return {
-        "domain": "heat_sap" if sap else "heat_execution",
+        "domain": "heat_sap" if sap else ("billet_genealogy" if billet else "heat_execution"),
         "heat": heat_match.group(1),
         "recommended_tool": "xstudio_heat_context",
-        "reason": "Canonical EAF/LRF/CCM, work-order and SAP production surfaces are harness-routed for this heat.",
+        "reason": "Canonical EAF/LRF/CCM, billet genealogy, work-order and SAP production surfaces are harness-routed for this heat.",
     }
 
 

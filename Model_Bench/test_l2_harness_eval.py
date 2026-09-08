@@ -133,6 +133,25 @@ class HarnessEvaluationTests(unittest.TestCase):
         )
         self.assertFalse(report["successful_multi_turn_tool_continuation"])
 
+    def test_valid_hermes_calls_include_kanban_and_flag_missing_post(self):
+        base = {
+            "run": {"ID": "run-1", "TicketID": "ticket-1"},
+            "events": [
+                {"event_type": "pre_tool_call", "profile_name": "l2-investigator-primary",
+                 "tool_call_id": "k1", "tool_name": "kanban_show", "args": {}},
+                {"event_type": "post_tool_call", "profile_name": "l2-investigator-primary",
+                 "tool_call_id": "k1", "tool_name": "kanban_show", "status": "ok"},
+            ],
+        }
+        self.assertTrue(evaluate_run(base, {})["valid_hermes_tool_calls"])
+        base["events"].append(
+            {"event_type": "pre_tool_call", "profile_name": "l2-investigator-primary",
+             "tool_call_id": "bad", "tool_name": "xstudio_select", "args": {}}
+        )
+        report = evaluate_run(base, {})
+        self.assertFalse(report["valid_hermes_tool_calls"])
+        self.assertEqual(1, len(report["failed_tool_calls"]))
+
 
 if __name__ == "__main__":
     unittest.main()

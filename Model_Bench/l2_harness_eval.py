@@ -123,6 +123,11 @@ def evaluate_run(bundle: Dict[str, Any], oracle: Dict[str, Any]) -> Dict[str, An
     reviewer_events = _role_events(events, REVIEWER)
     investigator_calls = _role_events(all_pre_calls, INVESTIGATOR)
     reviewer_calls = _role_events(all_pre_calls, REVIEWER)
+    successful_ids = {event.get("tool_call_id") for event in successful}
+    failed_calls = [
+        f"{event.get('profile_name')}:{event.get('tool_name')}:{event.get('tool_call_id')}"
+        for event in all_pre_calls if event.get("tool_call_id") not in successful_ids
+    ]
     investigator_api = [event for event in investigator_events if event.get("event_type") == "post_api_request"]
     reviewer_api = [event for event in reviewer_events if event.get("event_type") == "post_api_request"]
     compute_events = [event for event in events if event.get("event_type") in {"compute_sample", "gpu_sample"}]
@@ -131,8 +136,12 @@ def evaluate_run(bundle: Dict[str, Any], oracle: Dict[str, Any]) -> Dict[str, An
     approved = str((bundle.get("review") or {}).get("decision") or "").upper() == "APPROVE"
 
     return {
-        "valid_hermes_tool_calls": len(successful) == len(all_pre_calls)
-            and all(str(call.get("tool_name") or "").startswith("xstudio_") for call in all_pre_calls),
+        # Kanban and skill calls are valid Hermes calls too. Transport policy is
+        # evaluated separately; syntactic/runtime validity means every traced
+        # pre-call has one successful matching post-call.
+        "valid_hermes_tool_calls": not failed_calls,
+        "failed_tool_calls": failed_calls,
+        "xstudio_tool_calls": sum(str(call.get("tool_name") or "").startswith("xstudio_") for call in all_pre_calls),
         "correct_tool_choice": not missing_tools,
         "missing_required_tools": missing_tools,
         "correct_required_arguments": not argument_errors,

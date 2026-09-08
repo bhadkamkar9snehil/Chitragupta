@@ -314,6 +314,8 @@ def _heat_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
          "SELECT TOP 10 ID, WorkOrderNo, HeatNo, SAP_Status, SAP_DocumentNo, SAP_Message, IsProcessed, PostingDate, PostingType, MovementType, BatchNo, Quantity, ModifiedOn FROM dbo.SAP_Posting_Tbl WHERE TRY_CONVERT(int, HeatNo) = ? ORDER BY ModifiedOn DESC"),
         ("production", "MES_SAP_Production_Trn_Tbl", "l2_heat_sap_production", "MES production transactions for heat",
          "SELECT TOP 10 ID, HeatNo, ManufacturingOrder, Batch, InspectionLot, MaterialDocument, Saptransactionid, SAPPostingStatus, QuantityInCount, BilletNo, PostingDate, ModifiedOn FROM dbo.MES_SAP_Production_Trn_Tbl WHERE HeatNo = ? ORDER BY ModifiedOn DESC"),
+        ("billet_genealogy", "XStudio_List_XMES_CCM_Billet_Genealogy_Trn_Tbl_Vw", "l2_heat_billet_genealogy", "Billet and per-strand sequence evidence for heat",
+         "SELECT TOP 25 ID, HeatNo, BilletNo, StrandNo, BilletSequence, StrandSequence, ChargeType, Status, CreatedOn FROM dbo.XStudio_List_XMES_CCM_Billet_Genealogy_Trn_Tbl_Vw WHERE TRY_CONVERT(int, HeatNo) = ? ORDER BY StrandNo, StrandSequence, BilletSequence"),
     )
     entities: dict[str, Any] = {}
     evidence_refs: list[dict[str, str]] = []

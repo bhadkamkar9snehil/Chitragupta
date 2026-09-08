@@ -127,6 +127,16 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(route["heat"], "1602522")
         self.assertEqual(route["recommended_tool"], "xstudio_heat_context")
 
+    def test_deterministic_route_recognizes_billet_genealogy(self):
+        route = mod.deterministic_ticket_route({
+            "ProblemCategory": "PRODUCTION_STATE",
+            "ConversationSummary": "Billet strand sequence is out of order for Heat H99707",
+            "ExtractedEntitiesJson": {"HeatNo": "H99707"},
+        })
+        self.assertEqual("billet_genealogy", route["domain"])
+        self.assertEqual("99707", route["heat"])
+        self.assertEqual("xstudio_heat_context", route["recommended_tool"])
+
     def test_deterministic_route_maps_inventory_api_ticket_without_heat(self):
         ticket = {
             "ProblemCategory": "SAP_INTEGRATION",
