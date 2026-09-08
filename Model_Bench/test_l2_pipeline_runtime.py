@@ -23,6 +23,23 @@ SUMMARY_SPEC.loader.exec_module(summary)
 
 
 class PipelineContractTests(unittest.TestCase):
+    def test_gbrain_dependency_failure_pauses_new_claims(self):
+        result = type("R", (), {"returncode": 1, "stdout": '{"status":"DEGRADED"}', "stderr": "coverage 37.8%"})()
+        with patch.object(mod.subprocess, "run", return_value=result):
+            with self.assertRaisesRegex(RuntimeError, "GBrain knowledge is not ready"):
+                mod.check_gbrain_dependency(mod.default_args())
+
+    def test_reconcile_and_wip_run_before_gbrain_claim_gate(self):
+        order = []
+        with patch.object(mod, "reconcile", side_effect=lambda *a, **k: order.append("reconcile") or {}), \
+             patch.object(mod, "load_workflow_binding", return_value={"eligible_ticket_status":"Enter", "strict_resolution_status_binding":False}), \
+             patch.object(mod, "query_active_runs", side_effect=lambda a: order.append("wip") or []), \
+             patch.object(mod, "check_worker_dependencies", side_effect=lambda: order.append("worker")), \
+             patch.object(mod, "check_gbrain_dependency", side_effect=lambda a: order.append("gbrain") or (_ for _ in ()).throw(RuntimeError("not ready"))):
+            with self.assertRaisesRegex(RuntimeError, "not ready"):
+                mod.scout(mod.default_args())
+        self.assertEqual(order, ["reconcile", "wip", "worker", "gbrain"])
+
     def test_investigation_bundle_contains_bounded_gbrain_provenance(self):
         ticket = {"ID": "ticket-1", "BriefDetails": "SAP posting pending"}
         kb_result = {"solutions": [], "route_candidates": [], "gbrain": {"status": "READY",

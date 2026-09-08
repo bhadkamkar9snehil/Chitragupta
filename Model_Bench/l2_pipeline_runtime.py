@@ -1282,6 +1282,14 @@ def check_worker_dependencies() -> None:
         checked.add(key)
 
 
+def check_gbrain_dependency(args: argparse.Namespace) -> None:
+    result = subprocess.run([_orch_python(), _kb_retriever_path(), "--check-gbrain"],
+                            capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()[:300]
+        raise RuntimeError("WORKER_DEPENDENCY_UNAVAILABLE: GBrain knowledge is not ready: " + detail)
+
+
 # ---------------------------------------------------------------------------
 # Investigation bundle / claim
 # ---------------------------------------------------------------------------
@@ -1634,6 +1642,7 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
         return {"status": "WIP_LIMIT", "active_runs": active, "reconcile": reconciliation}
 
     check_worker_dependencies()
+    check_gbrain_dependency(args)
 
     eligible = str(binding.get("eligible_ticket_status") or args.eligible_status or DEFAULT_ELIGIBLE_STATUS)
     poll = run_orchestrator(
