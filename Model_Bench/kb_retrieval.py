@@ -20,6 +20,7 @@ import argparse
 import json
 import math
 import os
+import posixpath
 import re
 import subprocess
 from pathlib import Path
@@ -65,6 +66,7 @@ def _run_gbrain(argv: list[str], *, timeout: int, runner=None):
     run = runner or subprocess.run
     env = os.environ.copy()
     env["GBRAIN_HOME"] = GBRAIN_HOME
+    env["PATH"] = f"{posixpath.dirname(GBRAIN_BIN)}:{env.get('PATH', '')}"
     return run([GBRAIN_BIN, *argv], capture_output=True, text=True, timeout=timeout, env=env)
 
 
@@ -108,7 +110,9 @@ def retrieve_gbrain(query: str, config: dict, runner=None) -> dict:
         hits = []
         for row in rows:
             slug, score = str(row.get("slug") or ""), float(row.get("score") or 0)
-            if row.get("source_id") != config["source_id"] or not _slug_allowed(slug, config) or score < float(config["min_retrieval_score"]):
+            if (row.get("source_id") != config["source_id"] or not _slug_allowed(slug, config)
+                    or score < float(config["min_retrieval_score"])
+                    or row.get("evidence") == "weak_semantic"):
                 continue
             hits.append({"kb_id": f"gbrain:{config['source_id']}:{slug}", "source_type": "gbrain_page",
                          "source_ref": f"{config['source_id']}:{slug}", "slug": slug, "title": row.get("title"),

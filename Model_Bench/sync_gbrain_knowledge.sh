@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GBRAIN_BIN="${GBRAIN_BIN:-/home/snehil/.bun/bin/gbrain}"
 export GBRAIN_HOME="${GBRAIN_HOME:-/home/snehil/.hermes/xstudio-gbrain}"
+export PATH="$(dirname "$GBRAIN_BIN"):${PATH}"
 
 test -x "$GBRAIN_BIN" || { echo "FATAL: GBrain binary not found: $GBRAIN_BIN" >&2; exit 1; }
 

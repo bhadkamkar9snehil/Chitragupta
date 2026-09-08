@@ -77,6 +77,13 @@ class GBrainAdapterTests(unittest.TestCase):
         status = kb.get_gbrain_status(self.cfg, runner=lambda *a, **k: _Result(json.dumps(payload)))
         self.assertEqual(status["status"], "READY")
 
+    def test_gbrain_runner_adds_bun_to_non_login_path(self):
+        seen = {}
+        def runner(cmd, **kwargs):
+            seen.update(kwargs); return _Result('{"sources":[]}')
+        kb.get_gbrain_status(self.cfg, runner=runner)
+        self.assertTrue(seen["env"]["PATH"].startswith("/home/snehil/.bun/bin:"))
+
     def test_status_reports_incomplete_embeddings(self):
         payload = {"sources": [{"source_id": "xstudio-knowledge", "total_pages": 142,
                     "total_chunks": 601, "embedded_chunks": 227, "embed_coverage_pct": 37.8,
@@ -102,7 +109,7 @@ class GBrainAdapterTests(unittest.TestCase):
     def test_search_failure_and_weak_neighbour_abstain(self):
         failed = kb.retrieve_gbrain("SAP", self.cfg, runner=lambda *a, **k: _Result(stderr="closed", returncode=1))
         weak = kb.retrieve_gbrain("leave policy", self.cfg, runner=lambda *a, **k: _Result(json.dumps([
-            {"slug":"knowledge/weak","source_id":"xstudio-knowledge","score":.42}])) )
+            {"slug":"knowledge/weak","source_id":"xstudio-knowledge","score":.95, "evidence":"weak_semantic"}])) )
         self.assertEqual((failed["status"], failed["hits"], weak["abstained"]), ("UNAVAILABLE", [], True))
 
 
