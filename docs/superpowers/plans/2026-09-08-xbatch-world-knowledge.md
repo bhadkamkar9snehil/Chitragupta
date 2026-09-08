@@ -1,0 +1,124 @@
+# XBatch World Knowledge Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Extend the existing semantic atlas into the canonical XBatch world graph and make deterministic recipes/evidence matrices available to investigator and reviewer dispatch.
+
+**Architecture:** Normalize a safe Git snapshot of XStudio configuration relationships into the existing atlas, enrich it from the existing manifest and recipe catalog, then render bounded GBrain pages. Runtime code selects a validated recipe and packages relevant graph neighbours and evidence requirements without changing the lifecycle or database mutation boundary.
+
+**Tech Stack:** Python 3 standard library, JSON, SQL Server read-only export, existing Hermes typed tools, GBrain/PostgreSQL+pgvector.
+
+**Spec:** `Knowledge/XBATCH_WORLD_KNOWLEDGE_DESIGN.md`
+
+## Global Constraints
+
+- Extend `Knowledge/xstudio_semantic_atlas.json`; do not create a competing registry.
+- Preserve `Model_Bench/l2_pipeline_runtime.py` as the single lifecycle authority.
+- Preserve WIP=1, frozen proposals, bounded review cycles, SQL safety, auditing and deterministic publication.
+- Ticket-specific claims require live audited evidence.
+- Do not mix embedding signatures in one primary GBrain vector column.
+- Use tests first for every production-code change.
+
+---
+
+### Task 1: Configuration relationship snapshot and atlas v2
+
+**Files:**
+- Create: `Model_Bench/export_xbatch_relationships.py`
+- Create: `Reference Documents/XStudio_Configuration_Xbatch_Relationships.json`
+- Modify: `Model_Bench/build_xstudio_semantic_atlas.py`
+- Modify: `Model_Bench/test_xstudio_semantic_atlas.py`
+
+**Interfaces:**
+- Produces: `load_relationships(path: Path) -> list[dict[str, Any]]`
+- Produces: atlas `relationships` with stable IDs and provenance.
+
+- [ ] Add tests asserting active-edge count, stable IDs, endpoint fields,
+      cardinality, duplicate collapse and dangling-endpoint rejection.
+- [ ] Run `python -m unittest -v Model_Bench.test_xstudio_semantic_atlas` and
+      verify the new tests fail because atlas v2 is absent.
+- [ ] Add the read-only exporter and committed normalized snapshot.
+- [ ] Extend the atlas builder minimally to validate and normalize the snapshot.
+- [ ] Regenerate JSON/Markdown and run the semantic-atlas tests.
+- [ ] Commit the independently reproducible atlas-v2 slice.
+
+### Task 2: Domain and recipe catalog
+
+**Files:**
+- Create: `Knowledge/xbatch_investigation_recipes.json`
+- Create: `Model_Bench/xbatch_world.py`
+- Create: `Model_Bench/test_xbatch_world.py`
+- Modify: `Knowledge/manifest.json`
+- Modify: `Model_Bench/build_xstudio_semantic_atlas.py`
+
+**Interfaces:**
+- Produces: `load_world() -> dict[str, Any]`
+- Produces: `select_recipes(ticket: dict[str, Any]) -> dict[str, Any]`
+- Produces: `world_context(selection: dict[str, Any], limit: int) -> dict[str, Any]`
+
+- [ ] Add failing tests for one-recipe-per-route, registered read-only tools,
+      bounded context, identifier routing and unknown-route abstention.
+- [ ] Add concise recipes for every manifest route: helpdesk, SAP posting,
+      API transaction, work order, heat execution, billet inventory, quality,
+      performance, Hermes runtime and discover.
+- [ ] Implement strict recipe/atlas loading and deterministic selection.
+- [ ] Render domains/recipes into atlas v2 and generated GBrain pages.
+- [ ] Run focused tests and commit the recipe-catalog slice.
+
+### Task 3: Investigator world-context integration
+
+**Files:**
+- Modify: `Model_Bench/l2_pipeline_runtime.py`
+- Modify: `Model_Bench/test_l2_pipeline_runtime.py`
+
+**Interfaces:**
+- Consumes: `select_recipes()` and `world_context()` from Task 2.
+- Produces: bounded `world_knowledge` in the existing investigation package.
+
+- [ ] Add failing tests proving dispatch includes the selected recipe,
+      relationship neighbours and required evidence while excluding arbitrary
+      SQL and remaining below the configured character bound.
+- [ ] Integrate the world package into investigation and rework card creation.
+- [ ] Run focused lifecycle tests and commit the investigator integration.
+
+### Task 4: Reviewer evidence matrix
+
+**Files:**
+- Modify: `Model_Bench/xbatch_world.py`
+- Modify: `Model_Bench/l2_pipeline_runtime.py`
+- Modify: `Model_Bench/test_xbatch_world.py`
+- Modify: `Model_Bench/test_l2_pipeline_runtime.py`
+
+**Interfaces:**
+- Produces: `build_evidence_matrix(proposal, recipe, actions) -> dict[str, Any]`.
+- Consumes: frozen proposal claims and existing SQL action records.
+
+- [ ] Add failing tests for referenced, missing and unverifiable claim rows.
+- [ ] Implement deterministic evidence-category matching without changing the
+      existing hard claim-reference validator.
+- [ ] Include the matrix and recipe review checks in reviewer cards.
+- [ ] Verify rework and publication still use the same frozen proposal.
+- [ ] Run focused tests and commit the reviewer-context slice.
+
+### Task 5: Validation, deployment mirror and GBrain population
+
+**Files:**
+- Modify: `Model_Bench/validate_gbrain_knowledge.py`
+- Modify: `Model_Bench/test_validate_gbrain_knowledge.py`
+- Modify: `Knowledge/eval/gbrain_retrieval_cases.jsonl`
+- Modify: `Knowledge/PENDING_POINTS.md`
+
+**Interfaces:**
+- Consumes: generated atlas pages and recipe pages.
+- Produces: reproducible local validation and retrieval-quality evidence.
+
+- [ ] Add failing validation/retrieval cases for relationship, domain and
+      recipe queries.
+- [ ] Add atlas/recipe reproducibility and coverage checks to the existing
+      validator.
+- [ ] Run Python compilation, typed-tool, atlas, GBrain and lifecycle suites.
+- [ ] Run the existing deployment/mirror scripts and inspect the diff.
+- [ ] Sync the `xstudio-knowledge` GBrain source, complete one provider-aware
+      embedding pass, and run the retrieval evaluation.
+- [ ] Record exact coverage/results in the pending register and commit.
+
