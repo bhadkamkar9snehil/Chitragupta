@@ -538,11 +538,11 @@ def normalized_fallback_claims(summary: str) -> list[dict[str, Any]]:
     """
     return [{
         "id": "C1",
-        "claim": summary.strip(),
+        "claim": "The worker completed without supplying a structured claim/evidence contract.",
         "material": True,
         "status": "UNVERIFIED",
         "evidence": [],
-        "required_evidence": ["Reviewer must independently verify this summary against current-run actions and live evidence."],
+        "required_evidence": ["Review the preserved investigator_notes and current-run actions before making any factual claim."],
     }]
 
 
@@ -570,17 +570,26 @@ def normalize_investigator_completions(*, dry_run: bool = False, active_run_ids:
         ticket_id = metadata.get("ticket_id") or task_ticket_id(task)
         if not run_id or not ticket_id:
             continue
+        had_structured_reply = bool(metadata.get("reply_text"))
         metadata.update({
             "run_id": run_id,
             "ticket_id": ticket_id,
             "response_type": metadata.get("response_type") or infer_response_type(summary),
-            "reply_text": metadata.get("reply_text") or summary,
+            "reply_text": metadata.get("reply_text") or (
+                "Live investigation actions were recorded, but the investigator did not provide a "
+                "structurally reviewable claim/evidence proposal. No cause or resolution is verified. "
+                "The complete evidence trail has been preserved for reviewer and human follow-up."
+            ),
             "normalized_by": "l2_pipeline_runtime.py",
         })
         if body_field(task.get("body"), "claims_contract_version"):
             metadata["claims_contract_version"] = CLAIMS_CONTRACT_VERSION
             if not isinstance(metadata.get("claims"), list):
                 metadata["claims"] = normalized_fallback_claims(summary)
+                metadata["contract_repaired_from_unstructured"] = True
+                metadata["investigator_notes"] = summary
+                if not had_structured_reply:
+                    metadata["response_type"] = "UPDATE"
         metadata = annotate_evidence_status(metadata)
         if dry_run:
             print(f"[DRY RUN] normalize investigator task {task['id']}")
@@ -602,6 +611,7 @@ def create_reviewer_card(
     *,
     source_task: dict[str, Any],
     proposal: dict[str, Any],
+    verification_context: str = "",
     dry_run: bool = False,
 ) -> Optional[str]:
     run_id = str(proposal["run_id"])
@@ -619,15 +629,19 @@ def create_reviewer_card(
         f"ticket_no: {ticket_no}\n"
         f"investigation_task_id: {source_task['id']}\n"
         f"review_cycle: {cycle}\n"
+        f"claims_contract_version: {proposal.get('claims_contract_version') or body_field(source_task.get('body'), 'claims_contract_version') or 'legacy'}\n"
         "pipeline_stage: review\n"
         f"proposal_json: {proposal_json}\n\n"
+        + verification_context
+        +
         "The ticket identifier is not proof of database storage representation (for example, "
         "H99328 may map to a numeric key); establish the physical key and format from live "
         "schema/rows.\n"
         "Verify the frozen proposal above against live evidence. Approve with kanban_complete; "
         "reject with kanban_block. The deterministic reconciler owns publication/rework.\n"
-        "For claims_contract_version 1, independently call xstudio_get_run_actions and the smallest "
-        "relevant live context tool. Reject a VERIFIED material claim if its action_id is not in this "
+        "The harness has collected a fresh reviewer verification context below when a deterministic route exists. "
+        "Inspect it and call only the smallest additional live context tool if it does not cover a material claim. "
+        "Reject a VERIFIED material claim if its action_id is not in this "
         "run/ticket or the evidence does not support its strength. Do not infer causation from absence."
     )
     argv = [
@@ -677,7 +691,16 @@ def ensure_missing_reviewers(
         proposal = _completion_metadata(task)
         if not _proposal_complete(proposal):
             continue
-        if create_reviewer_card(source_task=task, proposal=proposal or {}, dry_run=dry_run):
+        verification_context = ""
+        if not dry_run:
+            route_ticket = _ticket_for_route(args, str(proposal.get("ticket_id") or task_ticket_id(task) or ""))
+            verification_context = _dispatch_route_context(
+                str(proposal.get("run_id") or run_id),
+                str(proposal.get("ticket_id") or task_ticket_id(task) or ""),
+                route_ticket, evidence_role="reviewer",
+            ).replace("Deterministic live route/context", "Independent reviewer live verification context")
+        if create_reviewer_card(source_task=task, proposal=proposal or {},
+                                verification_context=verification_context, dry_run=dry_run):
             created += 1
     return created
 
@@ -943,6 +966,7 @@ def publication_ledger(proposal: dict[str, Any], reviewer_task: dict[str, Any]) 
         "schema": "chitragupta.l2.frozen-proposal.v1",
         "review_task_id": reviewer_task.get("id"),
         "review_cycle": task_review_cycle(reviewer_task),
+        "review_decision": "APPROVED",
         "claims_contract_version": proposal.get("claims_contract_version"),
         "frozen_proposal": proposal,
     }
@@ -1020,6 +1044,7 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dic
             "--publish-response", "--run-id", run_id, "--force-run-id",
             "--response-type", response_type,
             "--reply-text", str(proposal["reply_text"]),
+            "--approval-status", "APPROVED",
             "--mirror-to-support-remarks",
             "--ledger", json.dumps(publication_ledger(proposal, task), separators=(",", ":"), default=str),
             *workflow_args,
@@ -1442,7 +1467,8 @@ def deterministic_ticket_route(ticket: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _dispatch_route_context(run_id: str, ticket_id: str, ticket: dict[str, Any]) -> str:
+def _dispatch_route_context(run_id: str, ticket_id: str, ticket: dict[str, Any],
+                            *, evidence_role: str = "investigator") -> str:
     """Collect the smallest deterministic live evidence package before dispatch.
 
     This is a trusted harness call, not model-generated SQL. It records the
@@ -1454,7 +1480,8 @@ def _dispatch_route_context(run_id: str, ticket_id: str, ticket: dict[str, Any])
     if route.get("recommended_tool") == "xstudio_heat_context":
         bridge = REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py"
         request = {"operation": "heat_context", "database": "XStudio_Xbatch",
-                   "run_id": run_id, "ticket_id": ticket_id, "heat": route["heat"]}
+                   "run_id": run_id, "ticket_id": ticket_id, "heat": route["heat"],
+                   "evidence_role": evidence_role}
         try:
             result = subprocess.run([sys.executable, str(bridge)], input=json.dumps(request),
                                     capture_output=True, text=True, timeout=45)
@@ -1466,7 +1493,8 @@ def _dispatch_route_context(run_id: str, ticket_id: str, ticket: dict[str, Any])
     elif route.get("recommended_tool") == "xstudio_sap_api_context":
         bridge = REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py"
         request = {"operation": "sap_api_context", "database": "XStudio_Xbatch",
-                   "run_id": run_id, "ticket_id": ticket_id, "api_type": route["api_type"]}
+                   "run_id": run_id, "ticket_id": ticket_id, "api_type": route["api_type"],
+                   "evidence_role": evidence_role}
         if route.get("identifier"):
             request["identifier"] = route["identifier"]
         try:
@@ -1481,7 +1509,7 @@ def _dispatch_route_context(run_id: str, ticket_id: str, ticket: dict[str, Any])
         bridge = REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py"
         request = {"operation": "work_order_context", "database": "XStudio_Xbatch",
                    "run_id": run_id, "ticket_id": ticket_id,
-                   "work_order": route["work_order"]}
+                   "work_order": route["work_order"], "evidence_role": evidence_role}
         if route.get("campaign"):
             request["campaign"] = route["campaign"]
         try:

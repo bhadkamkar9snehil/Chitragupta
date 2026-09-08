@@ -808,6 +808,7 @@ class HermesL2Client:
                           new_ticket_status: Optional[str] = None,
                           new_ask_status: Optional[str] = None,
                           next_eligible_on: Optional[datetime] = None,
+                          approval_status: Optional[str] = None,
                           mirror_reply_to_support_remarks: bool = False,
                           mirror_question_to_ask_remarks: bool = False) -> None:
         """EXEC dbo.Hermes_L2_Publish_Response_Usp -- generic structured reply; prefer
@@ -820,11 +821,12 @@ class HermesL2Client:
                 @RunID = ?, @ResponseType = ?, @ReplyText = ?, @ProblemSummary = ?,
                 @Findings = ?, @RootCause = ?, @Resolution = ?, @InvestigationJson = ?,
                 @NewTicketStatus = ?, @NewAskStatus = ?, @NextEligibleOn = ?,
+                @ApprovalStatus = ?,
                 @MirrorReplyToSupportRemarks = ?, @MirrorQuestionToAskRemarks = ?,
                 @HermesUserID = ?;
             """,
             (run_id, response_type, reply_text, problem_summary, findings, root_cause,
-             resolution, inv_json, new_ticket_status, new_ask_status, next_eligible_on,
+             resolution, inv_json, new_ticket_status, new_ask_status, next_eligible_on, approval_status,
              mirror_reply_to_support_remarks, mirror_question_to_ask_remarks,
              self.hermes_user_id),
         )
@@ -1452,6 +1454,8 @@ def main() -> None:
     parser.add_argument("--new-ticket-status", default=None,
                          help="Real live Status value to move the ticket to, or omit to leave unchanged.")
     parser.add_argument("--new-ask-status", default=None)
+    parser.add_argument("--approval-status", choices=["APPROVED"], default=None,
+                         help="Deterministic review decision persisted with publication.")
     parser.add_argument("--mirror-to-support-remarks", action="store_true",
                          help="Also write --reply-text into Complaint_Mst_Tbl.SupportExecutiveRemarks.")
     parser.add_argument("--mirror-to-ask-remarks", action="store_true",
@@ -1908,6 +1912,7 @@ def main() -> None:
                 investigation_json=ledger_obj,
                 new_ticket_status=args.new_ticket_status,
                 new_ask_status=args.new_ask_status,
+                approval_status=args.approval_status,
                 mirror_reply_to_support_remarks=args.mirror_to_support_remarks,
                 mirror_question_to_ask_remarks=args.mirror_to_ask_remarks,
             )

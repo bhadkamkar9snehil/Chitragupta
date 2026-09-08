@@ -177,7 +177,7 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(request, {
             "operation": "sap_api_context", "database": "XStudio_Xbatch",
             "run_id": "run-1", "ticket_id": "ticket-1", "api_type": "Inventory",
-            "identifier": "B99402",
+            "identifier": "B99402", "evidence_role": "investigator",
         })
         self.assertIn('"action_id": "api-1"', rendered)
 
@@ -189,7 +189,8 @@ class PipelineContractTests(unittest.TestCase):
             rendered = mod._dispatch_route_context("run-1", "ticket-1", ticket)
         request = json.loads(bridge.call_args.kwargs["input"])
         self.assertEqual(request, {"operation": "heat_context", "database": "XStudio_Xbatch",
-                                   "run_id": "run-1", "ticket_id": "ticket-1", "heat": "1602522"})
+                                   "run_id": "run-1", "ticket_id": "ticket-1", "heat": "1602522",
+                                   "evidence_role": "investigator"})
         self.assertIn('"action_id": "a-1"', rendered)
 
     def test_priority_closes_work_before_new_claim(self):
@@ -418,9 +419,11 @@ class PipelineContractTests(unittest.TestCase):
                 patch.object(mod, "_post_publish_activity"):
             mod.process_approvals(mod.default_args())
         command = publish.call_args.args[1]
+        self.assertEqual("APPROVED", command[command.index("--approval-status") + 1])
         ledger = json.loads(command[command.index("--ledger") + 1])
         self.assertEqual(ledger["frozen_proposal"], proposal)
         self.assertEqual(ledger["review_task_id"], "reviewer-1")
+        self.assertEqual(ledger["review_decision"], "APPROVED")
         self.assertEqual(ledger["claims_contract_version"], 1)
 
     def test_prepublish_skips_proposals_without_claims(self):
@@ -489,7 +492,10 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual("UNVERIFIED", claims[0]["status"])
         self.assertTrue(claims[0]["material"])
         self.assertEqual([], claims[0]["evidence"])
-        self.assertIn("independently verify", claims[0]["required_evidence"][0])
+        self.assertNotIn("No matching API row", claims[0]["claim"])
+        requirement = claims[0]["required_evidence"][0].lower()
+        self.assertIn("current-run actions", requirement)
+        self.assertIn("investigator_notes", requirement)
 
     def test_investigation_card_lists_semantic_context_tools(self):
         instructions = mod._query_instructions("run-1", "ticket-1")

@@ -152,6 +152,20 @@ class HarnessEvaluationTests(unittest.TestCase):
         self.assertFalse(report["valid_hermes_tool_calls"])
         self.assertEqual(1, len(report["failed_tool_calls"]))
 
+    def test_unverified_claim_cannot_hide_forbidden_customer_prose(self):
+        bundle = {
+            "run": {"ID": "r", "TicketID": "t", "ProcessStatus": "COMPLETED"},
+            "proposal": {"reply_text": "The record appears orphaned or deleted.", "claims": [{
+                "id": "C1", "claim": "No rows were found", "status": "UNVERIFIED", "material": True,
+            }]},
+            "review": {"decision": "APPROVE"},
+        }
+        report = evaluate_run(bundle, {"forbidden_claim_phrases": ["orphaned", "deleted"]})
+        findings = report["unsupported_material_claims"]
+        self.assertEqual(1, len(findings))
+        self.assertEqual("PUBLISHED_PROSE", findings[0]["status"])
+        self.assertTrue(report["reviewer_false_approval"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,7 +47,7 @@ def export_run(conn, run_id: str) -> dict[str, Any]:
     cur.execute(
         "SELECT ID, TicketID, AttemptNo, WorkerID, ProcessStatus, ResponseType, ReplyText, "
         "InvestigationJson, ActionsTakenJson, ApprovalStatus, IsActive, IsResolved, "
-        "ClaimedOn, CompletedOn, ErrorMessage FROM dbo.Hermes_L2_Response_Trn_Tbl "
+        "ClaimedOn, CompletedOn, NextEligibleOn, ErrorMessage FROM dbo.Hermes_L2_Response_Trn_Tbl "
         "WHERE ID = ? AND IsDeleted = 0", run_id,
     )
     runs = _dicts(cur)
@@ -110,7 +110,10 @@ def export_run(conn, run_id: str) -> dict[str, Any]:
         lifecycle.append("recovery")
     if any(event.get("profile_name") == "l2-reviewer-primary" for event in events):
         lifecycle.append("reviewer_created")
-    approval = str(run.get("ApprovalStatus") or "").upper()
+    ledger = _json(run.get("InvestigationJson"), {})
+    approval = str(run.get("ApprovalStatus") or (
+        ledger.get("review_decision") if isinstance(ledger, dict) else ""
+    ) or "").upper()
     if approval:
         lifecycle.append(approval.lower())
     if str(run.get("ProcessStatus") or "").upper() in {"COMPLETED", "WAITING_USER"}:

@@ -439,6 +439,18 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
     args = args or {}
     session = _session_key(task_id, **kwargs)
 
+    # A small model can select the right terminal Kanban action yet serialize
+    # an empty object. Preserve that decision without paying for another model
+    # turn; structured metadata and the SQL evidence trail remain authoritative.
+    if tool_name == "kanban_complete" and not (args.get("summary") or args.get("result")):
+        return {"action": "modify", "args": {
+            "summary": "Task completed; use the structured task metadata and persisted evidence trail for details."
+        }}
+    if tool_name == "kanban_block" and not (args.get("reason") or args.get("summary")):
+        return {"action": "modify", "args": {
+            "reason": "Task rejected or blocked; no structured reason was supplied by the worker."
+        }}
+
     if tool_name == "terminal":
         command = _terminal_command(args)
         if any(marker in command for marker in _BLOCKED_TERMINAL_MARKERS):

@@ -225,11 +225,14 @@ def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
 
     assignments = ", ".join(f"@{name} = N'{_escape_sql_string(parameters[name])}'" for name in sorted(allowed_params))
     sql = f"EXEC [dbo].[{procedure}] {assignments};"
+    audit_operation = procedure
+    if req.get("evidence_role") == "reviewer":
+        audit_operation = f"review_{procedure}"
     action_id, result = client.execute_readonly_sql_with_rows(
         run_id=run_id, database_name=database, sql=sql,
         schema_name="dbo",
         object_name=procedure,
-        operation_name=procedure,
+        operation_name=audit_operation,
         purpose="Typed L2 allowlisted diagnostic procedure",
         parameters_json=parameters,
     )
@@ -238,7 +241,7 @@ def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
         client.update_sql_action_evidence(action_id, after_json=result)
     return {"ok": True, "operation": "read_procedure", "database": database,
             "procedure": procedure, "result": result,
-            "evidence_refs": [{"action_id": action_id, "operation": procedure}]}
+            "evidence_refs": [{"action_id": action_id, "operation": audit_operation}]}
 
 
 def _heat_id(value: Any) -> int:
@@ -319,9 +322,10 @@ def _heat_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
     )
     entities: dict[str, Any] = {}
     evidence_refs: list[dict[str, str]] = []
+    operation_prefix = "review_" if req.get("evidence_role") == "reviewer" else ""
     for key, object_name, operation, purpose, sql in recipes:
         rows, ref = _semantic_read(client, run_id=run_id, sql=sql, parameters=(heat,),
-                                   operation_name=operation, object_name=object_name, purpose=purpose)
+                                   operation_name=operation_prefix + operation, object_name=object_name, purpose=purpose)
         entities[key] = rows
         evidence_refs.append(ref)
     return {"ok": True, "operation": "heat_context", "database": "XStudio_Xbatch",
@@ -337,7 +341,8 @@ def _sap_api_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9 _-]{0,99}", api_type):
         raise ValueError("api_type must be a short API name")
     result = _read_procedure({"database": "XStudio_Xbatch", "run_id": _require(req, "run_id"),
-                              "procedure": "XMES_Get_API_Transaction_Summary", "parameters": {"APIType": api_type}}, client)
+                              "procedure": "XMES_Get_API_Transaction_Summary", "parameters": {"APIType": api_type},
+                              "evidence_role": req.get("evidence_role")}, client)
     identifier = str(req.get("identifier") or "").strip()
     if identifier and result.get("ok"):
         rows = list(result.get("result") or [])
@@ -372,10 +377,11 @@ def _work_order_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
     )
     entities: dict[str, Any] = {}
     evidence_refs: list[dict[str, str]] = []
+    operation_prefix = "review_" if req.get("evidence_role") == "reviewer" else ""
     for key, object_name, operation, purpose, sql in recipes:
         rows, ref = _semantic_text_read(
             client, run_id=run_id, sql=sql, value=work_order,
-            parameter_name="work_order", operation_name=operation,
+            parameter_name="work_order", operation_name=operation_prefix + operation,
             object_name=object_name, purpose=purpose,
         )
         entities[key] = rows
@@ -384,7 +390,7 @@ def _work_order_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
         rows, ref = _semantic_text_read(
             client, run_id=run_id,
             sql="SELECT TOP 10 ID, WorkOrderNumber, MESWorkOrderNumber, CampaignNo, CampaignId, Campaign_Status, Status, Equipment, ItemName, TotalQuantity, CreatedDate FROM dbo.XStudio_XMes_Campaign_Plan_work_order_Vw WHERE CampaignNo = ? ORDER BY CreatedDate DESC",
-            value=campaign, parameter_name="campaign", operation_name="l2_campaign_work_orders",
+            value=campaign, parameter_name="campaign", operation_name=operation_prefix + "l2_campaign_work_orders",
             object_name="XStudio_XMes_Campaign_Plan_work_order_Vw",
             purpose="Canonical campaign membership by external campaign number",
         )

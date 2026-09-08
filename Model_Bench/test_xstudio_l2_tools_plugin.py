@@ -758,6 +758,18 @@ def test_config_patch_does_not_abort_when_optional_section_absent() -> None:
     assert "- xstudio-l2-tools" in patched  # other sections still applied
 
 
+def test_empty_kanban_completion_is_repaired_without_another_model_turn() -> None:
+    result = plugin._pre_tool_call("kanban_complete", {}, task_id="task-1")
+    assert result and result["action"] == "modify"
+    assert result["args"]["summary"]
+
+
+def test_empty_kanban_block_is_repaired_with_a_safe_reason() -> None:
+    result = plugin._pre_tool_call("kanban_block", {}, task_id="task-1")
+    assert result and result["action"] == "modify"
+    assert result["args"]["reason"]
+
+
 def main() -> int:
     tests = [value for name, value in sorted(globals().items())
              if name.startswith("test_") and callable(value)]

@@ -118,6 +118,13 @@ def evaluate_run(bundle: Dict[str, Any], oracle: Dict[str, Any]) -> Dict[str, An
         {"claim": claim_id, "status": "VERIFIED", "reason": "missing current-run evidence"}
         for claim_id in invalid_evidence_claims
     )
+    reply_text = str((bundle.get("proposal") or {}).get("reply_text") or "")
+    for phrase in forbidden:
+        if phrase in reply_text.lower() and not any(item.get("claim") == reply_text for item in unsupported):
+            unsupported.append({
+                "claim": reply_text, "status": "PUBLISHED_PROSE",
+                "reason": f"oracle-forbidden phrase in reply: {phrase}",
+            })
 
     investigator_events = _role_events(events, INVESTIGATOR)
     reviewer_events = _role_events(events, REVIEWER)

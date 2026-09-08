@@ -1909,6 +1909,7 @@ CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Publish_Response_Usp
     @NewTicketStatus              varchar(50) = NULL,
     @NewAskStatus                 varchar(50) = NULL,
     @NextEligibleOn               datetime = NULL,
+    @ApprovalStatus               varchar(50) = NULL,
     @MirrorReplyToSupportRemarks  bit = 0,
     @MirrorQuestionToAskRemarks   bit = 0,
     @HermesUserID                 varchar(36) = NULL
@@ -1941,6 +1942,12 @@ BEGIN
     IF NULLIF(LTRIM(RTRIM(@ReplyText)), N'') IS NULL
     BEGIN
         RAISERROR('ReplyText is required.', 16, 1);
+        RETURN;
+    END;
+
+    IF @ApprovalStatus IS NOT NULL AND @ApprovalStatus <> 'APPROVED'
+    BEGIN
+        RAISERROR('ApprovalStatus must be APPROVED when supplied.', 16, 1);
         RETURN;
     END;
 
@@ -2043,6 +2050,7 @@ BEGIN
             RootCause = COALESCE(@RootCause, RootCause),
             Resolution = COALESCE(@Resolution, Resolution),
             ReplyText = @ReplyText,
+            ApprovalStatus = COALESCE(@ApprovalStatus, ApprovalStatus),
             InvestigationJson = COALESCE(@InvestigationJson, InvestigationJson),
             ActionsTakenJson = @AutoActionsJson,
             RequiresUserInput = CASE WHEN @ResponseType = 'QUESTION' THEN 1 ELSE 0 END,
