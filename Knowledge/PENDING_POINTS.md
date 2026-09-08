@@ -10,7 +10,7 @@ This is not lifecycle authority, a deployment plan, or a ticket queue.
 | OBS-003 | Done | Reliability | Flush trace and readable Helpdesk activity from the two-minute scout. | Implemented in `f93daa1`; keep live-checking backlog. |
 | OBS-004 | Done | KPI integrity | Attribute hardware samples to the investigator/reviewer profile. | Implemented in `f93daa1`; historical `unknown` rows remain. |
 | L3-001 | Open | Workflow | Bind a verified visible Helpdesk status for L3 / human action. | Demonstrate one unambiguous live workflow status; do not guess. |
-| L3-002 | Done | Lifecycle | Prevent reviewer rework blocks from opening L3 escalations. | Implemented in `025be8c`; retain regression test. |
+| L3-002 | Done | Lifecycle | Prevent reviewer rework blocks from opening L3 escalations. | Runtime fix in `025be8c`; legacy SP now fails closed unless a terminal L3 outcome exists. |
 | KPI-001 | Good-to-have | Reporting | Add a concise Helpdesk-facing L2 operations scorecard using existing metric views. | Agree audience and KPI definitions. |
 
 ## Maintenance rule

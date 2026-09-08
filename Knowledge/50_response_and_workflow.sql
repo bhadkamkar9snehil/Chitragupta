@@ -355,19 +355,12 @@ END;
 GO
 
 /*
-  2026-09-04: pure-visibility escalation for a run that hit a genuine
-  kanban_block (capability gap -- ambiguous schema, missing data, etc.)
-  while a live kanban task still tracks it. Deliberately does NOT touch
-  Hermes_L2_Response_Trn_Tbl or the ticket's own Status/AskStatus -- unlike
-  Hermes_L2_Escalate_L3_Usp / Hermes_L2_Publish_Response_Usp, this does not
-  complete or fail the run; Kanban is still free to retry it. Its only job
-  is making sure a human sees the block reason and what was actually
-  checked, instead of the task sitting silently 'blocked' forever with
-  zero visibility -- confirmed live 2026-09-04: a ticket sat blocked 3+
-  hours on a real, unresolved schema ambiguity with no escalation of any
-  kind. Guarded by the same NOT EXISTS pattern as the other L3 insert so a
-  run already escalated (by this path or the ResponseType='L3_ESCALATION'
-  path) is never double-inserted.
+  Compatibility repair entrypoint only.  A normal kanban_block is a review
+  or rework signal, never an L3 decision.  The deterministic publisher owns
+  new escalation creation after the bounded review cycle; this procedure can
+  only repair a missing queue row for an already-published terminal L3
+  outcome.  That prevents a direct/legacy caller from reintroducing phantom
+  Open L3 rows for ordinary reviewer blocks.
 */
 CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Log_Blocked_Escalation_Usp
 (
@@ -380,6 +373,21 @@ CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Log_Blocked_Escalation_Usp
 AS
 BEGIN
     SET NOCOUNT ON;
+
+    IF NOT EXISTS
+    (
+        SELECT 1
+        FROM dbo.Hermes_L2_Response_Trn_Tbl
+        WHERE ID = @RunID
+          AND TicketID = @TicketID
+          AND IsDeleted = 0
+          AND ProcessStatus = 'COMPLETED'
+          AND ResponseType IN ('L3_ESCALATION', 'NEEDS_HUMAN_ACTION')
+    )
+    BEGIN
+        RAISERROR('Refusing blocked escalation without a deterministic terminal L3 outcome.', 16, 1);
+        RETURN;
+    END;
 
     IF EXISTS (SELECT 1 FROM dbo.Hermes_L3_Escalation_Trn_Tbl WHERE RunID = @RunID AND IsDeleted = 0)
         RETURN;
@@ -396,7 +404,11 @@ BEGIN
         'Automated investigation blocked on a genuine capability gap -- needs human review.',
         @HermesUserID, 'T-SQL'
     FROM dbo.Complaint_Mst_Tbl c
-    LEFT JOIN dbo.Hermes_L2_Response_Trn_Tbl r ON r.ID = @RunID
+    INNER JOIN dbo.Hermes_L2_Response_Trn_Tbl r ON r.ID = @RunID
+        AND r.TicketID = @TicketID
+        AND r.IsDeleted = 0
+        AND r.ProcessStatus = 'COMPLETED'
+        AND r.ResponseType IN ('L3_ESCALATION', 'NEEDS_HUMAN_ACTION')
     WHERE c.ID = @TicketID;
 END;
 GO
