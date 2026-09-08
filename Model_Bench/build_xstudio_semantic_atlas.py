@@ -26,12 +26,66 @@ SOURCES = {
         "procedures": REFERENCE / "XStudio_Xbatch_StoredProcedures.md",
     },
 }
+RELATIONSHIP_SOURCE = REFERENCE / "XStudio_Configuration_Xbatch_Relationships.json"
 REVIEWED_READ_ONLY = {("XStudio_Xbatch", "XMES_Get_API_Transaction_Summary")}
 WRITE_RE = re.compile(r"\b(?:INSERT|UPDATE|DELETE|MERGE|TRUNCATE|ALTER|CREATE|DROP)\b", re.I)
 OBJECT_RE = re.compile(
     r"(?:(?:\[?([A-Za-z0-9_]+)\]?\.)?\[?dbo\]?\.)\[?([A-Za-z_][A-Za-z0-9_]*)\]?",
     re.I,
 )
+
+RELATIONSHIP_FIELDS = (
+    "source_database", "source_object", "source_attribute", "target_database",
+    "target_object", "target_attribute", "source_cardinality", "target_cardinality",
+)
+
+
+def load_relationships(path: Path = RELATIONSHIP_SOURCE) -> list[dict[str, Any]]:
+    """Validate and collapse the configuration relationship snapshot."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    rows = payload.get("relationships")
+    if not isinstance(rows, list):
+        raise ValueError("relationship snapshot must contain a relationships array")
+    grouped: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise ValueError(f"relationship row {index} must be an object")
+        missing = [field for field in RELATIONSHIP_FIELDS if not str(row.get(field) or "").strip()]
+        if missing:
+            raise ValueError(f"relationship row {index} missing required fields: {', '.join(missing)}")
+        key = tuple(str(row[field]).strip().casefold() for field in RELATIONSHIP_FIELDS)
+        grouped.setdefault(key, []).append(row)
+
+    normalized = []
+    for key, duplicates in sorted(grouped.items()):
+        row = duplicates[0]
+        stable = json.dumps(list(key), separators=(",", ":"))
+        normalized.append({
+            "id": "rel_" + hashlib.sha256(stable.encode("utf-8")).hexdigest()[:16],
+            "name": str(row.get("relation_name") or "").strip() or None,
+            "source": {
+                "database": str(row["source_database"]).strip(),
+                "object": str(row["source_object"]).strip(),
+                "attribute": str(row["source_attribute"]).strip(),
+            },
+            "target": {
+                "database": str(row["target_database"]).strip(),
+                "object": str(row["target_object"]).strip(),
+                "attribute": str(row["target_attribute"]).strip(),
+            },
+            "cardinality": {
+                "source": str(row["source_cardinality"]).strip(),
+                "target": str(row["target_cardinality"]).strip(),
+            },
+            "provenance": {
+                "kind": "xstudio_configuration_relationship",
+                "source": payload.get("source"),
+                "source_row_count": len(duplicates),
+                "source_row_ids": sorted(str(item.get("source_row_id") or "") for item in duplicates),
+                "source_attribute_resolution": row.get("source_attribute_resolution", "attribute_catalog"),
+            },
+        })
+    return normalized
 
 
 def _sections(text: str) -> list[tuple[str, str]]:
@@ -114,10 +168,15 @@ def build() -> dict[str, Any]:
             "sources": {key: str(path.relative_to(ROOT)).replace("\\", "/") for key, path in paths.items()},
         }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "authority": "static routing/query-construction knowledge only; live reads are required for ticket claims",
         "procedure_policy": "Only READ_ONLY_REVIEWED procedures may be exposed by the bridge allowlist.",
         "databases": databases,
+        "relationships": load_relationships(),
+        "relationship_source": {
+            "path": str(RELATIONSHIP_SOURCE.relative_to(ROOT)).replace("\\", "/"),
+            "sha256": hashlib.sha256(RELATIONSHIP_SOURCE.read_bytes()).hexdigest(),
+        },
     }
 
 
