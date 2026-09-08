@@ -361,6 +361,7 @@ def _sample_hardware_async(boundary: str, kwargs: Dict[str, Any]) -> None:
             "task_id": _MY_KANBAN_TASK_ID or kwargs.get("task_id"),
             "run_id": ids2.get("run_id"),
             "ticket_id": ids2.get("ticket_id"),
+            "profile_name": _PROFILE_NAME,
         }
         _write_event({"event_type": "lmstudio_sample", "boundary": boundary, **base, "result": lm})
         _write_event({"event_type": "compute_sample", "boundary": boundary, **base, "result": compute})

@@ -75,6 +75,39 @@ class TracePluginTests(unittest.TestCase):
         self.assertEqual(34, parsed["cpu_util_pct"])
         self.assertEqual(16268, parsed["system_mem_total_mb"])
 
+    def test_hardware_samples_keep_the_worker_profile_for_compute_kpis(self):
+        events = []
+        original_write = plugin._write_event
+        original_profile = plugin._PROFILE_NAME
+        original_thread = plugin.threading.Thread
+        original_lm = plugin._sample_lmstudio
+        original_compute = plugin._sample_compute
+
+        class ImmediateThread:
+            def __init__(self, target, args=(), daemon=False):
+                self.target = target
+                self.args = args
+
+            def start(self):
+                self.target(*self.args)
+
+        try:
+            plugin._write_event = events.append
+            plugin._PROFILE_NAME = "l2-reviewer-primary"
+            plugin.threading.Thread = ImmediateThread
+            plugin._sample_lmstudio = lambda: {"latency_s": 0.1}
+            plugin._sample_compute = lambda: {"gpu_util_pct": 75}
+            plugin._sample_hardware_async("session_start", {"session_id": "s1"})
+        finally:
+            plugin._write_event = original_write
+            plugin._PROFILE_NAME = original_profile
+            plugin.threading.Thread = original_thread
+            plugin._sample_lmstudio = original_lm
+            plugin._sample_compute = original_compute
+
+        self.assertEqual(2, len(events))
+        self.assertTrue(all(e["profile_name"] == "l2-reviewer-primary" for e in events))
+
 
 if __name__ == "__main__":
     unittest.main()
