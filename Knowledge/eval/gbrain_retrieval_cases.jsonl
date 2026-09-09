@@ -8,3 +8,5 @@
 {"id":"helpdesk-runtime","query":"Hermes L2 SQL action audit and ticket response","expect_any_prefix":["knowledge/hermes-runtime-database-design","knowledge/hermes-sp-catalog"],"forbid_prefix":["agent_comms/","plans/"]}
 {"id":"irrelevant-hr","query":"employee annual leave reimbursement policy","expect_abstention":true,"forbid_prefix":["agent_comms/","plans/"]}
 {"id":"irrelevant-consumer","query":"best wireless headphones for running","expect_abstention":true,"forbid_prefix":["agent_comms/","plans/"]}
+{"id":"xbatch-configured-relationship","query":"Billet_Inventory GradeID relationship to XBatch_Material_Grade_Mst_Tbl ID cardinality","expect_any_prefix":["knowledge/atlas/xstudio_xbatch-relationship-b-"],"forbid_prefix":["agent_comms/","plans/"]}
+{"id":"sap-investigation-recipe","query":"deterministic SAP posting investigation required evidence stop escalation conditions","expect_any_prefix":["knowledge/atlas/xstudio_xbatch-recipe-sap-posting"],"forbid_prefix":["agent_comms/","plans/"]}

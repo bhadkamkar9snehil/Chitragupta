@@ -1,5 +1,6 @@
 ---
-type: Diagnostic
+type: note
+subtype: investigation-recipe
 route: helpdesk_ticket
 authority: harness-contract
 ---
@@ -17,4 +18,3 @@ Required evidence: ticket_state
 
 ## Escalation conditions
 - Workflow binding is absent or contradictory.
-

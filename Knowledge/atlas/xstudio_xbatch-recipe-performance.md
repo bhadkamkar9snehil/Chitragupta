@@ -1,5 +1,6 @@
 ---
-type: Diagnostic
+type: note
+subtype: investigation-recipe
 route: performance
 authority: harness-contract
 ---
@@ -18,4 +19,3 @@ Required evidence: delay_event, delay_classification
 
 ## Escalation conditions
 - Affected time window or equipment identity is missing.
-

@@ -1,5 +1,6 @@
 ---
-type: Reference
+type: note
+subtype: procedure-reference
 database: XStudio_Helpdesk
 authority: static-advisory
 ---

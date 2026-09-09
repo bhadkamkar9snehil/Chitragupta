@@ -214,7 +214,8 @@ def render_gbrain_pages(atlas: dict[str, Any]) -> dict[str, str]:
             schema_groups.setdefault(key, []).extend((f"## dbo.{name}", columns or "No exported columns.", ""))
         for key, lines in schema_groups.items():
             header = [
-                "---", "type: Reference", f"database: {database}", "authority: static-advisory", "---",
+                "---", "type: note", "subtype: schema-reference", f"database: {database}",
+                "authority: static-advisory", "---",
                 f"# {database} schema atlas: {key.upper()}", "",
                 "Static routing knowledge generated from the authoritative export. Current ticket facts require live SQL.", "",
             ]
@@ -231,39 +232,47 @@ def render_gbrain_pages(atlas: dict[str, Any]) -> dict[str, str]:
             ))
         for key, lines in sp_groups.items():
             header = [
-                "---", "type: Reference", f"database: {database}", "authority: static-advisory", "---",
+                "---", "type: note", "subtype: procedure-reference", f"database: {database}",
+                "authority: static-advisory", "---",
                 f"# {database} stored-procedure atlas: {key.upper()}", "",
                 "Safety is fail-closed. Only READ_ONLY_REVIEWED procedures may be exposed as diagnostics.", "",
             ]
             pages[f"{database.lower()}-procedure-{key}-atlas.md"] = "\n".join(header + lines) + "\n"
 
-    relationship_groups: dict[str, list[str]] = {}
+    relationship_groups: dict[str, list[list[str]]] = {}
     for edge in atlas.get("relationships", []):
         source = edge["source"]
         target = edge["target"]
         key = source["object"][0].lower() if source["object"][:1].isalnum() else "other"
-        relationship_groups.setdefault(key, []).extend((
+        relationship_groups.setdefault(key, []).append([
             f"## {source['object']}.{source['attribute']} -> {target['object']}.{target['attribute']}",
             f"Databases: {source['database']} -> {target['database']}",
             f"Cardinality: {edge['cardinality']['source']} -> {edge['cardinality']['target']}",
             f"Relation: {edge.get('name') or edge['id']}",
             f"Provenance: {edge['provenance']['kind']} ({edge['provenance']['source_row_count']} source row(s))",
             "",
-        ))
-    for key, lines in relationship_groups.items():
-        header = [
-            "---", "type: Reference", "database: XStudio_Configuration_Xbatch",
-            "authority: configuration-observed", "---",
-            f"# XBatch configured relationships: {key.upper()}", "",
-            "Configured joins and cardinality. They are routing knowledge; verify current ticket rows live.", "",
-        ]
-        pages[f"xstudio_xbatch-relationship-{key}-atlas.md"] = "\n".join(header + lines) + "\n"
+        ])
+    relationship_page_size = 40
+    for key, blocks in relationship_groups.items():
+        for offset in range(0, len(blocks), relationship_page_size):
+            part = offset // relationship_page_size + 1
+            lines = [line for block in blocks[offset:offset + relationship_page_size] for line in block]
+            header = [
+                "---", "type: note", "subtype: configured-relationship",
+                "database: XStudio_Configuration_Xbatch",
+                "authority: configuration-observed", "---",
+                f"# XBatch configured relationships: {key.upper()} part {part}", "",
+                "Configured joins and cardinality. They are routing knowledge; verify current ticket rows live.", "",
+            ]
+            pages[f"xstudio_xbatch-relationship-{key}-{part:02d}-atlas.md"] = (
+                "\n".join(header + lines).rstrip() + "\n"
+            )
 
     for recipe in atlas.get("recipes", []):
         evidence = ", ".join(item["category"] for item in recipe.get("required_evidence", [])) or "none"
         probes = ", ".join(item["tool"] for item in recipe.get("probes", [])) or "none"
         lines = [
-            "---", "type: Diagnostic", f"route: {recipe['route']}",
+            "---", "type: note", "subtype: investigation-recipe", f"route: {recipe['route']}",
             "authority: harness-contract", "---", f"# {recipe['description']}", "",
             f"Recipe ID: {recipe['recipe_id']}", f"Typed probes: {probes}",
             f"Required evidence: {evidence}", "", "## Interpretation rules",
@@ -271,7 +280,7 @@ def render_gbrain_pages(atlas: dict[str, Any]) -> dict[str, str]:
             "", "## Stop conditions", *[f"- {item}" for item in recipe.get("stop_conditions", [])],
             "", "## Escalation conditions", *[f"- {item}" for item in recipe.get("escalation_conditions", [])], "",
         ]
-        pages[f"xstudio_xbatch-recipe-{recipe['route'].replace('_', '-')}.md"] = "\n".join(lines) + "\n"
+        pages[f"xstudio_xbatch-recipe-{recipe['route'].replace('_', '-')}.md"] = "\n".join(lines).rstrip() + "\n"
     return pages
 
 

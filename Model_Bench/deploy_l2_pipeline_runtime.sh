@@ -33,6 +33,7 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
   mkdir -p "$scripts_dir"
   for f in \
     l2_pipeline_runtime.py \
+    xbatch_world.py \
     ticket_scout.py \
     reconcile_l2_pipeline.py \
     kanban_approval_publisher.py \
@@ -47,6 +48,11 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
   done
   chmod +x "$scripts_dir"/*.py
   cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$scripts_dir/helpdesk_workflow_binding.json"
+  knowledge_dir="$scripts_dir/knowledge"
+  mkdir -p "$knowledge_dir"
+  cp "$ROOT/Knowledge/xstudio_semantic_atlas.json" "$knowledge_dir/xstudio_semantic_atlas.json"
+  cp "$ROOT/Knowledge/manifest.json" "$knowledge_dir/manifest.json"
+  cp "$ROOT/Knowledge/xbatch_investigation_recipes.json" "$knowledge_dir/xbatch_investigation_recipes.json"
 done
 
 # The typed-tool bridge is invoked by the plugin at its repo path using the

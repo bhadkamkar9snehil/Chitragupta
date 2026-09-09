@@ -3,14 +3,37 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-ATLAS_PATH = ROOT / "Knowledge" / "xstudio_semantic_atlas.json"
-MANIFEST_PATH = ROOT / "Knowledge" / "manifest.json"
-RECIPES_PATH = ROOT / "Knowledge" / "xbatch_investigation_recipes.json"
+MODULE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def resolve_knowledge_root(candidates: list[Path] | None = None) -> Path:
+    if candidates is None:
+        candidates = []
+        if os.environ.get("AIHELPDESK_ROOT"):
+            candidates.append(Path(os.environ["AIHELPDESK_ROOT"]))
+        candidates.extend((
+            MODULE_ROOT,
+            Path(__file__).resolve().parent,
+            Path("/mnt/c/Users/Admin/Documents/Office/AIHelpdesk"),
+        ))
+    required = {"xstudio_semantic_atlas.json", "manifest.json", "xbatch_investigation_recipes.json"}
+    for candidate in candidates:
+        roots = (candidate, candidate / "Knowledge", candidate / "knowledge")
+        for root in roots:
+            if root.is_dir() and required <= {path.name for path in root.iterdir() if path.is_file()}:
+                return root
+    raise FileNotFoundError("XBatch world knowledge bundle not found")
+
+
+KNOWLEDGE_ROOT = resolve_knowledge_root()
+ATLAS_PATH = KNOWLEDGE_ROOT / "xstudio_semantic_atlas.json"
+MANIFEST_PATH = KNOWLEDGE_ROOT / "manifest.json"
+RECIPES_PATH = KNOWLEDGE_ROOT / "xbatch_investigation_recipes.json"
 
 ALLOWED_RECIPE_TOOLS = {
     "xstudio_select", "xstudio_suggest_tables", "xstudio_find_objects",

@@ -1,5 +1,6 @@
 ---
-type: Diagnostic
+type: note
+subtype: investigation-recipe
 route: sap_posting
 authority: harness-contract
 ---
@@ -18,4 +19,3 @@ Required evidence: sap_posting_state, sap_api_result
 
 ## Escalation conditions
 - Required correction is a production write or identifier remains ambiguous.
-

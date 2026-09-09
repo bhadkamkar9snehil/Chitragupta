@@ -1,5 +1,6 @@
 ---
-type: Diagnostic
+type: note
+subtype: investigation-recipe
 route: work_order
 authority: harness-contract
 ---
@@ -18,4 +19,3 @@ Required evidence: work_order_state
 
 ## Escalation conditions
 - Creation logic requires mutation or product branch is not safely identifiable.
-

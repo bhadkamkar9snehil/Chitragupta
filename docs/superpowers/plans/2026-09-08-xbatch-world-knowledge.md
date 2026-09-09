@@ -121,4 +121,3 @@
 - [ ] Sync the `xstudio-knowledge` GBrain source, complete one provider-aware
       embedding pass, and run the retrieval evaluation.
 - [ ] Record exact coverage/results in the pending register and commit.
-

@@ -1,5 +1,6 @@
 ---
-type: Reference
+type: note
+subtype: schema-reference
 database: XStudio_Xbatch
 authority: static-advisory
 ---

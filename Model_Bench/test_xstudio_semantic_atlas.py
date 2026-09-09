@@ -92,6 +92,19 @@ class SemanticAtlasTests(unittest.TestCase):
         self.assertIn("xbatch.sap-posting.v1", recipe_text)
         self.assertIn("Required evidence", recipe_text)
 
+    def test_gbrain_pages_use_canonical_type_and_stay_bounded(self):
+        pages = render_gbrain_pages(self.atlas)
+        self.assertTrue(pages)
+        self.assertTrue(all("type: note" in content for content in pages.values()))
+        relationship_pages = {
+            name: content for name, content in pages.items() if "relationship" in name
+        }
+        self.assertTrue(relationship_pages)
+        self.assertLessEqual(
+            max(len(content.encode("utf-8")) for content in relationship_pages.values()),
+            30_000,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

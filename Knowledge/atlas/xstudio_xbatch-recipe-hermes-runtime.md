@@ -1,5 +1,6 @@
 ---
-type: Diagnostic
+type: note
+subtype: investigation-recipe
 route: hermes_runtime
 authority: harness-contract
 ---
@@ -17,4 +18,3 @@ Required evidence: hermes_run_state
 
 ## Escalation conditions
 - A lifecycle mutation is required outside reconciliation.
-

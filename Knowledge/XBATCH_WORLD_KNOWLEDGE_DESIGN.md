@@ -130,4 +130,3 @@ hard deterministic gate.
 9. Generated artifacts pass check-mode reproducibility.
 10. GBrain sync and retrieval evaluation pass after the generated pages are
     indexed with one pinned embedding signature.
-

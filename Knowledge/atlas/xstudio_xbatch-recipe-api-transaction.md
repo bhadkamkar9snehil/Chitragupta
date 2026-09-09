@@ -1,5 +1,6 @@
 ---
-type: Diagnostic
+type: note
+subtype: investigation-recipe
 route: api_transaction
 authority: harness-contract
 ---
@@ -17,4 +18,3 @@ Required evidence: sap_api_result
 
 ## Escalation conditions
 - API type cannot be identified safely.
-

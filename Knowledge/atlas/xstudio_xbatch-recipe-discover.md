@@ -1,5 +1,6 @@
 ---
-type: Diagnostic
+type: note
+subtype: investigation-recipe
 route: discover
 authority: harness-contract
 ---
@@ -17,4 +18,3 @@ Required evidence: none
 
 ## Escalation conditions
 - No supported domain can be established within the bounded investigation.
-

@@ -9,6 +9,7 @@ from Model_Bench.xbatch_world import (
     select_recipes,
     validate_recipes,
     world_context,
+    resolve_knowledge_root,
 )
 
 
@@ -80,6 +81,15 @@ class XBatchWorldTests(unittest.TestCase):
         )
         self.assertEqual("REFERENCED", matrix["claims"][0]["status"])
         self.assertEqual(["heat_process_state"], matrix["claims"][0]["evidence_categories"])
+
+    def test_deployed_module_can_resolve_profile_local_knowledge_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory)
+            knowledge = profile / "knowledge"
+            knowledge.mkdir()
+            for name in ("xstudio_semantic_atlas.json", "manifest.json", "xbatch_investigation_recipes.json"):
+                (knowledge / name).write_text("{}", encoding="utf-8")
+            self.assertEqual(knowledge, resolve_knowledge_root([profile, knowledge]))
 
 
 if __name__ == "__main__":

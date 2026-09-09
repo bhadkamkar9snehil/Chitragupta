@@ -1,5 +1,6 @@
 ---
-type: Diagnostic
+type: note
+subtype: investigation-recipe
 route: quality
 authority: harness-contract
 ---
@@ -18,4 +19,3 @@ Required evidence: quality_result, sap_api_result
 
 ## Escalation conditions
 - The relevant product/quality path is ambiguous or needs configuration mutation.
-

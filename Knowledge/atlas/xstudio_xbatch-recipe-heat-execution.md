@@ -1,5 +1,6 @@
 ---
-type: Diagnostic
+type: note
+subtype: investigation-recipe
 route: heat_execution
 authority: harness-contract
 ---
@@ -18,4 +19,3 @@ Required evidence: heat_process_state
 
 ## Escalation conditions
 - Heat identity is ambiguous or correction requires a write.
-

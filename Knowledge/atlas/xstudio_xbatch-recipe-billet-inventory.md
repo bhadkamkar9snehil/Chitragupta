@@ -1,5 +1,6 @@
 ---
-type: Diagnostic
+type: note
+subtype: investigation-recipe
 route: billet_inventory
 authority: harness-contract
 ---
@@ -18,4 +19,3 @@ Required evidence: billet_genealogy
 
 ## Escalation conditions
 - Genealogy is absent across all canonical surfaces or repair requires mutation.
-
