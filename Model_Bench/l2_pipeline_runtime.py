@@ -35,9 +35,9 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 try:
-    from Model_Bench.xbatch_world import load_world, select_recipes, world_context
+    from Model_Bench.xbatch_world import build_evidence_matrix, load_world, select_recipes, world_context
 except ImportError:  # deployed scripts live beside xbatch_world.py
-    from xbatch_world import load_world, select_recipes, world_context
+    from xbatch_world import build_evidence_matrix, load_world, select_recipes, world_context
 
 ORCHESTRATOR_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Hermes_Orchestrator.py"
 KB_RETRIEVER_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\kb_retrieval.py"
@@ -674,6 +674,24 @@ def create_reviewer_card(
         return None
 
 
+def _review_evidence_context(args: argparse.Namespace, proposal: dict[str, Any],
+                             ticket: dict[str, Any]) -> str:
+    """Package recipe expectations against the frozen proposal's action refs."""
+    try:
+        world = load_world()
+        selection = select_recipes(ticket, world)
+        actions = get_run_actions(args, str(proposal["run_id"]))
+        matrix = build_evidence_matrix(proposal, selection["primary"], actions)
+        return (
+            "\n--- Reviewer evidence matrix ---\n"
+            "This matrix maps frozen claims to current-run action references and recipe evidence categories. "
+            "It is an audit aid; validate whether the cited rows actually support each claim.\n"
+            + json.dumps(matrix, default=str) + "\n"
+        )
+    except (OSError, RuntimeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        return f"\n--- Reviewer evidence matrix ---\nUnavailable: {type(exc).__name__}: {exc}\n"
+
+
 def ensure_missing_reviewers(
     args: argparse.Namespace,
     *,
@@ -704,6 +722,7 @@ def ensure_missing_reviewers(
                 str(proposal.get("ticket_id") or task_ticket_id(task) or ""),
                 route_ticket, evidence_role="reviewer",
             ).replace("Deterministic live route/context", "Independent reviewer live verification context")
+            verification_context += _review_evidence_context(args, proposal, route_ticket)
         if create_reviewer_card(source_task=task, proposal=proposal or {},
                                 verification_context=verification_context, dry_run=dry_run):
             created += 1

@@ -70,6 +70,17 @@ class XBatchWorldTests(unittest.TestCase):
         self.assertEqual("REFERENCED", matrix["claims"][0]["status"])
         self.assertEqual(["heat_process_state"], matrix["claims"][0]["evidence_categories"])
 
+    def test_evidence_matrix_reads_frozen_proposal_evidence_shape(self):
+        recipe = next(item for item in self.world["recipes"] if item["route"] == "heat_execution")
+        proposal = {"claims": [{"id": "C1", "claim": "LRF row exists", "status": "VERIFIED",
+                                 "evidence": [{"action_id": "A2"}]}]}
+        matrix = build_evidence_matrix(
+            proposal, recipe,
+            [{"ID": "A2", "OperationName": "l2_heat_lrf", "ObjectName": "LRF_Per_Heat"}],
+        )
+        self.assertEqual("REFERENCED", matrix["claims"][0]["status"])
+        self.assertEqual(["heat_process_state"], matrix["claims"][0]["evidence_categories"])
+
 
 if __name__ == "__main__":
     unittest.main()

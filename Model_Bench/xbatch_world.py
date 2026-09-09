@@ -152,6 +152,12 @@ def build_evidence_matrix(proposal: dict[str, Any], recipe: dict[str, Any],
     rows = []
     for claim in proposal.get("claims") or []:
         refs = [str(value) for value in (claim.get("evidence_refs") or [])]
+        refs.extend(
+            str(item["action_id"])
+            for item in (claim.get("evidence") or [])
+            if isinstance(item, dict) and item.get("action_id")
+        )
+        refs = list(dict.fromkeys(refs))
         matched_actions = [action_map[ref] for ref in refs if ref in action_map]
         matched_categories = []
         for category in categories:

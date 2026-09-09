@@ -603,6 +603,34 @@ class PipelineContractTests(unittest.TestCase):
         self.assertIn("claims_contract_version", body)
         self.assertIn("VERIFIED", body)
 
+    def test_missing_reviewer_receives_recipe_evidence_matrix(self):
+        proposal = {
+            "run_id": "r", "ticket_id": "t", "response_type": "UPDATE",
+            "reply_text": "EAF state verified from the current row.",
+            "claims": [{"id": "C1", "claim": "EAF row exists", "status": "VERIFIED",
+                        "material": True, "evidence": [{"action_id": "A1"}]}],
+        }
+        source = {
+            "id": "inv-1", "status": "done", "assignee": mod.INVESTIGATOR_PROFILE,
+            "body": "run_id: r\nticket_id: t\nticket_no: T1\nreview_cycle: 0",
+        }
+        actions = [{"ID": "A1", "RunID": "r", "TicketID": "t",
+                    "OperationName": "l2_heat_eaf", "ObjectName": "EAF_PER_HEAT"}]
+        with patch.object(mod, "list_tasks", return_value=[source]), \
+                patch.object(mod, "query_active_runs", return_value=[{"ID": "r"}]), \
+                patch.object(mod, "get_runs", return_value=[{"status": "done", "metadata": proposal}]), \
+                patch.object(mod, "_ticket_for_route", return_value={
+                    "BriefDetails": "heat H99328 EAF state", "ExtractedEntitiesJson": '{"HeatNo":"H99328"}'
+                }), \
+                patch.object(mod, "get_run_actions", return_value=actions), \
+                patch.object(mod, "_dispatch_route_context", return_value="\nreview live context\n"), \
+                patch.object(mod, "create_reviewer_card", return_value="rev-1") as create:
+            self.assertEqual(1, mod.ensure_missing_reviewers(mod.default_args()))
+        verification = create.call_args.kwargs["verification_context"]
+        self.assertIn("Reviewer evidence matrix", verification)
+        self.assertIn('"status": "REFERENCED"', verification)
+        self.assertIn('"evidence_categories": ["heat_process_state"]', verification)
+
 
 if __name__ == "__main__":
     unittest.main()
