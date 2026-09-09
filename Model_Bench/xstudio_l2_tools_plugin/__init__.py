@@ -169,6 +169,7 @@ _EFFECTIVE_REQUIRED_FIELDS_BY_TOOL: dict[str, tuple[str, ...]] = {
 _CONTEXT_FIELD_RE = {
     "run_id": re.compile(r"(?:current\s+)?run_id\s*[:=]\s*[`\"']?([A-Za-z0-9-]+)", re.IGNORECASE),
     "ticket_id": re.compile(r"(?:current\s+)?ticket_id\s*[:=]\s*[`\"']?([A-Za-z0-9-]+)", re.IGNORECASE),
+    "pipeline_stage": re.compile(r"pipeline_stage\s*[:=]\s*[`\"']?(investigation|rework|review)\b", re.IGNORECASE),
 }
 
 # Bounded so a single session cannot spend the 65.6K context on transport
@@ -438,6 +439,27 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
                    task_id: str = "", **kwargs: Any) -> dict[str, str] | None:
     args = args or {}
     session = _session_key(task_id, **kwargs)
+    context = _context_for(session, kwargs)
+
+    if tool_name == "kanban_complete" and context.get("pipeline_stage", "").lower() in {"investigation", "rework"}:
+        metadata = dict(args.get("metadata") or {}) if isinstance(args.get("metadata"), dict) else {}
+        for field in ("run_id", "ticket_id"):
+            if not metadata.get(field) and context.get(field):
+                metadata[field] = context[field]
+        metadata.setdefault("claims_contract_version", 1)
+        missing = [field for field in ("run_id", "ticket_id", "response_type", "reply_text", "claims")
+                   if metadata.get(field) in (None, "", [])]
+        if missing:
+            return {
+                "action": "block",
+                "message": (
+                    "L2 completion contract: metadata is missing " + ", ".join(missing) + ". "
+                    "Stay in this turn and retry kanban_complete with metadata containing run_id, ticket_id, "
+                    "response_type, reply_text, claims_contract_version=1, and a non-empty claims array. "
+                    "Each claim needs id, claim, material, status, and evidence; VERIFIED material claims "
+                    "must cite current-run action_id values."
+                ),
+            }
 
     # A small model can select the right terminal Kanban action yet serialize
     # an empty object. Preserve that decision without paying for another model

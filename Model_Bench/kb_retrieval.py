@@ -96,34 +96,68 @@ def _slug_allowed(slug: str, config: dict) -> bool:
             and value not in {s.casefold() for s in config["excluded_slugs"]})
 
 
+def _reference_specificity(slug: str) -> int:
+    """Prefer actionable canonical references over already-injected route summaries."""
+    value = slug.casefold()
+    if (value.startswith("knowledge/view_docs/")
+            or value.startswith("deploy/skills/xstudio/")
+            or value in {
+                "knowledge/xbatch-investigation-surfaces",
+                "knowledge/sohar-sms-event-workflows",
+                "knowledge/hermes-runtime-database-design",
+                "knowledge/hermes-sp-catalog",
+            }):
+        return 3
+    if "-relationship-" in value:
+        return 2
+    if "-recipe-" in value:
+        return 1
+    return 0
+
+
 def retrieve_gbrain(query: str, config: dict, runner=None) -> dict:
-    request = {"query": query, "limit": int(config["candidate_limit"]), "source_id": config["source_id"],
-               "snippet_chars": int(config["snippet_chars"]), "mode": "balanced", "salience": "off", "recency": "off"}
+    query_tokens = tokenize(query)
+    domain_tokens = tokenize(" ".join(str(term) for term in config.get("query_domain_terms", [])))
+    if domain_tokens and not query_tokens.intersection(domain_tokens):
+        return {"status": "READY", "source_id": config["source_id"], "hits": [], "abstained": True,
+                "abstention_reason": "Query has no XStudio/Hermes domain signal."}
     try:
-        result = _run_gbrain(["call", "search", json.dumps(request, separators=(",", ":"))],
-                             timeout=int(config["timeout_seconds"]), runner=runner)
+        result = _run_gbrain([
+            "search", query,
+            "--limit", str(int(config["candidate_limit"])),
+            "--source-id", config["source_id"],
+            "--snippet-chars", str(int(config["snippet_chars"])),
+            "--mode", "balanced",
+            "--salience", "off",
+            "--recency", "off",
+            "--json",
+        ], timeout=int(config["timeout_seconds"]), runner=runner)
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or f"exit {result.returncode}")
         rows = json.loads(result.stdout)
         if not isinstance(rows, list):
             raise ValueError("gbrain search returned a non-list")
         candidates = []
-        query_tokens = tokenize(query)
         for row in rows:
             slug, score = str(row.get("slug") or ""), float(row.get("score") or 0)
             literal_overlap = query_tokens & tokenize(f"{row.get('title') or ''} {row.get('chunk_text') or ''}")
+            structured_overlap = {term for term in literal_overlap if "_" in term or term.endswith("id")}
+            exact_identifier_match = len(literal_overlap) >= 4 and len(structured_overlap) >= 2
+            score_allowed = (score >= float(config["min_retrieval_score"])
+                             or (exact_identifier_match
+                                 and score >= float(config.get("min_exact_identifier_score", 0.45))))
             if (row.get("source_id") != config["source_id"] or not _slug_allowed(slug, config)
-                    or score < float(config["min_retrieval_score"])
+                    or not score_allowed
                     or (row.get("evidence") == "weak_semantic" and len(literal_overlap) < 2)):
                 continue
-            candidates.append((len(literal_overlap), score, slug, row))
-        candidates.sort(key=lambda item: (-item[0], -item[1], item[2]))
+            candidates.append((_reference_specificity(slug), len(literal_overlap), score, slug, row))
+        candidates.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3]))
         hits = [{"kb_id": f"gbrain:{config['source_id']}:{slug}", "source_type": "gbrain_page",
                  "source_ref": f"{config['source_id']}:{slug}", "slug": slug, "title": row.get("title"),
                  "excerpt": str(row.get("chunk_text") or "")[:int(config["snippet_chars"])],
                  "retrieval_score": round(score, 6), "keyword_hit": bool(row.get("keyword_hit")),
                  "evidence": row.get("evidence"), "verification_required": True}
-                for _, score, slug, row in candidates[:int(config["return_limit"])]]
+                for _, _, score, slug, row in candidates[:int(config["return_limit"])]]
         return {"status": "READY", "source_id": config["source_id"], "hits": hits, "abstained": not hits,
                 "abstention_reason": None if hits else "GBrain returned no allowed knowledge hit."}
     except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError, TypeError, json.JSONDecodeError) as exc:

@@ -11,12 +11,22 @@
       "knowledge/atlas/xstudio_helpdesk-schema-atlas",
       "knowledge/atlas/xstudio_helpdesk-procedure-atlas"
     ],
-    "candidate_limit": 12,
+    "candidate_limit": 24,
     "return_limit": 3,
     "snippet_chars": 600,
     "timeout_seconds": 20,
     "min_retrieval_score": 0.70,
-    "min_embedding_coverage_pct": 100.0
+    "min_exact_identifier_score": 0.45,
+    "min_embedding_coverage_pct": 100.0,
+    "query_domain_terms": [
+      "XStudio", "Xbatch", "XMES", "Hermes", "Helpdesk", "ticket", "SQL",
+      "SAP", "posting", "API", "transaction", "UsageDecision", "goods movement",
+      "heat", "EAF", "LRF", "CCM", "billet", "genealogy", "strand",
+      "quality", "spectro", "chemistry", "inspection lot", "deviation",
+      "work order", "campaign", "delay", "OEE", "downtime", "equipment",
+      "inventory", "GradeID", "relationship", "cardinality",
+      "PRODUCTION_STATE", "SAP_INTEGRATION", "DATA_LOOKUP", "PERFORMANCE", "WORK_ORDER"
+    ]
   },
   "always_load": [
     "mental-model.md",

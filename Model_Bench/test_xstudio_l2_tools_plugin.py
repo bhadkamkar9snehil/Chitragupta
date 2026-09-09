@@ -764,6 +764,36 @@ def test_empty_kanban_completion_is_repaired_without_another_model_turn() -> Non
     assert result["args"]["summary"]
 
 
+def test_investigator_completion_without_proposal_metadata_is_blocked_for_same_turn_retry() -> None:
+    plugin._pre_llm_call(
+        task_id="investigator-completion",
+        user_message=("run_id: RUN-1\nticket_id: TICKET-1\n"
+                      "pipeline_stage: investigation\nclaims_contract_version: 1"),
+    )
+    result = plugin._pre_tool_call(
+        "kanban_complete",
+        {"summary": "No rows were found for the supplied heat identifier.", "metadata": {}},
+        task_id="investigator-completion",
+    )
+    assert result and result["action"] == "block"
+    assert "response_type" in result["message"]
+    assert "claims" in result["message"]
+    assert "retry kanban_complete" in result["message"]
+
+
+def test_reviewer_completion_does_not_require_investigator_proposal_metadata() -> None:
+    plugin._pre_llm_call(
+        task_id="reviewer-completion",
+        user_message="run_id: RUN-1\nticket_id: TICKET-1\npipeline_stage: review",
+    )
+    result = plugin._pre_tool_call(
+        "kanban_complete",
+        {"summary": "Approved after independent live verification."},
+        task_id="reviewer-completion",
+    )
+    assert result is None
+
+
 def test_empty_kanban_block_is_repaired_with_a_safe_reason() -> None:
     result = plugin._pre_tool_call("kanban_block", {}, task_id="task-1")
     assert result and result["action"] == "modify"

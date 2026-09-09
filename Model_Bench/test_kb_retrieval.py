@@ -17,6 +17,8 @@ MANIFEST = {
         "excluded_slug_prefixes": ["agent_comms/", "knowledge/eval/"], "excluded_slugs": ["knowledge/atlas/old"],
         "candidate_limit": 12, "return_limit": 3, "snippet_chars": 600, "timeout_seconds": 20,
         "min_retrieval_score": 0.70, "min_embedding_coverage_pct": 100.0,
+        "query_domain_terms": ["xbatch", "sap", "heat", "billet", "spectro", "work", "order", "delay", "hermes",
+                               "gradeid", "relationship", "cardinality"],
     },
     "always_load": ["mental-model.md"],
     "identifier_routing": {
@@ -51,7 +53,7 @@ class GBrainManifestTests(unittest.TestCase):
     def test_production_manifest_has_bounded_source_scoped_gbrain_contract(self):
         cfg = kb.load_manifest()["gbrain"]
         self.assertEqual((cfg["source_id"], cfg["candidate_limit"], cfg["return_limit"]),
-                         ("xstudio-knowledge", 12, 3))
+                         ("xstudio-knowledge", 24, 3))
         self.assertEqual((cfg["snippet_chars"], cfg["min_retrieval_score"], cfg["min_embedding_coverage_pct"]),
                          (600, 0.70, 100.0))
 
@@ -102,9 +104,18 @@ class GBrainAdapterTests(unittest.TestCase):
         def runner(cmd, **kwargs):
             calls.append(cmd); return _Result(json.dumps(rows))
         result = kb.retrieve_gbrain("SAP posting pending", self.cfg, runner=runner)
-        request = json.loads(calls[0][3])
-        self.assertEqual(request["source_id"], "xstudio-knowledge")
+        self.assertEqual(calls[0][calls[0].index("--source-id") + 1], "xstudio-knowledge")
+        self.assertEqual(calls[0][calls[0].index("--limit") + 1], "12")
         self.assertEqual([h["slug"] for h in result["hits"]], ["knowledge/xbatch-investigation-surfaces"])
+
+    def test_search_uses_current_direct_gbrain_cli_contract(self):
+        calls = []
+        def runner(cmd, **kwargs):
+            calls.append(cmd); return _Result("[]")
+        kb.retrieve_gbrain("SAP posting pending", self.cfg, runner=runner)
+        self.assertEqual(calls[0][1:3], ["search", "SAP posting pending"])
+        self.assertIn("--source-id", calls[0])
+        self.assertIn("--json", calls[0])
 
     def test_search_failure_and_weak_neighbour_abstain(self):
         failed = kb.retrieve_gbrain("SAP", self.cfg, runner=lambda *a, **k: _Result(stderr="closed", returncode=1))
@@ -118,6 +129,43 @@ class GBrainAdapterTests(unittest.TestCase):
         result = kb.retrieve_gbrain("work order missing", self.cfg,
                                     runner=lambda *a, **k: _Result(json.dumps(rows)))
         self.assertFalse(result["abstained"])
+
+    def test_keyword_exact_result_without_xstudio_domain_signal_abstains(self):
+        rows = [{"slug":"knowledge/atlas/xstudio_xbatch-recipe-hermes-runtime",
+                 "source_id":"xstudio-knowledge", "score":1.0,
+                 "title":"Inspect the audited run lifecycle",
+                 "chunk_text":"Run and Helpdesk state agree.",
+                 "evidence":"keyword_exact", "keyword_hit":True}]
+        result = kb.retrieve_gbrain(
+            "best wireless headphones for running",
+            self.cfg,
+            runner=lambda *a, **k: _Result(json.dumps(rows)),
+        )
+        self.assertTrue(result["abstained"])
+        self.assertEqual(result["hits"], [])
+
+    def test_specific_reference_outranks_redundant_recipe_pages(self):
+        rows = [
+            {"slug":f"knowledge/atlas/xstudio_xbatch-recipe-{name}",
+             "source_id":"xstudio-knowledge", "score":score,
+             "title":f"{name} recipe", "chunk_text":"spectro chemistry result inspection lot",
+             "evidence":"keyword_exact", "keyword_hit":True}
+            for name, score in (("quality", .99), ("sap-posting", .98), ("api-transaction", .97))
+        ] + [{
+            "slug":"knowledge/view_docs/xstudio_xbatch.xstudio_list_quality_spectro_result_vw",
+            "source_id":"xstudio-knowledge", "score":.90,
+            "title":"Quality spectro result view", "chunk_text":"inspection lot chemistry result",
+            "evidence":"keyword_exact", "keyword_hit":True,
+        }]
+        result = kb.retrieve_gbrain(
+            "spectro chemistry result missing for inspection lot",
+            self.cfg,
+            runner=lambda *a, **k: _Result(json.dumps(rows)),
+        )
+        self.assertEqual(
+            result["hits"][0]["slug"],
+            "knowledge/view_docs/xstudio_xbatch.xstudio_list_quality_spectro_result_vw",
+        )
 
     def test_literal_identifier_coverage_reranks_semantic_candidates(self):
         rows = [
@@ -135,6 +183,23 @@ class GBrainAdapterTests(unittest.TestCase):
             runner=lambda *a, **k: _Result(json.dumps(rows)),
         )
         self.assertEqual(["knowledge/relationship-b"], [hit["slug"] for hit in result["hits"]])
+
+    def test_exact_multi_identifier_relationship_survives_low_semantic_score(self):
+        rows = [
+            {"slug":"knowledge/relationship-neighbour", "source_id":"xstudio-knowledge", "score":1.0,
+             "title":"Material relationship", "chunk_text":
+             "GradeID XBatch_Material_Grade_Mst_Tbl cardinality", "evidence":"keyword_exact"},
+            {"slug":"knowledge/relationship-billet", "source_id":"xstudio-knowledge", "score":.51,
+             "title":"Billet inventory relationship", "chunk_text":
+             "Billet_Inventory GradeID XBatch_Material_Grade_Mst_Tbl cardinality",
+             "evidence":"weak_semantic"},
+        ]
+        result = kb.retrieve_gbrain(
+            "Billet_Inventory GradeID relationship to XBatch_Material_Grade_Mst_Tbl ID cardinality",
+            {**self.cfg, "return_limit": 1},
+            runner=lambda *a, **k: _Result(json.dumps(rows)),
+        )
+        self.assertEqual(["knowledge/relationship-billet"], [hit["slug"] for hit in result["hits"]])
 
 
 class RouteTests(unittest.TestCase):
