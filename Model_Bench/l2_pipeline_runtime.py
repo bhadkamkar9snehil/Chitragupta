@@ -1029,6 +1029,20 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dic
                 counts["rework_created"] += 1
             continue
 
+        if proposal.get("contract_repaired_from_unstructured") is True:
+            reason = (
+                "Pre-publish proposal gate: the frozen proposal was repaired from an unstructured "
+                "investigator completion and cannot be approved. Re-package the findings with the "
+                "full claim/evidence contract and submit them through a fresh review cycle."
+            )
+            source_id = body_field(task.get("body"), "investigation_task_id")
+            if create_rework_card(
+                args, source_task=task, reason=reason,
+                investigation_task_id=source_id, dry_run=dry_run,
+            ):
+                counts["rework_created"] += 1
+            continue
+
         # Structural claim/evidence gate. If the proposal carries a claims array,
         # every material VERIFIED claim must have an evidence reference. This is a
         # deterministic structural check, not semantic judgment (that stays with the
@@ -1445,7 +1459,6 @@ def deterministic_ticket_route(ticket: dict[str, Any]) -> dict[str, Any]:
     ))
     normalized_text = re.sub(r"[^A-Z0-9]+", " ", (category + " " + summary).upper())
     api_types = (
-        (("WORK ORDER", "PROCESS ORDER"), "WorkOrderCreation"),
         (("BATCH CHARACTERISTIC",), "BatchCharacteristics"),
         (("BATCH CREATION",), "BatchCreation"),
         (("RESULT RECORDING",), "ResultRecording"),
@@ -1454,7 +1467,8 @@ def deterministic_ticket_route(ticket: dict[str, Any]) -> dict[str, Any]:
         (("CONSUMPTION",), "Consumption"),
         (("BY PRODUCT", "BYPRODUCT"), "ByProduct"),
         (("REVERSAL",), "Reversal"),
-        (("PRODUCTION",), "Production"),
+        (("PRODUCTION POSTING", "PRODUCTION"), "Production"),
+        (("WORK ORDER CREATION", "PROCESS ORDER CREATE", "PROCESS ORDER CREATION"), "WorkOrderCreation"),
     )
     explicit_api = "API" in normalized_text or "SAP INTEGRATION" in normalized_text
     if explicit_api:

@@ -794,6 +794,25 @@ def test_reviewer_completion_does_not_require_investigator_proposal_metadata() -
     assert result is None
 
 
+def test_reviewer_cannot_approve_runtime_repaired_unstructured_proposal() -> None:
+    plugin._pre_llm_call(
+        task_id="reviewer-repaired-proposal",
+        user_message=(
+            "run_id: RUN-1\nticket_id: TICKET-1\npipeline_stage: review\n"
+            'proposal_json: {"response_type":"UPDATE",'
+            '"contract_repaired_from_unstructured":true}'
+        ),
+    )
+    result = plugin._pre_tool_call(
+        "kanban_complete",
+        {"summary": "Approved despite missing investigator contract."},
+        task_id="reviewer-repaired-proposal",
+    )
+    assert result and result["action"] == "block"
+    assert "kanban_block" in result["message"]
+    assert "repaired" in result["message"].lower()
+
+
 def test_empty_kanban_block_is_repaired_with_a_safe_reason() -> None:
     result = plugin._pre_tool_call("kanban_block", {}, task_id="task-1")
     assert result and result["action"] == "modify"

@@ -170,6 +170,9 @@ _CONTEXT_FIELD_RE = {
     "run_id": re.compile(r"(?:current\s+)?run_id\s*[:=]\s*[`\"']?([A-Za-z0-9-]+)", re.IGNORECASE),
     "ticket_id": re.compile(r"(?:current\s+)?ticket_id\s*[:=]\s*[`\"']?([A-Za-z0-9-]+)", re.IGNORECASE),
     "pipeline_stage": re.compile(r"pipeline_stage\s*[:=]\s*[`\"']?(investigation|rework|review)\b", re.IGNORECASE),
+    "contract_repaired_from_unstructured": re.compile(
+        r"contract_repaired_from_unstructured[`\"']?\s*:\s*(true)\b", re.IGNORECASE
+    ),
 }
 
 # Bounded so a single session cannot spend the 65.6K context on transport
@@ -440,6 +443,19 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
     args = args or {}
     session = _session_key(task_id, **kwargs)
     context = _context_for(session, kwargs)
+
+    if (tool_name == "kanban_complete"
+            and context.get("pipeline_stage", "").lower() == "review"
+            and context.get("contract_repaired_from_unstructured", "").lower() == "true"):
+        return {
+            "action": "block",
+            "message": (
+                "L2 review contract: this frozen proposal was repaired from an unstructured "
+                "investigator completion and is not eligible for approval. Call kanban_block "
+                "with the specific missing claim/evidence objection so deterministic rework can "
+                "produce a fresh structured proposal."
+            ),
+        }
 
     if tool_name == "kanban_complete" and context.get("pipeline_stage", "").lower() in {"investigation", "rework"}:
         metadata = dict(args.get("metadata") or {}) if isinstance(args.get("metadata"), dict) else {}

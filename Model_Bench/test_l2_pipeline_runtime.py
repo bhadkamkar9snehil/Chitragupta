@@ -204,6 +204,21 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual("B99402", route["identifier"])
         self.assertEqual("xstudio_sap_api_context", route["recommended_tool"])
 
+    def test_sap_production_posting_with_work_order_routes_to_production_api(self):
+        route = mod.deterministic_ticket_route({
+            "ProblemCategory": "SAP_INTEGRATION",
+            "BriefDetails": "SAP posting stuck pending for Heat 1900001 / WO 199000000001",
+            "Description": (
+                "SAP production posting for Heat 1900001 (Work Order 199000000001) is pending; "
+                "check whether the API call was sent."
+            ),
+            "ExtractedEntitiesJson": json.dumps({
+                "HeatNo": "1900001", "WorkOrder": "199000000001"
+            }),
+        })
+        self.assertEqual("sap_api", route["domain"])
+        self.assertEqual("Production", route["api_type"])
+
     def test_deterministic_route_maps_work_order_and_campaign(self):
         ticket = {
             "ProblemCategory": "WORK_ORDER",
@@ -449,6 +464,29 @@ class PipelineContractTests(unittest.TestCase):
         self.assertGreater(result.get("rework_created", 0), 0)
         rework.assert_called_once()
         # Publisher should NOT have been invoked
+        publish.assert_not_called()
+
+    def test_prepublish_rejects_runtime_repaired_unstructured_proposal(self):
+        proposal = {
+            "run_id": "run-1", "ticket_id": "ticket-1",
+            "response_type": "UPDATE", "reply_text": "Generic repaired response.",
+            "claims_contract_version": 1,
+            "claims": [{"id": "C1", "claim": "No structured contract was supplied.",
+                        "material": True, "status": "UNVERIFIED", "evidence": []}],
+            "contract_repaired_from_unstructured": True,
+        }
+        task = {"id": "reviewer-1", "status": "done", "assignee": mod.REVIEWER_PROFILE,
+                "body": f"run_id: run-1\nticket_id: ticket-1\nproposal_json: {json.dumps(proposal)}"}
+        with patch.object(mod, "list_tasks", return_value=[task]), \
+                patch.object(mod, "query_active_runs", return_value=[{"ID": "run-1"}]), \
+                patch.object(mod, "_query_published_state", return_value=[]), \
+                patch.object(mod, "safe_query_active_run", return_value=[{"ID": "run-1"}]), \
+                patch.object(mod, "load_workflow_binding", return_value={"resolved_ticket_status": "Closed", "strict_resolution_status_binding": True}), \
+                patch.object(mod, "create_rework_card", return_value="rework") as rework, \
+                patch.object(mod, "run_orchestrator") as publish:
+            result = mod.process_approvals(mod.default_args())
+        self.assertEqual(result.get("rework_created"), 1)
+        self.assertIn("unstructured", rework.call_args.kwargs["reason"].lower())
         publish.assert_not_called()
 
     def test_prepublish_accepts_valid_claims(self):
