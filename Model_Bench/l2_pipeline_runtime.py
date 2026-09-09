@@ -34,6 +34,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+try:
+    from Model_Bench.xbatch_world import load_world, select_recipes, world_context
+except ImportError:  # deployed scripts live beside xbatch_world.py
+    from xbatch_world import load_world, select_recipes, world_context
+
 ORCHESTRATOR_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Hermes_Orchestrator.py"
 KB_RETRIEVER_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\kb_retrieval.py"
 DEFAULT_SERVER = "10.2.6.204"
@@ -1536,9 +1541,15 @@ def _dispatch_route_context(run_id: str, ticket_id: str, ticket: dict[str, Any],
             rendered["live_context"] = json.loads(result.stdout)
         except (OSError, subprocess.TimeoutExpired, RuntimeError, json.JSONDecodeError) as exc:
             rendered["live_context_warning"] = f"Deterministic work-order context unavailable: {type(exc).__name__}: {exc}"
+    try:
+        world = load_world()
+        selection = select_recipes(ticket, world)
+        rendered["world_knowledge"] = world_context(selection, world, max_chars=2500)
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        rendered["world_knowledge_warning"] = f"World knowledge unavailable: {type(exc).__name__}: {exc}"
     text = json.dumps(rendered, indent=2, default=str)
-    if len(text) > 7000:
-        text = text[:7000] + "\n... [route context truncated at 7,000 chars]"
+    if len(text) > 9000:
+        text = text[:9000] + "\n... [route/world context truncated at 9,000 chars]"
     return (
         "\n--- Deterministic live route/context ---\n"
         "This is current live evidence collected by the harness. Interpret only the returned rows; "

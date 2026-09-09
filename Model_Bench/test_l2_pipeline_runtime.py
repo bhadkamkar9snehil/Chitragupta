@@ -247,6 +247,28 @@ class PipelineContractTests(unittest.TestCase):
                                    "evidence_role": "investigator"})
         self.assertIn('"action_id": "a-1"', rendered)
 
+    def test_dispatch_context_includes_bounded_world_recipe_and_relationships(self):
+        ticket = {
+            "BriefDetails": "Billet missing from yard for heat H99328",
+            "ExtractedEntitiesJson": json.dumps({"HeatNo": "H99328"}),
+        }
+        completed = type("Completed", (), {"returncode": 0, "stderr": "",
+                    "stdout": json.dumps({"ok": True, "evidence_refs": []})})()
+        with patch.object(mod.subprocess, "run", return_value=completed):
+            rendered = mod._dispatch_route_context("run-1", "ticket-1", ticket)
+        self.assertIn('"recipe_id": "xbatch.billet-inventory.v1"', rendered)
+        self.assertIn('"object": "Billet_Inventory"', rendered)
+        self.assertIn('"object": "XBatch_Material_Grade_Mst_Tbl"', rendered)
+        self.assertLessEqual(len(rendered), 12000)
+
+    def test_generic_dispatch_context_abstains_to_discover_recipe_without_bridge(self):
+        with patch.object(mod.subprocess, "run") as bridge:
+            rendered = mod._dispatch_route_context(
+                "run-1", "ticket-1", {"BriefDetails": "unclassified behaviour"}
+            )
+        bridge.assert_not_called()
+        self.assertIn('"recipe_id": "xbatch.discover.v1"', rendered)
+
     def test_priority_closes_work_before_new_claim(self):
         self.assertGreater(mod.REVIEW_PRIORITY, mod.REWORK_PRIORITY)
         self.assertGreater(mod.REWORK_PRIORITY, mod.NEW_INVESTIGATION_PRIORITY)
