@@ -262,7 +262,7 @@ def render_gbrain_pages(atlas: dict[str, Any]) -> dict[str, str]:
     for edge in atlas.get("relationships", []):
         source = edge["source"]
         target = edge["target"]
-        key = source["object"][0].lower() if source["object"][:1].isalnum() else "other"
+        key = re.sub(r"[^a-z0-9]+", "-", source["object"].casefold()).strip("-") or "other"
         relationship_groups.setdefault(key, []).append([
             f"## {source['object']}.{source['attribute']} -> {target['object']}.{target['attribute']}",
             f"Databases: {source['database']} -> {target['database']}",
@@ -277,7 +277,7 @@ def render_gbrain_pages(atlas: dict[str, Any]) -> dict[str, str]:
                 "---", "type: note", "subtype: configured-relationship",
                 "database: XStudio_Configuration_Xbatch",
                 "authority: configuration-observed", "---",
-                f"# XBatch configured relationships: {key.upper()} part {part}", "",
+                f"# XBatch configured relationships: {key} part {part}", "",
                 "Configured joins and cardinality. They are routing knowledge; verify current ticket rows live.", "",
             ]
             pages[f"xstudio_xbatch-relationship-{key}-{part:02d}-atlas.md"] = (
