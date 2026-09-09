@@ -145,6 +145,12 @@ Knowledge is deliberately separated by authority and lifetime:
 Git-tracked Knowledge/ documents
     = canonical domain/runtime reference
 
+Knowledge/xstudio_semantic_atlas.json
+    = generated object, procedure, relationship, domain, and recipe world model
+
+GBrain xstudio-knowledge source
+    = derived searchable index of the committed knowledge; never ticket evidence
+
 Governed SQL Solution articles
     = reusable known-issue knowledge with lifecycle state
 
@@ -165,6 +171,13 @@ Start routing with:
 - `Knowledge/manifest.json` — machine-readable route map;
 - `Knowledge/task-router.md` — human-readable mirror;
 - `Knowledge/mental-model.md` and `Knowledge/execution-model.md` — always-loaded current operating model.
+
+The dispatcher also loads `Knowledge/xbatch_investigation_recipes.json` and the
+semantic atlas directly. It deterministically selects a bounded recipe/world
+context before model work. The reviewer receives a claim-to-action evidence
+matrix derived from the frozen proposal and persisted current-run actions.
+GBrain improves semantic retrieval around that fixed context; the model is not
+expected to discover the XBatch world by searching conversationally.
 
 ## SQL runtime and deployment
 

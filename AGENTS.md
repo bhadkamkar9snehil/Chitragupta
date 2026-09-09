@@ -268,7 +268,15 @@ Rules:
 
 ## 9. KB and memory boundaries
 
-The current deterministic KB retriever is an interim conservative layer. It must obey:
+The deterministic knowledge harness has two complementary inputs:
+
+- `Knowledge/xstudio_semantic_atlas.json` plus
+  `Knowledge/xbatch_investigation_recipes.json` provide the fixed,
+  harness-selected object/relationship/recipe world context;
+- GBrain provides bounded semantic retrieval over the committed knowledge
+  corpus. It is a derived index, not authority.
+
+The retriever must obey:
 
 - route alone cannot retrieve a solution;
 - weak generic overlap must abstain;
