@@ -119,6 +119,23 @@ class GBrainAdapterTests(unittest.TestCase):
                                     runner=lambda *a, **k: _Result(json.dumps(rows)))
         self.assertFalse(result["abstained"])
 
+    def test_literal_identifier_coverage_reranks_semantic_candidates(self):
+        rows = [
+            {"slug":"knowledge/relationship-x", "source_id":"xstudio-knowledge", "score":.96,
+             "title":"Material grade relationships", "chunk_text":"XBatch_Material_Grade_Mst_Tbl GradeID",
+             "evidence":"weak_semantic"},
+            {"slug":"knowledge/relationship-b", "source_id":"xstudio-knowledge", "score":.82,
+             "title":"Billet inventory relationship", "chunk_text":
+             "Billet_Inventory GradeID XBatch_Material_Grade_Mst_Tbl cardinality",
+             "evidence":"weak_semantic"},
+        ]
+        result = kb.retrieve_gbrain(
+            "Billet_Inventory GradeID XBatch_Material_Grade_Mst_Tbl cardinality",
+            {**self.cfg, "return_limit": 1},
+            runner=lambda *a, **k: _Result(json.dumps(rows)),
+        )
+        self.assertEqual(["knowledge/relationship-b"], [hit["slug"] for hit in result["hits"]])
+
 
 class RouteTests(unittest.TestCase):
     def test_strong_identifier_beats_vague_language(self):

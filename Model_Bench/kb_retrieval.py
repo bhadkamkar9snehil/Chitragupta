@@ -107,7 +107,7 @@ def retrieve_gbrain(query: str, config: dict, runner=None) -> dict:
         rows = json.loads(result.stdout)
         if not isinstance(rows, list):
             raise ValueError("gbrain search returned a non-list")
-        hits = []
+        candidates = []
         query_tokens = tokenize(query)
         for row in rows:
             slug, score = str(row.get("slug") or ""), float(row.get("score") or 0)
@@ -116,13 +116,14 @@ def retrieve_gbrain(query: str, config: dict, runner=None) -> dict:
                     or score < float(config["min_retrieval_score"])
                     or (row.get("evidence") == "weak_semantic" and len(literal_overlap) < 2)):
                 continue
-            hits.append({"kb_id": f"gbrain:{config['source_id']}:{slug}", "source_type": "gbrain_page",
-                         "source_ref": f"{config['source_id']}:{slug}", "slug": slug, "title": row.get("title"),
-                         "excerpt": str(row.get("chunk_text") or "")[:int(config["snippet_chars"])],
-                         "retrieval_score": round(score, 6), "keyword_hit": bool(row.get("keyword_hit")),
-                         "evidence": row.get("evidence"), "verification_required": True})
-            if len(hits) >= int(config["return_limit"]):
-                break
+            candidates.append((len(literal_overlap), score, slug, row))
+        candidates.sort(key=lambda item: (-item[0], -item[1], item[2]))
+        hits = [{"kb_id": f"gbrain:{config['source_id']}:{slug}", "source_type": "gbrain_page",
+                 "source_ref": f"{config['source_id']}:{slug}", "slug": slug, "title": row.get("title"),
+                 "excerpt": str(row.get("chunk_text") or "")[:int(config["snippet_chars"])],
+                 "retrieval_score": round(score, 6), "keyword_hit": bool(row.get("keyword_hit")),
+                 "evidence": row.get("evidence"), "verification_required": True}
+                for _, score, slug, row in candidates[:int(config["return_limit"])]]
         return {"status": "READY", "source_id": config["source_id"], "hits": hits, "abstained": not hits,
                 "abstention_reason": None if hits else "GBrain returned no allowed knowledge hit."}
     except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError, TypeError, json.JSONDecodeError) as exc:

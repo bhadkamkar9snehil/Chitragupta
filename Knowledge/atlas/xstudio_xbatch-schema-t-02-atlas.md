@@ -1,0 +1,36 @@
+---
+type: note
+subtype: schema-reference
+database: XStudio_Xbatch
+authority: static-advisory
+---
+# XStudio_Xbatch schema atlas: T part 2
+
+Static routing knowledge generated from the authoritative export. Current ticket facts require live SQL.
+
+## dbo.Transformer_BATTERY_BANK_DG_STATUS
+ID:varchar, Name:varchar, ParentID:varchar, CreatedBy:varchar, ModifiedBy:varchar, CreatedOn:datetime, ModifiedOn:datetime, IsDeleted:bit, IsSystem:bit, AssignedUserID:varchar, HostAddress:varchar, DbSyncStatus:varchar, MobileSyncStatus:varchar, Source:varchar, EntryDateTime:datetime, ReportDate:date, IsProcessed:bit, ECR1OperPVoltage:decimal, ECR1OperPCurrent:decimal, ECR4OperPCurrent:decimal, ECR4OperPVoltage:decimal, MRSSOperPVoltage:decimal, MRSSOperPCurrent:decimal, ECR5AOperPCurrent:decimal, ECR5AOperPVoltage:decimal, DG1Voltage:decimal, DG1AutoMan:bit, DG2Voltage:decimal, DG3Voltage:decimal, DG2AutoMan:bit, DG3AutoMan:bit, WTPDG1Voltage:decimal, WTPDG1AutoMan:bit, WTPDG2Voltage:decimal, WTPDG2AutoMan:bit, Remarks:varchar, Shift:varchar, BatteryCharger1OPVoltage:decimal, BatteryCharger1OPCurrent:decimal, BatteryCharger2OPCurrent:decimal, BatteryCharger2OPVoltage:decimal, SVCBatteryChargerOPVoltage:decimal, SVCBatteryChargerOPCurrent:decimal
+
+## dbo.Transformer_BATTERY_BANK_DG_STATUS_Audit
+ID:varchar, Name:varchar, ParentID:varchar, CreatedBy:varchar, ModifiedBy:varchar, CreatedOn:datetime, ModifiedOn:datetime, IsDeleted:bit, IsSystem:bit, AssignedUserID:varchar, HostAddress:varchar, DbSyncStatus:varchar, MobileSyncStatus:varchar, Source:varchar, EntryDateTime:datetime, ReportDate:date, IsProcessed:bit, ECR1OperPVoltage:decimal, ECR1OperPCurrent:decimal, ECR4OperPCurrent:decimal, ECR4OperPVoltage:decimal, MRSSOperPVoltage:decimal, MRSSOperPCurrent:decimal, ECR5AOperPCurrent:decimal, ECR5AOperPVoltage:decimal, DG1Voltage:decimal, DG1AutoMan:bit, DG2Voltage:decimal, DG3Voltage:decimal, DG2AutoMan:bit, DG3AutoMan:bit, WTPDG1Voltage:decimal, WTPDG1AutoMan:bit, WTPDG2Voltage:decimal, WTPDG2AutoMan:bit, Remarks:varchar, Shift:varchar
+
+## dbo.Transformer_Capacitor_Bank
+ID:varchar, Name:varchar, ParentID:varchar, CreatedBy:varchar, ModifiedBy:varchar, CreatedOn:datetime, ModifiedOn:datetime, IsDeleted:bit, IsSystem:bit, AssignedUserID:varchar, HostAddress:varchar, DbSyncStatus:varchar, MobileSyncStatus:varchar, Source:varchar, EntryDateTime:datetime, ReportDate:date, IsProcessed:bit, Shift:varchar, ECR1800KVARStatus:bit, ECR1400KVARStatus:bit, ECR1400KVARStatusPF:decimal, ECR1800KVARStatusPF:decimal, ECR21000KVARStatus:bit, ECR21000KVARStatusPF:decimal, ECR41000KVARStatus:bit, ECR41000KVARStatusPF:decimal, ECR2A1000KVARStatusPF:decimal, ECR2A1000KVARStatus:bit, ECR3300KVARStatusPF:decimal, ECR3A800KVARStatusPF:decimal, ECR3300KVARStatus:bit, ECR3A800KVARStatus:bit, ECR4A1000KVARStatus:bit, ECR4A1000KVARStatusPF:decimal
+
+## dbo.Transformer_Capacitor_Bank_Audit
+ID:varchar, Name:varchar, ParentID:varchar, CreatedBy:varchar, ModifiedBy:varchar, CreatedOn:datetime, ModifiedOn:datetime, IsDeleted:bit, IsSystem:bit, AssignedUserID:varchar, HostAddress:varchar, DbSyncStatus:varchar, MobileSyncStatus:varchar, Source:varchar, EntryDateTime:datetime, ReportDate:date, IsProcessed:bit, Shift:varchar, ECR1800KVARStatus:bit, ECR1400KVARStatus:bit, ECR1400KVARStatusPF:decimal, ECR1800KVARStatusPF:decimal, ECR21000KVARStatus:bit, ECR21000KVARStatusPF:decimal, ECR41000KVARStatus:bit, ECR41000KVARStatusPF:decimal, ECR2A1000KVARStatusPF:decimal, ECR2A1000KVARStatus:bit, ECR3300KVARStatusPF:decimal, ECR3A800KVARStatusPF:decimal, ECR3300KVARStatus:bit, ECR3A800KVARStatus:bit, ECR4A1000KVARStatus:bit, ECR4A1000KVARStatusPF:decimal
+
+## dbo.Transformer_Hydron_125_MVA
+ID:varchar, CreatedBy:varchar, ModifiedBy:varchar, CreatedOn:datetime, ModifiedOn:datetime, IsDeleted:bit, IsSystem:bit, AssignedUserID:varchar, HostAddress:varchar, DbSyncStatus:varchar, MobileSyncStatus:varchar, Source:varchar, Shift:varchar, PreRHSenceTemp:varchar, IsProcessed:bit, HydronPPM:varchar, H2OLevel:varchar, ReportDate:date, Name:varchar, TechnicianName:varchar, ParentID:varchar, EngineerName:varchar, PreRHLevel:varchar, EntryDateTime:datetime, TransformerPreRHSenceTemp:decimal, TransformerHydronPPM:decimal, TransformerPreRHLevel:decimal, TransformerH2OLevel:decimal
+
+## dbo.Transformer_LRF
+ID:varchar, Name:varchar, ParentID:varchar, CreatedBy:varchar, ModifiedBy:varchar, CreatedOn:datetime, ModifiedOn:datetime, IsDeleted:bit, IsSystem:bit, AssignedUserID:varchar, HostAddress:varchar, DbSyncStatus:varchar, MobileSyncStatus:varchar, Source:varchar, EntryDateTime:datetime, ReportDate:date, IsProcessed:bit, HeatNo:int, TapNo:int, PowerMW:decimal, TapChangerCounter:int, OilTemperatureDegC:int, OilLevelPercentage:int, HVBushingTemperature1U:decimal, HVBushingTemperature1V:decimal, HVBushingTemperature1W:decimal, LVTubeTemperature2UE1:decimal, LVTubeTemperature2VE2:decimal, LVTubeTemperature2WE3:decimal, SecFlexibleTemperature2UE1:decimal, SecFlexibleTemperature2VE2:decimal, SecFlexibleTemperature2WE3:decimal, OilFlowRunningCooler1:decimal, OilFlowRunningCooler2:decimal, WaterFlowM3PerHrCooler1:decimal, BreatherStatusTransformer:bit, BreatherStatusTapChanger:bit, Remarks:varchar, Attendant:varchar, Shift:varchar, WindingTemperature:decimal
+
+## dbo.Transformer_LRF_Audit
+ID:varchar, Name:varchar, ParentID:varchar, CreatedBy:varchar, ModifiedBy:varchar, CreatedOn:datetime, ModifiedOn:datetime, IsDeleted:bit, IsSystem:bit, AssignedUserID:varchar, HostAddress:varchar, DbSyncStatus:varchar, MobileSyncStatus:varchar, Source:varchar, EntryDateTime:datetime, ReportDate:date, IsProcessed:bit, HeatNo:int, TapNo:int, PowerMW:decimal, TapChangerCounter:int, OilTemperatureDegC:int, OilLevelPercentage:int, HVBushingTemperature1U:decimal, HVBushingTemperature1V:decimal, HVBushingTemperature1W:decimal, LVTubeTemperature2UE1:decimal, LVTubeTemperature2VE2:decimal, LVTubeTemperature2WE3:decimal, SecFlexibleTemperature2UE1:decimal, SecFlexibleTemperature2VE2:decimal, SecFlexibleTemperature2WE3:decimal, OilFlowRunningCooler1:decimal, OilFlowRunningCooler2:decimal, WaterFlowM3PerHrCooler1:decimal, BreatherStatusTransformer:bit, BreatherStatusTapChanger:bit, Remarks:varchar, Attendant:varchar, Shift:varchar
+
+## dbo.Transformer_Sprinkler_Station_Status
+ID:varchar, CreatedBy:varchar, ModifiedBy:varchar, CreatedOn:datetime, ModifiedOn:datetime, IsDeleted:bit, IsSystem:bit, AssignedUserID:varchar, HostAddress:varchar, DbSyncStatus:varchar, MobileSyncStatus:varchar, Source:varchar, MainPump:varchar, ParentID:varchar, Name:varchar, EngineerName:varchar, ReportDate:date, VDC24Supply:varchar, EntryDateTime:datetime, MainLinePR125MVA:int, SVCPACStatus:varchar, SubStationACStatus:varchar, FireAlarmPanelStatus:varchar, MainLinePR63MVA:int, SVCPStatus:varchar, PumpHouseStatus:varchar, TechnicianName:varchar, Shift:varchar, P3415VACSupply:varchar, IsProcessed:bit, DieselPump:varchar, JockeyPump:varchar, SubStationStatus:varchar
+
+## dbo.Tundish_Life
+ID:varchar, Name:varchar, ParentID:varchar, CreatedBy:varchar, ModifiedBy:varchar, CreatedOn:datetime, ModifiedOn:datetime, IsDeleted:bit, IsSystem:bit, AssignedUserID:varchar, HostAddress:varchar, DbSyncStatus:varchar, MobileSyncStatus:varchar, Source:varchar, TundishNumber:int, TundishLife:int

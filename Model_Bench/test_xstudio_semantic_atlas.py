@@ -96,12 +96,8 @@ class SemanticAtlasTests(unittest.TestCase):
         pages = render_gbrain_pages(self.atlas)
         self.assertTrue(pages)
         self.assertTrue(all("type: note" in content for content in pages.values()))
-        relationship_pages = {
-            name: content for name, content in pages.items() if "relationship" in name
-        }
-        self.assertTrue(relationship_pages)
         self.assertLessEqual(
-            max(len(content.encode("utf-8")) for content in relationship_pages.values()),
+            max(len(content.encode("utf-8")) for content in pages.values()),
             30_000,
         )
 

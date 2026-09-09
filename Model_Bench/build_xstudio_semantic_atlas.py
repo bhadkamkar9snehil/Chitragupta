@@ -203,41 +203,60 @@ def build() -> dict[str, Any]:
     }
 
 
+def _bounded_block_pages(blocks: list[list[str]], max_body_bytes: int = 24_000) -> list[list[str]]:
+    """Partition complete object blocks without letting one alphabet bucket grow unbounded."""
+    pages: list[list[str]] = []
+    current: list[str] = []
+    current_bytes = 0
+    for block in blocks:
+        block_bytes = len("\n".join(block).encode("utf-8"))
+        if current and current_bytes + block_bytes > max_body_bytes:
+            pages.append(current)
+            current, current_bytes = [], 0
+        current.extend(block)
+        current_bytes += block_bytes
+    if current:
+        pages.append(current)
+    return pages
+
+
 def render_gbrain_pages(atlas: dict[str, Any]) -> dict[str, str]:
     """Render compact searchable pages; the model never receives them wholesale."""
     pages: dict[str, str] = {}
     for database, data in atlas["databases"].items():
-        schema_groups: dict[str, list[str]] = {}
+        schema_groups: dict[str, list[list[str]]] = {}
         for name, item in data["objects"].items():
             columns = ", ".join(f"{col['name']}:{col['type']}" for col in item["columns"])
             key = name[0].lower() if name[:1].isalnum() else "other"
-            schema_groups.setdefault(key, []).extend((f"## dbo.{name}", columns or "No exported columns.", ""))
-        for key, lines in schema_groups.items():
-            header = [
-                "---", "type: note", "subtype: schema-reference", f"database: {database}",
-                "authority: static-advisory", "---",
-                f"# {database} schema atlas: {key.upper()}", "",
-                "Static routing knowledge generated from the authoritative export. Current ticket facts require live SQL.", "",
-            ]
-            pages[f"{database.lower()}-schema-{key}-atlas.md"] = "\n".join(header + lines) + "\n"
+            schema_groups.setdefault(key, []).append([f"## dbo.{name}", columns or "No exported columns.", ""])
+        for key, blocks in schema_groups.items():
+            for part, lines in enumerate(_bounded_block_pages(blocks), start=1):
+                header = [
+                    "---", "type: note", "subtype: schema-reference", f"database: {database}",
+                    "authority: static-advisory", "---",
+                    f"# {database} schema atlas: {key.upper()} part {part}", "",
+                    "Static routing knowledge generated from the authoritative export. Current ticket facts require live SQL.", "",
+                ]
+                pages[f"{database.lower()}-schema-{key}-{part:02d}-atlas.md"] = "\n".join(header + lines).rstrip() + "\n"
 
-        sp_groups: dict[str, list[str]] = {}
+        sp_groups: dict[str, list[list[str]]] = {}
         for name, item in data["procedures"].items():
             params = ", ".join(f"@{p['name']}:{p['type']}" for p in item["parameters"]) or "none"
             refs = ", ".join(item["referenced_objects"]) or "none detected"
             key = name[0].lower() if name[:1].isalnum() else "other"
-            sp_groups.setdefault(key, []).extend((
+            sp_groups.setdefault(key, []).append([
                 f"## dbo.{name}", f"Safety: {item['safety']}", f"Parameters: {params}",
                 f"Referenced objects: {refs}", "",
-            ))
-        for key, lines in sp_groups.items():
-            header = [
-                "---", "type: note", "subtype: procedure-reference", f"database: {database}",
-                "authority: static-advisory", "---",
-                f"# {database} stored-procedure atlas: {key.upper()}", "",
-                "Safety is fail-closed. Only READ_ONLY_REVIEWED procedures may be exposed as diagnostics.", "",
-            ]
-            pages[f"{database.lower()}-procedure-{key}-atlas.md"] = "\n".join(header + lines) + "\n"
+            ])
+        for key, blocks in sp_groups.items():
+            for part, lines in enumerate(_bounded_block_pages(blocks), start=1):
+                header = [
+                    "---", "type: note", "subtype: procedure-reference", f"database: {database}",
+                    "authority: static-advisory", "---",
+                    f"# {database} stored-procedure atlas: {key.upper()} part {part}", "",
+                    "Safety is fail-closed. Only READ_ONLY_REVIEWED procedures may be exposed as diagnostics.", "",
+                ]
+                pages[f"{database.lower()}-procedure-{key}-{part:02d}-atlas.md"] = "\n".join(header + lines).rstrip() + "\n"
 
     relationship_groups: dict[str, list[list[str]]] = {}
     for edge in atlas.get("relationships", []):
@@ -252,11 +271,8 @@ def render_gbrain_pages(atlas: dict[str, Any]) -> dict[str, str]:
             f"Provenance: {edge['provenance']['kind']} ({edge['provenance']['source_row_count']} source row(s))",
             "",
         ])
-    relationship_page_size = 40
     for key, blocks in relationship_groups.items():
-        for offset in range(0, len(blocks), relationship_page_size):
-            part = offset // relationship_page_size + 1
-            lines = [line for block in blocks[offset:offset + relationship_page_size] for line in block]
+        for part, lines in enumerate(_bounded_block_pages(blocks), start=1):
             header = [
                 "---", "type: note", "subtype: configured-relationship",
                 "database: XStudio_Configuration_Xbatch",
