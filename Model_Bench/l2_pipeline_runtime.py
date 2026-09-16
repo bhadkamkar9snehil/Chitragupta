@@ -1470,9 +1470,10 @@ def deterministic_ticket_route(ticket: dict[str, Any]) -> dict[str, Any]:
         (("PRODUCTION POSTING", "PRODUCTION"), "Production"),
         (("WORK ORDER CREATION", "PROCESS ORDER CREATE", "PROCESS ORDER CREATION"), "WorkOrderCreation"),
     )
+    api_type = next((value for phrases, value in api_types if any(p in normalized_text for p in phrases)), None)
     explicit_api = "API" in normalized_text or "SAP INTEGRATION" in normalized_text
-    if explicit_api:
-        api_type = next((value for phrases, value in api_types if any(p in normalized_text for p in phrases)), None)
+    named_sap_operation = "SAP" in normalized_text and api_type is not None
+    if explicit_api or named_sap_operation:
         if api_type:
             identifier = next((entities.get(key) for key in (
                 "Batch", "BatchNo", "SAPTransactionID", "TransactionID", "InspectionLot",
