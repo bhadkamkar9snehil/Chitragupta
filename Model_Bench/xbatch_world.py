@@ -125,7 +125,10 @@ def select_recipes(ticket: dict[str, Any], world: dict[str, Any] | None = None) 
     )).casefold()
     priority = (
         ("hermes_runtime", ("hermes", "kanban", "reviewer", "l2 run")),
-        ("api_transaction", ("transaction id", "api error", "api call", "usage decision api")),
+        ("api_transaction", (
+            "transaction id", "api error", "api call", "usage decision api",
+            "sap usage decision",
+        )),
         ("sap_posting", ("sap", "posting", "material document", "goods movement")),
         ("work_order", ("work order", "manufacturing order", "campaign")),
         ("billet_inventory", ("billet", "genealogy", "strand", "yard")),
