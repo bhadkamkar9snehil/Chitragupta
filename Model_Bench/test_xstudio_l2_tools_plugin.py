@@ -781,6 +781,40 @@ def test_investigator_completion_without_proposal_metadata_is_blocked_for_same_t
     assert "retry kanban_complete" in result["message"]
 
 
+def test_substantive_investigator_summary_is_packaged_without_another_model_turn() -> None:
+    plugin._pre_llm_call(
+        task_id="investigator-summary-package",
+        user_message=("run_id: RUN-2\nticket_id: TICKET-2\n"
+                      "pipeline_stage: investigation\nclaims_contract_version: 1"),
+    )
+    summary = (
+        "Investigated the reported SAP posting and preserved the current-run action trail. "
+        "The available evidence does not yet prove that the successful transaction belongs "
+        "to the reported heat and work-order pair, so independent review is required."
+    )
+    result = plugin._pre_tool_call(
+        "kanban_complete",
+        {"summary": summary, "result": "Investigation complete", "metadata": {}},
+        task_id="investigator-summary-package",
+    )
+    assert result and result["action"] == "modify"
+    metadata = result["args"]["metadata"]
+    assert metadata["run_id"] == "RUN-2"
+    assert metadata["ticket_id"] == "TICKET-2"
+    assert metadata["response_type"] == "UPDATE"
+    assert metadata["claims_contract_version"] == 1
+    assert metadata["claims"] == [{
+        "id": "summary-1",
+        "claim": summary,
+        "material": True,
+        "status": "UNVERIFIED",
+        "evidence": [],
+    }]
+    assert metadata["contract_packaged_from_summary"] is True
+    assert metadata["evidence_status"] == "INCOMPLETE"
+    assert metadata["reply_text"].startswith("Evidence status: INCOMPLETE.")
+
+
 def test_reviewer_completion_does_not_require_investigator_proposal_metadata() -> None:
     plugin._pre_llm_call(
         task_id="reviewer-completion",

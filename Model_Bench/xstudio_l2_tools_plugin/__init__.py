@@ -181,6 +181,7 @@ _CONTEXT_FIELD_RE = {
 MAX_TOOL_CALLS = max(1, int(os.environ.get("L2_MAX_XSTUDIO_TOOL_CALLS", "14")))
 MAX_IDENTICAL_FAILURES = max(1, int(os.environ.get("L2_MAX_IDENTICAL_FAILURES", "2")))
 BRIDGE_TIMEOUT_SECONDS = max(10, int(os.environ.get("L2_BRIDGE_TIMEOUT_SECONDS", "90")))
+MIN_SUBSTANTIVE_COMPLETION_CHARS = 160
 
 # Matched case-insensitively as substrings of the model's terminal command.
 # Every entry here is a *transport* path the harness owns. Benign inspection
@@ -465,6 +466,34 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
         metadata.setdefault("claims_contract_version", 1)
         missing = [field for field in ("run_id", "ticket_id", "response_type", "reply_text", "claims")
                    if metadata.get(field) in (None, "", [])]
+        summary = str(args.get("summary") or "").strip()
+        if (len(summary) >= MIN_SUBSTANTIVE_COMPLETION_CHARS
+                and metadata.get("run_id") and metadata.get("ticket_id")
+                and all(metadata.get(field) in (None, "", [])
+                        for field in ("response_type", "reply_text", "claims"))):
+            # Small local models reliably produce a useful flat summary but can loop
+            # forever when asked to serialize the nested proposal contract. Package
+            # that summary as an explicitly incomplete UPDATE. The independent
+            # reviewer still owns truth, and no statement is promoted to VERIFIED.
+            metadata.update({
+                "response_type": "UPDATE",
+                "reply_text": (
+                    "Evidence status: INCOMPLETE. The investigation produced findings "
+                    "that require independent review before any cause or resolution is "
+                    "treated as verified."
+                ),
+                "claims": [{
+                    "id": "summary-1",
+                    "claim": summary,
+                    "material": True,
+                    "status": "UNVERIFIED",
+                    "evidence": [],
+                }],
+                "contract_packaged_from_summary": True,
+                "evidence_status": "INCOMPLETE",
+                "investigator_notes": summary,
+            })
+            return {"action": "modify", "args": {"metadata": metadata}}
         if missing:
             return {
                 "action": "block",
