@@ -22,3 +22,4 @@ provides_tools:
   - xstudio_heat_context
   - xstudio_sap_api_context
   - xstudio_work_order_context
+  - xstudio_submit_proposal

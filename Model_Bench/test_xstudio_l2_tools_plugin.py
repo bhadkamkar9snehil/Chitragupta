@@ -130,6 +130,7 @@ def test_named_tool_schemas_have_small_required_contracts() -> None:
         "xstudio_heat_context": {"heat"},
         "xstudio_sap_api_context": {"api_type"},
         "xstudio_work_order_context": {"work_order"},
+        "xstudio_submit_proposal": {"response_type", "summary"},
     }
     assert set(plugin.TOOL_SCHEMAS) == set(expected)
     for name, required in expected.items():
@@ -756,6 +757,200 @@ def test_config_patch_does_not_abort_when_optional_section_absent() -> None:
     without = _SAMPLE_CONFIG.replace("known_plugin_toolsets:\n  cli:\n    - a2a\n", "")
     patched = _patch_sample(without)
     assert "- xstudio-l2-tools" in patched  # other sections still applied
+
+
+# --------------------------------------------------------------------------
+# xstudio_submit_proposal (flat completion tool)
+# --------------------------------------------------------------------------
+
+def _setup_investigator_context(task_id: str = "submit-test",
+                                run_id: str = "RUN-SP", ticket_id: str = "TICKET-SP") -> None:
+    """Seed session context so the handler can resolve run_id/ticket_id."""
+    plugin._pre_llm_call(
+        task_id=task_id,
+        user_message=f"run_id: {run_id}\nticket_id: {ticket_id}\npipeline_stage: investigation",
+    )
+
+
+_SUBSTANTIVE_SUMMARY = (
+    "Investigated the reported SAP usage decision for Heat 1900002 / Inspection Lot "
+    "49900000002. The XStudio_Xbatch canonical surfaces contain no EAF, LRF, CCM, "
+    "work-order, SAP posting, or billet genealogy rows for this heat. No UsageDecision "
+    "API transaction exists for identifier 49900000002."
+)
+
+
+def test_submit_proposal_assembles_complete_metadata_from_flat_args() -> None:
+    _setup_investigator_context()
+    with mock.patch.object(plugin.subprocess, "run") as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        result = plugin._submit_proposal_handler(
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+            task_id="submit-test",
+        )
+    parsed = json.loads(result)
+    assert parsed["ok"] is True
+    assert parsed["response_type"] == "UPDATE"
+    assert parsed["claim_status"] == "UNVERIFIED"
+    assert parsed["evidence_status"] == "INCOMPLETE"
+    # Verify the metadata passed to hermes kanban complete
+    call_args = mock_run.call_args[0][0]
+    assert call_args[:4] == ["hermes", "kanban", "complete", "submit-test"]
+    metadata_idx = call_args.index("--metadata")
+    metadata = json.loads(call_args[metadata_idx + 1])
+    assert metadata["run_id"] == "RUN-SP"
+    assert metadata["ticket_id"] == "TICKET-SP"
+    assert metadata["response_type"] == "UPDATE"
+    assert metadata["claims_contract_version"] == 1
+    assert metadata["submitted_via"] == "xstudio_submit_proposal"
+    assert len(metadata["claims"]) == 1
+    claim = metadata["claims"][0]
+    assert claim["id"] == "C1"
+    assert claim["claim"] == _SUBSTANTIVE_SUMMARY
+    assert claim["material"] is True
+    assert claim["status"] == "UNVERIFIED"
+    assert claim["evidence"] == []
+
+
+def test_submit_proposal_requires_response_type_and_summary() -> None:
+    _setup_investigator_context(task_id="submit-missing")
+    # Missing response_type
+    result = json.loads(plugin._submit_proposal_handler(
+        {"summary": _SUBSTANTIVE_SUMMARY},
+        task_id="submit-missing",
+    ))
+    assert result["ok"] is False
+    assert "response_type" in result["error"]
+
+    # Missing summary
+    result = json.loads(plugin._submit_proposal_handler(
+        {"response_type": "UPDATE", "summary": "Too short"},
+        task_id="submit-missing",
+    ))
+    assert result["ok"] is False
+    assert "160" in result["error"] or "characters" in result["error"]
+
+
+def test_submit_proposal_requires_action_id_for_verified_claims() -> None:
+    _setup_investigator_context(task_id="submit-verified")
+    result = json.loads(plugin._submit_proposal_handler(
+        {"response_type": "RESOLUTION", "summary": _SUBSTANTIVE_SUMMARY,
+         "claim_status": "VERIFIED"},
+        task_id="submit-verified",
+    ))
+    assert result["ok"] is False
+    assert "action_id" in result["error"]
+
+
+def test_submit_proposal_verified_claim_with_action_id_passes() -> None:
+    _setup_investigator_context(task_id="submit-verified-ok")
+    with mock.patch.object(plugin.subprocess, "run") as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        result = json.loads(plugin._submit_proposal_handler(
+            {"response_type": "RESOLUTION", "summary": _SUBSTANTIVE_SUMMARY,
+             "claim_status": "VERIFIED", "action_id": "ACTION-123"},
+            task_id="submit-verified-ok",
+        ))
+    assert result["ok"] is True
+    assert result["claim_status"] == "VERIFIED"
+    assert result["evidence_status"] == "COMPLETE"
+    metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
+    assert metadata["claims"][0]["evidence"] == [{"action_id": "ACTION-123"}]
+
+
+def test_submit_proposal_generates_reply_text_when_absent() -> None:
+    _setup_investigator_context(task_id="submit-reply")
+    with mock.patch.object(plugin.subprocess, "run") as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        plugin._submit_proposal_handler(
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+            task_id="submit-reply",
+        )
+    metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
+    assert metadata["reply_text"].startswith("Evidence status: INCOMPLETE.")
+    assert _SUBSTANTIVE_SUMMARY in metadata["reply_text"]
+
+
+def test_submit_proposal_uses_explicit_reply_text_when_provided() -> None:
+    _setup_investigator_context(task_id="submit-reply-explicit")
+    with mock.patch.object(plugin.subprocess, "run") as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        plugin._submit_proposal_handler(
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY,
+             "reply_text": "Custom user-facing message."},
+            task_id="submit-reply-explicit",
+        )
+    metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
+    assert metadata["reply_text"] == "Custom user-facing message."
+
+
+def test_submit_proposal_injects_run_and_ticket_from_context() -> None:
+    _setup_investigator_context(task_id="submit-ctx", run_id="CTX-RUN", ticket_id="CTX-TICKET")
+    with mock.patch.object(plugin.subprocess, "run") as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        plugin._submit_proposal_handler(
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+            task_id="submit-ctx",
+        )
+    metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
+    assert metadata["run_id"] == "CTX-RUN"
+    assert metadata["ticket_id"] == "CTX-TICKET"
+
+
+def test_submit_proposal_does_not_consume_xstudio_tool_budget() -> None:
+    _setup_investigator_context(task_id="submit-budget")
+    # Fill up the budget to MAX_TOOL_CALLS - 1
+    with plugin._lock:
+        plugin._session_calls["submit-budget"] = plugin.MAX_TOOL_CALLS - 1
+    # The pre_tool_call should not block xstudio_submit_proposal
+    result = plugin._pre_tool_call(
+        "xstudio_submit_proposal",
+        {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+        task_id="submit-budget",
+    )
+    assert result is None  # passes through without consuming budget
+    # Budget should be unchanged
+    with plugin._lock:
+        assert plugin._session_calls["submit-budget"] == plugin.MAX_TOOL_CALLS - 1
+
+
+def test_submit_proposal_sets_incomplete_evidence_for_update() -> None:
+    _setup_investigator_context(task_id="submit-evidence")
+    with mock.patch.object(plugin.subprocess, "run") as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        result = json.loads(plugin._submit_proposal_handler(
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY,
+             "claim_status": "INFERRED"},
+            task_id="submit-evidence",
+        ))
+    assert result["evidence_status"] == "INCOMPLETE"
+
+
+def test_submit_proposal_includes_optional_fields_in_metadata() -> None:
+    _setup_investigator_context(task_id="submit-optional")
+    with mock.patch.object(plugin.subprocess, "run") as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        plugin._submit_proposal_handler(
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY,
+             "problem_summary": "SAP posting missing",
+             "root_cause": "Heat not in MES",
+             "resolution": "Manual data entry required"},
+            task_id="submit-optional",
+        )
+    metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
+    assert metadata["problem_summary"] == "SAP posting missing"
+    assert metadata["root_cause"] == "Heat not in MES"
+    assert metadata["resolution"] == "Manual data entry required"
+
+
+def test_submit_proposal_rejects_when_context_missing() -> None:
+    # Don't set up context
+    result = json.loads(plugin._submit_proposal_handler(
+        {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+        task_id="submit-no-context",
+    ))
+    assert result["ok"] is False
+    assert "run_id" in result["error"]
 
 
 def test_empty_kanban_completion_is_repaired_without_another_model_turn() -> None:

@@ -67,6 +67,10 @@ xstudio_read_procedure
 xstudio_resolve_heat
 xstudio_get_run_actions
 xstudio_save_ledger
+xstudio_heat_context
+xstudio_sap_api_context
+xstudio_work_order_context
+xstudio_submit_proposal
 ```
 
 Do not use terminal to run the orchestrator, Windows Python, sqlcmd, pyodbc, or package installation. The harness owns transport.
@@ -132,7 +136,24 @@ unresolved/beyond L2                -> L3_ESCALATION
 
 ## Required completion metadata
 
-Your `kanban_complete` must make the proposal structurally reviewable:
+### Preferred: `xstudio_submit_proposal` (flat arguments)
+
+Call `xstudio_submit_proposal` with simple string fields. The harness automatically builds the nested claims and metadata structure:
+
+```text
+xstudio_submit_proposal(
+  response_type="UPDATE",             # UPDATE|QUESTION|RESOLUTION|L3_ESCALATION|NEEDS_HUMAN_ACTION
+  summary="<substantive findings>",   # at least 160 chars of live evidence findings
+  claim_status="UNVERIFIED",          # VERIFIED|INFERRED|UNVERIFIED|CONTRADICTED (default: UNVERIFIED)
+  action_id="<action-id-if-verified>" # required only when claim_status is VERIFIED
+)
+```
+
+Optional arguments: `reply_text`, `evidence_status` (`COMPLETE`|`INCOMPLETE`), `problem_summary`, `root_cause`, `resolution`.
+
+### Direct `kanban_complete` (advanced / nested schema)
+
+If using `kanban_complete` directly, you must make the proposal structurally reviewable:
 
 ```json
 {

@@ -128,7 +128,29 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "Read canonical work-order and campaign evidence using fixed reviewed recipes.",
         {"work_order": _STRING, "campaign": _STRING, "database": _DATABASE}, ("work_order",),
     ),
+    "xstudio_submit_proposal": _tool_schema(
+        "Complete the L2 investigation with a flat proposal. Preferred over kanban_complete "
+        "for submitting investigation results. The harness assembles full structured metadata.",
+        {
+            "response_type": {"type": "string", "enum": [
+                "UPDATE", "QUESTION", "RESOLUTION", "L3_ESCALATION", "NEEDS_HUMAN_ACTION",
+            ]},
+            "summary": _STRING,
+            "reply_text": _STRING,
+            "evidence_status": {"type": "string", "enum": ["COMPLETE", "INCOMPLETE"]},
+            "claim_status": {"type": "string", "enum": [
+                "VERIFIED", "INFERRED", "UNVERIFIED", "CONTRADICTED",
+            ]},
+            "action_id": _STRING,
+            "problem_summary": _STRING,
+            "root_cause": _STRING,
+            "resolution": _STRING,
+        },
+        ("response_type", "summary"),
+    ),
 }
+
+_VALID_RESPONSE_TYPES = {"UPDATE", "QUESTION", "RESOLUTION", "L3_ESCALATION", "NEEDS_HUMAN_ACTION"}
 
 TOOL_OPERATIONS: dict[str, str] = {
     "xstudio_select": "select",
@@ -433,10 +455,164 @@ def _legacy_tool_handler(params: dict[str, Any], **kwargs: Any) -> str:
     return _invoke_bridge(params)
 
 
-TOOL_HANDLERS = {
+def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
+    """Assemble flat proposal args into full kanban_complete metadata, then complete the task.
+
+    This is trusted harness code. The model fills in simple top-level string
+    fields; this handler builds the nested claims array and metadata dict that
+    the completion contract requires, then calls ``hermes kanban complete``
+    directly.  It does NOT consume the XStudio tool-call budget and does NOT
+    go through the SQL bridge.
+    """
+    session = _session_key(kwargs.get("task_id", ""))
+    context = _context_for(session, kwargs)
+    params = dict(params or {})
+
+    # --- validate required fields ---
+    response_type = str(params.get("response_type") or "").upper().strip()
+    summary = str(params.get("summary") or "").strip()
+    if response_type not in _VALID_RESPONSE_TYPES:
+        return json.dumps({
+            "ok": False,
+            "error": f"response_type must be one of {sorted(_VALID_RESPONSE_TYPES)}, got {response_type!r}",
+            "retry_same_call": False,
+        })
+    if len(summary) < MIN_SUBSTANTIVE_COMPLETION_CHARS:
+        return json.dumps({
+            "ok": False,
+            "error": (
+                f"summary must be at least {MIN_SUBSTANTIVE_COMPLETION_CHARS} characters of "
+                f"substantive investigation findings (got {len(summary)})"
+            ),
+            "retry_same_call": False,
+        })
+
+    run_id = context.get("run_id", "")
+    ticket_id = context.get("ticket_id", "")
+    if not run_id or not ticket_id:
+        return json.dumps({
+            "ok": False,
+            "error": "run_id and ticket_id could not be resolved from session context; "
+                     "ensure the task body was parsed before calling xstudio_submit_proposal",
+            "retry_same_call": False,
+        })
+
+    # --- claim assembly ---
+    claim_status = str(params.get("claim_status") or "UNVERIFIED").upper().strip()
+    if claim_status not in {"VERIFIED", "INFERRED", "UNVERIFIED", "CONTRADICTED"}:
+        claim_status = "UNVERIFIED"
+
+    action_id = str(params.get("action_id") or "").strip()
+    if claim_status == "VERIFIED" and not action_id:
+        return json.dumps({
+            "ok": False,
+            "error": "VERIFIED claims require action_id — a current-run Hermes action ID. "
+                     "Use xstudio_get_run_actions to find one, or set claim_status to INFERRED/UNVERIFIED.",
+            "retry_same_call": False,
+        })
+
+    evidence: list[dict[str, str]] = []
+    if action_id:
+        evidence = [{"action_id": action_id}]
+
+    claim = {
+        "id": "C1",
+        "claim": summary,
+        "material": True,
+        "status": claim_status,
+        "evidence": evidence,
+    }
+
+    # --- evidence status ---
+    evidence_status = str(params.get("evidence_status") or "").upper().strip()
+    if evidence_status not in {"COMPLETE", "INCOMPLETE"}:
+        # Default: COMPLETE only for RESOLUTION with VERIFIED claim
+        evidence_status = "COMPLETE" if (
+            response_type == "RESOLUTION" and claim_status == "VERIFIED"
+        ) else "INCOMPLETE"
+
+    # --- reply text ---
+    reply_text = str(params.get("reply_text") or "").strip()
+    if not reply_text:
+        if evidence_status == "INCOMPLETE":
+            reply_text = (
+                "Evidence status: INCOMPLETE. The investigation produced findings "
+                "that require independent review before any cause or resolution is "
+                "treated as verified.\n\n" + summary
+            )
+        else:
+            reply_text = summary
+
+    # --- metadata assembly ---
+    metadata: dict[str, Any] = {
+        "run_id": run_id,
+        "ticket_id": ticket_id,
+        "response_type": response_type,
+        "reply_text": reply_text,
+        "claims_contract_version": 1,
+        "claims": [claim],
+        "evidence_status": evidence_status,
+        "submitted_via": "xstudio_submit_proposal",
+    }
+    for optional_field in ("problem_summary", "root_cause", "resolution"):
+        value = str(params.get(optional_field) or "").strip()
+        if value:
+            metadata[optional_field] = value
+
+    # --- invoke kanban complete ---
+    task_id = str(kwargs.get("task_id") or "")
+    if not task_id:
+        return json.dumps({
+            "ok": False,
+            "error": "task_id is not available in the handler context",
+            "retry_same_call": False,
+        })
+
+    cmd = [
+        "hermes", "kanban", "complete", task_id,
+        "--summary", summary[:500],
+        "--result", response_type,
+        "--metadata", json.dumps(metadata, separators=(",", ":"), default=str),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return json.dumps({
+            "ok": False,
+            "error": f"kanban complete failed: {type(exc).__name__}: {exc}",
+            "retry_same_call": False,
+        })
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip()[:500]
+        return json.dumps({
+            "ok": False,
+            "error": f"kanban complete exited {proc.returncode}: {stderr}",
+            "retry_same_call": False,
+        })
+
+    return json.dumps({
+        "ok": True,
+        "submitted": True,
+        "response_type": response_type,
+        "evidence_status": evidence_status,
+        "claim_status": claim_status,
+        "message": (
+            f"Proposal submitted as {response_type} with {claim_status} claim. "
+            "The deterministic reconciler will create a reviewer and handle publication."
+        ),
+    })
+
+
+# Build handlers for bridge-routed tools; xstudio_submit_proposal has its own handler.
+_BRIDGE_TOOLS = {name for name in TOOL_SCHEMAS if name != "xstudio_submit_proposal"}
+
+TOOL_HANDLERS: dict[str, Any] = {
     name: (lambda params, _name=name, **kwargs: _named_tool_handler(_name, params, **kwargs))
-    for name in TOOL_SCHEMAS
+    for name in _BRIDGE_TOOLS
 }
+TOOL_HANDLERS["xstudio_submit_proposal"] = _submit_proposal_handler
 
 
 def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
@@ -522,6 +698,11 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
         command = _terminal_command(args)
         if any(marker in command for marker in _BLOCKED_TERMINAL_MARKERS):
             return {"action": "block", "message": _BLOCK_MESSAGE}
+        return None
+
+    # xstudio_submit_proposal does its own validation in _submit_proposal_handler
+    # and is not a bridge/SQL tool, so it must not consume the investigation budget.
+    if tool_name == "xstudio_submit_proposal":
         return None
 
     if tool_name not in TOOL_OPERATIONS and tool_name != TOOL_NAME:
@@ -637,6 +818,8 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str]:
             "L2 EXECUTION CONTRACT: use only the named xstudio_* tools in the xstudio_l2 toolset for XStudio/Helpdesk SQL, "
             "schema discovery, run evidence, ticket refresh, and ledger work. "
             "Each tool has a small required schema; never invent an operation field. "
+            "When completing the investigation, use xstudio_submit_proposal(response_type,summary) "
+            "instead of kanban_complete — it assembles full structured metadata from flat arguments. "
             f"Compact investigation state:{{known_context:{ids or ' none'}, live_calls_used:{used}, "
             f"live_calls_remaining:{max(0, MAX_TOOL_CALLS - used)}}}. "
             "Any raw Python/sqlcmd/pyodbc/pip command shown in older task text is legacy and "
