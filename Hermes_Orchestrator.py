@@ -1235,7 +1235,9 @@ def run_readonly_query(client: "HermesL2Client", sql: str, database: Optional[st
     return _rows_as_dicts(cur)
 
 
-def poll_and_claim(client: HermesL2Client, eligible_status_csv: str, bot_label: Optional[str] = None) -> Dict[str, Any]:
+def poll_and_claim(client: HermesL2Client, eligible_status_csv: str,
+                   bot_label: Optional[str] = None,
+                   ticket_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Deterministic, safe half of a cycle: recover stale runs, find candidates,
     atomically claim ONE, load its full context (including any structured L1
@@ -1252,7 +1254,11 @@ def poll_and_claim(client: HermesL2Client, eligible_status_csv: str, bot_label: 
     result: Dict[str, Any] = {"status": "STARTED"}
     result["stale_runs_recovered"] = client.recover_stale_runs()
 
-    candidates = client.get_candidate_tickets(eligible_status_csv, batch_size=20)
+    candidates = client.get_candidate_tickets(
+        eligible_status_csv, batch_size=500 if ticket_id else 20,
+    )
+    if ticket_id:
+        candidates = [c for c in candidates if str(c.get("TicketID")) == str(ticket_id)]
     if not candidates:
         result["status"] = "NO_TICKETS"
         return result
@@ -1582,7 +1588,10 @@ def main() -> None:
         if args.poll:
             if not args.eligible_status:
                 parser.error("--eligible-status is required with --poll")
-            result = poll_and_claim(client, args.eligible_status, bot_label=args.bot_label)
+            result = poll_and_claim(
+                client, args.eligible_status, bot_label=args.bot_label,
+                ticket_id=args.ticket_id,
+            )
             print(json.dumps(result, indent=2, default=str))
             return
 

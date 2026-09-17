@@ -1694,11 +1694,10 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
     check_gbrain_dependency(args)
 
     eligible = str(binding.get("eligible_ticket_status") or args.eligible_status or DEFAULT_ELIGIBLE_STATUS)
-    poll = run_orchestrator(
-        args,
-        ["--poll", "--eligible-status", eligible, "--bot-label", INVESTIGATOR_PROFILE],
-        timeout=90,
-    )
+    poll_args = ["--poll", "--eligible-status", eligible, "--bot-label", INVESTIGATOR_PROFILE]
+    if args.ticket_id:
+        poll_args += ["--ticket-id", args.ticket_id]
+    poll = run_orchestrator(args, poll_args, timeout=90)
     if not isinstance(poll, dict):
         raise RuntimeError(f"unexpected poll response: {poll!r}")
     if poll.get("status") in ("NO_TICKETS", "NO_CLAIMABLE_TICKET"):
@@ -1850,6 +1849,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--username", default=os.environ.get("MSSQL_MCP_USER") or DEFAULT_USER)
     p.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))
     p.add_argument("--eligible-status", default=DEFAULT_ELIGIBLE_STATUS)
+    p.add_argument("--ticket-id", default=None,
+                   help="Trusted operator acceptance mode: claim this eligible ticket only.")
     p.add_argument("--stale-after-minutes", type=int, default=ORPHAN_GRACE_MINUTES)
     p.add_argument("--dry-run", action="store_true")
     return p
