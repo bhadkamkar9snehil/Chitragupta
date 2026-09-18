@@ -19,9 +19,9 @@ Each newly emitted trace event has:
 
 - `TraceEventID`: UUID created once before its JSONL line is appended. It is
   persisted through retries and is unique in SQL.
-- `EventOnIst`: the source event time in IST, emitted as an ISO-8601 value with
-  the `+05:30` offset and stored as IST wall-clock time in SQL.
-- `IngestedOnIst`: the SQL ingestion time in IST.
+- `EventOnIst`: the source event time as `datetimeoffset(3)` in IST, carrying
+  the `+05:30` offset rather than an unlabelled wall-clock value.
+- `IngestedOnIst`: the SQL ingestion time as `datetimeoffset(3)` in IST.
 - `TaskID`, and a run/ticket identity either on the event itself or in a
   durable `trace_context` event for that task.
 
@@ -31,20 +31,21 @@ cursor-save failure do not create another trace row. A filtered unique index
 preserves historical rows that have no event ID.
 
 The hook remains non-blocking. It continues to write early events immediately,
-then emits exactly one `trace_context` event after its background Kanban lookup
-resolves the task to `RunID` and `TicketID`. Projection views use that context
-to correlate the early rows. If the Kanban lookup cannot resolve, the hook
-emits an explicit `trace_correlation_failed` record rather than making the
-coverage gap silent.
+then emits exactly one `trace_context` row after its background
+`hermes kanban show <task-id> --json` lookup finishes. A resolved context row
+maps `TaskID` to `RunID`/`TicketID`; a failed context row records a failed
+status with no inferred IDs. Projection views use this one existing-table
+mapping to correlate early rows. They never silently treat a missing mapping
+as successful coverage.
 
 ## Time contract
 
-All new source times are generated with `Asia/Kolkata`; SQL defaults use
-`SYSDATETIMEOFFSET() AT TIME ZONE 'India Standard Time'` and expose IST wall
-clock values. Existing `EventOn` is retained for compatibility but is written
-in IST for every new row. New views use `EventOnIst`/`IngestedOnIst` and name
-their output `...Ist`. Existing historical values are left unchanged and are
-not relabelled as IST evidence.
+All new source times are generated with `Asia/Kolkata`; SQL stores and exposes
+them as `datetimeoffset(3)` at `+05:30`. Existing `EventOn` is retained only
+for compatibility and is written in IST wall-clock time for every new row.
+New views use `EventOnIst`/`IngestedOnIst` and name their output `...Ist`.
+Existing historical values are left unchanged and are not relabelled as IST
+evidence.
 
 ## Read contract
 
@@ -56,13 +57,16 @@ not relabelled as IST evidence.
 - `FirstEventOnIst`, `LastEventOnIst`, `IngestedFirstOnIst`,
   `IngestedLastOnIst`, and IST wall-clock duration.
 
-A new read-only run-observability view joins L2 responses to the normalized
+`trace_context` rows establish correlation but are excluded from all tool,
+API, token, duration, and event-count metrics.
+
+One new read-only run-observability view joins L2 responses to the normalized
 trace projection and reports one of:
 
 - `OBSERVED`: correlated trace exists for the run;
 - `PENDING`: the run remains active and has no correlated trace yet;
-- `GAP`: the run is terminal but lacks correlated trace, or has an explicit
-  correlation failure.
+- `GAP`: the run is terminal but lacks a valid task-context mapping or has a
+  failed context row.
 
 Tool failures and blocked calls remain distinct from model/API failures. A
 published lifecycle result is not treated as proof that its tool execution was
@@ -73,10 +77,10 @@ error-free.
 Edit the numbered SQL sources (`00_tables_and_indexes.sql`,
 `50_response_and_workflow.sql`, `60_metrics_and_reporting.sql`) and regenerate
 `00_Hermes_L2_FULL_INSTALL.sql`. Update the trace plugin, drainer, and their
-tests. Deploy through the existing L2 deployer and verify the live schema,
-idempotent duplicate handling, a correlated trace, IST-only projections, and
-the lifecycle-observability status without manually claiming a production
-ticket.
+existing tests. Deploy through the existing L2 deployer and verify the live
+schema, idempotent duplicate handling, task-context correlation of early
+events, IST-only projections, and lifecycle-observability status without
+manually claiming a production ticket.
 
 ## Non-goals
 
