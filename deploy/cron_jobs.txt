@@ -7,46 +7,35 @@
     Name:      Session maintenance
     Schedule:  every 360m
     Repeat:    ∞
-    Next run:  2026-09-07T17:51:52.547666+00:00
+    Next run:  2026-09-18T09:35:11.580896+00:00
     Deliver:   local
     Script:    session_maintenance.py
     Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-07T11:51:52.547666+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-07T11:50:53.936668+00:00)
-    Execution: completed  4825eb1cd4f44f69b5caeeb5cef99e49
-
-  f1915c187f11 [active]
-    Name:      L2 Ticket Scout (Kanban bridge)
-    Schedule:  every 2m
-    Repeat:    ∞
-    Next run:  2026-09-07T13:09:57.675053+00:00
-    Deliver:   local
-    Script:    ticket_scout.py
-    Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-07T13:05:46.903260+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-07T13:07:46.903260+00:00)
-    Execution: running  d5682717e87c4a78b432d42f5f14b725
+    Last run:  2026-09-18T03:35:11.580896+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-18T03:35:02.509183+00:00)
+    Execution: completed  4420d53cb7784288bc8952d997dfb01f
 
   97bfe2a17d9d [active]
     Name:      L2 Kanban Completion Audit (no-LLM)
     Schedule:  every 10m
     Repeat:    ∞
-    Next run:  2026-09-07T13:19:29.424901+00:00
+    Next run:  2026-09-18T08:31:02.403906+00:00
     Deliver:   local
     Script:    audit_kanban_completions.py
     Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-07T13:09:29.424901+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-07T13:08:12.599655+00:00)
-    Execution: completed  2cdc258c0bee465d9d17c8b483425367
+    Last run:  2026-09-18T08:21:02.403906+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-18T08:20:56.334377+00:00)
+    Execution: completed  6377e4b06fd64de487b1df393d227450
 
   ba0827aece96 [active]
     Name:      Reapply mem0 LM Studio patch (no-LLM)
     Schedule:  every 1440m
     Repeat:    ∞
-    Next run:  2026-09-07T18:04:10.587385+00:00
+    Next run:  2026-09-18T11:54:38.036771+00:00
     Deliver:   local
     Script:    reapply_mem0_patch.py
     Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-06T18:04:10.587385+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-06T18:03:48.679572+00:00)
-    Execution: completed  0897cf5d70ca47a3aa777603ac7ed95a
+    Last run:  2026-09-17T11:54:38.036771+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-17T11:54:01.337553+00:00)
+    Execution: completed  20bec1f90fbc48fe8db5167a87057079
+

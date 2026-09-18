@@ -42,7 +42,7 @@ kanban:
 onboarding:
   seen:
     tool_progress_prompt: true
-_config_version: 40
+_config_version: 45
 platforms:
   api_server:
     host: 0.0.0.0
@@ -64,6 +64,7 @@ known_builtin_toolsets:
     - clarify
     - code_execution
     - computer_use
+    - connections
     - context_engine
     - cronjob
     - delegation
@@ -86,6 +87,9 @@ known_builtin_toolsets:
     - web
     - x_search
     - yuanbao
+tools:
+  tool_search:
+    enabled: off
 
 # ── Security ──────────────────────────────────────────────────────────
 # Secret redaction is ON by default — strings that look like API keys,
@@ -124,6 +128,3 @@ known_builtin_toolsets:
 # fallback_model:
 #   provider: openrouter
 #   model: anthropic/claude-sonnet-4
-tools:
-  tool_search:
-    enabled: off
