@@ -34,6 +34,14 @@ def _successful_calls(events: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for event in events:
         if event.get("event_type") != "post_tool_call" or event.get("status") != "ok":
             continue
+        result = event.get("result")
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except (ValueError, TypeError):
+                pass
+        if isinstance(result, dict) and (result.get("ok") is False or result.get("isError") is True):
+            continue
         before = pre.get(event.get("tool_call_id"))
         if before and before.get("tool_name") == event.get("tool_name"):
             calls.append(before)
@@ -140,7 +148,7 @@ def evaluate_run(bundle: Dict[str, Any], oracle: Dict[str, Any]) -> Dict[str, An
     compute_events = [event for event in events if event.get("event_type") in {"compute_sample", "gpu_sample"}]
     lifecycle = {str(item).lower() for item in bundle.get("lifecycle_events") or []}
     recovery_markers = {"recovery", "rework", "gave_up", "orphan_recovery", "unreviewable_rework"}
-    approved = str((bundle.get("review") or {}).get("decision") or "").upper() == "APPROVE"
+    approved = str((bundle.get("review") or {}).get("decision") or "").upper() in {"APPROVE", "APPROVED"}
 
     return {
         # Kanban and skill calls are valid Hermes calls too. Transport policy is
@@ -156,7 +164,8 @@ def evaluate_run(bundle: Dict[str, Any], oracle: Dict[str, Any]) -> Dict[str, An
         "successful_multi_turn_tool_continuation": all(
             _has_tool_continuation(events, role) for role in required_tools
         ),
-        "live_evidence_grounding": not invalid_evidence_claims and bool(claims),
+        "live_evidence_grounding": not invalid_evidence_claims and bool(claims)
+            and all(str(claim.get("status") or "").upper() == "VERIFIED" for claim in claims),
         "invalid_evidence_claims": invalid_evidence_claims,
         "unsupported_material_claims": unsupported,
         "reviewer_false_approval": approved and bool(unsupported),

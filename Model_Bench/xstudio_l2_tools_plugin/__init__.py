@@ -137,6 +137,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             ]},
             "summary": _STRING,
             "reply_text": _STRING,
+            "requester_question": {"type": "string", "description": "Specific question for the requester when a necessary identifier or fact is missing. Sets response_type=QUESTION and waits for their answer instead of retrying."},
+            "next_investigation_step": {"type": "string", "description": "For an incomplete UPDATE, the concrete new evidence check the next attempt can perform without waiting for requester information. Required for publication."},
             "evidence_status": {"type": "string", "enum": ["COMPLETE", "INCOMPLETE"]},
             "claim_status": {"type": "string", "enum": [
                 "VERIFIED", "INFERRED", "UNVERIFIED", "CONTRADICTED",
@@ -467,6 +469,8 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
     session = _session_key(kwargs.get("task_id", ""))
     context = _context_for(session, kwargs)
     params = dict(params or {})
+    if context.get("pipeline_stage", "").lower() == "review":
+        return json.dumps({"ok": False, "error": "Reviewers judge the frozen proposal: use kanban_complete to approve or kanban_block to reject. Do not submit a replacement proposal.", "retry_same_call": False})
 
     # --- validate required fields ---
     response_type = str(params.get("response_type") or "").upper().strip()
@@ -494,6 +498,16 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
             "ok": False,
             "error": "run_id and ticket_id could not be resolved from session context; "
                      "ensure the task body was parsed before calling xstudio_submit_proposal",
+            "retry_same_call": False,
+        })
+
+    requester_question = str(params.get("requester_question") or "").strip()
+    if requester_question:
+        response_type = "QUESTION"
+    if response_type == "QUESTION" and not requester_question:
+        return json.dumps({
+            "ok": False,
+            "error": "QUESTION requires requester_question: ask for the specific missing fact in customer-facing language.",
             "retry_same_call": False,
         })
 
@@ -561,7 +575,11 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
         "evidence_status": evidence_status,
         "submitted_via": "xstudio_submit_proposal",
     }
-    for optional_field in ("problem_summary", "root_cause", "resolution"):
+    if requester_question:
+        metadata["reply_text"] = requester_question
+        metadata["requester_question"] = requester_question
+        metadata["investigator_notes"] = summary
+    for optional_field in ("problem_summary", "root_cause", "resolution", "next_investigation_step"):
         value = str(params.get(optional_field) or "").strip()
         if value:
             metadata[optional_field] = value
@@ -824,13 +842,28 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str]:
     with _lock:
         used = _session_calls.get(session, 0)
     ids = "".join(f" {key}={value}" for key, value in context.items())
+    completion_contract = (
+        "You are the REVIEWER. Judge the frozen proposal; never submit a replacement. "
+        "Approve with kanban_complete or reject with kanban_block. First check response type: "
+        "reject UPDATE if only missing requester information can unblock the case, requiring QUESTION. "
+        "Reject RESOLUTION if it only diagnoses a problem or proposes an unexecuted fix. "
+        "Reject unsupported causal assertions without broad schema exploration. "
+        if context.get("pipeline_stage", "").lower() == "review" else
+        "When completing the investigation, use xstudio_submit_proposal(response_type,summary) "
+        "instead of kanban_complete. If only the requester can supply a missing incident identifier "
+        "or reproduction detail, submit QUESTION with requester_question containing the exact question "
+        "now; do not submit UPDATE or query unrelated sample rows. "
+    )
     return {
         "context": (
             "L2 EXECUTION CONTRACT: use only the named xstudio_* tools in the xstudio_l2 toolset for XStudio/Helpdesk SQL, "
             "schema discovery, run evidence, ticket refresh, and ledger work. "
             "Each tool has a small required schema; never invent an operation field. "
-            "When completing the investigation, use xstudio_submit_proposal(response_type,summary) "
-            "instead of kanban_complete — it assembles full structured metadata from flat arguments. "
+            f"{completion_contract}"
+            "UPDATE retries automatically and cannot obtain a user's answer. "
+            "Incomplete UPDATE requires next_investigation_step naming a concrete new evidence check. "
+            "RESOLUTION closes the ticket: require COMPLETE evidence, VERIFIED claims with action_id, "
+            "and resolution describing an observed successful outcome. A diagnosis or proposed fix is not resolution. "
             f"Compact investigation state:{{known_context:{ids or ' none'}, live_calls_used:{used}, "
             f"live_calls_remaining:{max(0, MAX_TOOL_CALLS - used)}}}. "
             "Any raw Python/sqlcmd/pyodbc/pip command shown in older task text is legacy and "

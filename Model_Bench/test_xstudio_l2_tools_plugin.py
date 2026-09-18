@@ -1085,6 +1085,44 @@ def test_empty_kanban_block_is_repaired_with_a_safe_reason() -> None:
     assert result["args"]["reason"]
 
 
+def test_requester_question_produces_question_with_customer_text() -> None:
+    _setup_investigator_context(task_id="submit-question")
+    question = "Please provide the affected heat number and the value you entered."
+    with mock.patch.object(plugin.subprocess, "run") as run:
+        run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        result = json.loads(plugin._submit_proposal_handler(
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY,
+             "requester_question": question}, task_id="submit-question"))
+    assert result["response_type"] == "QUESTION"
+    command = run.call_args[0][0]
+    metadata = json.loads(command[command.index("--metadata") + 1])
+    assert metadata["reply_text"] == question
+    assert metadata["investigator_notes"] == _SUBSTANTIVE_SUMMARY
+
+
+def test_question_without_explicit_customer_question_is_rejected() -> None:
+    _setup_investigator_context(task_id="submit-empty-question")
+    with mock.patch.object(plugin.subprocess, "run") as run:
+        result = json.loads(plugin._submit_proposal_handler(
+            {"response_type": "QUESTION", "summary": _SUBSTANTIVE_SUMMARY},
+            task_id="submit-empty-question"))
+    assert result["ok"] is False
+    assert "requester_question" in result["error"]
+    run.assert_not_called()
+
+
+def test_reviewer_cannot_submit_replacement_proposal() -> None:
+    result = plugin._pre_llm_call(task_id="review-role", user_message=(
+        "run_id: RUN-1\nticket_id: TICKET-1\npipeline_stage: review"))
+    assert "kanban_block" in result["context"]
+    assert "When completing the investigation" not in result["context"]
+    with mock.patch.object(plugin.subprocess, "run") as run:
+        response = json.loads(plugin._submit_proposal_handler(
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY}, task_id="review-role"))
+    assert response["ok"] is False
+    run.assert_not_called()
+
+
 def main() -> int:
     tests = [value for name, value in sorted(globals().items())
              if name.startswith("test_") and callable(value)]

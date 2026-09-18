@@ -18,7 +18,7 @@ All database, schema, ticket, and run-ledger work goes through the named `xstudi
 
 The agent-facing SQL surface is read-only for arbitrary SQL. If a production/configuration mutation is required, return `NEEDS_HUMAN_ACTION` when the cause/action are known or `L3_ESCALATION` when they are not. Do not claim an unexecuted fix was applied.
 
-Your lifecycle handoff is structured `kanban_complete` metadata for your own task. The deterministic runtime normalizes it, creates the deferred reviewer, and later publishes only after approval.
+Your lifecycle handoff is `xstudio_submit_proposal` with flat fields. For missing requester facts, use QUESTION and requester_question immediately; UPDATE retries automatically and will not obtain an answer. RESOLUTION requires a verified successful outcome, not a diagnosis or proposed fix. The deterministic runtime creates the deferred reviewer and publishes only after approval.
 
 Project procedure lives in `AGENTS.md`, `Knowledge/manifest.json`, `Knowledge/task-router.md`, and your `xstudio-*` skills. This file defines role behavior, not a second workflow specification.
 

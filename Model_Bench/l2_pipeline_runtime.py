@@ -91,6 +91,29 @@ _INCOMPLETE_EVIDENCE_MARKERS = re.compile(
 )
 
 
+def continuation_issues(proposal: dict[str, Any]) -> list[str]:
+    if (proposal.get("response_type") == "UPDATE"
+            and proposal.get("evidence_status") == "INCOMPLETE"
+            and not str(proposal.get("next_investigation_step") or "").strip()):
+        return ["Incomplete UPDATE requires next_investigation_step with a concrete new evidence check. If only requester facts can unblock progress, use QUESTION with requester_question instead of another retry."]
+    return []
+
+
+def resolution_issues(proposal: dict[str, Any]) -> list[str]:
+    """Closing a ticket requires a verified outcome, not merely a diagnosis."""
+    if proposal.get("response_type") != "RESOLUTION":
+        return []
+    issues = []
+    if proposal.get("evidence_status") != "COMPLETE":
+        issues.append("RESOLUTION requires evidence_status=COMPLETE")
+    material = [c for c in proposal.get("claims") or [] if isinstance(c, dict) and c.get("material", True)]
+    if not material or any(c.get("status") != "VERIFIED" or not c.get("evidence") for c in material):
+        issues.append("RESOLUTION requires verified material claims with current-run evidence")
+    if not str(proposal.get("resolution") or "").strip():
+        issues.append("RESOLUTION requires the verified outcome in resolution; a proposed fix is not a resolution")
+    return issues
+
+
 def annotate_evidence_status(metadata: dict[str, Any]) -> dict[str, Any]:
     """Make incomplete evidence explicit before a reviewer sees a proposal.
 
@@ -169,7 +192,7 @@ def validate_claims_contract(
         status = claim.get("status")
         if status not in VALID_CLAIM_STATUSES:
             issues.append(f"{label}: status {status!r} not in {sorted(VALID_CLAIM_STATUSES)}")
-        if claim.get("material") and status == "VERIFIED":
+        if claim.get("material", True) and status == "VERIFIED":
             evidence = claim.get("evidence")
             if not evidence or not isinstance(evidence, list) or len(evidence) == 0:
                 issues.append(f"{label} ({cid}): material VERIFIED claim has no evidence reference")
@@ -185,6 +208,8 @@ def validate_claims_contract(
                             issues.append(f"{label}.evidence[{j}]: action_id is not in the current run")
                         elif str(action.get("RunID")) != str(run_id) or str(action.get("TicketID")) != str(ticket_id):
                             issues.append(f"{label}.evidence[{j}]: action_id does not belong to the current run/ticket")
+                        elif action.get("Status") and action["Status"] != "SUCCESS":
+                            issues.append(f"{label}.evidence[{j}]: failed or unfinished action cannot support a VERIFIED claim")
 
     return (len(issues) == 0), issues
 
@@ -1029,6 +1054,18 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dic
                 counts["rework_created"] += 1
             continue
 
+        outcome_issues = resolution_issues(proposal) + continuation_issues(proposal)
+        if outcome_issues:
+            if create_rework_card(
+                args, source_task=task,
+                reason="Pre-publish outcome gate: " + "; ".join(outcome_issues)
+                       + ". Use QUESTION for missing requester facts, NEEDS_HUMAN_ACTION for a known unexecuted fix, or UPDATE for concrete further investigation.",
+                investigation_task_id=body_field(task.get("body"), "investigation_task_id"),
+                dry_run=dry_run,
+            ):
+                counts["rework_created"] += 1
+            continue
+
         if proposal.get("contract_repaired_from_unstructured") is True:
             reason = (
                 "Pre-publish proposal gate: the frozen proposal was repaired from an unstructured "
@@ -1609,6 +1646,11 @@ def _query_instructions(run_id: str, ticket_id: str) -> str:
         "pyodbc, credentials, auditing, output limits and retry guards.\n"
         f"Current run_id: {run_id}\nCurrent ticket_id: {ticket_id}\n"
         "The starting bundle and deterministic live route/context are already above; do not refetch them.\n\n"
+        "If the incident cannot be identified from the ticket or its conversation, ask for the missing "
+        "heat/work order, timestamp or reproduction details immediately. Call xstudio_submit_proposal "
+        "with response_type=QUESTION, requester_question=<specific customer question>, and summary=<why needed>. "
+        "Do not sample unrelated production rows or search UAT/test tables merely because a ticket says test. "
+        "UPDATE schedules another investigation; it is wrong when only the requester can unblock you.\n"
         "Tools:\n"
         "  xstudio_select(database,table,columns,where?,order_by?,top?)\n"
         "  xstudio_query(database,sql)\n"

@@ -4,6 +4,14 @@ from Model_Bench.l2_harness_eval import evaluate_run
 
 
 class HarnessEvaluationTests(unittest.TestCase):
+    def test_tool_transport_success_does_not_hide_tool_error(self):
+        events = [
+            {"event_type": "pre_tool_call", "tool_call_id": "x", "tool_name": "xstudio_select"},
+            {"event_type": "post_tool_call", "tool_call_id": "x", "tool_name": "xstudio_select",
+             "status": "ok", "result": '{"ok": false, "error": "Invalid column"}'},
+        ]
+        self.assertFalse(evaluate_run({"events": events}, {})["valid_hermes_tool_calls"])
+
     def test_scores_clean_grounded_two_role_run(self):
         bundle = {
             "run": {"ID": "run-1", "TicketID": "ticket-1", "ProcessStatus": "COMPLETED"},
@@ -151,6 +159,18 @@ class HarnessEvaluationTests(unittest.TestCase):
         report = evaluate_run(base, {})
         self.assertFalse(report["valid_hermes_tool_calls"])
         self.assertEqual(1, len(report["failed_tool_calls"]))
+
+    def test_unverified_claims_are_not_live_evidence_grounding(self):
+        report = evaluate_run({"proposal": {"claims": [
+            {"id": "C1", "claim": "Needs investigation", "status": "UNVERIFIED"}
+        ]}}, {})
+        self.assertFalse(report["live_evidence_grounding"])
+
+    def test_persisted_approved_spelling_detects_false_approval(self):
+        report = evaluate_run({"review": {"decision": "APPROVED"},
+                               "proposal": {"reply_text": "trigger failed"}},
+                              {"forbidden_claim_phrases": ["trigger failed"]})
+        self.assertTrue(report["reviewer_false_approval"])
 
     def test_unverified_claim_cannot_hide_forbidden_customer_prose(self):
         bundle = {

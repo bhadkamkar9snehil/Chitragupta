@@ -107,9 +107,20 @@ Use only when the outcome is verified strongly enough that the user-facing ticke
 
 Use only when a specific requester fact is genuinely required and cannot be established from current evidence.
 
+Pass `requester_question` with the exact customer-facing question. If the ticket and
+conversation do not identify the affected heat/work order or reproduce the symptom,
+ask immediately. Do not sample unrelated heats or search test tables from the word
+"test" alone. The harness publishes the question and waits for the answer.
+
 ### `UPDATE`
 
 Use when there is verified progress but no final outcome yet. This is safer than inventing a terminal result.
+
+An UPDATE becomes eligible for another investigation automatically. Never use it
+when the next step requires the requester to answer a question; use QUESTION.
+For an incomplete UPDATE, provide `next_investigation_step` naming the concrete
+new evidence check that a subsequent attempt can perform. Repeating the previous
+queries or waiting for a requester without asking them is not progress.
 
 If a material fact was not established before the typed-tool budget ended, mark the proposal as
 `Evidence status: INCOMPLETE`, list what was observed, and list what remains unverified. Do not
@@ -149,7 +160,10 @@ xstudio_submit_proposal(
 )
 ```
 
-Optional arguments: `reply_text`, `evidence_status` (`COMPLETE`|`INCOMPLETE`), `problem_summary`, `root_cause`, `resolution`.
+Optional arguments: `reply_text`, `requester_question` (required for QUESTION), `evidence_status` (`COMPLETE`|`INCOMPLETE`), `problem_summary`, `root_cause`, `resolution`.
+RESOLUTION requires COMPLETE evidence, VERIFIED material claims with current-run
+action references, and `resolution` describing the verified successful outcome.
+A proposed correction or diagnosis alone must not close a ticket.
 
 ### Direct `kanban_complete` (advanced / nested schema)
 

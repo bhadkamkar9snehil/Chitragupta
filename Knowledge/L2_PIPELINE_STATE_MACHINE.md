@@ -27,8 +27,9 @@ and configured models' structured tool calling. A failed dependency probe pauses
 that tick; subsequent scout ticks retry the probe. This is a dependency gate,
 not proof that a model will solve an arbitrary ticket.
 
-Primary investigator and reviewer sessions have a 24,576-token context budget,
-2,048-token output cap and 20-turn limit. Their available tools are file, skills,
+Primary investigator and reviewer sessions currently have a 65,792-token context
+budget, 8,192-token output cap and 20-turn limit (verified in the deployed profiles
+on 2026-09-18). Their available tools are file, skills,
 Kanban and typed XStudio evidence. These bounds must be validated against actual
 worker traces whenever the model deployment changes.
 
@@ -85,6 +86,17 @@ SQL / Helpdesk terminal or waiting state
 ```
 
 The investigator never publishes or creates its own reviewer. The reviewer never publishes, reassigns the ticket, or retypes the response for publication.
+
+Missing requester-only information uses QUESTION with an explicit customer question,
+not recurring UPDATEs. The flat proposal adapter preserves investigative notes and
+uses the requester question as the frozen reply. RESOLUTION publication requires
+COMPLETE evidence, verified material claims with current-run references, and an
+explicit verified resolution outcome. An incomplete or diagnosis-only resolution
+returns to the existing bounded rework loop even if a reviewer approved it.
+An incomplete UPDATE must specify `next_investigation_step`; missing continuation
+is returned for bounded rework before publication. A requester-dependent step must
+instead be a QUESTION. Reviewer turn instructions are role-specific, and reviewers
+cannot use the investigator proposal-submission tool.
 
 ## 3. Frozen proposal contract
 

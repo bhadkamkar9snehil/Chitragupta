@@ -23,6 +23,60 @@ SUMMARY_SPEC.loader.exec_module(summary)
 
 
 class PipelineContractTests(unittest.TestCase):
+    def test_incomplete_update_requires_concrete_continuation(self):
+        proposal = {"response_type": "UPDATE", "evidence_status": "INCOMPLETE"}
+        self.assertTrue(mod.continuation_issues(proposal))
+        proposal["next_investigation_step"] = "Inspect the update procedure for the identified record."
+        self.assertEqual([], mod.continuation_issues(proposal))
+        proposal["response_type"] = "QUESTION"
+        proposal.pop("next_investigation_step")
+        self.assertEqual([], mod.continuation_issues(proposal))
+
+    def test_omitted_material_flag_cannot_bypass_evidence_validation(self):
+        valid, issues = mod.validate_claims_contract([
+            {"id": "C1", "claim": "Fixed", "status": "VERIFIED"}])
+        self.assertFalse(valid)
+        self.assertTrue(issues)
+
+    def test_failed_action_is_not_evidence_for_verified_claim(self):
+        valid, issues = mod.validate_claims_contract([
+            {"id": "C1", "claim": "Fixed", "material": True, "status": "VERIFIED",
+             "evidence": [{"action_id": "a"}]}], run_id="r", ticket_id="t",
+            actions=[{"ID": "a", "RunID": "r", "TicketID": "t", "Status": "FAILED"}])
+        self.assertFalse(valid)
+        self.assertTrue(issues)
+
+    def test_resolution_requires_complete_verified_outcome(self):
+        proposal = {"response_type": "RESOLUTION", "evidence_status": "INCOMPLETE",
+                    "claims": [{"id": "C1", "status": "UNVERIFIED", "material": True}],
+                    "reply_text": "The cause is not established."}
+        self.assertTrue(mod.resolution_issues(proposal))
+        proposal.update(evidence_status="COMPLETE", resolution="The reported record is visible now.")
+        proposal["claims"][0].update(status="VERIFIED", evidence=[{"action_id": "a"}])
+        self.assertEqual([], mod.resolution_issues(proposal))
+        proposal.pop("resolution")
+        self.assertTrue(mod.resolution_issues(proposal))
+
+    def test_incomplete_resolution_goes_to_rework_before_publication(self):
+        proposal = {"run_id": "run-1", "ticket_id": "ticket-1", "response_type": "RESOLUTION",
+                    "reply_text": "Evidence status: INCOMPLETE. Proposed correction only.",
+                    "evidence_status": "INCOMPLETE", "claims": [
+                        {"id": "C1", "claim": "Proposed fix", "status": "UNVERIFIED", "material": True}]}
+        task = {"id": "reviewer-1", "assignee": mod.REVIEWER_PROFILE,
+                "body": f"run_id: run-1\nticket_id: ticket-1\nproposal_json: {json.dumps(proposal)}"}
+        with patch.object(mod, "list_tasks", return_value=[task]), \
+             patch.object(mod, "query_active_runs", return_value=[{"ID": "run-1"}]), \
+             patch.object(mod, "_query_published_state", return_value=[]), \
+             patch.object(mod, "safe_query_active_run", return_value=[{"ID": "run-1"}]), \
+             patch.object(mod, "load_workflow_binding", return_value={}), \
+             patch.object(mod, "get_run_actions", return_value=[]), \
+             patch.object(mod, "create_rework_card", return_value=True) as rework, \
+             patch.object(mod, "run_orchestrator") as publish:
+            result = mod.process_approvals(mod.default_args())
+        self.assertEqual(1, result["rework_created"])
+        rework.assert_called_once()
+        publish.assert_not_called()
+
     def test_lifecycle_busy_is_a_successful_retry_exit(self):
         with patch.object(mod, "lifecycle_lock", side_effect=RuntimeError("LIFECYCLE_BUSY: held")):
             self.assertEqual(mod.cli(["reconcile"]), 0)

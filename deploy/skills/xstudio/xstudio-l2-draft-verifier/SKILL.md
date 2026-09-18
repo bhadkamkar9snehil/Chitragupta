@@ -83,6 +83,10 @@ Do not use terminal to recreate SQL transport. Raw writes and arbitrary stored p
 4. **Independently verify live evidence.** Re-read the smallest sufficient set of current rows/definitions through the matching `xstudio_*` tool.
 5. **Check identifiers.** Reject plausible-sounding table/column/object claims that are not real or were never verified.
 6. **Check response-type safety.** A correct fact can still have the wrong workflow outcome.
+   Reject UPDATE when further progress depends on requester information: require
+   QUESTION with a specific customer question instead. Reject RESOLUTION for a
+   diagnosis, proposed correction, or unverified UI behavior. Closing requires a
+   verified successful outcome, COMPLETE evidence and current-run claim references.
 7. **Approve or reject exactly once.**
 
 Do not infer a database storage format from a ticket's extracted identifier. `H99328` in

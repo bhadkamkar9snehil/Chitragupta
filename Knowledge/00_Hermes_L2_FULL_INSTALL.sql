@@ -1909,8 +1909,84 @@ BEGIN
 END;
 GO
 
+-- Operator correction is intentionally outside the worker tool allowlist.
+-- Historical proposals and replies remain unchanged; a Reopen activity records
+-- the invalidated resolution and makes the current ticket eligible again.
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Reopen_Invalid_Resolution_Usp
+(
+    @RunID varchar(36),
+    @Reason nvarchar(max),
+    @ExpectedClosedStatus varchar(50),
+    @EligibleStatus varchar(50),
+    @DryRun bit = 1
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    IF NULLIF(LTRIM(RTRIM(@Reason)), N'') IS NULL
+       OR NULLIF(@ExpectedClosedStatus, '') IS NULL OR NULLIF(@EligibleStatus, '') IS NULL
+       OR @ExpectedClosedStatus = @EligibleStatus
+        THROW 51000, 'Reason and distinct live-verified status bindings are required.', 1;
+    BEGIN TRY
+        BEGIN TRANSACTION;
+        DECLARE @TicketID varchar(36), @Status varchar(50), @Resolved bit, @Snapshot nvarchar(max);
+        SELECT @TicketID = TicketID, @Resolved = IsResolved
+        FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+        WHERE ID = @RunID AND IsDeleted = 0 AND IsActive = 0
+          AND ProcessStatus = 'COMPLETED' AND ResponseType = 'RESOLUTION';
+        IF @TicketID IS NULL THROW 51000, 'Completed inactive resolution run not found.', 1;
+        IF EXISTS (SELECT 1 FROM dbo.Hermes_Ticket_Activity_Trn_Tbl
+                   WHERE RunID = @RunID AND ActivityType = 'Reopen'
+                     AND ActorName = 'Hermes resolution audit' AND IsDeleted = 0)
+        BEGIN
+            SELECT @RunID AS RunID, 'ALREADY_CORRECTED' AS Outcome;
+            COMMIT;
+            RETURN;
+        END;
+        SELECT @Status = Status FROM dbo.Complaint_Mst_Tbl WITH (UPDLOCK, HOLDLOCK)
+        WHERE ID = @TicketID AND ISNULL(IsDeleted, 0) = 0;
+        IF @Status IS NULL OR @Status <> @ExpectedClosedStatus OR ISNULL(@Resolved, 0) <> 1
+            THROW 51000, 'Ticket/run no longer matches the inspected closed resolution.', 1;
+        IF EXISTS (SELECT 1 FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+                   WHERE TicketID = @TicketID AND IsDeleted = 0 AND IsActive = 1)
+            THROW 51000, 'An active run protects this ticket.', 1;
+        IF @RunID <> (SELECT TOP (1) ID FROM dbo.Hermes_L2_Response_Trn_Tbl
+                      WHERE TicketID = @TicketID AND IsDeleted = 0 ORDER BY CreatedOn DESC, AttemptNo DESC)
+            THROW 51000, 'A newer run exists; inspect it before correction.', 1;
+        SELECT @Snapshot = (SELECT @Reason AS reason, r.ReplyText, r.InvestigationJson,
+                                   c.Solution, c.SupportExecutiveRemarks
+                            FROM dbo.Hermes_L2_Response_Trn_Tbl r
+                            JOIN dbo.Complaint_Mst_Tbl c ON c.ID = r.TicketID
+                            WHERE r.ID = @RunID FOR JSON PATH, WITHOUT_ARRAY_WRAPPER);
+        IF @DryRun = 0
+        BEGIN
+            INSERT dbo.Hermes_Ticket_Activity_Trn_Tbl
+                (TicketID, RunID, ActivityType, ActorType, ActorName, NoteText, OldValue, NewValue, IsCustomerVisible, Source)
+            VALUES (@TicketID, @RunID, 'Reopen', 'System', 'Hermes resolution audit',
+                    @Snapshot, @ExpectedClosedStatus, @EligibleStatus, 0, 'T-SQL');
+            UPDATE dbo.Complaint_Mst_Tbl
+            SET Status = @EligibleStatus, Solution = NULL,
+                SupportExecutiveRemarks = CONVERT(varchar(max), N'Reopened after resolution audit: ' + @Reason),
+                ModifiedOn = GETDATE(), Source = 'T-SQL'
+            WHERE ID = @TicketID;
+            UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+            SET IsResolved = 0, ModifiedOn = GETDATE()
+            WHERE ID = @RunID;
+        END;
+        SELECT @RunID AS RunID, @TicketID AS TicketID, @Status AS OldStatus,
+               @EligibleStatus AS NewStatus, @DryRun AS DryRun;
+        COMMIT;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK;
+        THROW;
+    END CATCH;
+END;
 GO
 
 CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Publish_Response_Usp
