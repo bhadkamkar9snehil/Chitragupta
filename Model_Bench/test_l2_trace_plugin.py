@@ -1,7 +1,10 @@
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 PLUGIN_PATH = Path(__file__).parent / "xstudio_l2_trace_plugin" / "__init__.py"
@@ -18,6 +21,73 @@ DRAIN_SPEC.loader.exec_module(drain)
 
 
 class TracePluginTests(unittest.TestCase):
+    def test_write_event_stamps_uuid_and_ist_offset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            events_path = Path(tmp) / "events.jsonl"
+            with patch.object(plugin, "_EVENTS_PATH", events_path):
+                plugin._write_event({"event_type": "pre_tool_call"})
+
+            event = json.loads(events_path.read_text(encoding="utf-8"))
+
+        self.assertRegex(event["trace_event_id"], r"^[0-9a-f-]{36}$")
+        self.assertTrue(event["event_on_ist"].endswith("+05:30"))
+
+    def test_task_resolution_writes_one_context_event(self):
+        events = []
+        result = type("Result", (), {
+            "returncode": 0,
+            "stdout": json.dumps({"body": "run_id: run-1\nticket_id: ticket-1"}),
+        })()
+        original_write = plugin._write_event
+        original_cache = dict(plugin._TASK_CACHE)
+        original_resolving = set(plugin._RESOLVING)
+        try:
+            plugin._write_event = events.append
+            plugin._TASK_CACHE.clear()
+            plugin._RESOLVING.add("t_abc123")
+            with patch.object(plugin.subprocess, "run", return_value=result):
+                plugin._resolve_task_ids_blocking("t_abc123")
+        finally:
+            plugin._write_event = original_write
+            plugin._TASK_CACHE.clear()
+            plugin._TASK_CACHE.update(original_cache)
+            plugin._RESOLVING.clear()
+            plugin._RESOLVING.update(original_resolving)
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("trace_context", events[0]["event_type"])
+        self.assertEqual("resolved", events[0]["status"])
+        self.assertEqual("run-1", events[0]["run_id"])
+        self.assertEqual("ticket-1", events[0]["ticket_id"])
+
+    def test_failed_task_resolution_writes_failed_context_without_ids(self):
+        events = []
+        result = type("Result", (), {"returncode": 1, "stdout": ""})()
+        original_write = plugin._write_event
+        try:
+            plugin._write_event = events.append
+            with patch.object(plugin.subprocess, "run", return_value=result):
+                plugin._resolve_task_ids_blocking("t_def456")
+        finally:
+            plugin._write_event = original_write
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("trace_context", events[0]["event_type"])
+        self.assertEqual("failed", events[0]["status"])
+        self.assertIsNone(events[0]["run_id"])
+        self.assertIsNone(events[0]["ticket_id"])
+
+    def test_drain_parameters_keep_event_identity_and_ist_offset(self):
+        event = {
+            "trace_event_id": "00000000-0000-0000-0000-000000000001",
+            "event_on_ist": "2026-09-18T12:00:00.000+05:30",
+        }
+
+        params = drain.trace_procedure_parameters(event)
+
+        self.assertEqual(event["trace_event_id"], params[0])
+        self.assertEqual("+05:30", params[1].isoformat()[-6:])
+
     def test_post_api_request_records_profile_and_ttft(self):
         events = []
         original_write = plugin._write_event

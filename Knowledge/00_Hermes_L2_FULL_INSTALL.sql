@@ -214,6 +214,9 @@ BEGIN
         Source            varchar(20)  NULL,
         EventType         varchar(100) NOT NULL,
         EventOn           datetime     NOT NULL,
+        TraceEventID      varchar(36)  NULL,
+        EventOnIst        datetimeoffset(3) NULL,
+        IngestedOnIst     datetimeoffset(3) NULL,
         SessionID         varchar(100) NULL,
         TaskID            varchar(100) NULL,
         TurnID            varchar(100) NULL,
@@ -233,6 +236,20 @@ BEGIN
         CONSTRAINT PK_Hermes_Agent_Trace_Trn PRIMARY KEY CLUSTERED (ID)
     );
 END;
+GO
+
+IF COL_LENGTH('dbo.Hermes_Agent_Trace_Trn_Tbl', 'TraceEventID') IS NULL
+    ALTER TABLE dbo.Hermes_Agent_Trace_Trn_Tbl ADD TraceEventID varchar(36) NULL;
+IF COL_LENGTH('dbo.Hermes_Agent_Trace_Trn_Tbl', 'EventOnIst') IS NULL
+    ALTER TABLE dbo.Hermes_Agent_Trace_Trn_Tbl ADD EventOnIst datetimeoffset(3) NULL;
+IF COL_LENGTH('dbo.Hermes_Agent_Trace_Trn_Tbl', 'IngestedOnIst') IS NULL
+    ALTER TABLE dbo.Hermes_Agent_Trace_Trn_Tbl ADD IngestedOnIst datetimeoffset(3) NULL;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl') AND name = 'UX_Hermes_Agent_Trace_TraceEventID')
+    CREATE UNIQUE NONCLUSTERED INDEX UX_Hermes_Agent_Trace_TraceEventID
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(TraceEventID)
+        WHERE TraceEventID IS NOT NULL;
 GO
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl') AND name = 'IX_Hermes_Agent_Trace_RunEvent')
@@ -2595,6 +2612,8 @@ transaction, and the source is a trusted local process, not user input.
 */
 CREATE OR ALTER PROCEDURE dbo.Hermes_Log_Agent_Trace_Usp
 (
+    @TraceEventID       varchar(36) = NULL,
+    @EventOnIst         datetimeoffset(3) = NULL,
     @EventType          varchar(50),
     @EventOn            datetime,
     @SessionID          varchar(100) = NULL,
@@ -2623,12 +2642,18 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    IF @TraceEventID IS NULL OR NOT EXISTS
+    (
+        SELECT 1
+        FROM dbo.Hermes_Agent_Trace_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+        WHERE TraceEventID = @TraceEventID
+    )
     INSERT INTO dbo.Hermes_Agent_Trace_Trn_Tbl
-        (EventType, EventOn, SessionID, TaskID, TurnID, ToolCallID, ApiRequestID,
+        (TraceEventID, EventOnIst, IngestedOnIst, EventType, EventOn, SessionID, TaskID, TurnID, ToolCallID, ApiRequestID,
          ToolName, Status, DurationMs, ArgsJson, ResultJson, ErrorMessage,
          Model, Provider, UsageJson, RunID, TicketID, Source)
     VALUES
-        (@EventType, @EventOn, @SessionID, @TaskID, @TurnID, @ToolCallID, @ApiRequestID,
+        (@TraceEventID, @EventOnIst, SYSDATETIMEOFFSET() AT TIME ZONE 'India Standard Time', @EventType, @EventOn, @SessionID, @TaskID, @TurnID, @ToolCallID, @ApiRequestID,
          @ToolName, @Status, @DurationMs, @ArgsJson, @ResultJson, @ErrorMessage,
          @Model, @Provider, @UsageJson, @RunID, @TicketID, 'T-SQL');
 END;
@@ -3111,12 +3136,33 @@ GO
 
 CREATE VIEW dbo.Hermes_L2_Compute_Per_Ticket_Vw
 AS
+WITH ResolvedTaskContext AS (
+    SELECT TaskID, MAX(RunID) AS RunID, MAX(TicketID) AS TicketID
+    FROM dbo.Hermes_Agent_Trace_Trn_Tbl
+    WHERE IsDeleted = 0
+      AND EventType = 'trace_context'
+      AND Status = 'resolved'
+      AND RunID IS NOT NULL
+      AND TicketID IS NOT NULL
+    GROUP BY TaskID
+),
+NormalizedTrace AS (
+    SELECT t.*,
+           COALESCE(t.RunID, c.RunID) AS EffectiveRunID,
+           COALESCE(t.TicketID, c.TicketID) AS EffectiveTicketID
+    FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+    LEFT JOIN ResolvedTaskContext c ON c.TaskID = t.TaskID
+    WHERE t.IsDeleted = 0
+)
 SELECT
-    t.TicketID,
-    t.RunID,
+    t.EffectiveTicketID AS TicketID,
+    t.EffectiveRunID AS RunID,
     COUNT(DISTINCT t.SessionID)                                   AS SessionCount,
     COUNT(*)                                                      AS TotalTraceEvents,
     SUM(CASE WHEN t.EventType = 'pre_tool_call' THEN 1 ELSE 0 END)  AS ToolCallCount,
+    SUM(CASE WHEN t.EventType = 'post_tool_call' AND t.Status = 'ok' THEN 1 ELSE 0 END) AS ToolSuccessCount,
+    SUM(CASE WHEN t.EventType = 'post_tool_call' AND t.Status = 'error' THEN 1 ELSE 0 END) AS ToolErrorCount,
+    SUM(CASE WHEN t.EventType = 'post_tool_call' AND t.Status = 'blocked' THEN 1 ELSE 0 END) AS BlockedToolCallCount,
     SUM(CASE WHEN t.EventType = 'post_api_request' THEN 1 ELSE 0 END) AS ApiRequestCount,
     SUM(CASE WHEN t.EventType = 'api_request_error' THEN 1 ELSE 0 END) AS ApiRequestErrorCount,
     SUM(CASE WHEN u.[key] = 'total_tokens' THEN TRY_CAST(u.[value] AS int) ELSE 0 END) AS TotalTokens,
@@ -3125,15 +3171,20 @@ SELECT
     SUM(CASE WHEN t.EventType = 'post_tool_call' THEN t.DurationMs ELSE 0 END) AS ToolCallDurationMsTotal,
     MIN(t.EventOn)                                                AS FirstEventOn,
     MAX(t.EventOn)                                                AS LastEventOn,
-    DATEDIFF(SECOND, MIN(t.EventOn), MAX(t.EventOn))              AS WallClockSeconds
-FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+    DATEDIFF(SECOND, MIN(t.EventOn), MAX(t.EventOn))              AS WallClockSeconds,
+    MIN(t.EventOnIst)                                             AS FirstEventOnIst,
+    MAX(t.EventOnIst)                                             AS LastEventOnIst,
+    MIN(t.IngestedOnIst)                                          AS IngestedFirstOnIst,
+    MAX(t.IngestedOnIst)                                          AS IngestedLastOnIst,
+    DATEDIFF(SECOND, MIN(t.EventOnIst), MAX(t.EventOnIst))        AS IstWallClockSeconds
+FROM NormalizedTrace t
 OUTER APPLY (
     SELECT [key], [value]
     FROM OPENJSON(t.UsageJson)
     WHERE ISJSON(t.UsageJson) = 1 AND [key] IN ('prompt_tokens', 'completion_tokens', 'total_tokens')
 ) u
-WHERE t.IsDeleted = 0 AND t.TicketID IS NOT NULL
-GROUP BY t.TicketID, t.RunID;
+WHERE t.EventType <> 'trace_context' AND t.EffectiveTicketID IS NOT NULL
+GROUP BY t.EffectiveTicketID, t.EffectiveRunID;
 GO
 
 IF OBJECT_ID('dbo.Hermes_L2_Compute_Per_Profile_Vw', 'V') IS NOT NULL
@@ -3142,12 +3193,33 @@ GO
 
 CREATE VIEW dbo.Hermes_L2_Compute_Per_Profile_Vw
 AS
+WITH ResolvedTaskContext AS (
+    SELECT TaskID, MAX(RunID) AS RunID, MAX(TicketID) AS TicketID
+    FROM dbo.Hermes_Agent_Trace_Trn_Tbl
+    WHERE IsDeleted = 0
+      AND EventType = 'trace_context'
+      AND Status = 'resolved'
+      AND RunID IS NOT NULL
+      AND TicketID IS NOT NULL
+    GROUP BY TaskID
+),
+NormalizedTrace AS (
+    SELECT t.*,
+           COALESCE(t.RunID, c.RunID) AS EffectiveRunID,
+           COALESCE(t.TicketID, c.TicketID) AS EffectiveTicketID
+    FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+    LEFT JOIN ResolvedTaskContext c ON c.TaskID = t.TaskID
+    WHERE t.IsDeleted = 0
+)
 SELECT
-    t.TicketID,
-    t.RunID,
+    t.EffectiveTicketID AS TicketID,
+    t.EffectiveRunID AS RunID,
     COALESCE(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.profile_name'), 'unknown') AS ProfileName,
     COUNT(DISTINCT t.SessionID) AS SessionCount,
     SUM(CASE WHEN t.EventType = 'pre_tool_call' THEN 1 ELSE 0 END) AS ToolCallCount,
+    SUM(CASE WHEN t.EventType = 'post_tool_call' AND t.Status = 'ok' THEN 1 ELSE 0 END) AS ToolSuccessCount,
+    SUM(CASE WHEN t.EventType = 'post_tool_call' AND t.Status = 'error' THEN 1 ELSE 0 END) AS ToolErrorCount,
+    SUM(CASE WHEN t.EventType = 'post_tool_call' AND t.Status = 'blocked' THEN 1 ELSE 0 END) AS BlockedToolCallCount,
     SUM(CASE WHEN t.EventType = 'post_api_request' THEN 1 ELSE 0 END) AS ModelTurnCount,
     SUM(CASE WHEN t.EventType = 'api_request_error' THEN 1 ELSE 0 END) AS ModelErrorCount,
     SUM(CASE WHEN u.[key] = 'total_tokens' THEN TRY_CAST(u.[value] AS bigint) ELSE 0 END) AS TotalTokens,
@@ -3164,15 +3236,46 @@ SELECT
     MAX(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.lmstudio_working_set_mb') AS int)) AS PeakLmStudioWorkingSetMb,
     MIN(t.EventOn) AS FirstEventOn,
     MAX(t.EventOn) AS LastEventOn,
-    DATEDIFF(SECOND, MIN(t.EventOn), MAX(t.EventOn)) AS WallClockSeconds
-FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+    DATEDIFF(SECOND, MIN(t.EventOn), MAX(t.EventOn)) AS WallClockSeconds,
+    MIN(t.EventOnIst) AS FirstEventOnIst,
+    MAX(t.EventOnIst) AS LastEventOnIst,
+    MIN(t.IngestedOnIst) AS IngestedFirstOnIst,
+    MAX(t.IngestedOnIst) AS IngestedLastOnIst,
+    DATEDIFF(SECOND, MIN(t.EventOnIst), MAX(t.EventOnIst)) AS IstWallClockSeconds
+FROM NormalizedTrace t
 OUTER APPLY (
     SELECT [key], [value]
     FROM OPENJSON(t.UsageJson)
     WHERE ISJSON(t.UsageJson) = 1
       AND [key] IN ('prompt_tokens', 'completion_tokens', 'output_tokens', 'total_tokens')
 ) u
-WHERE t.IsDeleted = 0 AND t.RunID IS NOT NULL
-GROUP BY t.TicketID, t.RunID,
+WHERE t.EventType <> 'trace_context' AND t.EffectiveRunID IS NOT NULL
+GROUP BY t.EffectiveTicketID, t.EffectiveRunID,
     COALESCE(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.profile_name'), 'unknown');
+GO
+
+IF OBJECT_ID('dbo.Hermes_L2_Run_Observability_Vw', 'V') IS NOT NULL
+    DROP VIEW dbo.Hermes_L2_Run_Observability_Vw;
+GO
+
+CREATE VIEW dbo.Hermes_L2_Run_Observability_Vw
+AS
+SELECT
+    r.ID AS RunID,
+    r.TicketID,
+    r.ProcessStatus,
+    r.IsActive,
+    c.TotalTraceEvents,
+    c.ToolErrorCount,
+    c.BlockedToolCallCount,
+    c.FirstEventOnIst,
+    c.LastEventOnIst,
+    CASE
+        WHEN c.RunID IS NOT NULL THEN 'OBSERVED'
+        WHEN r.IsActive = 1 THEN 'PENDING'
+        ELSE 'GAP'
+    END AS ObservabilityStatus
+FROM dbo.Hermes_L2_Response_Trn_Tbl r
+LEFT JOIN dbo.Hermes_L2_Compute_Per_Ticket_Vw c ON c.RunID = r.ID
+WHERE r.IsDeleted = 0;
 GO

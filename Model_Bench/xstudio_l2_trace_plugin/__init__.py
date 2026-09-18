@@ -56,11 +56,15 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 _LOCK = threading.Lock()
 _MAX_CHARS = 4000  # per string field; keeps one JSONL line small and the drain cheap
+_IST = ZoneInfo("Asia/Kolkata")
 
 # Secret redaction -- 2026-09-04: confirmed live that this profile's
 # MSSQL_MCP_USER/PASSWORD env vars have, on at least two real past
@@ -141,7 +145,8 @@ def _write_event(event: Dict[str, Any]) -> None:
     """Append one JSON line. Fail-open: a broken trace write must never
     break the agent loop or lose the tool result it's observing."""
     try:
-        event["written_at"] = time.time()
+        event.setdefault("trace_event_id", str(uuid4()))
+        event.setdefault("event_on_ist", datetime.now(_IST).isoformat(timespec="milliseconds"))
         line = json.dumps(_truncate(event), default=str) + "\n"
         with _LOCK:
             _DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -159,6 +164,7 @@ def _write_event(event: Dict[str, Any]) -> None:
 _TASK_CACHE_LOCK = threading.Lock()
 _TASK_CACHE: Dict[str, Dict[str, Optional[str]]] = {}
 _RESOLVING: set = set()
+_CONTEXT_EMITTED: set = set()
 _TASK_CACHE_MAX = 500
 
 # 2026-09-04 correction: the observer hooks' own `task_id` kwarg turned out
@@ -205,6 +211,20 @@ def _resolve_task_ids_blocking(kanban_task_id: str) -> None:
     with _TASK_CACHE_LOCK:
         _TASK_CACHE[kanban_task_id] = {"run_id": run_id, "ticket_id": ticket_id}
         _RESOLVING.discard(kanban_task_id)
+        emit_context = kanban_task_id not in _CONTEXT_EMITTED
+        if emit_context:
+            _CONTEXT_EMITTED.add(kanban_task_id)
+
+    if emit_context:
+        resolved = bool(run_id and ticket_id)
+        _write_event({
+            "event_type": "trace_context",
+            "task_id": kanban_task_id,
+            "run_id": run_id if resolved else None,
+            "ticket_id": ticket_id if resolved else None,
+            "status": "resolved" if resolved else "failed",
+            "profile_name": _PROFILE_NAME,
+        })
 
 
 def _get_or_start_resolve() -> Dict[str, Optional[str]]:

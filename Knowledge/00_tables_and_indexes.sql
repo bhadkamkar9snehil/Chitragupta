@@ -214,6 +214,9 @@ BEGIN
         Source            varchar(20)  NULL,
         EventType         varchar(100) NOT NULL,
         EventOn           datetime     NOT NULL,
+        TraceEventID      varchar(36)  NULL,
+        EventOnIst        datetimeoffset(3) NULL,
+        IngestedOnIst     datetimeoffset(3) NULL,
         SessionID         varchar(100) NULL,
         TaskID            varchar(100) NULL,
         TurnID            varchar(100) NULL,
@@ -233,6 +236,20 @@ BEGIN
         CONSTRAINT PK_Hermes_Agent_Trace_Trn PRIMARY KEY CLUSTERED (ID)
     );
 END;
+GO
+
+IF COL_LENGTH('dbo.Hermes_Agent_Trace_Trn_Tbl', 'TraceEventID') IS NULL
+    ALTER TABLE dbo.Hermes_Agent_Trace_Trn_Tbl ADD TraceEventID varchar(36) NULL;
+IF COL_LENGTH('dbo.Hermes_Agent_Trace_Trn_Tbl', 'EventOnIst') IS NULL
+    ALTER TABLE dbo.Hermes_Agent_Trace_Trn_Tbl ADD EventOnIst datetimeoffset(3) NULL;
+IF COL_LENGTH('dbo.Hermes_Agent_Trace_Trn_Tbl', 'IngestedOnIst') IS NULL
+    ALTER TABLE dbo.Hermes_Agent_Trace_Trn_Tbl ADD IngestedOnIst datetimeoffset(3) NULL;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl') AND name = 'UX_Hermes_Agent_Trace_TraceEventID')
+    CREATE UNIQUE NONCLUSTERED INDEX UX_Hermes_Agent_Trace_TraceEventID
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(TraceEventID)
+        WHERE TraceEventID IS NOT NULL;
 GO
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl') AND name = 'IX_Hermes_Agent_Trace_RunEvent')
@@ -632,4 +649,3 @@ BEGIN
     );
 END;
 GO
-

@@ -701,6 +701,8 @@ transaction, and the source is a trusted local process, not user input.
 */
 CREATE OR ALTER PROCEDURE dbo.Hermes_Log_Agent_Trace_Usp
 (
+    @TraceEventID       varchar(36) = NULL,
+    @EventOnIst         datetimeoffset(3) = NULL,
     @EventType          varchar(50),
     @EventOn            datetime,
     @SessionID          varchar(100) = NULL,
@@ -729,12 +731,18 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    IF @TraceEventID IS NULL OR NOT EXISTS
+    (
+        SELECT 1
+        FROM dbo.Hermes_Agent_Trace_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+        WHERE TraceEventID = @TraceEventID
+    )
     INSERT INTO dbo.Hermes_Agent_Trace_Trn_Tbl
-        (EventType, EventOn, SessionID, TaskID, TurnID, ToolCallID, ApiRequestID,
+        (TraceEventID, EventOnIst, IngestedOnIst, EventType, EventOn, SessionID, TaskID, TurnID, ToolCallID, ApiRequestID,
          ToolName, Status, DurationMs, ArgsJson, ResultJson, ErrorMessage,
          Model, Provider, UsageJson, RunID, TicketID, Source)
     VALUES
-        (@EventType, @EventOn, @SessionID, @TaskID, @TurnID, @ToolCallID, @ApiRequestID,
+        (@TraceEventID, @EventOnIst, SYSDATETIMEOFFSET() AT TIME ZONE 'India Standard Time', @EventType, @EventOn, @SessionID, @TaskID, @TurnID, @ToolCallID, @ApiRequestID,
          @ToolName, @Status, @DurationMs, @ArgsJson, @ResultJson, @ErrorMessage,
          @Model, @Provider, @UsageJson, @RunID, @TicketID, 'T-SQL');
 END;
