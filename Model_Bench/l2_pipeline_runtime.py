@@ -1690,8 +1690,21 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
     if active:
         return {"status": "WIP_LIMIT", "active_runs": active, "reconcile": reconciliation}
 
-    check_worker_dependencies()
-    check_gbrain_dependency(args)
+    # Dependency loss must stop a new claim without making the durable scout
+    # cron fail. Reconciliation above has already run; returning a typed
+    # state lets the next two-minute tick retry rather than allowing Hermes
+    # cron's repeated-error policy to pause the lifecycle backstop.
+    try:
+        check_worker_dependencies()
+        check_gbrain_dependency(args)
+    except RuntimeError as exc:
+        if str(exc).startswith("WORKER_DEPENDENCY_UNAVAILABLE:"):
+            return {
+                "status": "DEPENDENCY_UNAVAILABLE",
+                "reason": str(exc),
+                "reconcile": reconciliation,
+            }
+        raise
 
     eligible = str(binding.get("eligible_ticket_status") or args.eligible_status or DEFAULT_ELIGIBLE_STATUS)
     poll_args = ["--poll", "--eligible-status", eligible, "--bot-label", INVESTIGATOR_PROFILE]

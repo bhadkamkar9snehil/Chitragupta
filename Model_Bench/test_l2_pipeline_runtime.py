@@ -35,10 +35,10 @@ class PipelineContractTests(unittest.TestCase):
              patch.object(mod, "load_workflow_binding", return_value={"eligible_ticket_status":"Enter", "strict_resolution_status_binding":False}), \
              patch.object(mod, "query_active_runs", side_effect=lambda a: order.append("wip") or []), \
              patch.object(mod, "check_worker_dependencies", side_effect=lambda: order.append("worker")), \
-             patch.object(mod, "check_gbrain_dependency", side_effect=lambda a: order.append("gbrain") or (_ for _ in ()).throw(RuntimeError("not ready"))):
-            with self.assertRaisesRegex(RuntimeError, "not ready"):
-                mod.scout(mod.default_args())
+             patch.object(mod, "check_gbrain_dependency", side_effect=lambda a: order.append("gbrain") or (_ for _ in ()).throw(RuntimeError("WORKER_DEPENDENCY_UNAVAILABLE: not ready"))):
+            result = mod.scout(mod.default_args())
         self.assertEqual(order, ["reconcile", "wip", "worker", "gbrain"])
+        self.assertEqual(result["status"], "DEPENDENCY_UNAVAILABLE")
 
     def test_investigation_bundle_contains_bounded_gbrain_provenance(self):
         ticket = {"ID": "ticket-1", "BriefDetails": "SAP posting pending"}
