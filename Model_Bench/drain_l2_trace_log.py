@@ -23,7 +23,9 @@ import os
 import argparse
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import pyodbc
@@ -35,6 +37,7 @@ SERVER = "10.2.6.204"
 DATABASE = "XStudio_Helpdesk"
 USERNAME = "sa"
 PASSWORD = os.environ.get("MSSQL_MCP_PASSWORD")
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def usage_payload_for_event(event):
@@ -50,6 +53,41 @@ def usage_payload_for_event(event):
         if value is not None:
             usage[key] = value
     return usage or None
+
+
+def trace_procedure_parameters(event):
+    """Build the audited trace-procedure arguments from one durable outbox event."""
+    event_on_ist = None
+    raw_event_on_ist = event.get("event_on_ist")
+    if raw_event_on_ist:
+        event_on_ist = datetime.fromisoformat(raw_event_on_ist)
+    elif event.get("written_at") is not None:
+        # Legacy outbox rows predate the IST contract. Interpret their epoch in
+        # IST rather than creating new UTC-facing persistence.
+        event_on_ist = datetime.fromtimestamp(event["written_at"], tz=IST)
+    if event_on_ist is None:
+        event_on_ist = datetime.now(IST)
+    if event_on_ist.tzinfo is None:
+        event_on_ist = event_on_ist.replace(tzinfo=IST)
+
+    usage = usage_payload_for_event(event)
+    args_json = event.get("args")
+    result_json = event.get("result")
+    error = event.get("error")
+    error_message = event.get("error_message") or (json.dumps(error) if error else None)
+    tool_name = event.get("tool_name") or event.get("boundary")
+    return (
+        event.get("trace_event_id"), event_on_ist,
+        event.get("event_type"), event_on_ist.replace(tzinfo=None),
+        event.get("session_id"), event.get("task_id"), event.get("turn_id"),
+        event.get("tool_call_id"), event.get("api_request_id"), tool_name,
+        event.get("status"), event.get("duration_ms"),
+        json.dumps(args_json) if args_json is not None else None,
+        json.dumps(result_json) if result_json is not None else None,
+        error_message, event.get("model"), event.get("provider"),
+        json.dumps(usage) if usage is not None else None,
+        event.get("run_id"), event.get("ticket_id"),
+    )
 
 
 def load_cursor() -> int:
@@ -124,40 +162,13 @@ def main():
     try:
         cur = conn.cursor()
         for e in parsed:
-            written_at = e.get("written_at")
-            event_on = None
-            if written_at is not None:
-                from datetime import datetime, timezone
-                event_on = datetime.fromtimestamp(written_at, tz=timezone.utc)
-
-            usage = usage_payload_for_event(e)
-            args_json = e.get("args")
-            result_json = e.get("result")
-            error = e.get("error")
-            error_message = e.get("error_message") or (json.dumps(error) if error else None)
-            # lmstudio_sample/gpu_sample events (2026-09-04) have no tool_name of
-            # their own -- reuse that column for "boundary" (session_start/
-            # session_end) rather than adding a dedicated column for two event
-            # types only.
-            tool_name = e.get("tool_name") or e.get("boundary")
-
             cur.execute(
                 "EXEC dbo.Hermes_Log_Agent_Trace_Usp "
-                "@EventType=?, @EventOn=?, @SessionID=?, @TaskID=?, @TurnID=?, @ToolCallID=?, "
+                "@TraceEventID=?, @EventOnIst=?, @EventType=?, @EventOn=?, @SessionID=?, @TaskID=?, @TurnID=?, @ToolCallID=?, "
                 "@ApiRequestID=?, @ToolName=?, @Status=?, @DurationMs=?, @ArgsJson=?, "
                 "@ResultJson=?, @ErrorMessage=?, @Model=?, @Provider=?, @UsageJson=?, "
                 "@RunID=?, @TicketID=?;",
-                (
-                    e.get("event_type"), event_on, e.get("session_id"), e.get("task_id"),
-                    e.get("turn_id"), e.get("tool_call_id"), e.get("api_request_id"),
-                    tool_name, e.get("status"), e.get("duration_ms"),
-                    json.dumps(args_json) if args_json is not None else None,
-                    json.dumps(result_json) if result_json is not None else None,
-                    error_message,
-                    e.get("model"), e.get("provider"),
-                    json.dumps(usage) if usage is not None else None,
-                    e.get("run_id"), e.get("ticket_id"),
-                ),
+                trace_procedure_parameters(e),
             )
             inserted += 1
         conn.commit()
