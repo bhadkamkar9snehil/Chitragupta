@@ -1897,8 +1897,13 @@ def cli(argv: Optional[list[str]] = None) -> int:
         with lifecycle_lock(args):
             return _cli_owned(argv)
     except Exception as exc:
-        print(json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}))
-        return 1
+        message = f"{type(exc).__name__}: {exc}"
+        print(json.dumps({"ok": False, "error": message}))
+        # Lock contention means another lifecycle invocation owns the same
+        # serialized mutation path. It is an expected retry state, not a
+        # failed scout tick: reporting it as an error lets Hermes cron pause
+        # the only durable reconciliation backstop.
+        return 0 if "LIFECYCLE_BUSY:" in message else 1
 
 
 def _cli_owned(argv: Optional[list[str]] = None) -> int:

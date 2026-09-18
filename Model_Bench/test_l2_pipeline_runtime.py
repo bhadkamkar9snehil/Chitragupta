@@ -23,6 +23,10 @@ SUMMARY_SPEC.loader.exec_module(summary)
 
 
 class PipelineContractTests(unittest.TestCase):
+    def test_lifecycle_busy_is_a_successful_retry_exit(self):
+        with patch.object(mod, "lifecycle_lock", side_effect=RuntimeError("LIFECYCLE_BUSY: held")):
+            self.assertEqual(mod.cli(["reconcile"]), 0)
+
     def test_gbrain_dependency_failure_pauses_new_claims(self):
         result = type("R", (), {"returncode": 1, "stdout": '{"status":"DEGRADED"}', "stderr": "coverage 37.8%"})()
         with patch.object(mod.subprocess, "run", return_value=result):
