@@ -560,7 +560,7 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
             metadata[optional_field] = value
 
     # --- invoke kanban complete ---
-    task_id = str(kwargs.get("task_id") or "")
+    task_id = str(context.get("kanban_task_id") or kwargs.get("task_id") or "")
     if not task_id:
         return json.dumps({
             "ok": False,
@@ -774,6 +774,10 @@ def _post_tool_call(tool_name: str, args: dict[str, Any] | None = None,
         if isinstance(task, dict):
             session = _session_key(task_id, **kwargs)
             _remember_context(session, task.get("body"))
+            kanban_task_id = str(task.get("id") or "").strip()
+            if kanban_task_id:
+                with _lock:
+                    _session_context[session]["kanban_task_id"] = kanban_task_id
         return
     if tool_name not in TOOL_OPERATIONS and tool_name != TOOL_NAME:
         return

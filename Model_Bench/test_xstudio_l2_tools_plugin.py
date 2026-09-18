@@ -897,6 +897,28 @@ def test_submit_proposal_injects_run_and_ticket_from_context() -> None:
     assert metadata["ticket_id"] == "CTX-TICKET"
 
 
+def test_submit_proposal_uses_kanban_task_id_learned_from_show() -> None:
+    session_id = "worker-session"
+    plugin._post_tool_call(
+        "kanban_show",
+        result={"task": {
+            "id": "t_real_kanban_task",
+            "body": "run_id: RUN-K\nticket_id: TICKET-K\npipeline_stage: investigation",
+        }},
+        task_id=session_id,
+        session_id=session_id,
+    )
+    with mock.patch.object(plugin.subprocess, "run") as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        result = json.loads(plugin._submit_proposal_handler(
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+            task_id=session_id,
+            session_id=session_id,
+        ))
+    assert result["ok"] is True
+    assert mock_run.call_args[0][0][3] == "t_real_kanban_task"
+
+
 def test_submit_proposal_does_not_consume_xstudio_tool_budget() -> None:
     _setup_investigator_context(task_id="submit-budget")
     # Fill up the budget to MAX_TOOL_CALLS - 1
