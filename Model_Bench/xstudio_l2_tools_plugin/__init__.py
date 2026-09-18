@@ -530,6 +530,8 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
         evidence_status = "COMPLETE" if (
             response_type == "RESOLUTION" and claim_status == "VERIFIED"
         ) else "INCOMPLETE"
+    if claim_status != "VERIFIED" or not action_id:
+        evidence_status = "INCOMPLETE"
 
     # --- reply text ---
     reply_text = str(params.get("reply_text") or "").strip()
@@ -542,6 +544,11 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
             )
         else:
             reply_text = summary
+    elif evidence_status == "INCOMPLETE" and not reply_text.lower().startswith("evidence status: incomplete"):
+        reply_text = (
+            "Evidence status: INCOMPLETE. No material claim below should be treated as "
+            "verified until current-run evidence is cited.\n\n" + reply_text
+        )
 
     # --- metadata assembly ---
     metadata: dict[str, Any] = {

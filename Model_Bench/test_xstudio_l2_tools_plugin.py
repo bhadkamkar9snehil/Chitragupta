@@ -881,7 +881,8 @@ def test_submit_proposal_uses_explicit_reply_text_when_provided() -> None:
             task_id="submit-reply-explicit",
         )
     metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
-    assert metadata["reply_text"] == "Custom user-facing message."
+    assert metadata["reply_text"].startswith("Evidence status: INCOMPLETE.")
+    assert metadata["reply_text"].endswith("Custom user-facing message.")
 
 
 def test_submit_proposal_injects_run_and_ticket_from_context() -> None:
@@ -1028,6 +1029,20 @@ def test_substantive_investigator_summary_is_packaged_without_another_model_turn
         "evidence": [],
     }]
     assert metadata["contract_packaged_from_summary"] is True
+    assert metadata["evidence_status"] == "INCOMPLETE"
+
+
+def test_submit_proposal_cannot_mark_unverified_claim_complete() -> None:
+    _setup_investigator_context(task_id="submit-unverified-complete")
+    with mock.patch.object(plugin.subprocess, "run") as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        plugin._submit_proposal_handler(
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY,
+             "claim_status": "UNVERIFIED", "evidence_status": "COMPLETE"},
+            task_id="submit-unverified-complete",
+        )
+    command = mock_run.call_args[0][0]
+    metadata = json.loads(command[command.index("--metadata") + 1])
     assert metadata["evidence_status"] == "INCOMPLETE"
     assert metadata["reply_text"].startswith("Evidence status: INCOMPLETE.")
 
