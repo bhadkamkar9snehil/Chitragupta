@@ -21,6 +21,20 @@ class OrchestratorPluginTests(unittest.TestCase):
         plugin = _load()
         self.assertFalse(hasattr(plugin, "_pre_tool_call"))
 
+    def test_registers_native_kanban_terminal_hooks(self):
+        plugin = _load()
+        hooks = []
+
+        class Context:
+            def register_hook(self, name, callback):
+                hooks.append((name, callback))
+
+        plugin.register(Context())
+        self.assertEqual(
+            {name for name, _ in hooks},
+            {"post_tool_call", "kanban_task_completed", "kanban_task_blocked"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
