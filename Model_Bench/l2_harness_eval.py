@@ -105,6 +105,7 @@ def evaluate_run(bundle: Dict[str, Any], oracle: Dict[str, Any]) -> Dict[str, An
     actions = {
         str(action.get("ID")): action for action in bundle.get("actions") or []
         if str(action.get("RunID") or "") == run_id and str(action.get("TicketID") or "") == ticket_id
+        and str(action.get("Status") or "SUCCESS").upper() == "SUCCESS"
     }
     claims = _material_claims(bundle.get("proposal") or {})
     invalid_evidence_claims = []
@@ -149,6 +150,9 @@ def evaluate_run(bundle: Dict[str, Any], oracle: Dict[str, Any]) -> Dict[str, An
     lifecycle = {str(item).lower() for item in bundle.get("lifecycle_events") or []}
     recovery_markers = {"recovery", "rework", "gave_up", "orphan_recovery", "unreviewable_rework"}
     approved = str((bundle.get("review") or {}).get("decision") or "").upper() in {"APPROVE", "APPROVED"}
+    expected_response = str(oracle.get("expected_response_type") or "").upper()
+    actual_response = str(run.get("ResponseType") or (bundle.get("proposal") or {}).get("response_type") or "").upper()
+    correct_response = actual_response == expected_response if expected_response else None
 
     return {
         # Kanban and skill calls are valid Hermes calls too. Transport policy is
@@ -168,7 +172,8 @@ def evaluate_run(bundle: Dict[str, Any], oracle: Dict[str, Any]) -> Dict[str, An
             and all(str(claim.get("status") or "").upper() == "VERIFIED" for claim in claims),
         "invalid_evidence_claims": invalid_evidence_claims,
         "unsupported_material_claims": unsupported,
-        "reviewer_false_approval": approved and bool(unsupported),
+        "correct_response_type": correct_response,
+        "reviewer_false_approval": approved and (bool(unsupported) or correct_response is False),
         "investigator_tool_calls": len(investigator_calls),
         "reviewer_tool_calls": len(reviewer_calls),
         "investigator_model_turns": len(investigator_api),

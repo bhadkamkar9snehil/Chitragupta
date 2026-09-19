@@ -512,8 +512,17 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
 
         if operation == "get_definition":
             database = _database(req)
+            schema = str(req.get("schema") or "dbo").strip("[]")
+            name = str(_require(req, "object_name"))
+            if "." in name:
+                parts = [part.strip().strip("[]") for part in name.split(".")]
+                if len(parts) != 2 or not all(parts):
+                    raise ValueError("object_name must be an object or schema.object; specify database separately")
+                if req.get("schema") and schema.casefold() != parts[0].casefold():
+                    raise ValueError("schema conflicts with qualified object_name")
+                schema, name = parts
             result = client.get_sql_object_definition(database_name=database,
-                schema_name=str(req.get("schema") or "dbo"), object_name=str(_require(req, "object_name")))
+                schema_name=schema, object_name=name.strip("[]"))
             return {"ok": True, "operation": operation, "database": database, "definition": result}
 
         if operation == "get_ticket_context":

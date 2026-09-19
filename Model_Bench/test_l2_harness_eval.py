@@ -4,6 +4,23 @@ from Model_Bench.l2_harness_eval import evaluate_run
 
 
 class HarnessEvaluationTests(unittest.TestCase):
+    def test_wrong_persisted_outcome_fails_even_when_proposal_matches(self):
+        report = evaluate_run({
+            "run": {"ResponseType": "UPDATE"},
+            "proposal": {"response_type": "QUESTION"},
+            "review": {"decision": "APPROVED"},
+        }, {"expected_response_type": "QUESTION"})
+        self.assertFalse(report["correct_response_type"])
+        self.assertTrue(report["reviewer_false_approval"])
+
+    def test_failed_sql_action_cannot_ground_a_verified_claim(self):
+        report = evaluate_run({
+            "run": {"ID": "r", "TicketID": "t"},
+            "actions": [{"ID": "a", "RunID": "r", "TicketID": "t", "Status": "FAILED"}],
+            "proposal": {"claims": [{"status": "VERIFIED", "evidence": [{"action_id": "a"}]}]},
+        }, {})
+        self.assertFalse(report["live_evidence_grounding"])
+
     def test_tool_transport_success_does_not_hide_tool_error(self):
         events = [
             {"event_type": "pre_tool_call", "tool_call_id": "x", "tool_name": "xstudio_select"},

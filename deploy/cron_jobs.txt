@@ -7,25 +7,27 @@
     Name:      Session maintenance
     Schedule:  every 360m
     Repeat:    ∞
-    Next run:  2026-09-18T21:37:09.110202+00:00
+    Next run:  2026-09-19T03:37:45.749094+00:00
     Deliver:   local
     Script:    session_maintenance.py
     Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-18T15:37:09.110202+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-18T15:36:18.193695+00:00)
-    Execution: completed  546a69c8af29491d99dc0fda1de4ec5d
+    Last run:  2026-09-18T21:37:45.749094+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-18T21:37:09.110202+00:00)
+    Execution: completed  b0e9e2b1337e413e8b28e28510a7d97c
 
   97bfe2a17d9d [active]
     Name:      L2 Kanban Completion Audit (no-LLM)
     Schedule:  every 10m
     Repeat:    ∞
-    Next run:  2026-09-18T18:36:37.749868+00:00
+    Next run:  2026-09-19T02:51:56.690318+00:00
     Deliver:   local
     Script:    audit_kanban_completions.py
     Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-18T18:26:37.749868+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-18T18:24:58.062565+00:00)
-    Execution: completed  3ac37b7e240a4da8993c8469c3039412
+    Last run:  2026-09-19T02:41:56.690318+00:00  error: Script exited with code 1
+stdout:
+{"ok": false, "error": "RuntimeError: Traceback (most recent call last):\n  File \"/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Hermes_Orchestrator.py\", line 2047, in <module>\n    main()\n  File \"/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Hermes_Orchestrator.py\", line 1574, in main\n    client = HermesL2Client(\n             ^^^^^^^^^^^^^^^\n  File \"/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Hermes_Orchestrator.py\", line 457, in __init__\n    self.conn = self._connect(server, database, username, password, driver)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Hermes_Orchestrator.py\", line 472, in _connect\n    return pyodbc.connect(cs, timeout=15)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npyodbc.OperationalError: ('HYT00', '[HYT00] [Microsoft][ODBC Driver 18 for SQL Server]Login timeout expired (0) (SQLDriverConnect)')"}  (2 failures in a row)
+    Dispatch:  on time (scheduled 2026-09-19T02:40:55.702200+00:00)
+    Execution: failed  bf73f6485ab14dc6a181dba39ef717b5
 
   ba0827aece96 [active]
     Name:      Reapply mem0 LM Studio patch (no-LLM)
@@ -43,11 +45,13 @@
     Name:      L2 Ticket Scout (Kanban bridge)
     Schedule:  every 2m
     Repeat:    ∞
-    Next run:  2026-09-18T18:27:03.806658+00:00
+    Next run:  2026-09-19T02:46:13.566929+00:00
     Deliver:   local
     Script:    ticket_scout.py
     Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-18T18:17:57.648201+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-18T18:17:29.968444+00:00)
-    Execution: completed  b79645f96e4344bba4b716662a69072b
+    Last run:  2026-09-19T02:44:13.566929+00:00  error: Script exited with code 1
+stdout:
+{"ok": false, "error": "RuntimeError: Traceback (most recent call last):\n  File \"/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Hermes_Orchestrator.py\", line 2047, in <module>\n    main()\n  File \"/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Hermes_Orchestrator.py\", line 1574, in main\n    client = HermesL2Client(\n             ^^^^^^^^^^^^^^^\n  File \"/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Hermes_Orchestrator.py\", line 457, in __init__\n    self.conn = self._connect(server, database, username, password, driver)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Hermes_Orchestrator.py\", line 472, in _connect\n    return pyodbc.connect(cs, timeout=15)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npyodbc.OperationalError: ('HYT00', '[HYT00] [Microsoft][ODBC Driver 18 for SQL Server]Login timeout expired (0) (SQLDriverConnect)')"}
+    Dispatch:  on time (scheduled 2026-09-19T02:42:53.562747+00:00)
+    Execution: failed  5bda25f1a8fc413ea6c71ce657a18440
 

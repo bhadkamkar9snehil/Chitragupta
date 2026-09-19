@@ -33,6 +33,27 @@ bridge = _load("xstudio_l2_tool_bridge_test", ROOT / "xstudio_l2_tool_bridge.py"
 patcher = _load("patch_profile_config_test", ROOT / "patch_profile_config.py")
 
 
+def test_definition_accepts_discovered_qualified_names_and_rejects_schema_conflicts() -> None:
+    client = mock.Mock()
+    client.get_sql_object_definition.return_value = {}
+    with mock.patch.object(bridge, "_client", return_value=client):
+        for name in ("dbo.LRF_Per_Heat", "[dbo].[LRF_Per_Heat]", "LRF_Per_Heat"):
+            result = bridge.dispatch({"operation": "get_definition", "database": "XStudio_Xbatch",
+                                      "object_name": name})
+            assert result["ok"], result
+            client.get_sql_object_definition.assert_called_with(
+                database_name="XStudio_Xbatch", schema_name="dbo", object_name="LRF_Per_Heat")
+        client.get_sql_object_definition.reset_mock()
+        try:
+            bridge.dispatch({"operation": "get_definition", "database": "XStudio_Xbatch",
+                             "object_name": "dbo.LRF_Per_Heat", "schema": "other"})
+        except ValueError as exc:
+            assert "conflicts" in str(exc)
+        else:
+            raise AssertionError("conflicting schemas must be rejected")
+        client.get_sql_object_definition.assert_not_called()
+
+
 def setup_function() -> None:
     with plugin._lock:
         plugin._session_calls.clear()
