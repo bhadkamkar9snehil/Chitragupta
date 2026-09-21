@@ -30,7 +30,6 @@ platform_toolsets:
 known_plugin_toolsets:
   cli:
     - xstudio_l2
-    - xstudio_jev
 tools:
   tool_search:
     enabled: off
