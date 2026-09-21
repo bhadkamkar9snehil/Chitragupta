@@ -45,6 +45,33 @@ _STATIC_QUESTIONS = {
         "type": "noul",
         "instructions": "Is deeper local/System-2 reasoning still needed after this structured evidence assessment, beyond composing concise user-facing wording?",
     },
+    "execution_mode": {
+        "type": "choice",
+        "instructions": (
+            "Recommend the cheapest sufficient next reasoning mode. This is advisory only: "
+            "the deterministic runtime will independently gate whether Qwen may actually be skipped."
+        ),
+        "criteria": {
+            "QWEN_FREE": (
+                "No local-model reasoning or prose generation is needed. Use only when the evidence "
+                "supports a bounded deterministic handoff/outcome that can be rendered without inventing facts."
+            ),
+            "COMPOSE_ONLY": (
+                "Evidence and semantic decisions are already strong; a local model is useful only to compose "
+                "concise user-facing wording from supplied context, with at most a tiny focused recovery read."
+            ),
+            "FOCUSED_REASONING": (
+                "Contradiction, causality, missing evidence, or domain interpretation still requires System-2 reasoning."
+            ),
+        },
+    },
+    "needs_route_skill": {
+        "type": "noul",
+        "instructions": (
+            "Does the next local System-2 step materially need the route-specific domain skill, rather than "
+            "only the base L2 workflow and already-compiled evidence?"
+        ),
+    },
     "human_action_required": {
         "type": "noul",
         "instructions": "Is the corrective action outside the ordinary read-only investigator authority and therefore requires an authorized human?",
