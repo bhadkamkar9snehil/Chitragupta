@@ -146,7 +146,7 @@ Helpdesk = still visibly unresolved
 
 ## 5. Publication contract
 
-The deterministic publisher publishes only a reviewer-approved frozen proposal through `Hermes_Orchestrator.py --publish-response --force-run-id`.
+The deterministic publisher publishes only a semantically approved frozen proposal—either a Jev-primary direct approval that passes deterministic safety gates or a local-review fallback approval—through `Hermes_Orchestrator.py --publish-response --force-run-id`.
 
 After publication, verify persisted SQL state; Kanban narration is not the final truth.
 
@@ -491,8 +491,8 @@ Any lifecycle change must preserve or deliberately revise these invariants:
 
 - WIP ownership is explicit.
 - Exactly one lifecycle authority performs mutations.
-- Every publishable investigator/rework result gets exactly one reviewer.
-- Reviewers see an immutable proposal.
+- Every publishable investigator/rework result gets exactly one Jev primary semantic review; a local reviewer exists only on the fallback path.
+- All semantic review operates on the same immutable frozen proposal; a local reviewer never reconstructs it.
 - Publication is deterministic and idempotent.
 - Review cycles are bounded.
 - Event loss is recoverable by reconciliation.
