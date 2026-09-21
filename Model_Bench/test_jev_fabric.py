@@ -39,19 +39,21 @@ class FabricTests(unittest.TestCase):
                 "usage": {"input_tokens": 10, "output_tokens": 2},
             }
 
+        secret = "TYPE_SAFE_SECRET_SENTINEL_42"
         result = client.system_one(
             {"ticket": "x"},
             {
                 "a": {"type": "noul", "instructions": "A?"},
                 "b": {"type": "choice", "instructions": "B?", "criteria": {"x": None, "y": None}},
             },
-            api_key="test",
+            api_key=secret,
             sender=sender,
         )
         self.assertTrue(result["ok"])
         self.assertEqual(set(seen["payload"]["questions"]), {"a", "b"})
         self.assertEqual(seen["payload"]["model"], "jev-latest")
-        self.assertNotIn("test", str(seen["payload"]))
+        self.assertNotIn(secret, str(seen["payload"]))
+        self.assertEqual(seen["headers"]["Authorization"], f"Bearer {secret}")
 
     def test_ticket_triage_builds_parallel_characterization(self):
         seen = {}
