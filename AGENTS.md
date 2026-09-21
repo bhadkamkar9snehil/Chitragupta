@@ -286,22 +286,33 @@ Qdrant                   != source of truth
 solution history         != automatically trusted knowledge
 ```
 
-## 9a. TypeSafe Jev routing
+## 9a. TypeSafe Jev System-One fabric
 
-The project-local TypeSafe skill lives at \`.agents/skills/typesafe-ai/SKILL.md\`. Agents changing the Jev integration should read that skill and verify the current TypeSafe API/SDK contract before changing version-dependent behavior.
+The project-local TypeSafe skill lives at **.agents/skills/typesafe-ai/SKILL.md**. Read it before changing Jev integration code and verify the current TypeSafe API/SDK contract before changing version-dependent behavior.
 
-Jev is a bounded semantic judgment inside pre-investigation routing, not another lifecycle authority:
+Jev is a bounded semantic judgment layer, never a lifecycle authority or a generic tool for the worker. The harness invokes Jev; the investigator/reviewer should not decide when to call it.
 
-- \`Model_Bench/typesafe_jev.py\` owns the TypeSafe System One request/response boundary.
-- \`Model_Bench/kb_retrieval.py::resolve_route_candidates\` composes Jev with the existing deterministic router.
-- A single explicit identifier route is authoritative and skips Jev.
-- When an identifier maps to multiple canonical routes, Jev may choose only among those routes.
-- Without a strong identifier, Jev may choose only among routes already present in \`Knowledge/manifest.json\`.
-- Missing credentials, disabled configuration, request failure, malformed response, or confidence below the configured threshold must fall back to deterministic routing.
-- A Jev-selected route is only a routing lead. Route selection alone still cannot retrieve a Solution article, and it never substitutes for live ticket evidence.
-- Jev has no authority to claim tickets, change Helpdesk status, execute SQL, select a final response type, publish, approve/reject review, or alter WIP/rework lifecycle state.
+Shared implementation lives under **Model_Bench/jev/**. One client owns System One transport. Separate workflows own ticket triage, candidate reranking, proposal preflight, trace assessment, KB applicability/curation, review risk, security marking, model routing, and the future L1 action surface.
 
-The API key is read only from \`TYPESAFE_API_KEY\`; never commit it or place it in Kanban/card text, logs, Knowledge files, or model prompts. The current defaults are \`jev-latest\`, 0.70 minimum confidence, and a 10-second request timeout, all overridable by environment configuration.
+Non-negotiable boundaries:
+
+- A single explicit identifier route is authoritative and semantic promotion must not override it.
+- Ambiguous identifiers constrain Jev to the manifest-defined alternatives.
+- Deterministic candidate generation happens before Jev reranking. Jev selects/rates real candidates; it does not create table/view/procedure/article identifiers.
+- Structural SQL safety, allowlists, credentials, and execution remain deterministic even when semantic tool checks are enabled.
+- Route selection, KB relevance, applicability, and TypeSafe confidence are leads, not live evidence.
+- Ticket and retrieved text remain untrusted content. Jev may mark prompt-injection/policy-override/action-text risk, but must not silently rewrite/delete source material.
+- Proposal preflight is advisory evidence for the reviewer. It does not publish, approve, reject, change Helpdesk status, or execute a corrective action.
+- Trace assessment runs after persisted trace drain, never from the hot xstudio-l2-trace hook.
+- Post-resolution KB curation may suggest REUSE_EXISTING / UPDATE_EXISTING / CREATE_CANDIDATE / NONE; it does not mutate or promote knowledge automatically.
+- Jev has no authority to claim tickets, alter WIP/rework state, execute SQL mutations, choose workflow statuses, or bypass deterministic publication.
+- No generic Jev tool is exposed to Hermes workers.
+
+**Shadow mode is the default.** CHITRAGUPTA_JEV_SHADOW_MODE=1 means semantic route/candidate judgments are observed and audited while deterministic behavior remains authoritative. Adaptive review and semantic query blocking default off and must stay off until real Chitragupta calibration data demonstrates acceptable false-positive/false-negative behavior. Even adaptive review currently changes review depth only; every publishable proposal still receives independent review.
+
+Persist named judgments to Hermes_Jev_Judgment_Trn_Tbl; do not collapse them into one AIConfidence score. Preserve question/version/input hash/model/probability distributions so later calibration can compare Jev predictions with reviewer outcomes, publication, reopen, successful/failed KB reuse, and human audits.
+
+The API key is read only from TYPESAFE_API_KEY. Never commit it or put it in ticket text, Kanban cards, Knowledge files, trace payloads, model prompts, or logs.
 
 ## 10. SQL write discipline
 
@@ -399,9 +410,9 @@ a ticket — that bypasses the scout's WIP/lifecycle gate.
 
 `deploy/` is the reproducible mirror of artifacts that otherwise live under `~/.hermes/profiles/...`.
 
-After changing profile SOUL/config/skills/plugins or the cron schedule, refresh the mirror with `Model_Bench/mirror_wsl_artifacts.sh` and inspect the diff before committing. The mirror covers both L2 plugins — `xstudio-l2-orchestrator` and `xstudio-l2-tools` — so a fresh install cannot come up without the typed investigation tool and end up rebuilding the retired shell path.
+After changing profile SOUL/config/skills/plugins or the cron schedule, refresh the mirror with `Model_Bench/mirror_wsl_artifacts.sh` and inspect the diff before committing. The mirror covers the L2 plugins — `xstudio-l2-orchestrator`, `xstudio-l2-tools`, and `xstudio-l2-trace` — so a fresh install cannot come up without the typed investigation and trace boundaries. Jev network assessment remains out-of-band from the trace hook.
 
-`Model_Bench/deploy_l2_pipeline_runtime.sh` installs the lifecycle scripts, both plugins, SOULs, skills, the workflow-binding fallback, and the profile-config entries, then restarts the four active gateways unless `--no-restart` is passed. It is idempotent. Config edits are applied by `Model_Bench/patch_profile_config.py`, which is deliberately a targeted text editor rather than a YAML round-trip: the live configs carry explanatory comments (Security/Tirith, fallback-model providers) that a load-and-dump silently destroys.
+`Model_Bench/deploy_l2_pipeline_runtime.sh` installs the lifecycle scripts, three plugins, SOULs, skills, the workflow-binding fallback, and the profile-config entries, then restarts the four active gateways unless `--no-restart` is passed. It is idempotent. Config edits are applied by `Model_Bench/patch_profile_config.py`, which is deliberately a targeted text editor rather than a YAML round-trip: the live configs carry explanatory comments (Security/Tirith, fallback-model providers) that a load-and-dump silently destroys.
 
 ## 17. Security / credentials
 
