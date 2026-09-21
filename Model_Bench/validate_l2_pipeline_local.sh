@@ -27,7 +27,6 @@ PY_FILES=(
   Model_Bench/jev/trace_assessment.py
   Model_Bench/jev/kb_applicability.py
   Model_Bench/jev/kb_curation.py
-  Model_Bench/jev/security.py
   Model_Bench/jev/evidence_plan.py
   Model_Bench/jev/investigation_assessment.py
   Model_Bench/jev/reviewer.py
