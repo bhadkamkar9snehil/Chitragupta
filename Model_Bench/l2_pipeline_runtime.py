@@ -1149,8 +1149,82 @@ def _post_publish_activity(args: argparse.Namespace, run_id: str, ticket_id: str
     # history; KB promotion/dedupe is governed by Knowledge/KB_IMPLEMENTATION_PLAN.md.
 
 
-def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
+def _publish_frozen_proposal(
+    args: argparse.Namespace,
+    proposal: dict[str, Any],
+    *,
+    source: str,
+    dry_run: bool = False,
+) -> str:
+    """One deterministic publication path shared by Jev and local review."""
+    run_id = str(proposal.get("run_id") or "")
+    ticket_id = str(proposal.get("ticket_id") or "")
+    if not run_id or not ticket_id or not _proposal_complete(proposal):
+        return "invalid_proposal"
+
+    state = _query_published_state(args, run_id)
+    if state and state[0].get("ProcessStatus") in ("COMPLETED", "WAITING_USER") and state[0].get("ReplyText"):
+        return "already_published"
+    if not safe_query_active_run(run_id, args):
+        return "inactive"
+
     binding = load_workflow_binding()
+    response_type = str(proposal["response_type"]).upper()
+    try:
+        workflow_args, expected_status = _status_args_for_response(binding, proposal)
+    except RuntimeError as exc:
+        print(f"PUBLISH BLOCKED for run {run_id}: {exc}")
+        return "blocked_configuration"
+
+    cmd = [
+        "--publish-response", "--run-id", run_id, "--force-run-id",
+        "--response-type", response_type,
+        "--reply-text", str(proposal["reply_text"]),
+        "--mirror-to-support-remarks",
+        *workflow_args,
+    ]
+    if response_type == "QUESTION":
+        cmd.append("--mirror-to-ask-remarks")
+    for key, flag in (
+        ("problem_summary", "--problem-summary"),
+        ("findings", "--findings"),
+        ("root_cause", "--root-cause"),
+        ("resolution", "--resolution"),
+    ):
+        if proposal.get(key):
+            cmd += [flag, str(proposal[key])]
+
+    if dry_run:
+        print(f"[DRY RUN] publish {source} run={run_id} type={response_type} status={expected_status}")
+        return "published"
+
+    try:
+        run_orchestrator(args, cmd, timeout=90)
+    except RuntimeError as exc:
+        print(f"WARNING: publish failed for run {run_id}: {exc}")
+        return "failed"
+
+    verify = _query_published_state(args, run_id)
+    if not verify:
+        print(f"WARNING: publish returned success but no SQL row found for {run_id}")
+        return "failed"
+    row = verify[0]
+    if row.get("ProcessStatus") not in ("COMPLETED", "WAITING_USER") or not str(row.get("ReplyText") or "").strip():
+        print(f"WARNING: publish postcondition failed for {run_id}: {row}")
+        return "failed"
+    if expected_status and row.get("TicketStatus") != expected_status:
+        print(
+            f"WARNING: Helpdesk status postcondition failed for {run_id}: "
+            f"expected {expected_status!r}, got {row.get('TicketStatus')!r}"
+        )
+        return "failed"
+
+    _post_publish_activity(args, run_id, ticket_id, proposal)
+    return "published"
+
+
+def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
+    """Publish only local-review approvals; Jev approvals use the same helper earlier."""
     counts = {"published": 0, "blocked_configuration": 0, "rework_created": 0}
 
     for task in list_tasks("done"):
@@ -1160,19 +1234,12 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dic
         if not run_id or not ticket_id:
             continue
 
-        state = _query_published_state(args, run_id)
-        if state and state[0].get("ProcessStatus") in ("COMPLETED", "WAITING_USER") and state[0].get("ReplyText"):
-            continue
-        if not safe_query_active_run(run_id, args):
-            # Old done reviewer for a run already failed/reclaimed. Do not resurrect it.
-            continue
-
         proposal = task_proposal(task)
         if not _proposal_complete(proposal):
-            # Reviewer should never have been created without a frozen complete proposal in
-            # the new topology. Legacy/pre-migration cards may violate that; bounded rework
-            # is safer than publishing reconstructed prose.
-            reason = "Reviewer reached done but its frozen proposal_json is missing/incomplete; re-package the original verified finding through a fresh investigation/review cycle."
+            reason = (
+                "Local reviewer reached done but its frozen proposal_json is missing/incomplete; "
+                "re-package the original verified finding through focused rework."
+            )
             source_id = body_field(task.get("body"), "investigation_task_id")
             if create_rework_card(
                 args, source_task=task, reason=reason,
@@ -1181,60 +1248,16 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dic
                 counts["rework_created"] += 1
             continue
 
-        response_type = str(proposal["response_type"]).upper()
-        try:
-            workflow_args, expected_status = _status_args_for_response(binding, proposal)
-        except RuntimeError as exc:
-            # Deployment binding is a harness configuration problem, not an investigator
-            # defect. Keep the run active and visible; global WIP prevents new claims until
-            # the operator fixes the binding, then the same reconciler publishes it.
-            print(f"PUBLISH BLOCKED for run {run_id}: {exc}")
-            counts["blocked_configuration"] += 1
-            continue
-
-        cmd = [
-            "--publish-response", "--run-id", run_id, "--force-run-id",
-            "--response-type", response_type,
-            "--reply-text", str(proposal["reply_text"]),
-            "--mirror-to-support-remarks",
-            *workflow_args,
-        ]
-        if response_type == "QUESTION":
-            cmd.append("--mirror-to-ask-remarks")
-        for key, flag in (
-            ("problem_summary", "--problem-summary"),
-            ("findings", "--findings"),
-            ("root_cause", "--root-cause"),
-            ("resolution", "--resolution"),
-        ):
-            if proposal.get(key):
-                cmd += [flag, str(proposal[key])]
-
-        if dry_run:
-            print(f"[DRY RUN] publish reviewer {task['id']} run={run_id} type={response_type} status={expected_status}")
+        outcome = _publish_frozen_proposal(
+            args,
+            proposal or {},
+            source=f"local reviewer {task['id']}",
+            dry_run=dry_run,
+        )
+        if outcome in {"published", "already_published"}:
             counts["published"] += 1
-            continue
-
-        try:
-            run_orchestrator(args, cmd, timeout=90)
-        except RuntimeError as exc:
-            print(f"WARNING: publish failed for run {run_id}: {exc}")
-            continue
-
-        verify = _query_published_state(args, run_id)
-        if not verify:
-            print(f"WARNING: publish returned success but no SQL row found for {run_id}")
-            continue
-        row = verify[0]
-        if row.get("ProcessStatus") not in ("COMPLETED", "WAITING_USER") or not str(row.get("ReplyText") or "").strip():
-            print(f"WARNING: publish postcondition failed for {run_id}: {row}")
-            continue
-        if expected_status and row.get("TicketStatus") != expected_status:
-            print(f"WARNING: Helpdesk status postcondition failed for {run_id}: expected {expected_status!r}, got {row.get('TicketStatus')!r}")
-            continue
-
-        _post_publish_activity(args, run_id, ticket_id, proposal)
-        counts["published"] += 1
+        elif outcome == "blocked_configuration":
+            counts["blocked_configuration"] += 1
 
     return counts
 
