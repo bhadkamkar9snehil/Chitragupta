@@ -68,11 +68,10 @@ The normative lifecycle specification is `Knowledge/L2_PIPELINE_STATE_MACHINE.md
 
 ## Agent-facing investigation surface
 
-Chitragupta exposes two bounded typed toolsets:
+The worker has one typed evidence surface: `xstudio_l2`. Jev is **not** exposed as a worker tool; deterministic runtime code invokes reviewed System One workflows before/after the local model.
 
 | Need | Tool / operation |
 |---|---|
-| Jev classification/planning/review | `xstudio_jev` reviewed workflow |
 | Read a known table/view with validated identifiers | `xstudio_l2.select` |
 | Deterministically probe a Jev-selected real candidate by strong ticket identifier | `xstudio_l2.probe_table` |
 | Run composed read-only SQL | `xstudio_l2.query` |
@@ -85,20 +84,19 @@ Chitragupta exposes two bounded typed toolsets:
 | Inspect the run SQL/action audit | `xstudio_l2.get_run_actions` |
 | Persist ticket-specific findings | `xstudio_l2.save_ledger` |
 
-`xstudio_jev` is intentionally **not** a generic prompt tool. It exposes only reviewed workflows such as ticket triage, evidence planning, investigation assessment, primary review, KB applicability/curation, trace assessment, security screening, and profile/L1 routing.
-
-The worker-facing safety contract remains structural:
+The worker-facing safety contract is structural:
 
 - arbitrary SQL is read-only;
 - write/DDL/EXEC is rejected;
 - stored procedures require an explicit allowlist;
 - databases and schema identifiers are validated;
 - automatic `probe_table` refuses broad reads without a strong identifier-to-column mapping;
+- raw evidence is returned as read; Jev does not replace/filter SQL result rows inside `xstudio_l2`;
 - output is bounded;
-- repeated failures and semantically wasteful reads are circuit-broken;
+- repeated identical failures are circuit-broken;
 - terminal attempts to recreate database transport are blocked.
 
-Ticket publication is never an agent/Jev tool.
+Ticket publication and Jev orchestration are never worker tools.
 
 ## Worker roles
 
@@ -227,11 +225,9 @@ The local model receives this compact evidence package. If Jev judges the eviden
 
 probe_table never issues a broad automatic query when no strong identifier maps to the candidate schema. In that case the package explicitly says automatic probing was not possible and the bounded coordinator decides whether one focused live read is justified.
 
-### Bounded Hermes Jev plugin
+### Harness-owned Jev workflows
 
-xstudio-l2-jev registers the typed xstudio_jev toolset. It exposes reviewed workflows only: ticket triage, evidence planning, investigation assessment, candidate reranking, primary review / proposal preflight, KB applicability and curation, trace assessment, untrusted-context screening, model/profile routing, and L1 support-action selection.
-
-There is no arbitrary "ask Jev anything" operation.
+Deterministic runtime code owns Jev invocation. The Windows bridge exposes only the production workflows the harness currently needs: untrusted-context security screening, bounded evidence planning, investigation assessment, and primary proposal review. There is no model-facing Jev tool and no arbitrary-question surface.
 
 ### Storage: reuse the run and trace model
 
@@ -259,50 +255,45 @@ Every System One call is also written to the existing Hermes_Agent_Trace_Trn_Tbl
 ### Shared implementation
 
 ~~~text
-Model_Bench/jev/client.py                   one System One transport adapter
-Model_Bench/jev/ticket_triage.py           ticket classification
-Model_Bench/jev/evidence_plan.py           bounded evidence selection
+Model_Bench/jev/client.py                    one System One transport adapter
+Model_Bench/jev/ticket_triage.py            ticket characterization/routing
+Model_Bench/jev/evidence_plan.py            bounded evidence selection
 Model_Bench/jev/investigation_assessment.py structured evidence interpretation
 Model_Bench/jev/reviewer.py                 primary semantic reviewer
-Model_Bench/jev/candidate_rerank.py         real-candidate reranking
+Model_Bench/jev/candidate_rerank.py         bounded real-candidate reranking for KB curation
 Model_Bench/jev/kb_applicability.py         KB applicability
 Model_Bench/jev/kb_curation.py              KB curation
 Model_Bench/jev/trace_assessment.py         trace quality
 Model_Bench/jev/security.py                 untrusted-context screening
-Model_Bench/jev/tool_semantics.py           semantic tool circuit breaker
-Model_Bench/jev/model_routing.py            bounded profile routing
-Model_Bench/jev/l1_action.py                L1 action selection
 Model_Bench/jev/audit.py                    existing-run + trace persistence
-Model_Bench/jev_workflow_bridge.py          Windows deterministic bridge
-Model_Bench/xstudio_l2_jev_plugin/          bounded Hermes xstudio_jev toolset
-deploy/profiles/l2-jev-investigator/        default Jev-first coordinator
+Model_Bench/jev_workflow_bridge.py          Windows harness bridge
+deploy/profiles/l2-jev-investigator/        default Jev-first synthesis coordinator
 ~~~
 
-Model_Bench/typesafe_jev.py remains only as a compatibility facade for the original choose_route() entrypoint. The upstream TypeSafe skill is installed project-locally at .agents/skills/typesafe-ai/SKILL.md.
+The upstream TypeSafe skill is installed project-locally at `.agents/skills/typesafe-ai/SKILL.md`.
 
 ### Active behavior and configuration
 
-There is no Jev shadow mode. Jev routing, KB reranking, Jev-first evidence planning, primary semantic review, and semantic query circuit-breaking are active integrations. Deterministic structural rules remain higher authority where applicable: a single explicit identifier route, schema existence, read-only SQL, procedure allowlists, workflow binding, and publication state are still code-owned.
+Jev is active in harness-owned triage, evidence planning/assessment, KB semantic checks, trace assessment, security screening, and primary review. Deterministic structural rules remain higher authority: explicit identifier routing, schema existence, read-only SQL, procedure allowlists, workflow binding, WIP, and publication state are code-owned.
 
 ~~~text
-TYPESAFE_DEFAULT_MODEL                           default jev-latest
-TYPESAFE_BASE_URL                                optional API base override
-CHITRAGUPTA_JEV_ENABLED                          default 1
-CHITRAGUPTA_JEV_MIN_CONFIDENCE                   default 0.70
-CHITRAGUPTA_JEV_TIMEOUT_SECONDS                  default 10
-CHITRAGUPTA_JEV_TOOL_RERANK_ENABLED              default 1
-CHITRAGUPTA_JEV_KB_ENABLED                       default 1
-CHITRAGUPTA_JEV_TRACE_ENABLED                    default 1
-CHITRAGUPTA_JEV_SECURITY_ENABLED                 default 1
-CHITRAGUPTA_JEV_ADAPTIVE_REVIEW_ENABLED          default 1
-CHITRAGUPTA_JEV_SEMANTIC_TOOL_BLOCKING_ENABLED   default 1
-CHITRAGUPTA_JEV_PRIMARY_REVIEW_ENABLED            default 1
-CHITRAGUPTA_JEV_FIRST_INVESTIGATION_ENABLED       default 1
-CHITRAGUPTA_JEV_DIRECT_APPROVAL_CONFIDENCE        default 0.82
-CHITRAGUPTA_JEV_DIRECT_REWORK_CONFIDENCE          default 0.88
+TYPESAFE_API_KEY                              required in Windows Python/service environment
+TYPESAFE_DEFAULT_MODEL                        default jev-latest
+TYPESAFE_BASE_URL                             optional API base override
+CHITRAGUPTA_JEV_ENABLED                       default 1
+CHITRAGUPTA_JEV_AUDIT_ENABLED                 default 1
+CHITRAGUPTA_JEV_MIN_CONFIDENCE                default 0.70
+CHITRAGUPTA_JEV_TIMEOUT_SECONDS               default 10
+CHITRAGUPTA_JEV_KB_ENABLED                    default 1
+CHITRAGUPTA_JEV_TRACE_ENABLED                 default 1
+CHITRAGUPTA_JEV_SECURITY_ENABLED              default 1
+CHITRAGUPTA_JEV_FIRST_INVESTIGATION_ENABLED   default 1
+CHITRAGUPTA_JEV_DIRECT_APPROVAL_CONFIDENCE    default 0.82
+CHITRAGUPTA_JEV_DIRECT_REWORK_CONFIDENCE      default 0.88
 ~~~
 
-For this dev deployment the explicitly supplied TypeSafe credential is wired through deploy/dev/typesafe.env. client.py prefers a normal TYPESAFE_API_KEY environment value when present and otherwise reads that dev file. The credential is used only to create the HTTP Authorization header; do not put it into prompts, Kanban cards, ticket text, trace payloads, or model-visible configuration.
+There is no repository credential fallback. Never commit `.env` secrets or put TypeSafe credentials into prompts, Kanban cards, ticket text, trace payloads, or model-visible configuration.
+
 ## SQL runtime and deployment
 
 `Knowledge/00_Hermes_L2_FULL_INSTALL.sql` is the generated complete SQL bundle. The numbered source files are authoritative inputs; hardening sources `25_ticket_dispatch_hardening.sql` and `55_update_retry_hardening.sql` are already included in the generated full-install bundle.
@@ -347,17 +338,15 @@ Model_Bench/xstudio_l2_tool_bridge.py
     Harness-owned Windows/SQL transport behind the typed tool.
 
 Model_Bench/jev/
-Model_Bench/typesafe_jev.py
 Model_Bench/jev_workflow_bridge.py
-    Shared System-One judgment fabric, compatibility facade, and harness-owned
-    Windows bridge for semantic workflows/audit persistence.
+    Harness-owned System-One workflows and Windows bridge.
 
 Model_Bench/jev_trace_assessor.py
 Model_Bench/jev_post_resolution_curation.py
     Out-of-band trace-quality assessment and advisory KB curation.
 
 Model_Bench/kb_retrieval.py
-    Deterministic relevance gate plus shadow-mode Jev triage, applicability,
+    Deterministic relevance gate plus Jev triage, applicability,
     negative-indicator, and untrusted-context judgments.
 
 Model_Bench/kanban_approval_publisher.py
