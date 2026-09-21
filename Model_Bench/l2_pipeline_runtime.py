@@ -1712,6 +1712,7 @@ def _apply_primary_review(
     review: dict[str, Any],
     counts: dict[str, int],
     dry_run: bool,
+    tasks: list[dict[str, Any]] | None = None,
 ) -> None:
     proposal["jev_primary_review"] = review
     action = str(review.get("action") or "LOCAL_REVIEW")
@@ -1733,6 +1734,7 @@ def _apply_primary_review(
             reason=str(review.get("reason") or "Jev primary review requested focused rework."),
             investigation_task_id=task["id"],
             dry_run=dry_run,
+            tasks=tasks,
         )
         counts["reworked"] += int(bool(created))
         return
@@ -1789,6 +1791,7 @@ def process_jev_primary_reviews(
             review=review,
             counts=counts,
             dry_run=dry_run,
+            tasks=source_tasks,
         )
     return counts
 
@@ -1852,6 +1855,7 @@ def create_rework_card(
     reason: str,
     investigation_task_id: Optional[str],
     dry_run: bool = False,
+    tasks: list[dict[str, Any]] | None = None,
 ) -> Optional[str]:
     run_id, ticket_id = task_run_id(source_task), task_ticket_id(source_task)
     if not run_id or not ticket_id:
@@ -1864,8 +1868,8 @@ def create_rework_card(
             cycle=current_cycle, dry_run=dry_run,
         ) else None
 
-    tasks = list_tasks()
-    if _source_has_rework(tasks, source_task["id"]):
+    source_tasks = tasks if tasks is not None else list_tasks()
+    if _source_has_rework(source_tasks, source_task["id"]):
         return None
 
     prior = "" if dry_run else _persist_rejected_ledger(args, investigation_task_id, run_id)
@@ -1950,6 +1954,7 @@ def process_unreviewable_completions(
         if create_rework_card(
             args, source_task=task, reason=reason,
             investigation_task_id=task["id"], dry_run=dry_run,
+            tasks=source_tasks,
         ):
             processed += 1
     return processed
@@ -2032,6 +2037,7 @@ def process_rejections(
         if create_rework_card(
             args, source_task=task, reason=reason,
             investigation_task_id=investigation_task_id, dry_run=dry_run,
+            tasks=source_tasks,
         ):
             processed += 1
     return processed
@@ -2174,6 +2180,7 @@ def process_approvals(
             if create_rework_card(
                 args, source_task=task, reason=reason,
                 investigation_task_id=source_id, dry_run=dry_run,
+                tasks=source_tasks,
             ):
                 counts["rework_created"] += 1
             continue
