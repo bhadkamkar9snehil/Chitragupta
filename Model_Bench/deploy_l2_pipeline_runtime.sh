@@ -56,6 +56,13 @@ chmod +x "$SCRIPTS_DIR"/*.py
 test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
   || { echo "FATAL: Model_Bench/xstudio_l2_tool_bridge.py is missing" >&2; exit 1; }
 
+# KB retrieval executes directly from the repo path. Its TypeSafe Jev helper is
+# likewise repo-local: there is no runtime package installation or profile copy.
+test -f "$ROOT/Model_Bench/kb_retrieval.py" \
+  || { echo "FATAL: Model_Bench/kb_retrieval.py is missing" >&2; exit 1; }
+test -f "$ROOT/Model_Bench/typesafe_jev.py" \
+  || { echo "FATAL: Model_Bench/typesafe_jev.py is missing" >&2; exit 1; }
+
 # Keep the workflow binding beside the deployed scripts as a fallback. The
 # runtime also reads the canonical repo copy directly.
 cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
