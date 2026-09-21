@@ -733,6 +733,13 @@ SET KnowledgeType = COALESCE(KnowledgeType, 'KnownIssue'),
 WHERE KnowledgeType IS NULL OR ArticleStatus IS NULL;
 GO
 
+-- The NOT NULL default above migrates all legacy rows as Approved. Preserve
+-- legacy IsActive=0 semantics by marking those rows Deprecated.
+UPDATE dbo.Hermes_Solution_Article_Mst_Tbl
+SET ArticleStatus = 'Deprecated'
+WHERE IsDeleted = 0 AND IsActive = 0 AND ArticleStatus = 'Approved';
+GO
+
 IF NOT EXISTS
 (
     SELECT 1 FROM sys.check_constraints
