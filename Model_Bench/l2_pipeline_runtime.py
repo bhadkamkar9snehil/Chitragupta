@@ -1408,7 +1408,25 @@ def publication_ledger(proposal: dict[str, Any], reviewer_task: dict[str, Any]) 
     }
 
 
-def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
+def _publish_frozen_proposal(
+    args: argparse.Namespace,
+    proposal: dict[str, Any],
+    *,
+    source: str,
+    ledger: dict[str, Any] | None = None,
+    dry_run: bool = False,
+) -> str:
+    """One deterministic publication path shared by Jev and local review."""
+    run_id = str(proposal.get("run_id") or "")
+    ticket_id = str(proposal.get("ticket_id") or "")
+    if not run_id or not ticket_id or not _proposal_complete(proposal):
+        return "invalid_proposal"
+
+    state = _query_published_state(args, run_id)
+    if state and state[0].get("ProcessStatus") in ("COMPLETED", "WAITING_USER") and state[0].get("ReplyText"):
+        return "already_published"
+    if not safe_query_active_run(run_id, args):
+        return "inactive"
     binding = load_workflow_binding()
     response_type = str(proposal["response_type"]).upper()
     try:
@@ -1421,9 +1439,12 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dic
         "--publish-response", "--run-id", run_id, "--force-run-id",
         "--response-type", response_type,
         "--reply-text", str(proposal["reply_text"]),
+        "--approval-status", "APPROVED",
         "--mirror-to-support-remarks",
         *workflow_args,
     ]
+    if ledger:
+        cmd += ["--ledger", json.dumps(ledger, separators=(",", ":"), default=str)]
     if response_type == "QUESTION":
         cmd.append("--mirror-to-ask-remarks")
     for key, flag in (
@@ -1540,146 +1561,15 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dic
                     counts["rework_created"] += 1
                 continue
 
-        response_type = str(proposal["response_type"]).upper()
-        try:
-            workflow_args, expected_status = _status_args_for_response(binding, proposal)
-        except RuntimeError as exc:
-            # Deployment binding is a harness configuration problem, not an investigator
-            # defect. Keep the run active and visible; global WIP prevents new claims until
-            # the operator fixes the binding, then the same reconciler publishes it.
-            print(f"PUBLISH BLOCKED for run {run_id}: {exc}")
-            counts["blocked_configuration"] += 1
-            continue
-
-        cmd = [
-            "--publish-response", "--run-id", run_id, "--force-run-id",
-            "--response-type", response_type,
-            "--reply-text", str(proposal["reply_text"]),
-            "--approval-status", "APPROVED",
-            "--mirror-to-support-remarks",
-            "--ledger", json.dumps(publication_ledger(proposal, task), separators=(",", ":"), default=str),
-            *workflow_args,
-        ]
-        if response_type == "QUESTION":
-            cmd.append("--mirror-to-ask-remarks")
-        for key, flag in (
-            ("problem_summary", "--problem-summary"),
-            ("findings", "--findings"),
-            ("root_cause", "--root-cause"),
-            ("resolution", "--resolution"),
-        ):
-            if proposal.get(key):
-                cmd += [flag, str(proposal[key])]
-
-        if dry_run:
-            print(f"[DRY RUN] publish reviewer {task['id']} run={run_id} type={response_type} status={expected_status}")
-
-def _publish_frozen_proposal(
-    args: argparse.Namespace,
-    proposal: dict[str, Any],
-    *,
-    source: str,
-    dry_run: bool = False,
-) -> str:
-    """One deterministic publication path shared by Jev and local review."""
-    run_id = str(proposal.get("run_id") or "")
-    ticket_id = str(proposal.get("ticket_id") or "")
-    if not run_id or not ticket_id or not _proposal_complete(proposal):
-        return "invalid_proposal"
-
-    state = _query_published_state(args, run_id)
-    if state and state[0].get("ProcessStatus") in ("COMPLETED", "WAITING_USER") and state[0].get("ReplyText"):
-        return "already_published"
-    if not safe_query_active_run(run_id, args):
-        return "inactive"
-    binding = load_workflow_binding()
-    response_type = str(proposal["response_type"]).upper()
-    try:
-        workflow_args, expected_status = _status_args_for_response(binding, proposal)
-    except RuntimeError as exc:
-        print(f"PUBLISH BLOCKED for run {run_id}: {exc}")
-        return "blocked_configuration"
-
-    cmd = [
-        "--publish-response", "--run-id", run_id, "--force-run-id",
-        "--response-type", response_type,
-        "--reply-text", str(proposal["reply_text"]),
-        "--mirror-to-support-remarks",
-        *workflow_args,
-    ]
-    if response_type == "QUESTION":
-        cmd.append("--mirror-to-ask-remarks")
-    for key, flag in (
-        ("problem_summary", "--problem-summary"),
-        ("findings", "--findings"),
-        ("root_cause", "--root-cause"),
-        ("resolution", "--resolution"),
-    ):
-        if proposal.get(key):
-            cmd += [flag, str(proposal[key])]
-
-    if dry_run:
-        print(f"[DRY RUN] publish {source} run={run_id} type={response_type} status={expected_status}")
-        return "published"
-
-    try:
-        run_orchestrator(args, cmd, timeout=90)
-    except RuntimeError as exc:
-        print(f"WARNING: publish failed for run {run_id}: {exc}")
-        return "failed"
-
-    verify = _query_published_state(args, run_id)
-    if not verify:
-        print(f"WARNING: publish returned success but no SQL row found for {run_id}")
-        return "failed"
-    row = verify[0]
-    if row.get("ProcessStatus") not in ("COMPLETED", "WAITING_USER") or not str(row.get("ReplyText") or "").strip():
-        print(f"WARNING: publish postcondition failed for {run_id}: {row}")
-        return "failed"
-    if expected_status and row.get("TicketStatus") != expected_status:
-        print(
-            f"WARNING: Helpdesk status postcondition failed for {run_id}: "
-            f"expected {expected_status!r}, got {row.get('TicketStatus')!r}"
-        )
-        return "failed"
-
-    _post_publish_activity(args, run_id, ticket_id, proposal)
-    return "published"
-
-
-def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
-    """Publish only local-review approvals; Jev approvals use the same helper earlier."""
-    counts = {"published": 0, "blocked_configuration": 0, "rework_created": 0}
-    active = {str(row["ID"]) for row in query_active_runs(args)}
-
-    for task in list_tasks("done"):
-        if (task.get("assignee") or "") not in REVIEWER_PROFILES:
-            continue
-        run_id, ticket_id = task_run_id(task), task_ticket_id(task)
-        if run_id not in active or not ticket_id:
-            continue
-
-        proposal = task_proposal(task)
-        if not _proposal_complete(proposal):
-            reason = (
-                "Local reviewer reached done but its frozen proposal_json is missing/incomplete; "
-                "re-package the original verified finding through focused rework."
-            )
-            source_id = body_field(task.get("body"), "investigation_task_id")
-            if create_rework_card(
-                args, source_task=task, reason=reason,
-                investigation_task_id=source_id, dry_run=dry_run,
-            ):
-                counts["rework_created"] += 1
-            continue
-
         outcome = _publish_frozen_proposal(
             args,
             proposal or {},
             source=f"local reviewer {task['id']}",
+            ledger=publication_ledger(proposal, task),
             dry_run=dry_run,
         )
-        if outcome in {"published", "already_published"}:            counts["published"] += 1
+        if outcome in {"published", "already_published"}:
+            counts["published"] += 1
         elif outcome == "blocked_configuration":
             counts["blocked_configuration"] += 1
 
@@ -1782,8 +1672,7 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
     unreviewable = process_unreviewable_completions(args, dry_run=dry_run, active_run_ids=active)
     jev_reviews = process_jev_primary_reviews(args, dry_run=dry_run)
     reviewers = ensure_missing_reviewers(args, dry_run=dry_run, active_run_ids=active)
-    reworks = ensure_missing_reworks(args, dry_run=dry_run, active_run_ids=active)
-    processed, outcomes = process_approvals(args, dry_run=dry_run)
+    local_approvals = process_approvals(args, dry_run=dry_run)
     rejections = process_rejections(args, dry_run=dry_run)
     orphans = recover_orphan_runs(
         args, dry_run=dry_run, stale_after_minutes=args.stale_after_minutes,
@@ -1953,13 +1842,25 @@ def _route_skill(route: str | None) -> str | None:
     return None
 
 
+class InvestigationBundle(str):
+    route_skill: str | None
+
+    def __new__(cls, text: str, route_skill: str | None = None):
+        obj = str.__new__(cls, text)
+        obj.route_skill = route_skill
+        return obj
+
+    def __iter__(self):
+        return iter((str(self), self.route_skill))
+
+
 def _investigation_bundle(
     args: argparse.Namespace,
     ticket_id: str,
     fallback_ticket: dict[str, Any],
     *,
     run_id: str | None = None,
-) -> tuple[str, str | None]:
+) -> InvestigationBundle:
     try:
         bundle = run_orchestrator(args, ["--investigate-bundle", ticket_id], timeout=90)
     except RuntimeError as exc:
@@ -1973,7 +1874,10 @@ def _investigation_bundle(
     # Orchestrator still has the old route-only solution lookup for compatibility. Never expose
     # two competing KB paths to the worker.
     bundle.pop("known_solutions", None)
-    kb = _run_kb_retrieval(args, fallback_ticket)
+    bundle["kb_retrieval"] = _run_kb_retrieval(
+        args, fallback_ticket, ticket_id=ticket_id, run_id=run_id
+    )
+    kb = bundle["kb_retrieval"] if isinstance(bundle.get("kb_retrieval"), dict) else {}
     ticket_context = bundle.get("ticket") if isinstance(bundle.get("ticket"), dict) else {}
     live_ticket = ticket_context.get("ticket") if isinstance(ticket_context.get("ticket"), dict) else fallback_ticket
     ticket_fields = (
@@ -1982,46 +1886,16 @@ def _investigation_bundle(
         "HermesComplaintTypeName", "HermesPriorityName",
     )
     prior_runs = ticket_context.get("prior_runs") if isinstance(ticket_context, dict) else []
-    compact = {
-        "ticket": {key: live_ticket.get(key) for key in ticket_fields if live_ticket.get(key) is not None},
-        "prior_attempts": [
-            {key: row.get(key) for key in ("ID", "ProcessStatus", "ResponseType", "ReplyText", "ErrorMessage", "ClaimedOn")
-             if row.get(key) not in (None, "")}
-            for row in list(prior_runs or [])[:3]
-        ],
-        "prior_ledger": bundle.get("prior_ledger"),
-        "suggested_tables": [
-            {key: row.get(key) for key in ("table", "database", "matched_columns") if row.get(key) is not None}
-            for row in list(bundle.get("suggested_tables") or [])[:3]
-        ],
-        "kb": {
-            "solutions": list(kb.get("solutions") or [])[:2],
-            "route_candidates": list(kb.get("route_candidates") or [])[:2],
-            "gbrain": {
-                "status": (kb.get("gbrain") or {}).get("status"),
-                "source_id": (kb.get("gbrain") or {}).get("source_id"),
-                "hits": [{key: hit.get(key) for key in ("kb_id", "source_ref", "title", "excerpt", "retrieval_score", "verification_required")
-                          if hit.get(key) is not None} for hit in list((kb.get("gbrain") or {}).get("hits") or [])[:3]],
-                "abstained": (kb.get("gbrain") or {}).get("abstained"),
-                "abstention_reason": (kb.get("gbrain") or {}).get("abstention_reason"),
-            },
-            "abstained": kb.get("abstained"),
-            "abstention_reason": kb.get("abstention_reason"),
-        },
-    }
-    rendered = json.dumps(compact, indent=2, default=str)
-    if len(rendered) > 8000:
-        rendered = rendered[:8000] + "\n... [bundle truncated at 8,000 chars]"
 
-    suggested_tables = bundle.get("suggested_tables")("suggested_tables")
+    suggested_tables = bundle.get("suggested_tables")
     bundle["jev_first_investigation"] = _jev_first_investigation(
         ticket=fallback_ticket,
         run_id=run_id,
         ticket_id=ticket_id,
         suggested_tables=suggested_tables if isinstance(suggested_tables, list) else [],
-        kb_retrieval=bundle["kb_retrieval"] if isinstance(bundle["kb_retrieval"], dict) else {},
+        kb_retrieval=kb,
     )
-    route_candidates = (bundle.get("kb_retrieval") or {}).get("route_candidates") or []
+    route_candidates = kb.get("route_candidates") or []
     selected_route = (
         str(route_candidates[0].get("route") or "")
         if route_candidates and isinstance(route_candidates[0], dict)
@@ -2065,17 +1939,49 @@ def _investigation_bundle(
         ),
     }
 
-    rendered = json.dumps(bundle, indent=2, default=str)
+    compact = {
+        "ticket": {key: live_ticket.get(key) for key in ticket_fields if live_ticket.get(key) is not None},
+        "prior_attempts": [
+            {key: row.get(key) for key in ("ID", "ProcessStatus", "ResponseType", "ReplyText", "ErrorMessage", "ClaimedOn")
+             if row.get(key) not in (None, "")}
+            for row in list(prior_runs or [])[:3]
+        ],
+        "prior_ledger": bundle.get("prior_ledger"),
+        "suggested_tables": [
+            {key: row.get(key) for key in ("table", "database", "matched_columns") if row.get(key) is not None}
+            for row in list(bundle.get("suggested_tables") or [])[:3]
+        ],
+        "kb": {
+            "solutions": list(kb.get("solutions") or [])[:2],
+            "route_candidates": list(kb.get("route_candidates") or [])[:2],
+            "gbrain": {
+                "status": (kb.get("gbrain") or {}).get("status"),
+                "source_id": (kb.get("gbrain") or {}).get("source_id"),
+                "hits": [{key: hit.get(key) for key in ("kb_id", "source_ref", "title", "excerpt", "retrieval_score", "verification_required")
+                          if hit.get(key) is not None} for hit in list((kb.get("gbrain") or {}).get("hits") or [])[:3]],
+                "abstained": (kb.get("gbrain") or {}).get("abstained"),
+                "abstention_reason": (kb.get("gbrain") or {}).get("abstention_reason"),
+            },
+            "abstained": kb.get("abstained"),
+            "abstention_reason": kb.get("abstention_reason"),
+        },
+        "jev_first_investigation": bundle.get("jev_first_investigation"),
+        "preloaded_route_skill": bundle.get("preloaded_route_skill"),
+        "jev_ticket_security": bundle.get("jev_ticket_security"),
+        "untrusted_context_policy": bundle.get("untrusted_context_policy"),
+    }
+    rendered = json.dumps(compact, indent=2, default=str)
     if len(rendered) > 14000:
         rendered = rendered[:14000] + "\n... [bundle truncated at 14,000 chars]"
-    return (
+    return InvestigationBundle(
         (
             "\n--- Investigation bundle (single dispatch-time package) ---\n"
             "KB hits, prior findings, Jev judgments, and suggested tables are leads, not proof. "
             "Final claims require current live SQL or verified Knowledge/ evidence.\n"
             f"{rendered}\n"
         ),
-        bundle.get("preloaded_route_skill"),    )
+        bundle.get("preloaded_route_skill"),
+    )
 
 
 def _ticket_for_route(args: argparse.Namespace, ticket_id: str) -> dict[str, Any]:

@@ -45,13 +45,13 @@ class FabricTests(unittest.TestCase):
                 "a": {"type": "noul", "instructions": "A?"},
                 "b": {"type": "choice", "instructions": "B?", "criteria": {"x": None, "y": None}},
             },
-            api_key="test",
+            api_key="secret-token",
             sender=sender,
         )
         self.assertTrue(result["ok"])
         self.assertEqual(set(seen["payload"]["questions"]), {"a", "b"})
         self.assertEqual(seen["payload"]["model"], "jev-latest")
-        self.assertNotIn("test", str(seen["payload"]))
+        self.assertNotIn("secret-token", str(seen["payload"]))
 
     def test_ticket_triage_builds_parallel_characterization(self):
         seen = {}
