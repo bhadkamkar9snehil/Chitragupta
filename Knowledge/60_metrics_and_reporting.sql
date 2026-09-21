@@ -398,6 +398,34 @@ SELECT
     TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.publication_risk.score'))
         AS ReviewRiskScore,
 
+    JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.execution_mode.choice')
+        AS JevRecommendedExecutionMode,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.execution_mode.confidence'))
+        AS JevRecommendedExecutionConfidence,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.evidence_sufficient.noul'))
+        AS JevEvidenceSufficientProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.needs_local_model.noul'))
+        AS JevNeedsLocalModelProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.needs_route_skill.noul'))
+        AS JevNeedsRouteSkillProbability,
+
+    r.ExecutionMode,
+    r.LocalModelState,
+    r.LocalModelPurpose,
+    r.LocalModelPriority,
+    r.LocalModelQueuedOn,
+    r.LocalModelStartedOn,
+    r.LocalModelCompletedOn,
+    CASE WHEN r.LocalModelStartedOn IS NULL THEN 0 ELSE 1 END AS LocalModelStarted,
+    CASE
+        WHEN r.LocalModelQueuedOn IS NOT NULL AND r.LocalModelStartedOn IS NOT NULL
+        THEN DATEDIFF(SECOND, r.LocalModelQueuedOn, r.LocalModelStartedOn)
+    END AS LocalModelQueueWaitSeconds,
+    CASE
+        WHEN r.LocalModelStartedOn IS NOT NULL AND r.LocalModelCompletedOn IS NOT NULL
+        THEN DATEDIFF(SECOND, r.LocalModelStartedOn, r.LocalModelCompletedOn)
+    END AS LocalModelRunSeconds,
+
     r.ReviewMode,
     r.JevReviewDecision,
     r.JevReviewConfidence,
