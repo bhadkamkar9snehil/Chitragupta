@@ -18,6 +18,7 @@ episodic state remains in InvestigationJson; neither belongs here.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -293,13 +294,32 @@ def connect(server: str, database: str, username: str, password: str | None):
 def fetch_articles(conn) -> list[dict[str, Any]]:
     cur = conn.cursor()
     cur.execute(
-        """
-        SELECT ID, Title, ProblemSummary, RootCause, ResolutionSteps,
-               Route, Tags, UsageCount, CreatedOn, ModifiedOn
-        FROM dbo.Hermes_Solution_Article_Mst_Tbl
-        WHERE IsActive = 1 AND IsDeleted = 0;
-        """
+        "SELECT CASE WHEN COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ArticleStatus') "
+        "IS NULL THEN 0 ELSE 1 END"
     )
+    governed = bool(cur.fetchone()[0])
+    if governed:
+        cur.execute(
+            """
+            SELECT ID, Title, ProblemSummary, RootCause, ResolutionSteps,
+                   Route, Tags, UsageCount, CreatedOn, ModifiedOn,
+                   KnowledgeType, ArticleStatus, CanonicalKey, RevisionNo,
+                   ContentHash, SourceTicketID, SourceRunID, LastVerifiedOn,
+                   ApplicabilityJson, NegativeIndicatorsJson, VerificationJson,
+                   EvidenceJson, DiagnosticSteps, VerificationSteps, ExpectedResult
+            FROM dbo.Hermes_Solution_Article_Mst_Tbl
+            WHERE IsActive = 1 AND IsDeleted = 0 AND ArticleStatus = 'Approved';
+            """
+        )
+    else:
+        cur.execute(
+            """
+            SELECT ID, Title, ProblemSummary, RootCause, ResolutionSteps,
+                   Route, Tags, UsageCount, CreatedOn, ModifiedOn
+            FROM dbo.Hermes_Solution_Article_Mst_Tbl
+            WHERE IsActive = 1 AND IsDeleted = 0;
+            """
+        )
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
 
@@ -381,6 +401,21 @@ def rank_articles(
                 "usage_count": int(article.get("UsageCount") or 0),
                 "created_on": article.get("CreatedOn"),
                 "modified_on": article.get("ModifiedOn"),
+                "knowledge_type": article.get("KnowledgeType"),
+                "article_status": article.get("ArticleStatus") or ("Approved" if article.get("IsActive", 1) else None),
+                "canonical_key": article.get("CanonicalKey"),
+                "revision_no": article.get("RevisionNo"),
+                "content_hash": article.get("ContentHash"),
+                "source_ticket_id": article.get("SourceTicketID"),
+                "source_run_id": article.get("SourceRunID"),
+                "last_verified_on": article.get("LastVerifiedOn"),
+                "applicability": article.get("ApplicabilityJson"),
+                "negative_indicators": article.get("NegativeIndicatorsJson"),
+                "verification": article.get("VerificationJson"),
+                "evidence": article.get("EvidenceJson"),
+                "diagnostic_steps": article.get("DiagnosticSteps"),
+                "verification_steps": article.get("VerificationSteps"),
+                "expected_result": article.get("ExpectedResult"),
                 "retrieval_score": round(score, 2),
                 "matched_terms": matched_terms,
                 "retrieval_reasons": reasons,
@@ -426,6 +461,56 @@ def _compose_kb_score(row: dict[str, Any]) -> float:
         (2.0 * relevance) + (2.0 * applicability) + same_pattern + (0.5 * same_root) - (2.5 * negative),
         6,
     )
+
+
+def log_retrieval_telemetry(
+    conn,
+    *,
+    query: str,
+    routes: list[dict[str, Any]],
+    ranked: list[dict[str, Any]],
+    ticket_id: str | None,
+    run_id: str | None,
+) -> dict[str, Any]:
+    """Best-effort PRE_INVESTIGATION telemetry; retrieval never depends on it."""
+    if not ranked:
+        return {"ok": True, "inserted": 0}
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT CASE WHEN OBJECT_ID('dbo.Hermes_KB_Retrieval_Trn_Tbl', 'U') "
+            "IS NULL THEN 0 ELSE 1 END"
+        )
+        if not bool(cur.fetchone()[0]):
+            return {"ok": False, "inserted": 0, "reason": "retrieval telemetry table not deployed"}
+        route_names = {r.get("route") for r in routes}
+        query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()
+        sql = """
+        INSERT INTO dbo.Hermes_KB_Retrieval_Trn_Tbl
+        (TicketID, RunID, QueryPhase, QueryHash, KBID, SourceType, RankNo,
+         DeterministicScore, JevRelevance, JevApplicability,
+         JevNegativeIndicator, RouteMatch, Selected)
+        VALUES (?, ?, 'PRE_INVESTIGATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0);
+        """
+        for rank_no, row in enumerate(ranked, start=1):
+            cur.execute(
+                sql,
+                ticket_id,
+                run_id,
+                query_hash,
+                row.get("kb_id"),
+                row.get("source_type"),
+                rank_no,
+                row.get("retrieval_score"),
+                row.get("jev_relevance"),
+                row.get("jev_applicability"),
+                row.get("jev_negative_indicator"),
+                1 if row.get("route") in route_names else 0,
+            )
+        conn.commit()
+        return {"ok": True, "inserted": len(ranked)}
+    except Exception as exc:
+        return {"ok": False, "inserted": 0, "reason": f"{type(exc).__name__}: {exc}"}
 
 
 def retrieve(
@@ -501,6 +586,15 @@ def retrieve(
                 max_risk = max((float(v or 0.0) for v in flags.values()), default=0.0)
                 row["context_handling"] = "QUOTE_ONLY_UNTRUSTED" if max_risk >= jev_policy.HIGH_RISK_NOUL else "NORMAL_UNTRUSTED_SOURCE"
 
+    retrieval_telemetry = log_retrieval_telemetry(
+        conn,
+        query=query,
+        routes=routes,
+        ranked=ranked,
+        ticket_id=ticket_id,
+        run_id=run_id,
+    )
+
     # Best-effort audit. Retrieval must never fail because audit persistence is unavailable.
     audit_results = []
     for stage, state, result in (
@@ -538,6 +632,7 @@ def retrieve(
             "latency_ms": security.get("latency_ms"),
         },
         "jev_audit": audit_results,
+        "retrieval_telemetry": retrieval_telemetry,
         "abstained": not bool(ranked),
         "abstention_reason": None if ranked else "No active solution article met the relevance threshold.",
         "retrieval_policy": {
