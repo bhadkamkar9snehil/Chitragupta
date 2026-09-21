@@ -362,7 +362,7 @@ python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 ```
 
-Jev is active, not shadowed. The dev deployment loads the explicitly approved TypeSafe credential from `deploy/dev/typesafe.env` when `TYPESAFE_API_KEY` is absent.
+Jev is harness-owned. `TYPESAFE_API_KEY` must come from the Windows Python/service environment; there is no repository credential fallback.
 
 Run `Knowledge/98_pipeline_postflight.sql` and `Knowledge/99_postflight.sql` after SQL deployment as appropriate.
 
