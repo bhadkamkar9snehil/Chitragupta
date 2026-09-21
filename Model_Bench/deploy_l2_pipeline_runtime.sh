@@ -62,22 +62,32 @@ test -f "$ROOT/Model_Bench/kb_retrieval.py" \
   || { echo "FATAL: Model_Bench/kb_retrieval.py is missing" >&2; exit 1; }
 test -f "$ROOT/Model_Bench/typesafe_jev.py" \
   || { echo "FATAL: Model_Bench/typesafe_jev.py is missing" >&2; exit 1; }
+test -f "$ROOT/Model_Bench/jev_workflow_bridge.py" \
+  || { echo "FATAL: Model_Bench/jev_workflow_bridge.py is missing" >&2; exit 1; }
+test -f "$ROOT/Model_Bench/jev_trace_assessor.py" \
+  || { echo "FATAL: Model_Bench/jev_trace_assessor.py is missing" >&2; exit 1; }
+test -f "$ROOT/Model_Bench/jev_post_resolution_curation.py" \
+  || { echo "FATAL: Model_Bench/jev_post_resolution_curation.py is missing" >&2; exit 1; }
+test -f "$ROOT/Model_Bench/jev/client.py" \
+  || { echo "FATAL: Model_Bench/jev fabric is missing" >&2; exit 1; }
 
 # Keep the workflow binding beside the deployed scripts as a fallback. The
 # runtime also reads the canonical repo copy directly.
 cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
 
-# Deploy both observer plugins to every active role. The orchestrator plugin
-# only triggers reconciliation; the tools plugin registers `xstudio_l2` and
-# enforces the execution guard. Correctness never depends on the event hook,
-# because ticket_scout runs the same reconciler before every new claim.
+# Deploy the orchestrator, typed-tools, and trace observer plugins to every
+# active role. Trace remains a cheap local observer; all Jev network work runs
+# later from the drain pipeline, never inside observer hooks. Correctness never
+# depends on an event hook because ticket_scout reconciles before every claim.
 deploy_plugins() {
   local profile="$1" plugin src dir
-  for plugin in xstudio-l2-orchestrator xstudio-l2-tools; do
+  for plugin in xstudio-l2-orchestrator xstudio-l2-tools xstudio-l2-trace; do
     if [[ "$plugin" == "xstudio-l2-orchestrator" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_orchestrator_plugin"
-    else
+    elif [[ "$plugin" == "xstudio-l2-tools" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_tools_plugin"
+    else
+      src="$ROOT/Model_Bench/xstudio_l2_trace_plugin"
     fi
     dir="$HOME/.hermes/profiles/$profile/plugins/$plugin"
     mkdir -p "$dir"
@@ -168,7 +178,7 @@ if [[ "${1:-}" != "--no-restart" ]]; then
 fi
 
 echo
-echo "Deployed deterministic L2 lifecycle + typed XStudio investigation harness."
+echo "Deployed deterministic L2 lifecycle + typed XStudio harness + trace observer + Jev System-One fabric."
 echo "Typed tool: xstudio_l2. Retired terminal transports (Hermes_Orchestrator.py,"
 echo "Windows Python, sqlcmd, pyodbc, pip) are blocked by plugin hook + approvals.deny."
 echo "Known retired deployed lifecycle scripts are removed on every deploy."
