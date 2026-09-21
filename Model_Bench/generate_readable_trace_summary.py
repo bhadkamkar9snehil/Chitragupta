@@ -234,16 +234,17 @@ def _jev_assessment_note(cur, run_id: str) -> str:
         value = getattr(row, attr, None)
         if value is not None:
             parts.append(f"{label}: {float(value):.2f}")
-    if getattr(row, "JevProposedResponseType", None):
-        value = getattr(row, "JevProposedResponseTypeConfidence", None)
+    decision = getattr(row, "JevReviewDecision", None)
+    if decision:
+        confidence = getattr(row, "JevReviewConfidence", None)
         parts.append(
-            "preflight response-type view: "
-            + str(row.JevProposedResponseType)
-            + (f" ({float(value):.2f})" if value is not None else "")
+            "primary review: "
+            + str(decision)
+            + (f" ({float(confidence):.2f})" if confidence is not None else "")
         )
     risk = getattr(row, "ReviewRiskScore", None)
     if risk is not None:
-        parts.append(f"preflight review-risk score: {float(risk):.2f}/3")
+        parts.append(f"primary review risk: {float(risk):.2f}/3")
     if not parts:
         return ""
     return (
