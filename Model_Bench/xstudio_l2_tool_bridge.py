@@ -182,6 +182,33 @@ def _escape_sql_string(value: Any) -> str:
     return str(value).replace("'", "''")
 
 
+def _semantic_context_for_run(req: dict[str, Any], client: Any) -> tuple[Any, str | None]:
+    explicit = req.get("semantic_context")
+    if explicit:
+        return explicit, str(req.get("ticket_id") or "") or None
+    run_id = str(req.get("run_id") or "")
+    if not run_id:
+        return "", str(req.get("ticket_id") or "") or None
+    try:
+        run = client.get_run(run_id) or {}
+        ticket_id = str(run.get("TicketID") or "") or None
+        if not ticket_id:
+            return {"run": run}, None
+        ctx = client.get_ticket_context(ticket_id) or {}
+        ticket = ctx.get("ticket") if isinstance(ctx, dict) else ctx
+        return {
+            "ticket": ticket,
+            "run": {
+                "ID": run.get("ID"),
+                "Route": run.get("Route"),
+                "ResponseType": run.get("ResponseType"),
+                "ProcessStatus": run.get("ProcessStatus"),
+            },
+        }, ticket_id
+    except Exception:
+        return "", str(req.get("ticket_id") or "") or None
+
+
 def _audit_jev(
     result: dict[str, Any],
     *,
@@ -330,14 +357,18 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
                 except Exception:
                     previous_reads = []
 
+            semantic_context, inferred_ticket_id = _semantic_context_for_run(req, client)
             semantics_state = {
-                "investigation_context": req.get("semantic_context") or "",
+                "investigation_context": semantic_context,
                 "proposed_call": {"operation": "query", "database": database, "sql": sql},
                 "previous_reads": previous_reads,
             }
             jev_semantics = assess_tool_call(semantics_state)
+            audit_req = dict(req)
+            if inferred_ticket_id and not audit_req.get("ticket_id"):
+                audit_req["ticket_id"] = inferred_ticket_id
             jev_audit = _audit_jev(
-                jev_semantics, stage="TOOL_QUERY_SEMANTICS", state=semantics_state, req=req
+                jev_semantics, stage="TOOL_QUERY_SEMANTICS", state=semantics_state, req=audit_req
             )
 
             if jev_policy.SEMANTIC_TOOL_BLOCKING_ENABLED and jev_semantics.get("ok"):
