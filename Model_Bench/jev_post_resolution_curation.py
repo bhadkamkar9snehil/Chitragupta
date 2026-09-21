@@ -76,7 +76,7 @@ def candidate_articles(cur, run: dict[str, Any], top: int = 8) -> tuple[list[dic
     route = run.get("Route")
     cur.execute(
         """
-        SELECT TOP 100
+        SELECT TOP 24
             ID, Title, ProblemSummary, RootCause, ResolutionSteps, Route, Tags,
             UsageCount, CreatedOn, ModifiedOn, KnowledgeType, ArticleStatus,
             CanonicalKey, RevisionNo, LastVerifiedOn, ApplicabilityJson,
