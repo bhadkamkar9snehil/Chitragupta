@@ -320,6 +320,50 @@ class PipelineContractTests(unittest.TestCase):
         self.assertNotIn("resolved", proposal["reply_text"].lower())
         self.assertIn("did not apply", proposal["reply_text"].lower())
 
+    def test_qwen_free_handoff_requires_exact_workflow_binding_before_review(self):
+        proposal = {
+            "run_id": "r1",
+            "ticket_id": "t1",
+            "response_type": "L3_ESCALATION",
+            "reply_text": "handoff",
+        }
+        with patch.object(mod, "_jev_primary_review") as review, \
+             patch.object(mod, "_publish_frozen_proposal") as publish:
+            result, reason = mod._try_qwen_free_handoff(
+                mod.default_args(),
+                {"l3_ticket_status": None},
+                proposal,
+            )
+        self.assertIsNone(result)
+        self.assertIn("no exact terminal status", reason)
+        review.assert_not_called()
+        publish.assert_not_called()
+
+    def test_qwen_free_handoff_still_requires_jev_primary_approval(self):
+        proposal = {
+            "run_id": "r1",
+            "ticket_id": "t1",
+            "response_type": "L3_ESCALATION",
+            "reply_text": "handoff",
+        }
+        with patch.object(
+            mod, "_jev_primary_review",
+            return_value={"action": "APPROVE", "ok": True},
+        ) as review, patch.object(
+            mod, "_publish_frozen_proposal",
+            return_value="published",
+        ) as publish:
+            result, reason = mod._try_qwen_free_handoff(
+                mod.default_args(),
+                {"l3_ticket_status": "Escalated"},
+                proposal,
+            )
+        self.assertIsNone(reason)
+        self.assertEqual(result["status"], "JEV_QWEN_FREE_PUBLISHED")
+        self.assertEqual(result["investigator_task_id"], None)
+        review.assert_called_once()
+        publish.assert_called_once()
+
     def test_context_budget_is_smaller_for_compose_only_than_focused_reasoning(self):
         self.assertLess(
             mod._context_budget_for_mode("COMPOSE_ONLY"),
