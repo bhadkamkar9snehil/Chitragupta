@@ -321,6 +321,40 @@ class PipelineContractTests(unittest.TestCase):
         # The compiler result remains valid structured JSON; no assembled JSON string is sliced.
         json.loads(json.dumps(view))
 
+    def test_process_approvals_reports_already_published_separately(self):
+        tasks = [
+            {
+                "id": "review-new",
+                "assignee": mod.REVIEWER_PROFILE,
+                "body": (
+                    "run_id: r-new\n"
+                    "ticket_id: t-new\n"
+                    'proposal_json: {"run_id":"r-new","ticket_id":"t-new","response_type":"UPDATE","reply_text":"new"}'
+                ),
+            },
+            {
+                "id": "review-old",
+                "assignee": mod.REVIEWER_PROFILE,
+                "body": (
+                    "run_id: r-old\n"
+                    "ticket_id: t-old\n"
+                    'proposal_json: {"run_id":"r-old","ticket_id":"t-old","response_type":"UPDATE","reply_text":"old"}'
+                ),
+            },
+        ]
+
+        def publish(_args, proposal, **_kwargs):
+            return "published" if proposal["run_id"] == "r-new" else "already_published"
+
+        with patch.object(mod, "list_tasks", return_value=tasks), \
+             patch.object(mod, "_publish_frozen_proposal", side_effect=publish):
+            counts = mod.process_approvals(mod.default_args(), dry_run=True)
+
+        self.assertEqual(counts["published"], 1)
+        self.assertEqual(counts["already_published"], 1)
+        self.assertEqual(counts["blocked_configuration"], 0)
+        self.assertEqual(counts["rework_created"], 0)
+
     def test_resolution_fails_closed_without_binding(self):
         with self.assertRaises(RuntimeError):
             mod._status_args_for_response(
