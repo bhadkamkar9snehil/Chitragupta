@@ -4,6 +4,46 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+MODE="fast"
+case "${1:-}" in
+  ""|--fast) MODE="fast" ;;
+  --full) MODE="full" ;;
+  --live-only) MODE="live-only" ;;
+  -h|--help)
+    cat <<'EOF'
+Usage:
+  bash Model_Bench/validate_l2_pipeline_local.sh             # fast local gate (default)
+  bash Model_Bench/validate_l2_pipeline_local.sh --fast      # same as default
+  bash Model_Bench/validate_l2_pipeline_local.sh --full      # fast gate + live SQL/Hermes checks
+  bash Model_Bench/validate_l2_pipeline_local.sh --live-only # only live deployment/runtime checks
+
+The fast gate is intended for the edit/test loop. Use --full before deployment,
+after lifecycle changes, or when validating the live SQL/Kanban integration.
+EOF
+    exit 0
+    ;;
+  *)
+    echo "Unknown argument: $1" >&2
+    echo "Run with --help for supported modes." >&2
+    exit 2
+    ;;
+esac
+
+START_TOTAL=$SECONDS
+
+section() {
+  printf '\n== %s ==\n' "$1"
+}
+
+timed() {
+  local label="$1"
+  shift
+  local start=$SECONDS
+  "$@"
+  local elapsed=$((SECONDS - start))
+  printf '[timing] %s: %ss\n' "$label" "$elapsed"
+}
+
 PY_FILES=(
   Model_Bench/l2_pipeline_runtime.py
   Model_Bench/ticket_scout.py
@@ -42,56 +82,94 @@ PY_FILES=(
   Model_Bench/test_xstudio_l2_tools_plugin.py
 )
 
-echo "== Secret hygiene =="
-if git ls-files | grep -E '(^|/)[^/]*\.env$' >/dev/null; then
-  echo "FAIL: tracked .env credential file found; credentials must come from process/service environment" >&2
-  git ls-files | grep -E '(^|/)[^/]*\.env$' >&2
-  exit 1
-fi
-
-echo "== Python syntax =="
-python3 -m py_compile "${PY_FILES[@]}"
-
-echo "== Deterministic lifecycle contract tests =="
-python3 Model_Bench/test_l2_pipeline_runtime.py
-
-echo "== Typed investigation-tool contract tests =="
-python3 Model_Bench/test_xstudio_l2_tools_plugin.py
-
-echo "== TypeSafe Jev fabric contract tests =="
-python3 Model_Bench/test_jev_fabric.py
-
-echo "== Knowledge/skill validation =="
-python3 Model_Bench/validate_knowledge_manifest.py
-python3 Model_Bench/test_kb_retrieval.py
-
-echo "== Retired live-deployment guard =="
-DEPLOYED_SCRIPTS="$HOME/.hermes/profiles/l2-investigator/scripts"
-retired_found=0
-for retired in dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py; do
-  if [[ -e "$DEPLOYED_SCRIPTS/$retired" ]]; then
-    echo "FAIL: retired script is still deployed live: $DEPLOYED_SCRIPTS/$retired" >&2
-    retired_found=1
+run_fast_checks() {
+  section "Secret hygiene"
+  if git ls-files | grep -E '(^|/)[^/]*\.env$' >/dev/null; then
+    echo "FAIL: tracked .env credential file found; credentials must come from process/service environment" >&2
+    git ls-files | grep -E '(^|/)[^/]*\.env$' >&2
+    exit 1
   fi
-done
-if [[ "$retired_found" -ne 0 ]]; then
-  echo "Run: bash Model_Bench/deploy_l2_pipeline_runtime.sh" >&2
-  exit 1
-fi
-echo "PASS: no known retired lifecycle scripts remain in the live scripts directory"
+  echo "PASS: no tracked .env credential files"
 
-echo "== Live workflow discovery (read-only) =="
-python3 Model_Bench/configure_helpdesk_workflow.py
+  section "Python syntax"
+  timed "py_compile" python3 -m py_compile "${PY_FILES[@]}"
 
-echo "== Pipeline status (read-only) =="
-python3 Model_Bench/l2_pipeline_runtime.py status
+  section "Deterministic lifecycle contract tests"
+  timed "l2 runtime tests" python3 Model_Bench/test_l2_pipeline_runtime.py
 
-echo "== Reconcile preview (dry-run) =="
-python3 Model_Bench/l2_pipeline_runtime.py reconcile --dry-run
+  section "Typed investigation-tool contract tests"
+  timed "typed-tool tests" python3 Model_Bench/test_xstudio_l2_tools_plugin.py
+
+  section "TypeSafe Jev fabric contract tests"
+  timed "Jev fabric tests" python3 Model_Bench/test_jev_fabric.py
+
+  section "Knowledge/skill validation"
+  timed "knowledge manifest" python3 Model_Bench/validate_knowledge_manifest.py
+  timed "KB retrieval tests" python3 Model_Bench/test_kb_retrieval.py
+}
+
+run_live_checks() {
+  section "Retired live-deployment guard"
+  local deployed_scripts="$HOME/.hermes/profiles/l2-investigator/scripts"
+  local retired_found=0
+  local retired
+  for retired in dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py; do
+    if [[ -e "$deployed_scripts/$retired" ]]; then
+      echo "FAIL: retired script is still deployed live: $deployed_scripts/$retired" >&2
+      retired_found=1
+    fi
+  done
+  if [[ "$retired_found" -ne 0 ]]; then
+    echo "Run: bash Model_Bench/deploy_l2_pipeline_runtime.sh" >&2
+    exit 1
+  fi
+  echo "PASS: no known retired lifecycle scripts remain in the live scripts directory"
+
+  section "Live workflow discovery (read-only)"
+  timed "workflow discovery" python3 Model_Bench/configure_helpdesk_workflow.py
+
+  section "Pipeline status (read-only)"
+  timed "pipeline status" python3 Model_Bench/l2_pipeline_runtime.py status
+
+  section "Reconcile preview (dry-run)"
+  timed "reconcile dry-run" python3 Model_Bench/l2_pipeline_runtime.py reconcile --dry-run
+}
+
+case "$MODE" in
+  fast)
+    run_fast_checks
+    ;;
+  full)
+    run_fast_checks
+    run_live_checks
+    ;;
+  live-only)
+    run_live_checks
+    ;;
+esac
 
 echo
-cat <<'EOF'
-LOCAL VALIDATION COMPLETE.
+echo "VALIDATION COMPLETE: mode=$MODE total=$((SECONDS - START_TOTAL))s"
+
+if [[ "$MODE" == "fast" ]]; then
+  cat <<'EOF'
+
+FAST LOCAL GATE PASSED.
+
+This mode intentionally skips live SQL/Hermes workflow discovery, status, and
+reconciliation. Run the full gate before deployment or after lifecycle changes:
+
+  bash Model_Bench/validate_l2_pipeline_local.sh --full
+
+If only the live integration needs to be rechecked after the fast gate already
+passed, use:
+
+  bash Model_Bench/validate_l2_pipeline_local.sh --live-only
+EOF
+else
+  cat <<'EOF'
+
+FULL/LIVE VALIDATION COMPLETE.
 
 SQL deployment note:
   Knowledge/00_Hermes_L2_FULL_INSTALL.sql is the generated complete bundle.
@@ -100,10 +178,9 @@ SQL deployment note:
   the numbered source files exist.
 
 Jev deployment note:
-  Jev is harness-owned. Set TYPESAFE_API_KEY in the Windows Python/service
-  environment; no repository credential fallback exists. Jev-first investigation
-  and Jev primary review are enabled. The local reviewer is the uncertainty/
-  deep-reasoning fallback.
+  Jev is harness-owned. The local reviewer is the uncertainty/deep-reasoning
+  fallback; execution depth is chosen by the Jev assessment and then bounded
+  by deterministic runtime policy.
 
 After deploying/regenerating the SQL bundle, run:
   Knowledge/98_pipeline_postflight.sql
@@ -111,12 +188,8 @@ After deploying/regenerating the SQL bundle, run:
 Confirm deploy/helpdesk_workflow_binding.json still matches live workflow values.
 Do not guess replacement status names.
 
-Live deployment note:
-  deploy_l2_pipeline_runtime.sh now removes known retired lifecycle scripts from
-  ~/.hermes/profiles/l2-investigator/scripts. Validation fails if those stale
-  copies reappear even when they are absent from Git.
-
-For the next naturally arriving fresh ticket, verify its trace uses xstudio_l2 for
-database/schema/ticket evidence and does not attempt to recreate SQL transport via
+For the next naturally arriving fresh ticket, verify its trace uses xstudio_l2
+for database/schema/ticket evidence and does not recreate SQL transport through
 terminal, an interpreter, pyodbc/sqlcmd, or package installation.
 EOF
+fi
