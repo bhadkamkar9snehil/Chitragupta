@@ -170,7 +170,19 @@ class PipelineContractTests(unittest.TestCase):
             "ok": True,
             "answers": {
                 "evidence_sufficient": {"type": "noul", "noul": 0.95},
+                "response_type": {
+                    "type": "choice", "choice": "UPDATE", "confidence": 0.95,
+                    "probabilities": {"UPDATE": 0.95},
+                },
+                "execution_mode": {
+                    "type": "choice", "choice": "COMPOSE_ONLY", "confidence": 0.95,
+                    "probabilities": {"COMPOSE_ONLY": 0.95},
+                },
+                "needs_additional_probe": {"type": "noul", "noul": 0.10},
                 "needs_local_model": {"type": "noul", "noul": 0.10},
+                "needs_route_skill": {"type": "noul", "noul": 0.10},
+                "human_action_required": {"type": "noul", "noul": 0.10},
+                "confidence_quality": {"type": "score", "score": 2.5, "confidence": 0.95},
             },
         }
 
@@ -196,8 +208,102 @@ class PipelineContractTests(unittest.TestCase):
                 kb_retrieval={"solutions": [], "ticket_characterization": {}, "route_candidates": []},
             )
         self.assertEqual(probe.call_count, 1)
+        self.assertEqual(package["execution_mode"], "COMPOSE_ONLY")
         self.assertEqual(package["local_model_scope"], "COMPOSE_ONLY")
-        self.assertEqual(package["max_additional_live_reads"], 1)
+        self.assertEqual(package["max_additional_live_reads"], 0)
+        self.assertFalse(package["load_route_skill"])
+
+    def test_execution_contract_allows_qwen_free_only_for_high_confidence_handoff(self):
+        assessment = {
+            "ok": True,
+            "answers": {
+                "evidence_sufficient": {"type": "noul", "noul": 0.97},
+                "response_type": {
+                    "type": "choice", "choice": "L3_ESCALATION", "confidence": 0.96,
+                    "probabilities": {"L3_ESCALATION": 0.96},
+                },
+                "execution_mode": {
+                    "type": "choice", "choice": "QWEN_FREE", "confidence": 0.95,
+                    "probabilities": {"QWEN_FREE": 0.95},
+                },
+                "needs_additional_probe": {"type": "noul", "noul": 0.05},
+                "needs_local_model": {"type": "noul", "noul": 0.03},
+                "needs_route_skill": {"type": "noul", "noul": 0.1},
+                "human_action_required": {"type": "noul", "noul": 0.1},
+                "confidence_quality": {"type": "score", "score": 2.9, "confidence": 0.95},
+            },
+        }
+        contract = mod._resolve_execution_contract(assessment)
+        self.assertEqual(contract["execution_mode"], "QWEN_FREE")
+        self.assertEqual(contract["local_model_scope"], "COMPOSE_ONLY")
+        self.assertEqual(contract["max_additional_live_reads"], 0)
+        self.assertFalse(contract["load_route_skill"])
+
+    def test_execution_contract_downgrades_qwen_free_resolution_to_compose_only(self):
+        assessment = {
+            "ok": True,
+            "answers": {
+                "evidence_sufficient": {"type": "noul", "noul": 0.98},
+                "response_type": {
+                    "type": "choice", "choice": "RESOLUTION", "confidence": 0.98,
+                    "probabilities": {"RESOLUTION": 0.98},
+                },
+                "execution_mode": {
+                    "type": "choice", "choice": "QWEN_FREE", "confidence": 0.98,
+                    "probabilities": {"QWEN_FREE": 0.98},
+                },
+                "needs_additional_probe": {"type": "noul", "noul": 0.02},
+                "needs_local_model": {"type": "noul", "noul": 0.02},
+                "needs_route_skill": {"type": "noul", "noul": 0.1},
+                "human_action_required": {"type": "noul", "noul": 0.0},
+                "confidence_quality": {"type": "score", "score": 3.0, "confidence": 0.98},
+            },
+        }
+        contract = mod._resolve_execution_contract(assessment)
+        self.assertEqual(contract["execution_mode"], "COMPOSE_ONLY")
+        self.assertIsNone(mod._qwen_free_proposal(
+            run_id="r1",
+            ticket_id="t1",
+            ticket_context={"BriefDetails": "known issue"},
+            probes=[],
+            execution_contract=contract,
+        ))
+
+    def test_qwen_free_proposal_is_deterministic_handoff_not_resolution(self):
+        contract = {
+            "execution_mode": "QWEN_FREE",
+            "response_type": "NEEDS_HUMAN_ACTION",
+        }
+        proposal = mod._qwen_free_proposal(
+            run_id="r1",
+            ticket_id="t1",
+            ticket_context={"BriefDetails": "configuration correction required"},
+            probes=[{
+                "candidate": {"database": "XStudio_Xbatch", "table": "dbo.Config"},
+                "probe": {
+                    "ok": True,
+                    "probe_possible": True,
+                    "identifier": {"column": "BatchNo", "value": "B1"},
+                    "rows": [{"BatchNo": "B1"}],
+                },
+            }],
+            execution_contract=contract,
+        )
+        self.assertIsNotNone(proposal)
+        self.assertEqual(proposal["response_type"], "NEEDS_HUMAN_ACTION")
+        self.assertEqual(proposal["execution_mode"], "QWEN_FREE")
+        self.assertNotIn("resolved", proposal["reply_text"].lower())
+        self.assertIn("did not apply", proposal["reply_text"].lower())
+
+    def test_context_budget_is_smaller_for_compose_only_than_focused_reasoning(self):
+        self.assertLess(
+            mod._context_budget_for_mode("COMPOSE_ONLY"),
+            mod._context_budget_for_mode("FOCUSED_REASONING"),
+        )
+        self.assertLess(
+            mod._context_budget_for_mode("QWEN_FREE"),
+            mod._context_budget_for_mode("COMPOSE_ONLY"),
+        )
 
     def test_jev_disabled_still_builds_deterministic_context_chunks(self):
         with patch.dict(
