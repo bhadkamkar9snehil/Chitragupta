@@ -421,13 +421,21 @@ This pipeline depends on the real Windows/WSL/Hermes/Kanban/SQL/LM Studio enviro
 Useful commands:
 
 ```bash
-bash Model_Bench/deploy_l2_pipeline_runtime.sh
+# Fast edit/test loop: syntax + deterministic/unit/knowledge contracts only.
 bash Model_Bench/validate_l2_pipeline_local.sh
-python3 Model_Bench/test_xstudio_l2_tools_plugin.py
-python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
+
+# Full pre-deployment gate: fast checks + live workflow discovery/status/reconcile preview.
+bash Model_Bench/validate_l2_pipeline_local.sh --full
+
+# Re-run only the live integration after the fast gate already passed.
+bash Model_Bench/validate_l2_pipeline_local.sh --live-only
+
+bash Model_Bench/deploy_l2_pipeline_runtime.sh --no-restart
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py reconcile --dry-run
 ```
+
+The reconciler takes one Kanban/active-run snapshot and ignores inactive historical cards during normal lifecycle reconciliation. Do not reintroduce per-history SQL activity checks into the hot reconcile path; historical divergence belongs in the separate audit.
 
 Do not use GitHub Actions as proof that the live pipeline is healthy.
 
