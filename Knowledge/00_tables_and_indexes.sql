@@ -75,6 +75,47 @@ BEGIN
 END;
 GO
 
+
+/* Jev is a semantic reviewer/investigator for the same run, not a parallel
+   business object. Persist stage state directly on Hermes_L2_Response_Trn_Tbl;
+   detailed call telemetry belongs in Hermes_Agent_Trace_Trn_Tbl. */
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevTriageJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevTriageJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevInvestigationJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevInvestigationJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevTraceJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevTraceJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevKBCurationJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevKBCurationJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'ReviewMode') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD ReviewMode varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewDecision') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewDecision varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewConfidence') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewConfidence decimal(9,6) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevRiskScore') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevRiskScore decimal(9,6) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalReviewRequired') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalReviewRequired bit NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevModel') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevModel varchar(120) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewedOn') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewedOn datetime NULL;
+GO
+
 IF NOT EXISTS
 (
     SELECT 1
@@ -572,90 +613,6 @@ GO
 
 
 /* ============================================================================
-   TypeSafe Jev / System-One semantic judgment audit
-   One row per narrow typed judgment. Do not collapse these into a single
-   opaque AIConfidence value: route confidence, overclaim probability,
-   evidence support, KB applicability, trace failure class, etc. are distinct.
-   ============================================================================ */
-IF OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl', 'U') IS NULL
-BEGIN
-    CREATE TABLE dbo.Hermes_Jev_Judgment_Trn_Tbl
-    (
-        ID                  varchar(36)    NOT NULL
-            CONSTRAINT DF_Hermes_Jev_Judgment_ID DEFAULT (NEWID()),
-        TicketID            varchar(36)    NULL,
-        RunID               varchar(36)    NULL,
-        Stage               varchar(50)    NOT NULL,
-        JudgmentName        varchar(120)   NOT NULL,
-        QuestionVersion     varchar(30)    NOT NULL
-            CONSTRAINT DF_Hermes_Jev_QuestionVersion DEFAULT ('v1'),
-        Model               varchar(120)   NULL,
-        AnswerType          varchar(20)    NOT NULL,
-        ChoiceValue         nvarchar(500)  NULL,
-        NoulProbability     decimal(9,6)   NULL,
-        ScoreValue          decimal(9,6)   NULL,
-        Confidence          decimal(9,6)   NULL,
-        ProbabilitiesJson   nvarchar(max)  NULL,
-        InputHash           varchar(64)    NOT NULL,
-        PolicyVersion       varchar(100)   NOT NULL,
-        Accepted            bit            NULL,
-        LatencyMs           decimal(12,2)  NULL,
-        CreatedOn           datetime       NOT NULL
-            CONSTRAINT DF_Hermes_Jev_Judgment_CreatedOn DEFAULT (GETDATE()),
-        IsDeleted           bit            NOT NULL
-            CONSTRAINT DF_Hermes_Jev_Judgment_IsDeleted DEFAULT (0),
-        Source              varchar(20)    NULL
-            CONSTRAINT DF_Hermes_Jev_Judgment_Source DEFAULT ('Jev'),
-
-        CONSTRAINT PK_Hermes_Jev_Judgment PRIMARY KEY CLUSTERED (ID),
-        CONSTRAINT CK_Hermes_Jev_Judgment_AnswerType
-            CHECK (AnswerType IN ('choice', 'noul', 'score'))
-    );
-END;
-GO
-
-IF NOT EXISTS
-(
-    SELECT 1 FROM sys.indexes
-    WHERE object_id = OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl')
-      AND name = 'IX_Hermes_Jev_Judgment_RunStage'
-)
-BEGIN
-    CREATE NONCLUSTERED INDEX IX_Hermes_Jev_Judgment_RunStage
-        ON dbo.Hermes_Jev_Judgment_Trn_Tbl(RunID, Stage, CreatedOn DESC)
-        INCLUDE (JudgmentName, AnswerType, ChoiceValue, NoulProbability, ScoreValue, Confidence)
-        WHERE IsDeleted = 0;
-END;
-GO
-
-IF NOT EXISTS
-(
-    SELECT 1 FROM sys.indexes
-    WHERE object_id = OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl')
-      AND name = 'IX_Hermes_Jev_Judgment_Ticket'
-)
-BEGIN
-    CREATE NONCLUSTERED INDEX IX_Hermes_Jev_Judgment_Ticket
-        ON dbo.Hermes_Jev_Judgment_Trn_Tbl(TicketID, CreatedOn DESC)
-        WHERE IsDeleted = 0;
-END;
-GO
-
-IF NOT EXISTS
-(
-    SELECT 1 FROM sys.indexes
-    WHERE object_id = OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl')
-      AND name = 'UX_Hermes_Jev_Judgment_Idempotency'
-)
-BEGIN
-    CREATE UNIQUE NONCLUSTERED INDEX UX_Hermes_Jev_Judgment_Idempotency
-        ON dbo.Hermes_Jev_Judgment_Trn_Tbl(RunID, Stage, JudgmentName, InputHash, PolicyVersion)
-        WHERE RunID IS NOT NULL AND IsDeleted = 0;
-END;
-GO
-
-
-/* ============================================================================
    Governed reusable-knowledge lifecycle required by Jev applicability/curation.
    These ALTERs migrate the existing Solution table in place and preserve all
    legacy content. Jev suggestions never directly change ArticleStatus.
@@ -806,57 +763,6 @@ GO
 IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'OutcomeOn') IS NULL
     ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD OutcomeOn datetime NULL;
 GO
-
-/* Retrieval telemetry: similarity/relevance is not truth or successful use. */
-IF OBJECT_ID('dbo.Hermes_KB_Retrieval_Trn_Tbl', 'U') IS NULL
-BEGIN
-    CREATE TABLE dbo.Hermes_KB_Retrieval_Trn_Tbl
-    (
-        ID                   varchar(36)   NOT NULL
-            CONSTRAINT DF_Hermes_KB_Retrieval_ID DEFAULT (NEWID()),
-        TicketID             varchar(36)   NULL,
-        RunID                varchar(36)   NULL,
-        QueryPhase           varchar(30)   NOT NULL,
-        QueryHash            varchar(64)   NOT NULL,
-        KBID                 varchar(200)  NOT NULL,
-        SourceType           varchar(50)   NULL,
-        RankNo               int           NULL,
-        DenseRank            int           NULL,
-        SparseRank           int           NULL,
-        FusionScore          decimal(18,6) NULL,
-        DeterministicScore   decimal(18,6) NULL,
-        JevRelevance         decimal(9,6)  NULL,
-        JevApplicability     decimal(9,6)  NULL,
-        JevNegativeIndicator decimal(9,6)  NULL,
-        RouteMatch           bit           NULL,
-        ScopeMatch           bit           NULL,
-        Selected             bit           NULL,
-        SelectionDisposition varchar(50)   NULL,
-        RetrievedOn          datetime      NOT NULL
-            CONSTRAINT DF_Hermes_KB_Retrieval_RetrievedOn DEFAULT (GETDATE()),
-        CreatedOn            datetime      NOT NULL
-            CONSTRAINT DF_Hermes_KB_Retrieval_CreatedOn DEFAULT (GETDATE()),
-        IsDeleted            bit           NOT NULL
-            CONSTRAINT DF_Hermes_KB_Retrieval_IsDeleted DEFAULT (0),
-        CONSTRAINT PK_Hermes_KB_Retrieval PRIMARY KEY CLUSTERED (ID)
-    );
-END;
-GO
-
-IF NOT EXISTS
-(
-    SELECT 1 FROM sys.indexes
-    WHERE object_id = OBJECT_ID('dbo.Hermes_KB_Retrieval_Trn_Tbl')
-      AND name = 'IX_Hermes_KB_Retrieval_Run'
-)
-BEGIN
-    CREATE NONCLUSTERED INDEX IX_Hermes_KB_Retrieval_Run
-        ON dbo.Hermes_KB_Retrieval_Trn_Tbl(RunID, QueryPhase, RetrievedOn DESC)
-        INCLUDE (KBID, RankNo, JevRelevance, JevApplicability, JevNegativeIndicator, Selected)
-        WHERE IsDeleted = 0;
-END;
-GO
-
 
 /* ============================================================================
    Agent observer trace store.
