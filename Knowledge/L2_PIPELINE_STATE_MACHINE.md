@@ -7,9 +7,17 @@ If this document and the runtime disagree, fix the drift immediately.
 
 ## 1. Core invariant
 
-The current LM Studio deployment has one safe local inference slot. Chitragupta therefore uses Jev/System One to remove bounded classification, selection, and review work from that slot.
+The current LM Studio deployment has one safe local inference slot. Chitragupta therefore separates **pipeline concurrency** from **local-model concurrency**.
 
-Global SQL pipeline WIP remains one active Hermes run.
+Default runtime capacities:
+
+```text
+active Hermes runs       8   (L2_MAX_PIPELINE_WIP)
+RUNNING local-Qwen work  1   (hard SQL-serialized invariant)
+QUEUED local-Qwen work   4   (L2_MAX_QWEN_WAITING backpressure)
+```
+
+Jev, deterministic candidate generation, bounded probes, context compilation, and QWEN_FREE review/publication may progress for several tickets while the one local Qwen slot is busy. Any COMPOSE_ONLY, FOCUSED_REASONING, rework, or local-review fallback task must acquire that same shared slot.
 
 ```text
 local deep-review priority     30
@@ -17,7 +25,7 @@ rework investigation           20
 new investigation              10
 ```
 
-A fresh Helpdesk claim is allowed only when `Hermes_L2_Response_Trn_Tbl` has no active run after reconciliation.
+A fresh Helpdesk claim is allowed while active-run count is below the configured pipeline cap and the bounded local-model waiting backlog is not full. `Hermes_L2_Claim_Ticket_Usp` enforces capacity atomically under `sp_getapplock('HermesL2:PipelineCapacity')`, so overlapping scouts cannot over-claim.
 
 ## 2. Normal lifecycle
 
@@ -60,10 +68,19 @@ DETERMINISTIC EXECUTION + CONTEXT COMPILER
           |       -> deterministic publish only if approved
           |
           v
-l2-jev-investigator card [priority 10, only when needed]
+PERSIST FROZEN LOCAL-MODEL WORK PACKAGE
+  LocalModelState=QUEUED
+  priority: review 30 > rework 20 > investigation 10
+          |
+          v
+SQL LOCAL-MODEL ADMISSION
+  exactly one RUNNING task across all profiles
+          |
+          v
+l2-jev-investigator / rework / local-review task
   COMPOSE_ONLY or FOCUSED_REASONING
           |
-          | kanban_complete(metadata)
+          | kanban_complete / kanban_block
           v
 normalize / validate frozen proposal
           |
@@ -202,6 +219,34 @@ RESOLUTION              root-cause establishment >= 0.72
 High-confidence `REWORK` or `L3_ESCALATION` currently require decision confidence >= 0.88.
 
 If an approval misses any safety gate, it does **not** publish. It falls to `LOCAL_REVIEW`.
+
+## 5a. Shared local-model admission
+
+All local-model purposes use one run-owned queue on `Hermes_L2_Response_Trn_Tbl`:
+
+```text
+ExecutionMode
+LocalModelState        QUEUED | RUNNING | DONE
+LocalModelPurpose      INVESTIGATION | REWORK | REVIEW
+LocalModelPriority
+LocalModelWorkKey
+PendingLocalModelJson
+LocalModelTaskID
+LocalModelQueuedOn
+LocalModelStartedOn
+LocalModelCompletedOn
+```
+
+The exact Kanban task specification is persisted in `PendingLocalModelJson` before any task is created. `Hermes_L2_Try_Acquire_Local_Model_Usp` uses `sp_getapplock('HermesL2:LocalModelSlot')` plus the run table to guarantee at most one active local-model lease.
+
+Admission order is:
+
+```text
+review 30 > rework 20 > new investigation 10
+then LocalModelQueuedOn ASC
+```
+
+A QUEUED run with no Kanban card is intentional, not an orphan. The card is created only after SQL admission. Terminal cards release the slot during reconciliation; a stale RUNNING lease is requeued only when no live local-model Kanban task still owns that run.
 
 ## 6. Local deep-review fallback
 
@@ -356,16 +401,19 @@ One reconciler owns lifecycle mutation.
 Current synchronous order:
 
 ```text
-1. normalize investigator/rework completions
-2. convert unreviewable completions into bounded rework
-3. run Jev primary reviews
+1. release terminal local-model leases
+2. requeue stale local-model leases only when no live local card owns the run
+3. normalize investigator/rework completions
+4. convert unreviewable completions into queued bounded rework
+5. run Jev primary reviews
      - direct approve/publish where safety gates pass
-     - direct focused rework where accepted
+     - queue focused rework where accepted
      - direct L3 escalation where accepted
-     - create local reviewer only for fallback
-4. process local-review rejections
-5. process local-review approvals through the same publisher
-6. recover true SQL/Kanban orphans
+     - queue local reviewer only for fallback
+6. process local-review rejections
+7. process local-review approvals through the same publisher
+8. recover true SQL/Kanban orphans
+9. admit at most one next local-Qwen task
 ```
 
 Do not restore separate publisher/reject/reviewer schedulers.
@@ -376,13 +424,13 @@ Do not restore separate publisher/reject/reviewer schedulers.
 
 Event delivery is the fast path.
 
-The 2-minute `ticket_scout.py` run remains the durable reconcile-first backstop and only claims when global WIP is zero.
+The 2-minute `ticket_scout.py` run remains the durable reconcile-first backstop. It can fill multiple Jev/deterministic pipeline slots in one pass, stops at the SQL pipeline cap or bounded Qwen backlog, and never creates a local-model card outside the shared admission controller.
 
 ## 15. Stale/orphan recovery
 
 Age alone never makes a run stale.
 
-Any Kanban card referencing the exact run protects it, including investigation, rework, or local-review fallback.
+Any Kanban card referencing the exact run protects it, including investigation, rework, or local-review fallback. A run-owned `LocalModelState=QUEUED` also represents valid protected work even before a Kanban card exists.
 
 A run is auto-failed for clean retry only when it is active in SQL, has no Kanban task referencing it, and exceeds the orphan grace period.
 
@@ -392,7 +440,7 @@ A run is auto-failed for clean retry only when it is active in SQL, has no Kanba
 
 `Knowledge/55_update_retry_hardening.sql` provides bounded continuation behavior for published `UPDATE` responses.
 
-Both are part of the generated full-install bundle.
+Both are part of the generated full-install bundle. Within the same operational priority, fresh never-run/user-changed tickets are ordered ahead of failed retries and old UPDATE continuations, preventing continuation loops from starving new incidents.
 
 ## 17. Deployment and validation
 
