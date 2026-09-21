@@ -209,6 +209,39 @@ def _semantic_context_for_run(req: dict[str, Any], client: Any) -> tuple[Any, st
         return "", str(req.get("ticket_id") or "") or None
 
 
+def _jev_row_focus(
+    rows: Any,
+    *,
+    semantic_context: Any,
+    sql: str,
+    req: dict[str, Any],
+) -> tuple[list[Any], dict[str, Any], dict[str, Any]]:
+    """Return semantic row suggestions without ever deleting/replacing raw SQL evidence."""
+    if not jev_policy.ROW_RERANK_ENABLED or not isinstance(rows, list) or len(rows) < 2:
+        return [], {"ok": False, "reason": "row rerank disabled or insufficient rows"}, {"ok": True, "persisted": 0}
+    candidates = [r for r in rows[:32] if isinstance(r, dict)]
+    if len(candidates) < 2:
+        return [], {"ok": False, "reason": "rows are not structured candidates"}, {"ok": True, "persisted": 0}
+    query = json.dumps(
+        {"investigation_context": semantic_context, "sql": sql},
+        default=str,
+        separators=(",", ":"),
+    )[:5000]
+    result = rerank_candidates(
+        query,
+        candidates,
+        top=min(8, len(candidates)),
+        candidate_kind="live SQL result row",
+    )
+    audit = _audit_jev(
+        result,
+        stage="TOOL_ROW_RERANK",
+        state={"query": query, "candidate_count": len(candidates)},
+        req=req,
+    )
+    return list(result.get("ranked") or []), result, audit
+
+
 def _audit_jev(
     result: dict[str, Any],
     *,
@@ -332,9 +365,21 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
                 return {"operation": operation, **built, "retry_same_call": False}
             rows = _orchestrator().run_readonly_query(
                 client, built["sql"], database=database, run_id=req.get("run_id"))
+            semantic_context, inferred_ticket_id = _semantic_context_for_run(req, client)
+            audit_req = dict(req)
+            if inferred_ticket_id and not audit_req.get("ticket_id"):
+                audit_req["ticket_id"] = inferred_ticket_id
+            suggested_rows, row_jev, row_audit = _jev_row_focus(
+                rows,
+                semantic_context=semantic_context,
+                sql=str(built.get("sql") or ""),
+                req=audit_req,
+            )
             return {"ok": True, "operation": operation, "database": database,
                     "table": built.get("table"), "sql": built.get("sql"),
-                    "warning": built.get("warning") or built.get("ambiguity_warning"), "rows": rows}
+                    "warning": built.get("warning") or built.get("ambiguity_warning"),
+                    "rows": rows, "jev_suggested_rows": suggested_rows,
+                    "jev_row_rerank": row_jev, "jev_row_audit": row_audit}
 
         if operation == "query":
             database = _database(req)
@@ -412,8 +457,16 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
 
             rows = _orchestrator().run_readonly_query(
                 client, sql, database=database, run_id=req.get("run_id"))
+            suggested_rows, row_jev, row_audit = _jev_row_focus(
+                rows,
+                semantic_context=semantic_context,
+                sql=sql,
+                req=audit_req,
+            )
             return {"ok": True, "operation": operation, "database": database, "rows": rows,
-                    "jev_semantics": jev_semantics, "jev_audit": jev_audit}
+                    "jev_semantics": jev_semantics, "jev_audit": jev_audit,
+                    "jev_suggested_rows": suggested_rows,
+                    "jev_row_rerank": row_jev, "jev_row_audit": row_audit}
 
         if operation == "find_objects":
             database = _database(req)
