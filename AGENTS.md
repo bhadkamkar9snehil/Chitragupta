@@ -43,33 +43,36 @@ Ticket Scout (2-minute cron)
 Hermes_Orchestrator.py --poll
         |
         v
+JEV TRIAGE + EVIDENCE PLAN
+        |
+        v
+deterministic bounded probes
+        |
+        v
+JEV INVESTIGATION ASSESSMENT
+ + META-ATTENTION CONTEXT COMPILE
+        |
+        v
 INVESTIGATOR [priority 10]
-  l2-investigator-primary
+  l2-jev-investigator
+  COMPOSE_ONLY or FOCUSED_REASONING
         |
         | kanban_complete(metadata)
         v
-normalize / validate completion
-        |
-        | only after the proposal is reviewable
-        v
-REVIEWER [priority 30]
-  l2-reviewer-primary
-  frozen proposal_json
-       / \
-approve   reject
-   |         |
-   v         v
-deterministic  REWORK [priority 20]
-publish        l2-investigator-primary
-   |             |
-   |             | complete + normalize
-   |             v
-   |          NEW REVIEWER [priority 30]
-   |             |
-   +-------------+
+normalize / freeze proposal
         |
         v
-SQL + Helpdesk terminal/waiting state
+JEV PRIMARY REVIEW
+   /       |          |             \
+APPROVE  REWORK  L3_ESCALATION  LOCAL_REVIEW
+   |       |          |              |
+   v       v          v              v
+publish  rework    L3 path       qwen reviewer
+                                      |
+                                approve/reject
+                                  |       |
+                                  v       v
+                               publish  rework
 ```
 
 ### Non-negotiable lifecycle rules
@@ -77,13 +80,13 @@ SQL + Helpdesk terminal/waiting state
 - New investigation priority = `10`.
 - Rework priority = `20`.
 - Review priority = `30`.
-- Reviewer creation is **deferred until the investigator/rework completion has been normalized and is reviewable**.
-- A reviewer receives a frozen `proposal_json`. The proposal reviewed is the proposal published.
+- Every normalized proposal gets one Jev primary semantic review. A local reviewer card is created only for `LOCAL_REVIEW`, Jev unavailability/uncertainty, or genuine deep reasoning.
+- Any local reviewer receives a frozen `proposal_json`. The proposal reviewed is the proposal published.
 - Investigator never calls `--publish-response`.
-- Reviewer never calls `--publish-response` and never retypes the response for publication.
+- Jev/local reviewers never publish; deterministic lifecycle code owns publication.
 - `review_cycle` counts reviewer/rework loops. SQL `AttemptNo` does not.
 - `MAX_REVIEW_CYCLES = 3`; rejection at cycle 2 escalates instead of creating cycle 3.
-- A rework is not complete until it gets its own fresh reviewer after rework completion/normalization.
+- A rework is not complete until its fresh proposal receives a fresh Jev primary review; a local reviewer is added only if that review falls back.
 - The old `l2-review` board and `kanban_forward_bridge.py` are retired.
 - All investigator/reviewer/rework tasks live on the normal Kanban board.
 
@@ -94,9 +97,9 @@ The central reconciler owns lifecycle sequencing synchronously. Current order:
 ```text
 1. normalize investigator/rework completions
 2. convert unreviewable terminal completions into bounded rework
-3. create missing reviewers for reviewable completed investigations
-4. process reviewer rejections
-5. process reviewer approvals and publish
+3. run Jev primary reviews and apply direct approve/rework/escalation or create local-review fallback
+4. process local-review rejections
+5. process local-review approvals through the same deterministic publisher
 6. recover true SQL/Kanban orphans
 ```
 
@@ -296,7 +299,8 @@ claim
 -> deterministic real candidates
 -> Jev evidence plan
 -> deterministic identifier-bounded probes
--> Jev investigation assessment
+-> Jev investigation assessment + per-chunk meta-attention Scores
+-> deterministic context compiler (whole chunks; pinned current/live evidence)
 -> l2-jev-investigator local synthesis/focused reads
 -> frozen proposal
 -> Jev primary review
@@ -311,6 +315,11 @@ Rules:
 - Read .agents/skills/typesafe-ai/SKILL.md before changing TypeSafe-specific API/question behavior.
 - Jev is harness-owned. Do not expose a worker-facing generic or bounded Jev tool; deterministic runtime code invokes the reviewed workflows.
 - Jev may choose/rate only candidates supplied by deterministic code; it never invents SQL identifiers or grants authority.
+- The investigation assessment request also Scores explicit context chunks for the next local System-2 step; do not add a second Jev request just for context selection.
+- Context chunks carry source and authority metadata. Current ticket and successful live-SQL probe chunks are pinned to at least COMPACT presentation; a Jev-selected known solution is also pinned to at least COMPACT.
+- Meta-attention changes only the model-facing view. It never deletes or rewrites raw evidence, changes authority, or turns KB/history into current-ticket proof.
+- Context budgeting operates on whole chunks: FULL -> COMPACT -> SUMMARY -> OMIT. Never restore global character slicing of the assembled JSON.
+- Omitted chunks must remain named with recovery hints so focused reasoning can fetch them only when needed.
 - probe_table may automatically read only when a strong ticket identifier maps to a real allowlisted column. No identifier means no broad automatic probe.
 - Structural SQL safety, procedure allowlists, workflow binding, WIP, publication, and mutations remain deterministic.
 - Jev primary review may replace the normal local-review pass when deterministic thresholds accept APPROVE, REWORK, or L3_ESCALATION.
