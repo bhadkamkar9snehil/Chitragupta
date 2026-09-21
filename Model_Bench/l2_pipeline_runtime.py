@@ -2422,7 +2422,7 @@ def _investigation_bundle(
     fallback_ticket: dict[str, Any],
     *,
     run_id: str | None = None,
-) -> tuple[str, str | None, dict[str, Any] | None]:
+) -> tuple[str, str | None, dict[str, Any] | None, str]:
     try:
         bundle = run_orchestrator(args, ["--investigate-bundle", ticket_id], timeout=90)
     except RuntimeError as exc:
@@ -2559,6 +2559,7 @@ def _investigation_bundle(
             if isinstance(investigation.get("qwen_free_proposal"), dict)
             else None
         ),
+        execution_mode,
     )
 
 
@@ -2627,57 +2628,16 @@ def _archive_stale_cards_for_ticket(ticket_id: str, new_run_id: str) -> None:
         print(f"WARNING: stale-card cleanup failed: {r.stderr.strip()[:300]}")
 
 
-def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
-    reconciliation = reconcile(args, dry_run=dry_run)
-    if dry_run:
-        return {"status": "DRY_RUN", "reconcile": reconciliation}
 
-    # A configuration error should stop NEW work, not reconciliation of already-claimed work.
-    binding = load_workflow_binding()
-    ready, reason = _binding_ready_for_claims(binding)
-    if not ready:
-        return {
-            "status": "WORKFLOW_BINDING_NOT_READY",
-            "reason": reason,
-            "binding_path": binding.get("_path"),
-            "reconcile": reconciliation,
-        }
-
-    # Global WIP=1. Existing work always wins over a new claim.
-    active = query_active_runs(args)
-    if active:
-        return {"status": "WIP_LIMIT", "active_runs": active, "reconcile": reconciliation}
-
-    eligible = str(binding.get("eligible_ticket_status") or args.eligible_status or DEFAULT_ELIGIBLE_STATUS)
-    poll = run_orchestrator(
-        args,
-        ["--poll", "--eligible-status", eligible, "--bot-label", INVESTIGATOR_PROFILE],
-        timeout=90,
-    )
-    if not isinstance(poll, dict):
-        raise RuntimeError(f"unexpected poll response: {poll!r}")
-    if poll.get("status") in ("NO_TICKETS", "NO_CLAIMABLE_TICKET"):
-        return {"status": poll.get("status"), "reconcile": reconciliation}
-    if poll.get("status") != "CLAIMED":
-        raise RuntimeError(f"unexpected poll status: {poll.get('status')}")
-
-    run_id = str(poll["run_id"])
-    ticket_id = str(poll["ticket_id"])
-    ticket = poll.get("ticket") or {}
-    ticket_no = str(ticket.get("TicketNo") or ticket_id)
-    _archive_stale_cards_for_ticket(ticket_id, run_id)
-
-    investigation_bundle, route_skill, qwen_free_proposal = _investigation_bundle(
-        args, ticket_id, ticket, run_id=run_id
-    )
-
-    fast_result, qwen_free_fallback_reason = _try_qwen_free_handoff(
-        args, binding, qwen_free_proposal
-    )
-    if fast_result:
-        fast_result["reconcile"] = reconciliation
-        return fast_result
-
+def _investigator_task_spec(
+    *,
+    run_id: str,
+    ticket_id: str,
+    ticket_no: str,
+    investigation_bundle: str,
+    route_skill: str | None,
+    qwen_free_fallback_reason: str | None,
+) -> dict[str, Any]:
     body = (
         f"run_id: {run_id}\n"
         f"ticket_id: {ticket_id}\n"
@@ -2695,57 +2655,163 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
         )
         + _query_instructions(run_id, ticket_id)
     )
-    create_argv = [
-        "kanban", "create", f"L2 {ticket_no}",
-        "--assignee", INVESTIGATOR_PROFILE,
-        "--body", body,
-        "--skill", "xstudio-l2-ticket-workflow",
-        "--skill", "xstudio-sql-write-discipline",
-    ]
-    if route_skill and route_skill not in {"xstudio-l2-ticket-workflow", "xstudio-sql-write-discipline"}:
-        create_argv += ["--skill", route_skill]
-    create_argv += [
-        "--priority", str(NEW_INVESTIGATION_PRIORITY),
-        "--idempotency-key", f"l2-ticket-{run_id}",
-        "--max-runtime", "20m",
-        "--json",
-    ]
-    create = run_hermes(create_argv)
-    if create.returncode != 0:
+    skills = ["xstudio-l2-ticket-workflow", "xstudio-sql-write-discipline"]
+    if route_skill and route_skill not in skills:
+        skills.append(route_skill)
+    return {
+        "title": f"L2 {ticket_no}",
+        "assignee": INVESTIGATOR_PROFILE,
+        "body": body,
+        "priority": NEW_INVESTIGATION_PRIORITY,
+        "skills": skills,
+        "idempotency_key": f"l2-ticket-{run_id}",
+        "max_runtime": "20m",
+    }
+
+
+def _prepare_claimed_ticket(
+    args: argparse.Namespace,
+    binding: dict[str, Any],
+    poll: dict[str, Any],
+) -> dict[str, Any]:
+    run_id = str(poll["run_id"])
+    ticket_id = str(poll["ticket_id"])
+    ticket = poll.get("ticket") or {}
+    ticket_no = str(ticket.get("TicketNo") or ticket_id)
+    _archive_stale_cards_for_ticket(ticket_id, run_id)
+
+    investigation_bundle, route_skill, qwen_free_proposal, execution_mode = _investigation_bundle(
+        args, ticket_id, ticket, run_id=run_id
+    )
+    fast_result, fallback_reason = _try_qwen_free_handoff(
+        args, binding, qwen_free_proposal
+    )
+    if fast_result:
+        return fast_result
+
+    spec = _investigator_task_spec(
+        run_id=run_id,
+        ticket_id=ticket_id,
+        ticket_no=ticket_no,
+        investigation_bundle=investigation_bundle,
+        route_skill=route_skill,
+        qwen_free_fallback_reason=fallback_reason,
+    )
+    try:
+        queued = _queue_local_model_task(
+            args,
+            run_id=run_id,
+            purpose="INVESTIGATION",
+            execution_mode=execution_mode,
+            priority=NEW_INVESTIGATION_PRIORITY,
+            work_key=f"investigation-{run_id}-0",
+            spec=spec,
+        )
+    except RuntimeError as exc:
         try:
             run_orchestrator(args, [
                 "--fail-run", "--run-id", run_id,
-                "--error-message", f"Dispatcher could not create investigator Kanban task: {create.stderr.strip()[:400]}",
+                "--error-message", f"Could not queue local-model investigation: {exc}",
                 "--retry-after-minutes", "5",
             ])
         except RuntimeError:
             pass
-        raise RuntimeError(f"investigator create failed: {create.stderr.strip()[:500]}")
-    try:
-        investigator_id = (json.loads(create.stdout) or {}).get("id")
-    except json.JSONDecodeError:
-        investigator_id = None
-    if not investigator_id:
-        # Kanban creation may actually have succeeded, so do not create an untracked duplicate.
-        # The active SQL run remains protected; next reconciliation/status makes the mismatch visible.
-        raise RuntimeError("investigator task was created but its id could not be parsed")
+        raise
 
-    # No local reviewer is pre-created. Reconciliation first normalizes/freezes the
-    # investigator proposal, then runs Jev primary review. A local reviewer card exists
-    # only if Jev falls back to LOCAL_REVIEW.
+    status = str(queued.get("QueueStatus") or "")
+    if status not in {"QUEUED", "ALREADY_QUEUED"}:
+        raise RuntimeError(f"unexpected local-model queue result for {run_id}: {queued!r}")
     return {
-        "status": "CLAIMED",
+        "status": "QUEUED_LOCAL_MODEL",
         "run_id": run_id,
         "ticket_id": ticket_id,
-        "investigator_task_id": investigator_id,
-        "reviewer_task_id": None,
-        "primary_review": "jev_after_normalized_completion",
-        "local_reviewer_creation": "only_on_local_review_fallback",
-        "priorities": {
-            "investigation": NEW_INVESTIGATION_PRIORITY,
-            "rework": REWORK_PRIORITY,
-            "review": REVIEW_PRIORITY,
-        },
+        "execution_mode": execution_mode,
+        "queue_status": status,
+        "investigator_task_id": None,
+    }
+
+
+def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
+    reconciliation = reconcile(args, dry_run=dry_run)
+    if dry_run:
+        return {"status": "DRY_RUN", "reconcile": reconciliation}
+
+    binding = load_workflow_binding()
+    ready, reason = _binding_ready_for_claims(binding)
+    if not ready:
+        return {
+            "status": "WORKFLOW_BINDING_NOT_READY",
+            "reason": reason,
+            "binding_path": binding.get("_path"),
+            "reconcile": reconciliation,
+        }
+
+    active = query_active_runs(args)
+    local_counts = _local_model_counts(active)
+    claims: list[dict[str, Any]] = []
+    dispatches: list[dict[str, Any]] = []
+
+    while len(active) < args.max_pipeline_wip:
+        if local_counts["queued"] >= args.max_qwen_waiting:
+            break
+
+        eligible = str(
+            binding.get("eligible_ticket_status")
+            or args.eligible_status
+            or DEFAULT_ELIGIBLE_STATUS
+        )
+        poll = run_orchestrator(
+            args,
+            [
+                "--poll",
+                "--eligible-status", eligible,
+                "--bot-label", INVESTIGATOR_PROFILE,
+                "--max-pipeline-wip", str(args.max_pipeline_wip),
+            ],
+            timeout=90,
+        )
+        if not isinstance(poll, dict):
+            raise RuntimeError(f"unexpected poll response: {poll!r}")
+        if poll.get("status") in {"NO_TICKETS", "NO_CLAIMABLE_TICKET"}:
+            break
+        if poll.get("status") != "CLAIMED":
+            raise RuntimeError(f"unexpected poll status: {poll.get('status')}")
+
+        result = _prepare_claimed_ticket(args, binding, poll)
+        claims.append(result)
+
+        if result.get("status") != "JEV_QWEN_FREE_PUBLISHED":
+            active.append({
+                "ID": result.get("run_id"),
+                "TicketID": result.get("ticket_id"),
+                "LocalModelState": "QUEUED",
+                "LocalModelPurpose": "INVESTIGATION",
+            })
+            local_counts["queued"] += 1
+
+        if local_counts["running"] == 0 and local_counts["queued"] > 0:
+            dispatched = _dispatch_next_local_model_task(args)
+            dispatches.append(dispatched)
+            if dispatched.get("status") == "DISPATCHED":
+                local_counts["running"] = 1
+                local_counts["queued"] = max(0, local_counts["queued"] - 1)
+
+    if claims:
+        status = "PIPELINE_FILLED"
+    elif len(active) >= args.max_pipeline_wip:
+        status = "PIPELINE_WIP_LIMIT"
+    elif local_counts["queued"] >= args.max_qwen_waiting:
+        status = "QWEN_BACKPRESSURE"
+    else:
+        status = "NO_CLAIMABLE_TICKET"
+
+    return {
+        "status": status,
+        "claims": claims,
+        "claim_count": len(claims),
+        "pipeline_active_estimate": len(active),
+        "local_model": local_counts,
+        "dispatches": dispatches,
         "reconcile": reconciliation,
     }
 
