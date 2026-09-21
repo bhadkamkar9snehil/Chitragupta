@@ -89,20 +89,11 @@ class FabricTests(unittest.TestCase):
         def sender(url, payload, headers, timeout):
             answers = {}
             for name in payload["questions"]:
-                if name.startswith("relevant_c0"):
-                    answers[name] = {"type": "noul", "noul": 0.2}
-                elif name.startswith("relevant_c1"):
-                    answers[name] = {"type": "noul", "noul": 0.95}
-                elif name.startswith("same_pattern_c0"):
-                    answers[name] = {
-                        "type": "score", "score": 0.4, "confidence": 0.9,
-                        "legend": {"0": "x"}, "probabilities": {"0": 1.0},
-                    }
+                if name.endswith("_c0"):
+                    probability = 0.2
                 else:
-                    answers[name] = {
-                        "type": "score", "score": 2.8, "confidence": 0.9,
-                        "legend": {"0": "x"}, "probabilities": {"0": 1.0},
-                    }
+                    probability = 0.95
+                answers[name] = {"type": "noul", "noul": probability}
             return {"model": "jev-test", "answers": answers, "usage": {}}
 
         candidates = [{"table": "dbo.A"}, {"table": "dbo.B"}]
