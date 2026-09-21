@@ -2079,15 +2079,17 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
         # The active SQL run remains protected; next reconciliation/status makes the mismatch visible.
         raise RuntimeError("investigator task was created but its id could not be parsed")
 
-    # No reviewer is pre-created. The completion hook/scout reconciler first normalizes the
-    # investigator's result, then freezes that exact proposal into a new high-priority reviewer.
+    # No local reviewer is pre-created. Reconciliation first normalizes/freezes the
+    # investigator proposal, then runs Jev primary review. A local reviewer card exists
+    # only if Jev falls back to LOCAL_REVIEW.
     return {
         "status": "CLAIMED",
         "run_id": run_id,
         "ticket_id": ticket_id,
         "investigator_task_id": investigator_id,
         "reviewer_task_id": None,
-        "reviewer_creation": "deferred_until_normalized_completion",
+        "primary_review": "jev_after_normalized_completion",
+        "local_reviewer_creation": "only_on_local_review_fallback",
         "priorities": {
             "investigation": NEW_INVESTIGATION_PRIORITY,
             "rework": REWORK_PRIORITY,
@@ -2157,7 +2159,8 @@ def pipeline_status(args: argparse.Namespace) -> dict[str, Any]:
                 "new_investigation": NEW_INVESTIGATION_PRIORITY,
             },
             "max_review_cycles": MAX_REVIEW_CYCLES,
-            "reviewer_creation": "after_normalized_investigator_completion",
+            "primary_review": "jev_after_normalized_investigator_completion",
+            "local_reviewer_creation": "only_on_local_review_fallback",
             "frozen_review_proposal": True,
         },
     }
