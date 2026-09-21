@@ -24,7 +24,6 @@ PY_FILES=(
   Model_Bench/jev/policy.py
   Model_Bench/jev/client.py
   Model_Bench/jev/ticket_triage.py
-  Model_Bench/jev/candidate_rerank.py
   Model_Bench/jev/trace_assessment.py
   Model_Bench/jev/kb_applicability.py
   Model_Bench/jev/kb_curation.py
