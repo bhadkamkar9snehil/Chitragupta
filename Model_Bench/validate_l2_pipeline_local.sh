@@ -35,6 +35,9 @@ PY_FILES=(
   Model_Bench/jev/tool_semantics.py
   Model_Bench/jev/model_routing.py
   Model_Bench/jev/l1_action.py
+  Model_Bench/jev/evidence_plan.py
+  Model_Bench/jev/investigation_assessment.py
+  Model_Bench/jev/reviewer.py
   Model_Bench/jev/audit.py
   Model_Bench/model_scorecard.py
   Model_Bench/test_typesafe_jev.py
@@ -44,9 +47,14 @@ PY_FILES=(
   Model_Bench/patch_tool_search_off.py
   Model_Bench/xstudio_l2_orchestrator_plugin/__init__.py
   Model_Bench/xstudio_l2_tools_plugin/__init__.py
+  Model_Bench/xstudio_l2_jev_plugin/__init__.py
   Model_Bench/xstudio_l2_tool_bridge.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
 )
+
+echo "== TypeSafe dev credential wiring =="
+test -s deploy/dev/typesafe.env || { echo "FAIL: deploy/dev/typesafe.env is missing/empty" >&2; exit 1; }
+grep -q '^TYPESAFE_API_KEY=' deploy/dev/typesafe.env || { echo "FAIL: TYPESAFE_API_KEY is not wired in deploy/dev/typesafe.env" >&2; exit 1; }
 
 echo "== Python syntax =="
 python3 -m py_compile "${PY_FILES[@]}"
@@ -102,11 +110,10 @@ SQL deployment note:
   the numbered source files exist.
 
 Jev deployment note:
-  Live Jev calls require TYPESAFE_API_KEY in the Windows Python/service
-  environment. CHITRAGUPTA_JEV_SHADOW_MODE defaults to 1, so semantic
-  judgments are observed/audited without changing deterministic behavior.
-  Do not enable adaptive review or semantic tool blocking until local
-  calibration data has been reviewed.
+  Jev is active, not shadowed. The explicitly approved dev credential is read
+  from deploy/dev/typesafe.env when TYPESAFE_API_KEY is absent. Jev-first
+  investigation, semantic tool controls, and Jev primary review are enabled.
+  Local qwen review is now the uncertainty/deep-reasoning fallback.
 
 After deploying/regenerating the SQL bundle, run:
   Knowledge/98_pipeline_postflight.sql
