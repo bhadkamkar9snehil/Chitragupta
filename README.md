@@ -235,7 +235,7 @@ probe_table never issues a broad automatic query when no strong identifier maps 
 
 ### Harness-owned Jev workflows
 
-Deterministic runtime code owns Jev invocation. The Windows bridge exposes only the production workflows the runtime currently needs: bounded evidence planning, investigation assessment/meta-attention, and primary proposal review. Ticket trust screening is coalesced into ticket triage; KB trust screening is coalesced into KB applicability, so identical state is not sent through separate Jev requests. There is no model-facing Jev tool and no arbitrary-question surface.
+Deterministic runtime code owns Jev invocation. The Windows bridge exposes only the production workflows the runtime currently needs: full-ticket trust screening, bounded evidence planning, investigation assessment/meta-attention, and primary proposal review. Ticket trust screening deliberately remains separate from triage because routing uses requester-grounded text and excludes model/L1 suspected-cause content to avoid confirmation bias, while security must inspect the broader untrusted ticket. KB trust screening is coalesced into KB applicability because those judgments truly share the same candidate state. There is no model-facing Jev tool and no arbitrary-question surface.
 
 ### Storage: reuse the run and trace model
 
@@ -280,7 +280,7 @@ The upstream TypeSafe skill is installed project-locally at `.agents/skills/type
 
 ### Active behavior and configuration
 
-Jev is active in harness-owned triage/trust screening, evidence planning/assessment/meta-attention, KB applicability/trust checks, trace assessment, and primary review. Deterministic structural rules remain higher authority: explicit identifier routing, schema existence, read-only SQL, procedure allowlists, workflow binding, WIP, and publication state are code-owned.
+Jev is active in harness-owned requester-grounded triage, separate full-ticket trust screening, evidence planning/assessment/meta-attention, coalesced KB applicability/trust checks, trace assessment, and primary review. Deterministic structural rules remain higher authority: explicit identifier routing, schema existence, read-only SQL, procedure allowlists, workflow binding, WIP, and publication state are code-owned.
 
 ~~~text
 TYPESAFE_API_KEY                              required in Windows Python/service environment
