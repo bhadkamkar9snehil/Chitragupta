@@ -430,9 +430,13 @@ The 2-minute `ticket_scout.py` run remains the durable reconcile-first backstop.
 
 Age alone never makes a run stale.
 
-Any Kanban card referencing the exact run protects it, including investigation, rework, or local-review fallback. A run-owned `LocalModelState=QUEUED` also represents valid protected work even before a Kanban card exists.
+A run is protected from orphan recovery if:
 
-A run is auto-failed for clean retry only when it is active in SQL, has no Kanban task referencing it, and exceeds the orphan grace period.
+1. it is referenced by an active Kanban card (`KANBAN_RUN_PROTECTING_STATES = {'todo', 'ready', 'blocked', 'triage', 'running', 'review', 'scheduled', 'done'}`);
+2. it is queued in SQL waiting for local-model admission (`LocalModelState='QUEUED'`); or
+3. it was requeued in the current reconciliation pass from a stale lease.
+
+A run is auto-failed for clean retry only when it is active in SQL, has neither active Kanban representation nor QUEUED local-model state, and exceeds the orphan grace period (45 minutes).
 
 ## 16. Candidate filtering / UPDATE continuation
 

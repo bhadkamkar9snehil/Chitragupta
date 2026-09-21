@@ -679,6 +679,7 @@ class HermesL2Client:
         work_key: str,
         work_json: Dict[str, Any],
         execution_mode: Optional[str] = None,
+        max_waiting: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Persist one exact local-model work package on the active run."""
         cur = self.conn.cursor()
@@ -691,12 +692,13 @@ class HermesL2Client:
                 @WorkKey = ?,
                 @ExecutionMode = ?,
                 @WorkJson = ?,
-                @HermesUserID = ?;
+                @HermesUserID = ?,
+                @MaxWaiting = ?;
             """,
             (
                 run_id, purpose, priority, work_key, execution_mode,
                 json.dumps(work_json, separators=(",", ":"), default=str),
-                self.hermes_user_id,
+                self.hermes_user_id, max_waiting,
             ),
         )
         rows = _rows_as_dicts(cur)
@@ -1371,6 +1373,8 @@ def main() -> None:
                          help="Trusted lifecycle operation for the SQL-backed single local-model slot.")
     parser.add_argument("--local-model-purpose", default=None)
     parser.add_argument("--local-model-priority", type=int, default=None)
+    parser.add_argument("--local-model-max-waiting", type=int, default=None,
+                         help="Enforce atomic queue waiting capacity; returns BACKPRESSURE if exceeded.")
     parser.add_argument("--local-model-work-key", default=None)
     parser.add_argument("--local-model-execution-mode", default=None)
     parser.add_argument("--local-model-work-json", default=None)
@@ -1647,6 +1651,7 @@ def main() -> None:
                     args.local_model_work_key,
                     work_json,
                     execution_mode=args.local_model_execution_mode,
+                    max_waiting=args.local_model_max_waiting,
                 )
             elif action == "acquire":
                 result = client.try_acquire_local_model_work()

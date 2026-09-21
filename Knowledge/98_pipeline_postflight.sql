@@ -26,10 +26,11 @@ IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelState') IS NULL
     INSERT INTO @Failures VALUES ('local_model_queue_state', 'Run-owned local-model queue columns are missing; deploy the current 00_tables_and_indexes.sql.');
 
 IF OBJECT_ID('dbo.Hermes_L2_Queue_Local_Model_Usp', 'P') IS NULL
+   OR OBJECT_DEFINITION(OBJECT_ID('dbo.Hermes_L2_Queue_Local_Model_Usp')) NOT LIKE '%@MaxWaiting%'
    OR OBJECT_ID('dbo.Hermes_L2_Try_Acquire_Local_Model_Usp', 'P') IS NULL
    OR OBJECT_ID('dbo.Hermes_L2_Bind_Local_Model_Task_Usp', 'P') IS NULL
    OR OBJECT_ID('dbo.Hermes_L2_Finish_Local_Model_Usp', 'P') IS NULL
-    INSERT INTO @Failures VALUES ('local_model_admission_procs', 'SQL-backed local-model queue/admission procedures are missing.');
+    INSERT INTO @Failures VALUES ('local_model_admission_procs', 'SQL-backed local-model queue/admission procedures are missing or Hermes_L2_Queue_Local_Model_Usp lacks @MaxWaiting.');
 
 IF OBJECT_ID('dbo.Hermes_L2_Claim_Ticket_Usp', 'P') IS NULL
    OR OBJECT_DEFINITION(OBJECT_ID('dbo.Hermes_L2_Claim_Ticket_Usp')) NOT LIKE '%@MaxPipelineWip%'

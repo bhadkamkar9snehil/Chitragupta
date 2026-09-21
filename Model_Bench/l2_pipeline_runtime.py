@@ -94,6 +94,12 @@ CONTEXT_MODE_BUDGET_CHARS = {
 # Kept broad for diagnostics/compatibility. `todo` remains a live state even though the
 # new reconciler no longer relies on pre-created parent-gated reviewers.
 LIVE_KANBAN_STATUSES = {"todo", "ready", "blocked", "triage", "running", "review", "scheduled"}
+KANBAN_RUN_PROTECTING_STATES = {"todo", "ready", "blocked", "triage", "running", "review", "scheduled", "done"}
+KANBAN_MODEL_EXECUTING_STATES = {"ready", "scheduled", "running"}
+LOCAL_MODEL_TERMINAL_TASK_STATES = {"done", "blocked", "failed", "cancelled"}
+_LOCAL_MODEL_TERMINAL_TASK_STATES = LOCAL_MODEL_TERMINAL_TASK_STATES
+PUBLISHED_PROCESS_STATES = {"COMPLETED", "WAITING_USER"}
+LOCAL_MODEL_PENDING_STATES = {"QUEUED", "RUNNING"}
 
 REPO_ROOT_WSL = Path("/mnt/c/Users/Admin/Documents/Office/AIHelpdesk")
 BINDING_CANDIDATES = [
@@ -381,10 +387,7 @@ def safe_query_active_run(run_id: str, args: Optional[argparse.Namespace] = None
         "FROM dbo.Hermes_L2_Response_Trn_Tbl "
         f"WHERE ID = '{safe}' AND IsDeleted = 0 AND IsActive = 1"
     )
-    try:
-        rows = run_orchestrator(args, ["--query", sql])
-    except RuntimeError:
-        return []
+    rows = run_orchestrator(args, ["--query", sql])
     return rows if isinstance(rows, list) else []
 
 
@@ -458,17 +461,20 @@ def _queue_local_model_task(
         print(f"[DRY RUN] queue local model {purpose} run={run_id} key={work_key}")
         return {"QueueStatus": "DRY_RUN", "RunID": run_id}
 
+    max_waiting = getattr(args, "max_qwen_waiting", MAX_QWEN_WAITING)
+    argv = [
+        "--local-model-action", "queue",
+        "--run-id", run_id,
+        "--local-model-purpose", purpose,
+        "--local-model-priority", str(priority),
+        "--local-model-work-key", work_key,
+        "--local-model-execution-mode", execution_mode,
+        "--local-model-max-waiting", str(max_waiting),
+        "--local-model-work-stdin",
+    ]
     result = run_orchestrator(
         args,
-        [
-            "--local-model-action", "queue",
-            "--run-id", run_id,
-            "--local-model-purpose", purpose,
-            "--local-model-priority", str(priority),
-            "--local-model-work-key", work_key,
-            "--local-model-execution-mode", execution_mode,
-            "--local-model-work-stdin",
-        ],
+        argv,
         input_text=json.dumps(spec, separators=(",", ":"), default=str),
     )
     return result if isinstance(result, dict) else {"QueueStatus": "ERROR"}
@@ -497,8 +503,7 @@ def _live_local_model_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]
         task
         for task in tasks
         if (task.get("assignee") or "") in (INVESTIGATOR_PROFILES | REVIEWER_PROFILES)
-        and str(task.get("status") or "").lower() in LIVE_KANBAN_STATUSES
-        and str(task.get("status") or "").lower() not in _LOCAL_MODEL_TERMINAL_TASK_STATES
+        and str(task.get("status") or "").strip().lower() in KANBAN_MODEL_EXECUTING_STATES
     ]
 
 
@@ -608,7 +613,7 @@ def _sync_local_model_completions(
         run_id = str(row.get("ID") or "")
         task_id = str(row.get("LocalModelTaskID") or "")
         task = by_id.get(task_id)
-        if not run_id or not task or task.get("status") not in _LOCAL_MODEL_TERMINAL_TASK_STATES:
+        if not run_id or not task or str(task.get("status") or "").strip().lower() not in LOCAL_MODEL_TERMINAL_TASK_STATES:
             continue
         if dry_run:
             print(f"[DRY RUN] release local-model slot run={run_id} task={task_id}")
@@ -678,10 +683,7 @@ def _l3_exists(args: argparse.Namespace, run_id: str) -> bool:
         "SELECT TOP 1 ID FROM dbo.Hermes_L3_Escalation_Trn_Tbl "
         f"WHERE RunID = '{safe}' AND IsDeleted = 0"
     )
-    try:
-        rows = run_orchestrator(args, ["--query", sql])
-    except RuntimeError:
-        return False
+    rows = run_orchestrator(args, ["--query", sql])
     return bool(rows)
 
 
@@ -2288,15 +2290,25 @@ def recover_orphan_runs(
     stale_after_minutes: int = ORPHAN_GRACE_MINUTES,
     tasks: list[dict[str, Any]] | None = None,
     active_runs: list[dict[str, Any]] | None = None,
+    protected_run_ids: set[str] | None = None,
 ) -> int:
     """Recover true orphans from the same reconciliation snapshot."""
     source_tasks = tasks if tasks is not None else list_tasks()
     source_active = active_runs if active_runs is not None else query_active_runs(args)
-    referenced_run_ids = {task_run_id(t) for t in source_tasks if task_run_id(t)}
+    referenced_run_ids = {
+        task_run_id(t)
+        for t in source_tasks
+        if task_run_id(t)
+        and (not t.get("status") or str(t.get("status")).strip().lower() in KANBAN_RUN_PROTECTING_STATES)
+    }
+    if protected_run_ids:
+        referenced_run_ids |= {str(pid) for pid in protected_run_ids if pid}
     recovered = 0
     for row in source_active:
         run_id = str(row.get("ID") or "")
         if not run_id or run_id in referenced_run_ids:
+            continue
+        if str(row.get("LocalModelState") or "").strip().upper() == "QUEUED":
             continue
         try:
             age = int(row.get("AgeMinutes") or 0)
@@ -2337,7 +2349,7 @@ def audit_done_reviewers(args: argparse.Namespace, *, dry_run: bool = False) -> 
         rows = _query_published_state(args, run_id)
         ok = bool(
             rows
-            and rows[0].get("ProcessStatus") in ("COMPLETED", "WAITING_USER")
+            and rows[0].get("ProcessStatus") in PUBLISHED_PROCESS_STATES
             and rows[0].get("ResponseType")
             and str(rows[0].get("ReplyText") or "").strip()
         )
@@ -2402,7 +2414,7 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
         str(row.get("ID"))
         for row in active_runs
         if row.get("ID")
-        and row.get("LocalModelState") in {"QUEUED", "RUNNING"}
+        and row.get("LocalModelState") in LOCAL_MODEL_PENDING_STATES
         and str(row.get("ID")) not in released
     } | requeued
 
@@ -2433,12 +2445,18 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
     local_approvals = process_approvals(
         args, dry_run=dry_run, tasks=tasks, active_run_ids=active_run_ids
     )
+    protected_orphans = requeued | {
+        str(r.get("ID"))
+        for r in active_runs
+        if r.get("ID") and str(r.get("LocalModelState") or "").strip().upper() == "QUEUED"
+    }
     orphans = recover_orphan_runs(
         args,
         dry_run=dry_run,
         stale_after_minutes=args.stale_after_minutes,
         tasks=tasks,
         active_runs=active_runs,
+        protected_run_ids=protected_orphans,
     )
     dispatch = _dispatch_next_local_model_task(args, dry_run=dry_run, tasks=tasks)
     return {
@@ -2824,6 +2842,21 @@ def _prepare_claimed_ticket(
         raise
 
     status = str(queued.get("QueueStatus") or "")
+    if status == "BACKPRESSURE":
+        try:
+            run_orchestrator(args, [
+                "--fail-run", "--run-id", run_id,
+                "--error-message", "Local model queue saturated (backpressure)",
+                "--retry-after-minutes", "2",
+            ])
+        except RuntimeError:
+            pass
+        return {
+            "status": "BACKPRESSURE",
+            "run_id": run_id,
+            "ticket_id": ticket_id,
+            "queue_status": "BACKPRESSURE",
+        }
     if status not in {"QUEUED", "ALREADY_QUEUED"}:
         raise RuntimeError(f"unexpected local-model queue result for {run_id}: {queued!r}")
     return {
@@ -2886,7 +2919,9 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
         result = _prepare_claimed_ticket(args, binding, poll)
         claims.append(result)
 
-        if result.get("status") != "JEV_QWEN_FREE_PUBLISHED":
+        if result.get("status") == "BACKPRESSURE":
+            break
+        elif result.get("status") != "JEV_QWEN_FREE_PUBLISHED":
             active.append({
                 "ID": result.get("run_id"),
                 "TicketID": result.get("ticket_id"),

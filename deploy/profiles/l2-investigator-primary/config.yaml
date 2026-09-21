@@ -1,10 +1,12 @@
 model:
+  max_tokens: 8192
   default: qwen/qwen3.5-9b
   provider: lmstudio
   base_url: http://100.111.69.102:1235/v1
-  context_length: 65600
+  context_length: 65792
 agent:
-  reasoning_effort: minimal
+  max_turns: 20
+  reasoning_effort: none
 memory:
   provider: mem0
 approvals:
@@ -40,7 +42,7 @@ kanban:
 onboarding:
   seen:
     tool_progress_prompt: true
-_config_version: 40
+_config_version: 45
 platforms:
   api_server:
     host: 0.0.0.0
@@ -49,16 +51,9 @@ platforms:
     enabled: true
 platform_toolsets:
   cli:
-    - clarify
-    - cronjob
-    - delegation
     - file
     - kanban
-    - memory
-    - session_search
     - skills
-    - terminal
-    - todo
     - xstudio_l2
 known_plugin_toolsets:
   cli:
@@ -71,6 +66,7 @@ known_builtin_toolsets:
     - clarify
     - code_execution
     - computer_use
+    - connections
     - context_engine
     - cronjob
     - delegation
@@ -93,6 +89,9 @@ known_builtin_toolsets:
     - web
     - x_search
     - yuanbao
+tools:
+  tool_search:
+    enabled: off
 
 # ── Security ──────────────────────────────────────────────────────────
 # Secret redaction is ON by default — strings that look like API keys,
@@ -131,6 +130,3 @@ known_builtin_toolsets:
 # fallback_model:
 #   provider: openrouter
 #   model: anthropic/claude-sonnet-4
-tools:
-  tool_search:
-    enabled: off

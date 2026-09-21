@@ -178,8 +178,9 @@ Any Kanban task referencing a run protects that run, including `todo`, `ready`, 
 A SQL run is recoverable as a true orphan only when:
 
 1. it is still active in SQL;
-2. no Kanban task at any stage references that exact `run_id`; and
-3. the orphan grace period has elapsed.
+2. no Kanban task at any stage references that exact `run_id`;
+3. it is not in `LocalModelState = 'QUEUED'`; and
+4. the orphan grace period has elapsed.
 
 Do not reintroduce the retired `l2-review` board lookup.
 

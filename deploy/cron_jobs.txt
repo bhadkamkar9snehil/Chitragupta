@@ -7,46 +7,47 @@
     Name:      Session maintenance
     Schedule:  every 360m
     Repeat:    ∞
-    Next run:  2026-09-05T17:48:00.982592+00:00
+    Next run:  2026-09-21T15:44:37.053726+00:00
     Deliver:   local
     Script:    session_maintenance.py
     Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-05T11:48:00.982592+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-05T11:47:38.333827+00:00)
-    Execution: completed  ac408ea93cd44eb193e6feaaadcebb88
-
-  f1915c187f11 [active]
-    Name:      L2 Ticket Scout (Kanban bridge)
-    Schedule:  every 2m
-    Repeat:    ∞
-    Next run:  2026-09-05T17:33:45.223454+00:00
-    Deliver:   local
-    Script:    ticket_scout.py
-    Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-05T17:29:27.387940+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-05T17:31:27.387940+00:00)
-    Execution: running  854a6c2729a649d2b767b4cccda5ba6e
+    Last run:  2026-09-21T09:44:37.053726+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-21T09:43:33.451737+00:00)
+    Execution: completed  2eee21802b13432ab64e6faae72d1e49
 
   97bfe2a17d9d [active]
     Name:      L2 Kanban Completion Audit (no-LLM)
     Schedule:  every 10m
     Repeat:    ∞
-    Next run:  2026-09-05T17:40:55.808621+00:00
+    Next run:  2026-09-21T14:10:33.868967+00:00
     Deliver:   local
     Script:    audit_kanban_completions.py
     Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-05T17:30:55.808621+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-05T17:29:45.285367+00:00)
-    Execution: completed  5808d302747c4db7b957cde1cef2fa1b
+    Last run:  2026-09-21T13:50:11.328615+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-21T14:00:11.328615+00:00)
+    Execution: running  b328dbdbeb024446a0d6c6fb8afe82b1
 
   ba0827aece96 [active]
     Name:      Reapply mem0 LM Studio patch (no-LLM)
     Schedule:  every 1440m
     Repeat:    ∞
-    Next run:  2026-09-05T18:03:23.406682+00:00
+    Next run:  2026-09-22T11:56:45.874928+00:00
     Deliver:   local
     Script:    reapply_mem0_patch.py
     Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-04T18:03:23.406682+00:00  ok
-    Execution: completed  b8c52f3fabb448c1bae3cbadb4e1bbe3
+    Last run:  2026-09-21T11:56:45.874928+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-21T11:55:44.686485+00:00)
+    Execution: completed  5195cc72ba3d4b6b9c6aaf4b836964c0
+
+  25e16b1941aa [active]
+    Name:      L2 Ticket Scout (Kanban bridge)
+    Schedule:  every 2m
+    Repeat:    ∞
+    Next run:  2026-09-21T14:01:41.346496+00:00
+    Deliver:   local
+    Script:    ticket_scout.py
+    Mode:      no-agent (script stdout delivered directly)
+    Last run:  2026-09-21T13:59:41.346496+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-21T13:58:32.666456+00:00)
+    Execution: completed  62d02464b01e4fe68f641364b85ae4e7
 

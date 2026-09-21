@@ -110,7 +110,8 @@ CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Queue_Local_Model_Usp
     @WorkKey        varchar(255),
     @ExecutionMode  varchar(30) = NULL,
     @WorkJson       nvarchar(max),
-    @HermesUserID   varchar(36) = NULL
+    @HermesUserID   varchar(36) = NULL,
+    @MaxWaiting     int = NULL
 )
 AS
 BEGIN
@@ -181,6 +182,37 @@ BEGIN
         IF @CurrentState IN ('QUEUED', 'RUNNING') AND ISNULL(@CurrentKey, '') <> @WorkKey
         BEGIN
             RAISERROR('Run already owns different pending local-model work.', 16, 1);
+        END;
+
+        IF @MaxWaiting IS NOT NULL
+        BEGIN
+            DECLARE @BlockingQueued int;
+
+            SELECT @BlockingQueued = COUNT(*)
+            FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+            WHERE IsActive = 1
+              AND IsDeleted = 0
+              AND LocalModelState = 'QUEUED'
+              AND ID <> @RunID
+              AND (@Priority <= 10 OR LocalModelPriority >= @Priority);
+
+            IF @BlockingQueued >= @MaxWaiting
+            BEGIN
+                COMMIT TRANSACTION;
+                SELECT
+                    'BACKPRESSURE' AS QueueStatus,
+                    ID AS RunID,
+                    TicketID,
+                    LocalModelState,
+                    LocalModelPurpose,
+                    LocalModelPriority,
+                    LocalModelWorkKey,
+                    LocalModelTaskID,
+                    ExecutionMode
+                FROM dbo.Hermes_L2_Response_Trn_Tbl
+                WHERE ID = @RunID;
+                RETURN;
+            END;
         END;
 
         UPDATE dbo.Hermes_L2_Response_Trn_Tbl

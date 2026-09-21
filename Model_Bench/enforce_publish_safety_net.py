@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Compatibility entrypoint for orphan-run recovery.
+"""Compatibility entrypoint for orphan-run recovery and publish safety.
 
-The centralized runtime owns recovery. A run is protected whenever current Kanban
-state still references it, including queued/deferred-stage work and completed review
-state awaiting deterministic publication. This wrapper exists for operator/backward
-compatibility only; it is not a separately scheduled lifecycle authority.
+Lifecycle logic is centralized in l2_pipeline_runtime.py. Routing through
+reconcile ensures atomic ordering across completions, reviews, rejections,
+approvals, and admission.
 """
+import sys
 from l2_pipeline_runtime import cli
 
 if __name__ == "__main__":
-    raise SystemExit(cli(["recover", *__import__("sys").argv[1:]]))
+    raise SystemExit(cli(["reconcile", *sys.argv[1:]]))

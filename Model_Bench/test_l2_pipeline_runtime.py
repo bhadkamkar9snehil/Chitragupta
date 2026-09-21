@@ -979,5 +979,132 @@ class PipelineContractTests(unittest.TestCase):
             self.assertIn("Jev flag confirmed", reason)
 
 
+    def test_queued_local_model_without_card_is_not_orphan(self):
+        args = mod.default_args()
+        active = [{"ID": "run-queued-1", "AgeMinutes": 60, "LocalModelState": "QUEUED"}]
+        with patch.object(mod, "run_orchestrator") as orch:
+            count = mod.recover_orphan_runs(args, tasks=[], active_runs=active)
+        orch.assert_not_called()
+        self.assertEqual(count, 0)
+
+    def test_requeued_stale_lease_not_failed_as_orphan_same_reconcile(self):
+        args = mod.default_args()
+        active = [{
+            "ID": "run-stale-1",
+            "AgeMinutes": 60,
+            "LocalModelState": "RUNNING",
+            "LocalModelTaskID": "task-old",
+        }]
+        calls = []
+        def fake_orch(a, argv, **kw):
+            calls.append(argv)
+            if "--local-model-action" in argv and "finish" in argv:
+                return {"status": "FINISHED"}
+            if "--local-model-action" in argv and "acquire" in argv:
+                return {"AcquireStatus": "EMPTY"}
+            return []
+
+        with patch.object(mod, "list_tasks", return_value=[]), \
+             patch.object(mod, "query_active_runs", return_value=active), \
+             patch.object(mod, "run_orchestrator", side_effect=fake_orch):
+            res = mod.reconcile(args)
+
+        self.assertEqual(res["local_model_requeued_stale"], 1)
+        self.assertEqual(res["orphans_recovered"], 0)
+        fail_calls = [c for c in calls if "--fail-run" in c]
+        self.assertEqual(len(fail_calls), 0)
+
+    def test_blocked_and_done_cards_do_not_hold_qwen_slot(self):
+        tasks = [
+            {"id": "t-done", "assignee": mod.INVESTIGATOR_PROFILE, "status": "done"},
+            {"id": "t-blocked", "assignee": mod.REVIEWER_PROFILE, "status": "blocked"},
+            {"id": "t-failed", "assignee": mod.INVESTIGATOR_PROFILE, "status": "failed"},
+            {"id": "t-cancelled", "assignee": mod.REVIEWER_PROFILE, "status": "cancelled"},
+        ]
+        live = mod._live_local_model_tasks(tasks)
+        self.assertEqual(len(live), 0)
+
+    def test_live_executing_card_prevents_parallel_dispatch(self):
+        for status in ("ready", "running", "scheduled"):
+            tasks = [{"id": f"t-{status}", "assignee": mod.INVESTIGATOR_PROFILE, "status": status}]
+            live = mod._live_local_model_tasks(tasks)
+            self.assertEqual(len(live), 1, f"Status {status} must be recognized as executing")
+
+    def test_true_orphan_without_queue_or_kanban_recovered(self):
+        args = mod.default_args()
+        active = [{"ID": "run-orphan-1", "AgeMinutes": 60, "LocalModelState": None}]
+        calls = []
+        def fake_orch(a, argv, **kw):
+            calls.append(argv)
+            return {}
+
+        with patch.object(mod, "run_orchestrator", side_effect=fake_orch):
+            count = mod.recover_orphan_runs(args, tasks=[], active_runs=active)
+        self.assertEqual(count, 1)
+        self.assertTrue(any("--fail-run" in c and "run-orphan-1" in c for c in calls))
+
+    def test_queue_local_model_passes_max_waiting(self):
+        args = mod.default_args()
+        args.max_qwen_waiting = 5
+        spec = {
+            "title": "title", "assignee": mod.INVESTIGATOR_PROFILE,
+            "body": "b", "priority": 10, "idempotency_key": "k", "max_runtime": "10m"
+        }
+        captured_argv = []
+        def fake_orch(a, argv, **kw):
+            captured_argv.extend(argv)
+            return {"QueueStatus": "QUEUED"}
+
+        with patch.object(mod, "run_orchestrator", side_effect=fake_orch):
+            mod._queue_local_model_task(
+                args,
+                run_id="r1",
+                purpose="INVESTIGATION",
+                execution_mode="COMPOSE_ONLY",
+                priority=10,
+                work_key="k1",
+                spec=spec,
+            )
+        self.assertIn("--local-model-max-waiting", captured_argv)
+        idx = captured_argv.index("--local-model-max-waiting")
+        self.assertEqual(captured_argv[idx + 1], "5")
+
+    def test_prepare_claimed_ticket_handles_backpressure(self):
+        args = mod.default_args()
+        poll = {"run_id": "r-bp", "ticket_id": "t-bp", "ticket": {"TicketNo": "TBP"}}
+        binding = {"eligible_ticket_status": "Enter"}
+        fail_calls = []
+        def fake_orch(a, argv, **kw):
+            if "--fail-run" in argv:
+                fail_calls.append(argv)
+                return {}
+            if "--investigate-bundle" in argv:
+                return {"ticket_id": "t-bp", "ticket": {}}
+            return {}
+
+        with patch.object(mod, "run_orchestrator", side_effect=fake_orch), \
+             patch.object(mod, "_run_kb_retrieval", return_value={"solutions": []}), \
+             patch.object(mod, "_jev_first_investigation", return_value={"execution_depth": "COMPOSE_ONLY"}), \
+             patch.object(mod, "_try_qwen_free_handoff", return_value=(None, "not free")), \
+             patch.object(mod, "_queue_local_model_task", return_value={"QueueStatus": "BACKPRESSURE"}):
+            res = mod._prepare_claimed_ticket(args, binding, poll)
+
+        self.assertEqual(res["status"], "BACKPRESSURE")
+        self.assertEqual(len(fail_calls), 1)
+        self.assertIn("r-bp", fail_calls[0])
+
+    def test_safe_query_active_run_propagates_database_failure(self):
+        args = mod.default_args()
+        with patch.object(mod, "run_orchestrator", side_effect=RuntimeError("SQL Server connection timeout")):
+            with self.assertRaises(RuntimeError):
+                mod.safe_query_active_run("r-fail", args)
+
+    def test_l3_exists_propagates_database_failure(self):
+        args = mod.default_args()
+        with patch.object(mod, "run_orchestrator", side_effect=RuntimeError("SQL Server connection timeout")):
+            with self.assertRaises(RuntimeError):
+                mod._l3_exists(args, "r-fail")
+
+
 if __name__ == "__main__":
     unittest.main()

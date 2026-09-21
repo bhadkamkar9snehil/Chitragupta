@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Compatibility entrypoint: publish approved reviewer completions.
 
-Lifecycle logic is centralized in l2_pipeline_runtime.py. This wrapper is
-kept because existing hooks/cron/manual runbooks may still invoke the old
-script name.
+Lifecycle logic is centralized in l2_pipeline_runtime.py. Routing through
+reconcile ensures atomic ordering across completions, reviews, rejections,
+approvals, and admission.
 """
 import sys
 from l2_pipeline_runtime import cli
 
 if __name__ == "__main__":
-    raise SystemExit(cli(["publish", *sys.argv[1:]]))
+    raise SystemExit(cli(["reconcile", *sys.argv[1:]]))
