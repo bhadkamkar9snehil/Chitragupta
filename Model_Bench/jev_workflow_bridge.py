@@ -60,7 +60,8 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
             allowed_routes=req.get("allowed_routes"),
         )
     elif workflow == "model_routing":
-        result = assess_model_route(state, dict(req.get("profiles") or {}))
+        embedded_profiles = state.get("profiles") if isinstance(state, dict) else None
+        result = assess_model_route(state, dict(req.get("profiles") or embedded_profiles or {}))
     elif workflow == "l1_action":
         result = assess_l1_action(state, actions=req.get("actions"))
     else:
