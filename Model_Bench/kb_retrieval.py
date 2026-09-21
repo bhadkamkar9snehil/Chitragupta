@@ -164,7 +164,6 @@ def resolve_route_candidates(
     top: int = 3,
     *,
     jev_decider=None,
-    semantic_shadow: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Fuse deterministic routing with an optional Jev semantic Choice.
 
@@ -248,10 +247,6 @@ def resolve_route_candidates(
             break
 
     routing["selected_route"] = choice
-    if semantic_shadow:
-        routing["mode"] = "jev_shadow"
-        routing["jev_suggested_candidates"] = fused[:top]
-        return deterministic, routing
     routing["mode"] = "jev"
     return fused[:top], routing
 
@@ -531,7 +526,6 @@ def retrieve(
         query,
         manifest,
         jev_decider=_triage_route_decider(triage),
-        semantic_shadow=jev_policy.SHADOW_MODE,
     )
     routing["triage"] = triage
 
@@ -553,14 +547,13 @@ def retrieve(
             ranked = list(kb_semantics.get("candidates") or ranked)
             for row in ranked:
                 row["jev_kb_composite"] = _compose_kb_score(row)
-            if not jev_policy.SHADOW_MODE:
-                ranked.sort(
-                    key=lambda row: (
-                        bool(float(row.get("jev_negative_indicator") or 0.0) >= jev_policy.HIGH_RISK_NOUL),
-                        -float(row.get("jev_kb_composite") or 0.0),
-                        -float(row.get("retrieval_score") or 0.0),
-                    )
+            ranked.sort(
+                key=lambda row: (
+                    bool(float(row.get("jev_negative_indicator") or 0.0) >= jev_policy.HIGH_RISK_NOUL),
+                    -float(row.get("jev_kb_composite") or 0.0),
+                    -float(row.get("retrieval_score") or 0.0),
                 )
+            )
 
     if ranked and jev_policy.SECURITY_SCREEN_ENABLED:
         security_items = [
@@ -634,9 +627,9 @@ def retrieve(
         "abstention_reason": None if ranked else "No active solution article met the relevance threshold.",
         "retrieval_policy": {
             "route_only_match_allowed": False,
-            "semantic_route_is_advisory": True,
-            "semantic_kb_is_shadow_mode": jev_policy.SHADOW_MODE,
-            "jev_low_confidence_falls_back": True,
+            "semantic_route_is_active": True,
+            "semantic_kb_reranking_is_active": True,
+            "jev_low_confidence_falls_back_to_deterministic": True,
             "min_score": min_score,
             "min_matched_terms": min_matched_terms,
             "top": top,
