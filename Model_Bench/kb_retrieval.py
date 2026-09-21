@@ -26,7 +26,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-import typesafe_jev
 from jev import policy as jev_policy
 from jev.audit import persist_rows, rows_for_result
 from jev.kb_applicability import assess_kb_candidates
@@ -194,14 +193,21 @@ def resolve_route_candidates(
         }
         return deterministic, routing
 
-    decider = jev_decider or typesafe_jev.choose_route
+    if jev_decider is None:
+        routing["jev"] = {
+            "enabled": False,
+            "accepted": False,
+            "reason": "no semantic route decision supplied",
+        }
+        return deterministic, routing
+
     try:
-        jev = decider(
+        jev = jev_decider(
             query,
             manifest,
             allowed_routes=identifier_routes if len(identifier_routes) > 1 else None,
         )
-    except Exception as exc:  # caller-supplied/test decider must not break retrieval
+    except Exception as exc:  # injected semantic decision must never break retrieval
         jev = {
             "enabled": True,
             "accepted": False,
