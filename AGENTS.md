@@ -50,10 +50,15 @@ deterministic bounded probes
         |
         v
 JEV INVESTIGATION ASSESSMENT
- + META-ATTENTION CONTEXT COMPILE
+ + META-ATTENTION + EXECUTION DEPTH
+        |
+        +-- QWEN_FREE (strict deterministic handoff gate)
+        |       |
+        |       v
+        |   JEV PRIMARY REVIEW -> deterministic handoff publish
         |
         v
-INVESTIGATOR [priority 10]
+INVESTIGATOR [priority 10, only when needed]
   l2-jev-investigator
   COMPOSE_ONLY or FOCUSED_REASONING
         |
@@ -80,7 +85,11 @@ publish  rework    L3 path       qwen reviewer
 - New investigation priority = `10`.
 - Rework priority = `20`.
 - Review priority = `30`.
-- Every normalized proposal gets one Jev primary semantic review. A local reviewer card is created only for `LOCAL_REVIEW`, Jev unavailability/uncertainty, or genuine deep reasoning.
+- Jev recommends one execution depth in the same investigation-assessment call: `QWEN_FREE`, `COMPOSE_ONLY`, or `FOCUSED_REASONING`. Deterministic code owns the final gate.
+- `QWEN_FREE` is intentionally narrow: only high-confidence L3/human-action handoffs may skip Qwen, and only when current evidence is strong, no further probe/reasoning is needed, full-ticket trust screening is low-risk, the exact workflow handoff status is bound, and Jev primary review approves the frozen deterministic proposal.
+- `COMPOSE_ONLY` uses a smaller context budget and normally no additional live read; `FOCUSED_REASONING` receives the larger bounded context/recovery budget.
+- The route-specific domain skill is loaded only when the same Jev assessment says it materially helps the next System-2 step.
+- Every normalized local-model proposal gets one Jev primary semantic review. A Qwen-free deterministic handoff is also Jev-primary-reviewed before publication. A local reviewer card is created only for `LOCAL_REVIEW`, Jev unavailability/uncertainty, or genuine deep reasoning.
 - Any local reviewer receives a frozen `proposal_json`. The proposal reviewed is the proposal published.
 - Investigator never calls `--publish-response`.
 - Jev/local reviewers never publish; deterministic lifecycle code owns publication.
