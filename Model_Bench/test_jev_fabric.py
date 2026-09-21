@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from jev import client
-from jev.audit import rows_for_result
+from jev.audit import _same_stage_input, rows_for_result
 from jev.evidence_plan import plan_evidence
 from jev.investigation_assessment import assess_investigation
 from jev.kb_curation import assess_curation, rerank_articles
@@ -282,6 +283,19 @@ class FabricTests(unittest.TestCase):
         result = assess_curation({"verified_resolution": {}}, api_key="test", sender=sender)
         self.assertTrue(result["ok"])
         self.assertEqual(set(seen["criteria"]), {"REUSE_EXISTING", "UPDATE_EXISTING", "CREATE_CANDIDATE", "NONE"})
+
+    def test_audit_idempotence_matches_stage_input_version(self):
+        prior = {
+            "PRIMARY_REVIEW": {
+                "input_hash": "abc",
+                "policy_version": "p1",
+                "question_version": "v2",
+            }
+        }
+        first = {"InputHash": "abc", "PolicyVersion": "p1", "QuestionVersion": "v2"}
+        self.assertTrue(_same_stage_input(json.dumps(prior), "PRIMARY_REVIEW", first))
+        changed = dict(first, InputHash="different")
+        self.assertFalse(_same_stage_input(json.dumps(prior), "PRIMARY_REVIEW", changed))
 
     def test_audit_rows_keep_each_judgment_separate(self):
         result = {
