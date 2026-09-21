@@ -16,7 +16,27 @@ PY_FILES=(
   Model_Bench/configure_helpdesk_workflow.py
   Model_Bench/kb_retrieval.py
   Model_Bench/typesafe_jev.py
+  Model_Bench/jev_workflow_bridge.py
+  Model_Bench/jev_trace_assessor.py
+  Model_Bench/jev_post_resolution_curation.py
+  Model_Bench/jev/__init__.py
+  Model_Bench/jev/policy.py
+  Model_Bench/jev/client.py
+  Model_Bench/jev/ticket_triage.py
+  Model_Bench/jev/candidate_rerank.py
+  Model_Bench/jev/proposal_preflight.py
+  Model_Bench/jev/trace_assessment.py
+  Model_Bench/jev/kb_applicability.py
+  Model_Bench/jev/kb_curation.py
+  Model_Bench/jev/review_risk.py
+  Model_Bench/jev/security.py
+  Model_Bench/jev/tool_semantics.py
+  Model_Bench/jev/model_routing.py
+  Model_Bench/jev/l1_action.py
+  Model_Bench/jev/audit.py
+  Model_Bench/model_scorecard.py
   Model_Bench/test_typesafe_jev.py
+  Model_Bench/test_jev_fabric.py
   Model_Bench/test_kb_retrieval.py
   Model_Bench/patch_profile_config.py
   Model_Bench/patch_tool_search_off.py
@@ -37,6 +57,9 @@ python3 Model_Bench/test_xstudio_l2_tools_plugin.py
 
 echo "== TypeSafe Jev routing contract tests =="
 python3 Model_Bench/test_typesafe_jev.py
+
+echo "== TypeSafe Jev fabric contract tests =="
+python3 Model_Bench/test_jev_fabric.py
 
 echo "== Knowledge/skill validation =="
 python3 Model_Bench/validate_knowledge_manifest.py
@@ -75,6 +98,13 @@ SQL deployment note:
   It already includes the current 25_ticket_dispatch_hardening and
   55_update_retry_hardening sources. Do not re-apply those merely because
   the numbered source files exist.
+
+Jev deployment note:
+  Live Jev calls require TYPESAFE_API_KEY in the Windows Python/service
+  environment. CHITRAGUPTA_JEV_SHADOW_MODE defaults to 1, so semantic
+  judgments are observed/audited without changing deterministic behavior.
+  Do not enable adaptive review or semantic tool blocking until local
+  calibration data has been reviewed.
 
 After deploying/regenerating the SQL bundle, run:
   Knowledge/98_pipeline_postflight.sql
