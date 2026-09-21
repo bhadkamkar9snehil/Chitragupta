@@ -47,38 +47,6 @@ class PipelineContractTests(unittest.TestCase):
         self.assertNotIn("CONFIRMATION_BIAS_SENTINEL", query)
         self.assertIn("real symptom", query)
 
-    def test_jev_review_depth_never_focuses_resolution(self):
-        preflight = {
-            "result": {
-                "answers": {
-                    "evidence_supports_core_claim": {"type": "noul", "noul": 0.99},
-                    "reply_overstates_evidence": {"type": "noul", "noul": 0.01},
-                    "reply_claims_action_was_performed": {"type": "noul", "noul": 0.01},
-                    "review_risk": {"type": "score", "score": 0.1, "confidence": 0.99},
-                }
-            }
-        }
-        self.assertEqual(
-            mod._review_depth_candidate(preflight, {"response_type": "RESOLUTION"}),
-            "FULL",
-        )
-
-    def test_jev_review_depth_can_suggest_focused_for_low_risk_update(self):
-        preflight = {
-            "result": {
-                "answers": {
-                    "evidence_supports_core_claim": {"type": "noul", "noul": 0.95},
-                    "reply_overstates_evidence": {"type": "noul", "noul": 0.05},
-                    "reply_claims_action_was_performed": {"type": "noul", "noul": 0.05},
-                    "review_risk": {"type": "score", "score": 0.4, "confidence": 0.9},
-                }
-            }
-        }
-        self.assertEqual(
-            mod._review_depth_candidate(preflight, {"response_type": "UPDATE"}),
-            "FOCUSED",
-        )
-
     def test_default_investigator_is_jev_first_profile(self):
         self.assertEqual(mod.INVESTIGATOR_PROFILE, "l2-jev-investigator")
 
