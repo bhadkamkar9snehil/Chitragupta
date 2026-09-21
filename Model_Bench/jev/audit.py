@@ -22,6 +22,7 @@ _STAGE_COLUMNS = {
     "KB_SECURITY": "JevInvestigationJson",
     "TOOL_CANDIDATE_RERANK": "JevInvestigationJson",
     "TOOL_QUERY_SEMANTICS": "JevInvestigationJson",
+    "TOOL_ROW_RERANK": "JevInvestigationJson",
     "JEV_EVIDENCE_PLAN": "JevInvestigationJson",
     "JEV_INVESTIGATION": "JevInvestigationJson",
     "PROPOSAL_PREFLIGHT": "JevReviewJson",
