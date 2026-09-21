@@ -575,7 +575,7 @@ class PipelineContractTests(unittest.TestCase):
         with patch.object(
             mod, "run_orchestrator", return_value={"AcquireStatus": "BUSY"}
         ) as orchestrator, patch.object(mod, "run_hermes") as hermes:
-            result = mod._dispatch_next_local_model_task(mod.default_args())
+            result = mod._dispatch_next_local_model_task(mod.default_args(), tasks=[])
 
         self.assertEqual(result["status"], "BUSY")
         orchestrator.assert_called_once()
@@ -614,7 +614,7 @@ class PipelineContractTests(unittest.TestCase):
 
         with patch.object(mod, "run_orchestrator", side_effect=orchestrator) as orch, \
              patch.object(mod, "run_hermes", return_value=HermesResult()) as hermes:
-            result = mod._dispatch_next_local_model_task(mod.default_args())
+            result = mod._dispatch_next_local_model_task(mod.default_args(), tasks=[])
 
         self.assertEqual(result["status"], "DISPATCHED")
         self.assertEqual(result["task_id"], "t_qwen")
@@ -657,7 +657,7 @@ class PipelineContractTests(unittest.TestCase):
 
         with patch.object(mod, "run_orchestrator", side_effect=orchestrator), \
              patch.object(mod, "run_hermes", return_value=HermesResult()):
-            result = mod._dispatch_next_local_model_task(mod.default_args())
+            result = mod._dispatch_next_local_model_task(mod.default_args(), tasks=[])
 
         self.assertEqual(result["status"], "CREATE_FAILED_REQUEUED")
         self.assertEqual(len(calls), 2)
@@ -691,6 +691,21 @@ class PipelineContractTests(unittest.TestCase):
             task_id="t_done",
             outcome="DONE",
         )
+
+    def test_dispatch_blocks_when_legacy_live_local_task_exists(self):
+        tasks = [{
+            "id": "legacy-qwen",
+            "status": "running",
+            "assignee": mod.INVESTIGATOR_PROFILE,
+        }]
+        with patch.object(mod, "run_orchestrator") as orchestrator:
+            result = mod._dispatch_next_local_model_task(
+                mod.default_args(), tasks=tasks
+            )
+
+        self.assertEqual(result["status"], "KANBAN_LOCAL_MODEL_BUSY")
+        self.assertEqual(result["task_ids"], ["legacy-qwen"])
+        orchestrator.assert_not_called()
 
     def test_pending_primary_review_waits_for_existing_qwen_work(self):
         task = {
