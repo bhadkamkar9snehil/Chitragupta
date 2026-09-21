@@ -20,8 +20,9 @@ Use this skill only for an investigator/rework card that already belongs to one 
 ```text
 claim
 -> Jev triage/evidence plan + deterministic probes
--> Jev investigation assessment + context compiler
--> investigator
+-> Jev investigation assessment + execution-depth/meta-attention compiler
+-> QWEN_FREE deterministic handoff when narrowly safe
+   OR investigator COMPOSE_ONLY / FOCUSED_REASONING
 -> normalize frozen proposal
 -> Jev primary review
    -> APPROVE       -> deterministic publish
@@ -71,7 +72,7 @@ Raw `query` is read-only. Arbitrary `EXEC` and arbitrary SQL mutation are not av
 
 ## Jev System-One annotations
 
-The starting card contains a **Jev meta-attention compiled context view**. Current-ticket/live-SQL chunks are pinned; lower-value KB/history/discovery chunks may be FULL, COMPACT, SUMMARY, or omitted with a recovery hint.
+The starting card contains a **Jev execution contract + meta-attention compiled context view**. Current-ticket/live-SQL chunks are pinned; lower-value KB/history/discovery chunks may be FULL, COMPACT, SUMMARY, or omitted with a recovery hint. The execution contract states whether this fallback worker is COMPOSE_ONLY or FOCUSED_REASONING, its additional-read budget, and whether a route-specific skill was worth loading.
 
 These are **leads, not proof**:
 
