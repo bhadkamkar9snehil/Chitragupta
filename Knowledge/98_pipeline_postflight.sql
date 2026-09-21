@@ -11,6 +11,21 @@ ELSE IF OBJECT_DEFINITION(OBJECT_ID('dbo.Hermes_L2_Get_Candidate_Tickets_Usp')) 
 IF OBJECT_ID('dbo.Hermes_L2_Default_Update_Continuation_Trg', 'TR') IS NULL
     INSERT INTO @Failures VALUES ('update_continuation_hardening', 'Apply Knowledge/55_update_retry_hardening.sql; UPDATE responses can otherwise become permanently ineligible.');
 
+IF OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl', 'U') IS NULL
+    INSERT INTO @Failures VALUES ('jev_judgment_table', 'Hermes_Jev_Judgment_Trn_Tbl is missing; deploy the regenerated full install before enabling Jev audit.');
+
+IF OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NULL
+    INSERT INTO @Failures VALUES ('jev_assessment_view', 'Hermes_Jev_Run_Assessment_Vw is missing; deploy Knowledge/60_metrics_and_reporting.sql from the current bundle.');
+
+IF OBJECT_ID('dbo.Hermes_KB_Retrieval_Trn_Tbl', 'U') IS NULL
+    INSERT INTO @Failures VALUES ('kb_retrieval_telemetry', 'Hermes_KB_Retrieval_Trn_Tbl is missing; semantic KB calibration cannot be measured.');
+
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ArticleStatus') IS NULL
+    INSERT INTO @Failures VALUES ('kb_article_lifecycle', 'Solution article governance columns are missing (ArticleStatus/KnowledgeType/applicability).');
+
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ApplicabilityJson') IS NULL
+    INSERT INTO @Failures VALUES ('kb_applicability', 'ApplicabilityJson is missing from Hermes_Solution_Article_Mst_Tbl.');
+
 IF EXISTS
 (
     SELECT TicketID
