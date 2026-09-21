@@ -496,10 +496,11 @@ class PipelineContractTests(unittest.TestCase):
         # The compiler result remains valid structured JSON; no assembled JSON string is sliced.
         json.loads(json.dumps(view))
 
-    def test_process_approvals_reports_already_published_separately(self):
+    def test_process_approvals_skips_inactive_history_without_publish_queries(self):
         tasks = [
             {
                 "id": "review-new",
+                "status": "done",
                 "assignee": mod.REVIEWER_PROFILE,
                 "body": (
                     "run_id: r-new\n"
@@ -509,6 +510,7 @@ class PipelineContractTests(unittest.TestCase):
             },
             {
                 "id": "review-old",
+                "status": "done",
                 "assignee": mod.REVIEWER_PROFILE,
                 "body": (
                     "run_id: r-old\n"
@@ -518,17 +520,44 @@ class PipelineContractTests(unittest.TestCase):
             },
         ]
 
-        def publish(_args, proposal, **_kwargs):
-            return "published" if proposal["run_id"] == "r-new" else "already_published"
-
-        with patch.object(mod, "list_tasks", return_value=tasks), \
-             patch.object(mod, "_publish_frozen_proposal", side_effect=publish):
-            counts = mod.process_approvals(mod.default_args(), dry_run=True)
+        with patch.object(
+            mod, "_publish_frozen_proposal", return_value="published"
+        ) as publish:
+            counts = mod.process_approvals(
+                mod.default_args(),
+                dry_run=True,
+                tasks=tasks,
+                active_run_ids={"r-new"},
+            )
 
         self.assertEqual(counts["published"], 1)
-        self.assertEqual(counts["already_published"], 1)
+        self.assertEqual(counts["inactive_skipped"], 1)
         self.assertEqual(counts["blocked_configuration"], 0)
         self.assertEqual(counts["rework_created"], 0)
+        publish.assert_called_once()
+        self.assertEqual(publish.call_args.args[1]["run_id"], "r-new")
+
+    def test_reconcile_with_no_active_runs_does_not_walk_historical_completions(self):
+        historical = [{
+            "id": "old-investigator",
+            "status": "done",
+            "assignee": mod.INVESTIGATOR_PROFILE,
+            "body": "run_id: old-run\nticket_id: old-ticket",
+        }]
+        with patch.object(mod, "list_tasks", return_value=historical) as tasks, \
+             patch.object(mod, "query_active_runs", return_value=[]) as active, \
+             patch.object(mod, "latest_done_run") as latest, \
+             patch.object(mod, "_publish_frozen_proposal") as publish:
+            result = mod.reconcile(mod.default_args(), dry_run=True)
+
+        tasks.assert_called_once()
+        active.assert_called_once()
+        latest.assert_not_called()
+        publish.assert_not_called()
+        self.assertEqual(result["snapshot"]["active_run_count"], 0)
+        self.assertEqual(result["snapshot"]["kanban_task_count"], 1)
+        self.assertEqual(result["local_reviewer_approvals"]["published"], 0)
+
 
     def test_resolution_fails_closed_without_binding(self):
         with self.assertRaises(RuntimeError):
