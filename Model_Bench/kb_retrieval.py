@@ -26,6 +26,11 @@ from pathlib import Path
 from typing import Any
 
 import typesafe_jev
+from jev import policy as jev_policy
+from jev.audit import persist_rows, rows_for_result
+from jev.kb_applicability import assess_kb_candidates
+from jev.security import assess_context_items
+from jev.ticket_triage import assess_ticket
 
 try:
     import pyodbc
@@ -382,6 +387,42 @@ def rank_articles(
     return ranked[:top]
 
 
+def _triage_route_decider(triage: dict[str, Any]):
+    def decide(query: str, manifest: dict[str, Any], *, allowed_routes=None) -> dict[str, Any]:
+        del query, manifest, allowed_routes
+        answer = (triage.get("answers") or {}).get("route") or {}
+        if not triage.get("ok") or answer.get("type") != "choice":
+            return {
+                "enabled": bool(triage.get("enabled")),
+                "accepted": False,
+                "reason": triage.get("reason") or "Jev triage route unavailable",
+            }
+        confidence = float(answer.get("confidence") or 0.0)
+        return {
+            "enabled": True,
+            "accepted": confidence >= jev_policy.MIN_CHOICE_CONFIDENCE,
+            "choice": answer.get("choice"),
+            "confidence": confidence,
+            "probabilities": answer.get("probabilities") or {},
+            "model": triage.get("model"),
+            "reason": None if confidence >= jev_policy.MIN_CHOICE_CONFIDENCE
+                else "Jev confidence below configured threshold",
+        }
+    return decide
+
+
+def _compose_kb_score(row: dict[str, Any]) -> float:
+    relevance = float(row.get("jev_relevance") or 0.0)
+    applicability = float(row.get("jev_applicability") or 0.0)
+    same_pattern = float(row.get("jev_same_failure_pattern") or 0.0)
+    same_root = float(row.get("jev_same_root_cause_family") or 0.0)
+    negative = float(row.get("jev_negative_indicator") or 0.0)
+    return round(
+        (2.0 * relevance) + (2.0 * applicability) + same_pattern + (0.5 * same_root) - (2.5 * negative),
+        6,
+    )
+
+
 def retrieve(
     conn,
     query: str,
@@ -389,8 +430,23 @@ def retrieve(
     top: int = 5,
     min_score: float = 7.0,
     min_matched_terms: int = MIN_MATCHED_TERMS,
+    *,
+    ticket_id: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
-    routes, routing = resolve_route_candidates(query, manifest)
+    identifier_routes = _strong_identifier_routes(query, manifest)
+    triage = assess_ticket(
+        {"query": query},
+        manifest,
+        allowed_routes=identifier_routes if identifier_routes else None,
+    )
+    routes, routing = resolve_route_candidates(
+        query,
+        manifest,
+        jev_decider=_triage_route_decider(triage),
+    )
+    routing["triage"] = triage
+
     ranked = rank_articles(
         fetch_articles(conn),
         query,
@@ -400,17 +456,88 @@ def retrieve(
         min_matched_terms=min_matched_terms,
     )
 
+    kb_semantics = {"ok": False, "reason": "KB Jev judgments disabled", "candidates": ranked}
+    security = {"ok": False, "reason": "Jev security screening disabled", "items": ranked}
+
+    if ranked and jev_policy.KB_JUDGMENTS_ENABLED:
+        kb_semantics = assess_kb_candidates({"query": query, "routes": routes}, ranked)
+        if kb_semantics.get("ok"):
+            ranked = list(kb_semantics.get("candidates") or ranked)
+            for row in ranked:
+                row["jev_kb_composite"] = _compose_kb_score(row)
+            if not jev_policy.SHADOW_MODE:
+                ranked.sort(
+                    key=lambda row: (
+                        bool(float(row.get("jev_negative_indicator") or 0.0) >= jev_policy.HIGH_RISK_NOUL),
+                        -float(row.get("jev_kb_composite") or 0.0),
+                        -float(row.get("retrieval_score") or 0.0),
+                    )
+                )
+
+    if ranked and jev_policy.SECURITY_SCREEN_ENABLED:
+        security_items = [
+            {
+                "kb_id": row.get("kb_id"),
+                "source_ref": row.get("source_ref"),
+                "title": row.get("title"),
+                "problem_summary": row.get("problem_summary"),
+                "root_cause": row.get("root_cause"),
+                "resolution_steps": row.get("resolution_steps"),
+            }
+            for row in ranked
+        ]
+        security = assess_context_items(security_items)
+        if security.get("ok"):
+            security_by_id = {item.get("kb_id"): item for item in security.get("items") or []}
+            for row in ranked:
+                flags = (security_by_id.get(row.get("kb_id")) or {}).get("jev_untrusted_context") or {}
+                row["jev_untrusted_context"] = flags
+                max_risk = max((float(v or 0.0) for v in flags.values()), default=0.0)
+                row["context_handling"] = "QUOTE_ONLY_UNTRUSTED" if max_risk >= jev_policy.HIGH_RISK_NOUL else "NORMAL_UNTRUSTED_SOURCE"
+
+    # Best-effort audit. Retrieval must never fail because audit persistence is unavailable.
+    audit_results = []
+    for stage, state, result in (
+        ("TICKET_TRIAGE", {"query": query}, triage),
+        ("KB_APPLICABILITY", {"query": query, "candidate_count": len(ranked)}, kb_semantics),
+        ("KB_SECURITY", {"query": query, "candidate_count": len(ranked)}, security),
+    ):
+        if result.get("ok"):
+            try:
+                audit_results.append(persist_rows(rows_for_result(
+                    result=result,
+                    stage=stage,
+                    state=state,
+                    ticket_id=ticket_id,
+                    run_id=run_id,
+                )))
+            except Exception as exc:
+                audit_results.append({"ok": False, "reason": f"{type(exc).__name__}: {exc}"})
+
     return {
         "query": query,
         "route_candidates": routes,
         "routing": routing,
+        "ticket_characterization": triage.get("answers") if triage.get("ok") else {},
         "knowledge_documents": knowledge_docs_for_routes(manifest, routes),
         "solutions": ranked,
+        "jev_kb_applicability": {
+            "ok": bool(kb_semantics.get("ok")),
+            "model": kb_semantics.get("model"),
+            "latency_ms": kb_semantics.get("latency_ms"),
+        },
+        "jev_security": {
+            "ok": bool(security.get("ok")),
+            "model": security.get("model"),
+            "latency_ms": security.get("latency_ms"),
+        },
+        "jev_audit": audit_results,
         "abstained": not bool(ranked),
         "abstention_reason": None if ranked else "No active solution article met the relevance threshold.",
         "retrieval_policy": {
             "route_only_match_allowed": False,
             "semantic_route_is_advisory": True,
+            "semantic_kb_is_shadow_mode": jev_policy.SHADOW_MODE,
             "jev_low_confidence_falls_back": True,
             "min_score": min_score,
             "min_matched_terms": min_matched_terms,
@@ -428,6 +555,8 @@ def main() -> int:
     ap.add_argument("--username", default=os.environ.get("MSSQL_MCP_USER", "sa"))
     ap.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))
     ap.add_argument("--query", required=True, help="Ticket text/problem description to retrieve against")
+    ap.add_argument("--ticket-id")
+    ap.add_argument("--run-id")
     ap.add_argument("--top", type=int, default=5)
     ap.add_argument("--min-score", type=float, default=7.0)
     ap.add_argument("--min-matched-terms", type=int, default=MIN_MATCHED_TERMS)
@@ -443,6 +572,8 @@ def main() -> int:
             top=max(1, args.top),
             min_score=args.min_score,
             min_matched_terms=max(1, args.min_matched_terms),
+            ticket_id=args.ticket_id,
+            run_id=args.run_id,
         )
     finally:
         conn.close()
