@@ -606,6 +606,47 @@ def _sync_local_model_completions(
     return released
 
 
+
+def _recover_stale_local_model_leases(
+    args: argparse.Namespace,
+    tasks: list[dict[str, Any]],
+    active_runs: list[dict[str, Any]],
+    *,
+    stale_after_minutes: int,
+    dry_run: bool = False,
+) -> set[str]:
+    """Requeue a stale SQL lease only when no live local-model card still owns the run."""
+    live_run_ids = {
+        task_run_id(task)
+        for task in _live_local_model_tasks(tasks)
+        if task_run_id(task)
+    }
+    requeued: set[str] = set()
+    for row in active_runs:
+        if row.get("LocalModelState") != "RUNNING":
+            continue
+        run_id = str(row.get("ID") or "")
+        if not run_id or run_id in live_run_ids:
+            continue
+        try:
+            age = int(row.get("AgeMinutes") or 0)
+        except (TypeError, ValueError):
+            age = 0
+        if age < stale_after_minutes:
+            continue
+        task_id = str(row.get("LocalModelTaskID") or "") or None
+        if dry_run:
+            print(f"[DRY RUN] requeue stale local-model lease run={run_id} age={age}m")
+        else:
+            _finish_local_model_work(
+                args,
+                run_id=run_id,
+                task_id=task_id,
+                outcome="REQUEUE",
+            )
+        requeued.add(run_id)
+    return requeued
+
 def _query_published_state(args: argparse.Namespace, run_id: str) -> list[dict[str, Any]]:
     safe = run_id.replace("'", "''")
     sql = (
@@ -2321,6 +2362,7 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
             },
             "orphans_recovered": 0,
             "local_model_released": 0,
+            "local_model_requeued_stale": 0,
             "local_model_dispatch": {"status": "EMPTY"},
             "snapshot": {
                 "active_run_count": 0,
@@ -2332,13 +2374,20 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
     released = _sync_local_model_completions(
         args, tasks, active_runs, dry_run=dry_run
     )
+    requeued = _recover_stale_local_model_leases(
+        args,
+        tasks,
+        active_runs,
+        stale_after_minutes=args.stale_after_minutes,
+        dry_run=dry_run,
+    )
     pending_local = {
         str(row.get("ID"))
         for row in active_runs
         if row.get("ID")
         and row.get("LocalModelState") in {"QUEUED", "RUNNING"}
         and str(row.get("ID")) not in released
-    }
+    } | requeued
 
     normalized = normalize_investigator_completions(
         dry_run=dry_run, tasks=tasks, active_run_ids=active_run_ids
@@ -2383,6 +2432,7 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
         "local_reviewer_approvals": local_approvals,
         "orphans_recovered": orphans,
         "local_model_released": len(released),
+        "local_model_requeued_stale": len(requeued),
         "local_model_dispatch": dispatch,
         "snapshot": {
             "active_run_count": len(active_run_ids),
