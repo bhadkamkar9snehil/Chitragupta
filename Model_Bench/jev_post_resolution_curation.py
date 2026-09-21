@@ -118,7 +118,13 @@ def main() -> int:
                 persist_rows(rows_for_result(
                     result=rerank,
                     stage="POST_RESOLUTION_KB_RERANK",
-                    state={"run": str(run["RunID"]), "candidate_count": len(candidates)},
+                    state={
+                        "run": str(run["RunID"]),
+                        "query": " ".join(str(run.get(k) or "") for k in (
+                            "ProblemSummary", "RootCause", "Resolution", "Findings", "Route"
+                        )).strip(),
+                        "candidate_ids": [str(row.get("ID") or "") for row in candidates],
+                    },
                     ticket_id=str(run["TicketID"]),
                     run_id=str(run["RunID"]),
                 ))
