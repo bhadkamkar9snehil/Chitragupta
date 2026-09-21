@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from . import policy
@@ -20,6 +21,8 @@ DEFAULT_BASE_URL = "https://api.typesafe.ai"
 DEFAULT_MODEL = "jev-latest"
 SYSTEM_ONE_PATH = "/v1/systemone"
 DEFAULT_TIMEOUT = 10.0
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEV_ENV_FILE = REPO_ROOT / "deploy" / "dev" / "typesafe.env"
 
 JsonSender = Callable[[str, dict[str, Any], dict[str, str], float], dict[str, Any]]
 
@@ -32,8 +35,24 @@ def _float_env(name: str, default: float) -> float:
     return value if value > 0 else default
 
 
+def _dev_api_key() -> str:
+    """Load the explicitly-approved dev key without exposing it to model context."""
+    try:
+        for raw in DEV_ENV_FILE.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if line.startswith("TYPESAFE_API_KEY="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+
+def resolved_api_key(api_key: str | None = None) -> str:
+    return (api_key or os.environ.get("TYPESAFE_API_KEY", "") or _dev_api_key()).strip()
+
+
 def typesafe_available(api_key: str | None = None) -> bool:
-    return bool(policy.JEV_ENABLED and (api_key or os.environ.get("TYPESAFE_API_KEY", "")).strip())
+    return bool(policy.JEV_ENABLED and resolved_api_key(api_key))
 
 
 def _http_sender(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
@@ -63,7 +82,7 @@ def system_one(
     if not policy.JEV_ENABLED:
         return {"ok": False, "enabled": False, "reason": "CHITRAGUPTA_JEV_ENABLED is disabled", "answers": {}}
 
-    key = (api_key if api_key is not None else os.environ.get("TYPESAFE_API_KEY", "")).strip()
+    key = resolved_api_key(api_key)
     if not key:
         return {"ok": False, "enabled": False, "reason": "TYPESAFE_API_KEY is not configured", "answers": {}}
     if not questions:
