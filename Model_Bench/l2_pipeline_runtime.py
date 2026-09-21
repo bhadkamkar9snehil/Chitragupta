@@ -69,7 +69,12 @@ ORPHAN_GRACE_MINUTES = 45
 MIN_SUMMARY_CHARS = 40
 MODEL_CONTEXT_BUDGET_CHARS = 14000
 MODEL_CONTEXT_RESERVED_CHARS = 3000
-CONTEXT_COMPILER_VERSION = "jev-meta-attention-v1"
+CONTEXT_COMPILER_VERSION = "jev-meta-attention-v2"
+CONTEXT_MODE_BUDGET_CHARS = {
+    "QWEN_FREE": 4500,
+    "COMPOSE_ONLY": 7000,
+    "FOCUSED_REASONING": MODEL_CONTEXT_BUDGET_CHARS - MODEL_CONTEXT_RESERVED_CHARS,
+}
 
 # Kept broad for diagnostics/compatibility. `todo` remains a live state even though the
 # new reconciler no longer relies on pre-created parent-gated reviewers.
@@ -454,6 +459,177 @@ def _score_answer(result: dict[str, Any], name: str, default: float = 0.0) -> fl
         return float(answer.get("score")) if answer.get("type") == "score" else default
     except (TypeError, ValueError):
         return default
+
+
+def _choice_answer(
+    result: dict[str, Any],
+    name: str,
+    default: str = "",
+) -> tuple[str, float]:
+    answer = (result.get("answers") or {}).get(name) or {}
+    if answer.get("type") != "choice":
+        return default, 0.0
+    try:
+        confidence = float(answer.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return str(answer.get("choice") or default), confidence
+
+
+def _resolve_execution_contract(assessment: dict[str, Any]) -> dict[str, Any]:
+    """Turn Jev's advisory execution-depth choice into deterministic runtime policy.
+
+    Jev may recommend the cheapest sufficient mode, but the harness owns the
+    actual boundary. QWEN_FREE is intentionally narrow: only escalation/human
+    handoff outcomes can skip prose generation, and only at high evidence and
+    low-reasoning/probe uncertainty.
+    """
+    if not isinstance(assessment, dict) or not assessment.get("ok"):
+        return {
+            "recommended_mode": "FOCUSED_REASONING",
+            "recommendation_confidence": 0.0,
+            "execution_mode": "FOCUSED_REASONING",
+            "local_model_scope": "FOCUSED_REASONING",
+            "max_additional_live_reads": 3,
+            "load_route_skill": True,
+            "reason": "Jev assessment unavailable",
+        }
+
+    recommended, recommendation_confidence = _choice_answer(
+        assessment, "execution_mode", "FOCUSED_REASONING"
+    )
+    response_type, response_confidence = _choice_answer(assessment, "response_type", "UPDATE")
+    evidence = _noul_answer(assessment, "evidence_sufficient", 0.0)
+    needs_probe = _noul_answer(assessment, "needs_additional_probe", 1.0)
+    needs_local = _noul_answer(assessment, "needs_local_model", 1.0)
+    needs_route_skill = _noul_answer(assessment, "needs_route_skill", 1.0)
+    human_action = _noul_answer(assessment, "human_action_required", 0.0)
+    quality = _score_answer(assessment, "confidence_quality", 0.0)
+
+    qwen_free_safe = (
+        recommended == "QWEN_FREE"
+        and recommendation_confidence >= 0.90
+        and response_confidence >= 0.90
+        and response_type in {"L3_ESCALATION", "NEEDS_HUMAN_ACTION"}
+        and evidence >= 0.90
+        and needs_probe <= 0.15
+        and needs_local <= 0.10
+        and quality >= 2.60
+        and (response_type != "NEEDS_HUMAN_ACTION" or human_action >= 0.85)
+    )
+
+    compose_safe = (
+        recommended in {"QWEN_FREE", "COMPOSE_ONLY"}
+        and evidence >= 0.80
+        and needs_local <= 0.20
+        and quality >= 2.00
+    )
+
+    if qwen_free_safe:
+        mode = "QWEN_FREE"
+    elif compose_safe:
+        mode = "COMPOSE_ONLY"
+    else:
+        mode = "FOCUSED_REASONING"
+
+    if mode == "QWEN_FREE":
+        max_reads = 0
+    elif mode == "COMPOSE_ONLY":
+        max_reads = 0 if needs_probe <= 0.15 else 1
+    else:
+        max_reads = 3 if needs_probe >= 0.50 else 2
+
+    return {
+        "recommended_mode": recommended,
+        "recommendation_confidence": recommendation_confidence,
+        "execution_mode": mode,
+        # If a Qwen-free attempt is rejected by the primary review or workflow
+        # binding, its fallback local task is only a composer, not a fresh investigation.
+        "local_model_scope": "COMPOSE_ONLY" if mode == "QWEN_FREE" else mode,
+        "max_additional_live_reads": max_reads,
+        "load_route_skill": mode != "QWEN_FREE" and needs_route_skill >= 0.55,
+        "response_type": response_type,
+        "response_type_confidence": response_confidence,
+        "evidence_sufficient": evidence,
+        "needs_additional_probe": needs_probe,
+        "needs_local_model": needs_local,
+        "confidence_quality": quality,
+        "human_action_required": human_action,
+    }
+
+
+def _context_budget_for_mode(mode: str) -> int:
+    return int(CONTEXT_MODE_BUDGET_CHARS.get(mode, CONTEXT_MODE_BUDGET_CHARS["FOCUSED_REASONING"]))
+
+
+def _qwen_free_proposal(
+    *,
+    run_id: str | None,
+    ticket_id: str,
+    ticket_context: dict[str, Any],
+    probes: list[dict[str, Any]],
+    execution_contract: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Render only bounded handoff outcomes that do not need generative prose."""
+    if not run_id or execution_contract.get("execution_mode") != "QWEN_FREE":
+        return None
+
+    response_type = str(execution_contract.get("response_type") or "").upper()
+    if response_type == "L3_ESCALATION":
+        reply = (
+            "The bounded L2 evidence does not support a safe automated resolution. "
+            "This case requires L3 review. No corrective action was applied automatically."
+        )
+    elif response_type == "NEEDS_HUMAN_ACTION":
+        reply = (
+            "Current evidence indicates that the next corrective step requires authorized "
+            "human action. Hermes did not apply the change automatically; the case requires "
+            "an authorized handoff."
+        )
+    else:
+        return None
+
+    findings: list[str] = []
+    for item in probes[:3]:
+        if not isinstance(item, dict):
+            continue
+        candidate = item.get("candidate") or {}
+        probe = item.get("probe") or {}
+        if not isinstance(probe, dict) or not probe.get("ok"):
+            continue
+        table = ".".join(
+            part for part in (str(candidate.get("database") or ""), str(candidate.get("table") or ""))
+            if part
+        )
+        rows = probe.get("rows")
+        row_count = len(rows) if isinstance(rows, list) else 0
+        identifier = probe.get("identifier") or {}
+        identifier_column = identifier.get("column") if isinstance(identifier, dict) else None
+        if probe.get("probe_possible"):
+            detail = f"{table or 'live source'}: bounded live read returned {row_count} row(s)"
+            if identifier_column:
+                detail += f" using {identifier_column}"
+            findings.append(detail + ".")
+
+    problem_summary = str(
+        ticket_context.get("BriefDetails")
+        or ticket_context.get("Description")
+        or "Current support request"
+    ).strip()[:800]
+
+    return {
+        "run_id": str(run_id),
+        "ticket_id": str(ticket_id),
+        "response_type": response_type,
+        "reply_text": reply,
+        "problem_summary": problem_summary,
+        "findings": " ".join(findings) if findings else (
+            "Jev assessed the bounded current-ticket evidence as sufficient for a handoff outcome; "
+            "no production/configuration mutation was performed."
+        ),
+        "execution_mode": "QWEN_FREE",
+        "generated_by": "deterministic_jev_fast_path",
+    }
 
 
 _CONTEXT_LEVEL_NAMES = {0: "OMIT", 1: "SUMMARY", 2: "COMPACT", 3: "FULL"}
