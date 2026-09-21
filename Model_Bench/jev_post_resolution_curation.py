@@ -21,8 +21,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from Model_Bench.jev.audit import persist_rows, rows_for_result
 from Model_Bench.jev.client import typesafe_available
-from Model_Bench.jev.candidate_rerank import rerank_candidates
-from Model_Bench.jev.kb_curation import assess_curation
+from Model_Bench.jev.kb_curation import assess_curation, rerank_articles
 from Model_Bench.jev.policy import KB_JUDGMENTS_ENABLED
 
 SERVER = os.environ.get("MSSQL_MCP_SERVER", "10.2.6.204")
@@ -93,11 +92,10 @@ def candidate_articles(cur, run: dict[str, Any], top: int = 8) -> tuple[list[dic
     query = " ".join(str(run.get(k) or "") for k in (
         "ProblemSummary", "RootCause", "Resolution", "Findings", "Route"
     )).strip()
-    rerank = rerank_candidates(
+    rerank = rerank_articles(
         query,
         pool,
         top=min(top, len(pool) or top),
-        candidate_kind="existing governed Solution article",
     )
     return (list(rerank.get("ranked") or pool[:top]), rerank)
 
