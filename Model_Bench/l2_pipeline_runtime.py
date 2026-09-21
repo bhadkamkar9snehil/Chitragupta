@@ -971,7 +971,7 @@ def create_rework_card(
     argv = [
         "kanban", "create", f"REWORK[{next_cycle}]: L2 {ticket_no}",
         "--body", body,
-        "--assignee", routed_profile or INVESTIGATOR_PROFILE,
+        "--assignee", INVESTIGATOR_PROFILE,
         "--priority", str(REWORK_PRIORITY),
         "--skill", "xstudio-l2-ticket-workflow",
         "--skill", "xstudio-sql-write-discipline",
@@ -1361,7 +1361,7 @@ def _investigation_bundle(
     fallback_ticket: dict[str, Any],
     *,
     run_id: str | None = None,
-) -> tuple[str, str | None, str | None]:
+) -> tuple[str, str | None]:
     try:
         bundle = run_orchestrator(args, ["--investigate-bundle", ticket_id], timeout=90)
     except RuntimeError as exc:
@@ -1430,56 +1430,6 @@ def _investigation_bundle(
         ),
     }
 
-    # Optional profile routing is bounded to operator-supplied candidates.
-    # It cannot invent or activate a profile outside this configuration.
-    routed_profile: str | None = None
-    profile_json = os.environ.get("CHITRAGUPTA_JEV_PROFILE_CANDIDATES_JSON")
-    if profile_json:
-        try:
-            profile_candidates = json.loads(profile_json)
-        except json.JSONDecodeError:
-            profile_candidates = {}
-        if isinstance(profile_candidates, dict) and len(profile_candidates) > 1:
-            profile_state = {
-                "ticket": fallback_ticket,
-                "ticket_characterization": (
-                    bundle.get("kb_retrieval") or {}
-                ).get("ticket_characterization") or {},
-                "profiles": profile_candidates,
-            }
-            model_route = _run_jev_workflow(
-                "model_routing",
-                profile_state,
-                ticket_id=ticket_id,
-                run_id=run_id,
-                audit_stage="MODEL_ROUTING",
-            )
-            bundle["jev_model_routing"] = (
-                model_route.get("result") if model_route.get("ok")
-                else {"ok": False, "reason": model_route.get("error") or "unavailable"}
-            )
-            route_answer = (
-                ((bundle.get("jev_model_routing") or {}).get("answers") or {}).get("profile") or {}
-                if isinstance(bundle.get("jev_model_routing"), dict) else {}
-            )
-            try:
-                profile_confidence = float(route_answer.get("confidence") or 0.0)
-            except (TypeError, ValueError):
-                profile_confidence = 0.0
-            profile_choice = str(route_answer.get("choice") or "")
-            routing_enabled = os.environ.get(
-                "CHITRAGUPTA_JEV_MODEL_ROUTING_ENABLED", "0"
-            ).strip().lower() in {"1", "true", "yes", "on"}
-            if (
-                routing_enabled
-                and route_answer.get("type") == "choice"
-                and profile_confidence >= 0.80
-                and profile_choice in INVESTIGATOR_PROFILES
-                and profile_choice in profile_candidates
-            ):
-                routed_profile = profile_choice
-            bundle["jev_model_routing_applied"] = routed_profile
-
     rendered = json.dumps(bundle, indent=2, default=str)
     if len(rendered) > 14000:
         rendered = rendered[:14000] + "\n... [bundle truncated at 14,000 chars]"
@@ -1491,7 +1441,6 @@ def _investigation_bundle(
             f"{rendered}\n"
         ),
         bundle.get("preloaded_route_skill"),
-        routed_profile,
     )
 
 
@@ -1599,7 +1548,7 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
     ticket_no = str(ticket.get("TicketNo") or ticket_id)
     _archive_stale_cards_for_ticket(ticket_id, run_id)
 
-    investigation_bundle, route_skill, routed_profile = _investigation_bundle(
+    investigation_bundle, route_skill = _investigation_bundle(
         args, ticket_id, ticket, run_id=run_id
     )
     body = (
