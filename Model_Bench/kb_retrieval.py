@@ -595,8 +595,16 @@ def retrieve(
     audit_results = []
     for stage, state, result in (
         ("TICKET_TRIAGE", {"query": query}, triage),
-        ("KB_APPLICABILITY", {"query": query, "candidate_count": len(ranked)}, kb_semantics),
-        ("KB_SECURITY", {"query": query, "candidate_count": len(ranked)}, security),
+        (
+            "KB_APPLICABILITY",
+            {"query": query, "candidate_ids": [str(row.get("kb_id") or "") for row in ranked]},
+            kb_semantics,
+        ),
+        (
+            "KB_SECURITY",
+            {"query": query, "candidate_ids": [str(row.get("kb_id") or "") for row in ranked]},
+            security,
+        ),
     ):
         if result.get("ok"):
             try:
