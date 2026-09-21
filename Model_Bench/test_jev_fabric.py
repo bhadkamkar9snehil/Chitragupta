@@ -10,10 +10,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from jev import client
 from jev.audit import rows_for_result
 from jev.candidate_rerank import rerank_candidates
+from jev.evidence_plan import plan_evidence
+from jev.investigation_assessment import assess_investigation
 from jev.kb_curation import assess_curation
 from jev.l1_action import assess_l1_action
 from jev.model_routing import assess_model_route
 from jev.proposal_preflight import assess_proposal
+from jev.reviewer import review_proposal
 from jev.security import assess_context_items
 from jev.ticket_triage import assess_ticket
 from jev.trace_assessment import assess_trace
@@ -110,6 +113,119 @@ class FabricTests(unittest.TestCase):
         result = rerank_candidates("target", candidates, top=2, api_key="test", sender=sender)
         self.assertEqual(result["ranked"][0]["table"], "dbo.B")
         self.assertEqual({r["table"] for r in result["ranked"]}, {"dbo.A", "dbo.B"})
+
+    def test_evidence_plan_fans_out_over_only_supplied_real_candidates(self):
+        seen = {}
+
+        def sender(url, payload, headers, timeout):
+            seen["questions"] = payload["questions"]
+            seen["candidates"] = payload["state"]["candidates"]
+            answers = {}
+            for name, q in payload["questions"].items():
+                if q["type"] == "noul":
+                    answers[name] = {"type": "noul", "noul": 0.8}
+                else:
+                    answers[name] = {
+                        "type": "score", "score": 2.0, "confidence": 0.9,
+                        "legend": {"0": "low", "3": "high"},
+                        "probabilities": {"2": 1.0},
+                    }
+            return {"model": "jev-test", "answers": answers, "usage": {}}
+
+        candidates = [
+            {"table": "dbo.RealA", "database": "XStudio_Xbatch"},
+            {"table": "dbo.RealB", "database": "XStudio_Xbatch"},
+        ]
+        result = plan_evidence(
+            {"HeatNo": "H1"}, candidates,
+            api_key="test", sender=sender,
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(set(seen["candidates"]), {"c0", "c1"})
+        self.assertIn("inspect_c0", seen["questions"])
+        self.assertIn("value_c1", seen["questions"])
+        self.assertNotIn("inspect_c2", seen["questions"])
+
+    def test_investigation_assessment_has_no_match_solution_and_bounded_outcomes(self):
+        seen = {}
+
+        def sender(url, payload, headers, timeout):
+            seen["questions"] = payload["questions"]
+            qs = payload["questions"]
+            return {
+                "model": "jev-test",
+                "answers": {
+                    "evidence_sufficient": {"type": "noul", "noul": 0.9},
+                    "known_solution": {
+                        "type": "choice", "choice": "NONE", "confidence": 0.8,
+                        "probabilities": {"NONE": 0.8, "s0": 0.2},
+                    },
+                    "response_type": {
+                        "type": "choice", "choice": "UPDATE", "confidence": 0.8,
+                        "probabilities": {"UPDATE": 0.8},
+                    },
+                    "root_cause_family": {
+                        "type": "choice", "choice": "UNKNOWN", "confidence": 0.9,
+                        "probabilities": {"UNKNOWN": 0.9},
+                    },
+                    "needs_additional_probe": {"type": "noul", "noul": 0.1},
+                    "needs_local_model": {"type": "noul", "noul": 0.1},
+                    "human_action_required": {"type": "noul", "noul": 0.1},
+                    "confidence_quality": {
+                        "type": "score", "score": 2.5, "confidence": 0.9,
+                        "legend": {"0": "weak", "3": "decisive"},
+                        "probabilities": {"3": 0.7, "2": 0.3},
+                    },
+                },
+                "usage": {},
+            }
+
+        result = assess_investigation({
+            "ticket": {"HeatNo": "H1"},
+            "live_probes": [{"rows": [{"HeatNo": "H1"}]}],
+            "known_solutions": [{"title": "Known X", "source_ref": "solution:1"}],
+        }, api_key="test", sender=sender)
+        self.assertTrue(result["ok"])
+        self.assertIn("NONE", seen["questions"]["known_solution"]["criteria"])
+        self.assertIn("RESOLUTION", seen["questions"]["response_type"]["criteria"])
+        self.assertIn("NEEDS_HUMAN_ACTION", seen["questions"]["response_type"]["criteria"])
+
+    def test_primary_reviewer_is_bounded_to_four_decisions_and_explicit_risks(self):
+        seen = {}
+
+        def sender(url, payload, headers, timeout):
+            seen["questions"] = payload["questions"]
+            answers = {}
+            for name, q in payload["questions"].items():
+                if q["type"] == "choice":
+                    criteria = q["criteria"]
+                    pick = "APPROVE" if name == "decision" else "OTHER"
+                    answers[name] = {
+                        "type": "choice", "choice": pick, "confidence": 0.9,
+                        "probabilities": {pick: 0.9},
+                    }
+                elif q["type"] == "score":
+                    answers[name] = {
+                        "type": "score", "score": 0.2, "confidence": 0.9,
+                        "legend": {"0": "low"}, "probabilities": {"0": 1.0},
+                    }
+                else:
+                    answers[name] = {"type": "noul", "noul": 0.9}
+            return {"model": "jev-test", "answers": answers, "usage": {}}
+
+        result = review_proposal(
+            {"proposal": {"response_type": "UPDATE"}, "run_actions": []},
+            api_key="test", sender=sender,
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            set(seen["questions"]["decision"]["criteria"]),
+            {"APPROVE", "REWORK", "LOCAL_REVIEW", "L3_ESCALATION"},
+        )
+        self.assertIn("reply_overstates_evidence", seen["questions"])
+        self.assertIn("audit_shows_claimed_action", seen["questions"])
+        self.assertIn("needs_deep_local_reasoning", seen["questions"])
+        self.assertIn("publication_risk", seen["questions"])
 
     def test_proposal_preflight_contains_expected_safety_dimensions(self):
         seen = {}
