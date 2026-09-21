@@ -1258,6 +1258,7 @@ def poll_and_claim(
     eligible_status_csv: str,
     bot_label: Optional[str] = None,
     max_pipeline_wip: int = 8,
+    persist_claim_state: bool = True,
 ) -> Dict[str, Any]:
     """
     Deterministic, safe half of a cycle: recover stale runs, find candidates,
@@ -1316,17 +1317,13 @@ def poll_and_claim(
             # not a context-loss bug, a small-model verbatim-recall failure.
             # Don't make the model responsible for exact-value fidelity when
             # code can pass it through mechanically instead.
-            _LAST_CLAIM_STATE_PATH.write_text(json.dumps({
-                "run_id": run_id,
-                "ticket_id": candidate["TicketID"],
-                "claimed_at": datetime.now(timezone.utc).isoformat(),
-                # Which bot (profile/model combo) claimed this -- needed to
-                # score/compare combos honestly once more than one profile
-                # is polling the same live queue concurrently. Not a DB
-                # column deliberately (no schema change for something this
-                # local); model_scorecard.py reads it straight from here.
-                "bot_label": bot_label,
-            }), encoding="utf-8")
+            if persist_claim_state:
+                _LAST_CLAIM_STATE_PATH.write_text(json.dumps({
+                    "run_id": run_id,
+                    "ticket_id": candidate["TicketID"],
+                    "claimed_at": datetime.now(timezone.utc).isoformat(),
+                    "bot_label": bot_label,
+                }), encoding="utf-8")
             return result
 
     result["status"] = "NO_CLAIMABLE_TICKET"
@@ -1365,6 +1362,9 @@ def main() -> None:
                          help="Atomic SQL-enforced maximum number of active L2 runs. "
                               "Jev-only work can occupy several slots; local-Qwen concurrency "
                               "is governed separately by the local-model admission controller.")
+    parser.add_argument("--no-local-claim-state", action="store_true",
+                         help="Do not overwrite the singleton manual-CLI last-claim file. "
+                              "Required for deterministic multi-WIP scout polling.")
     parser.add_argument("--local-model-action",
                          choices=["queue", "acquire", "bind", "finish"],
                          default=None,
@@ -1680,6 +1680,7 @@ def main() -> None:
                 args.eligible_status,
                 bot_label=args.bot_label,
                 max_pipeline_wip=args.max_pipeline_wip,
+                persist_claim_state=not args.no_local_claim_state,
             )
             print(json.dumps(result, indent=2, default=str))
             return
