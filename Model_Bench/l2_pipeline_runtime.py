@@ -2883,6 +2883,10 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
             if dispatched.get("status") == "DISPATCHED":
                 local_counts["running"] = 1
                 local_counts["queued"] = max(0, local_counts["queued"] - 1)
+            elif dispatched.get("status") in {"BUSY", "KANBAN_LOCAL_MODEL_BUSY"}:
+                # A concurrent/legacy local task already owns the physical model.
+                # Treat it as occupied for the rest of this scout fill pass.
+                local_counts["running"] = 1
 
     if claims:
         status = "PIPELINE_FILLED"
