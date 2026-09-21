@@ -16,9 +16,7 @@ from .policy import AUDIT_ENABLED, POLICY_VERSION
 
 _STAGE_COLUMNS = {
     "TICKET_TRIAGE": "JevTriageJson",
-    "TICKET_SECURITY": "JevTriageJson",
     "KB_APPLICABILITY": "JevInvestigationJson",
-    "KB_SECURITY": "JevInvestigationJson",
     "JEV_EVIDENCE_PLAN": "JevInvestigationJson",
     "JEV_INVESTIGATION": "JevInvestigationJson",
     "PRIMARY_REVIEW": "JevReviewJson",
