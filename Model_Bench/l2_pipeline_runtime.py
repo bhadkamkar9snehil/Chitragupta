@@ -632,6 +632,49 @@ def _qwen_free_proposal(
     }
 
 
+
+def _try_qwen_free_handoff(
+    args: argparse.Namespace,
+    binding: dict[str, Any],
+    proposal: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Attempt the narrow Jev-only handoff; otherwise return a local-model fallback reason."""
+    if not proposal:
+        return None, None
+
+    try:
+        _, expected_handoff_status = _status_args_for_response(binding, proposal)
+    except RuntimeError as exc:
+        return None, str(exc)
+    if not expected_handoff_status:
+        return None, "workflow binding has no exact terminal status for this handoff outcome"
+
+    review = _jev_primary_review(args, proposal)
+    if review.get("action") != "APPROVE":
+        return None, (
+            "Jev primary review did not approve the deterministic fast path: "
+            f"{review.get('action') or 'unknown'}"
+        )
+
+    publish_outcome = _publish_frozen_proposal(
+        args,
+        proposal,
+        source="Jev Qwen-free deterministic handoff",
+    )
+    if publish_outcome not in {"published", "already_published"}:
+        return None, f"deterministic publish returned {publish_outcome}; use local fallback"
+
+    return {
+        "status": "JEV_QWEN_FREE_PUBLISHED",
+        "run_id": str(proposal.get("run_id") or ""),
+        "ticket_id": str(proposal.get("ticket_id") or ""),
+        "response_type": proposal.get("response_type"),
+        "primary_review": review,
+        "publish_outcome": publish_outcome,
+        "investigator_task_id": None,
+        "reviewer_task_id": None,
+    }, None
+
 _CONTEXT_LEVEL_NAMES = {0: "OMIT", 1: "SUMMARY", 2: "COMPACT", 3: "FULL"}
 
 
@@ -2248,49 +2291,12 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
         args, ticket_id, ticket, run_id=run_id
     )
 
-    qwen_free_fallback_reason: str | None = None
-    if qwen_free_proposal:
-        try:
-            _, expected_handoff_status = _status_args_for_response(binding, qwen_free_proposal)
-        except RuntimeError as exc:
-            expected_handoff_status = None
-            qwen_free_fallback_reason = str(exc)
-
-        # A Qwen-free handoff may finish a ticket only when the live workflow
-        # binding names the exact handoff status. Otherwise fall back to the
-        # normal local composer/reasoner without mutating Helpdesk state.
-        if expected_handoff_status:
-            fast_review = _jev_primary_review(args, qwen_free_proposal)
-            if fast_review.get("action") == "APPROVE":
-                publish_outcome = _publish_frozen_proposal(
-                    args,
-                    qwen_free_proposal,
-                    source="Jev Qwen-free deterministic handoff",
-                )
-                if publish_outcome in {"published", "already_published"}:
-                    return {
-                        "status": "JEV_QWEN_FREE_PUBLISHED",
-                        "run_id": run_id,
-                        "ticket_id": ticket_id,
-                        "response_type": qwen_free_proposal.get("response_type"),
-                        "primary_review": fast_review,
-                        "publish_outcome": publish_outcome,
-                        "investigator_task_id": None,
-                        "reviewer_task_id": None,
-                        "reconcile": reconciliation,
-                    }
-                qwen_free_fallback_reason = (
-                    f"deterministic publish returned {publish_outcome}; use local fallback"
-                )
-            else:
-                qwen_free_fallback_reason = (
-                    "Jev primary review did not approve the deterministic fast path: "
-                    f"{fast_review.get('action') or 'unknown'}"
-                )
-        elif qwen_free_fallback_reason is None:
-            qwen_free_fallback_reason = (
-                "workflow binding has no exact terminal status for this handoff outcome"
-            )
+    fast_result, qwen_free_fallback_reason = _try_qwen_free_handoff(
+        args, binding, qwen_free_proposal
+    )
+    if fast_result:
+        fast_result["reconcile"] = reconciliation
+        return fast_result
 
     body = (
         f"run_id: {run_id}\n"
