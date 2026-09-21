@@ -27,11 +27,37 @@ from Model_Bench.jev.review_risk import assess_review_risk
 from Model_Bench.jev.security import assess_context_items, assess_untrusted_context
 from Model_Bench.jev.ticket_triage import assess_ticket
 from Model_Bench.jev.trace_assessment import assess_trace
+from Model_Bench.jev import policy as jev_policy
 
 
 def dispatch(req: dict[str, Any]) -> dict[str, Any]:
     workflow = str(req.get("workflow") or "")
     state = req.get("state") or {}
+
+    feature_enabled = {
+        "proposal_preflight": jev_policy.PREFLIGHT_ENABLED,
+        "review_risk": jev_policy.PREFLIGHT_ENABLED,
+        "trace_assessment": jev_policy.TRACE_ASSESSMENT_ENABLED,
+        "kb_curation": jev_policy.KB_JUDGMENTS_ENABLED,
+        "kb_applicability": jev_policy.KB_JUDGMENTS_ENABLED,
+        "security": jev_policy.SECURITY_SCREEN_ENABLED,
+        "security_batch": jev_policy.SECURITY_SCREEN_ENABLED,
+        "candidate_rerank": jev_policy.TOOL_RERANK_ENABLED,
+        "ticket_triage": jev_policy.JEV_ENABLED,
+        "model_routing": jev_policy.JEV_ENABLED,
+        "l1_action": jev_policy.JEV_ENABLED,
+    }.get(workflow, True)
+    if not feature_enabled:
+        return {
+            "workflow": workflow,
+            "result": {
+                "ok": False,
+                "enabled": False,
+                "reason": f"Jev workflow {workflow} is disabled by Chitragupta policy",
+                "answers": {},
+            },
+            "audit": {"ok": True, "persisted": 0, "reason": "workflow disabled"},
+        }
     if workflow == "proposal_preflight":
         result = assess_proposal(state)
     elif workflow == "review_risk":
