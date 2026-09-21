@@ -36,6 +36,7 @@ from typing import Any, Iterable, Optional
 WINDOWS_PYTHON = "/mnt/c/Python314/python.exe"
 ORCHESTRATOR_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Hermes_Orchestrator.py"
 KB_RETRIEVER_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\kb_retrieval.py"
+JEV_WORKFLOW_BRIDGE_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\jev_workflow_bridge.py"
 DEFAULT_SERVER = "10.2.6.204"
 DEFAULT_DATABASE = "XStudio_Helpdesk"
 DEFAULT_USER = "sa"
@@ -367,6 +368,135 @@ def _l3_exists(args: argparse.Namespace, run_id: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Jev System-One semantic preflight
+# ---------------------------------------------------------------------------
+
+def _run_jev_workflow(
+    workflow: str,
+    state: dict[str, Any],
+    *,
+    ticket_id: str | None = None,
+    run_id: str | None = None,
+    audit_stage: str | None = None,
+    timeout: int = 30,
+) -> dict[str, Any]:
+    """Invoke the Windows-side Jev bridge. Failure is advisory and fail-open."""
+    req = {
+        "workflow": workflow,
+        "state": state,
+        "ticket_id": ticket_id,
+        "run_id": run_id,
+        "audit_stage": audit_stage,
+    }
+    try:
+        proc = subprocess.run(
+            [_orch_python(), JEV_WORKFLOW_BRIDGE_WIN],
+            input=json.dumps(req, separators=(",", ":"), default=str),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "error": f"Jev bridge unavailable: {type(exc).__name__}: {exc}"}
+    try:
+        data = json.loads((proc.stdout or "").strip() or "{}")
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "Jev bridge returned invalid JSON"}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "Jev bridge returned non-object JSON"}
+    if proc.returncode != 0 and data.get("ok", True):
+        data["ok"] = False
+        data["error"] = f"Jev bridge exited {proc.returncode}"
+    return data
+
+
+def _proposal_preflight_state(
+    args: argparse.Namespace,
+    proposal: dict[str, Any],
+) -> dict[str, Any]:
+    run_id = str(proposal.get("run_id") or "")
+    ticket_id = str(proposal.get("ticket_id") or "")
+    try:
+        ticket_context = run_orchestrator(args, ["--get-ticket-context", ticket_id], timeout=45)
+    except RuntimeError as exc:
+        ticket_context = {"error": str(exc)}
+    try:
+        run_actions = run_orchestrator(args, ["--get-run-actions", run_id], timeout=45)
+    except RuntimeError as exc:
+        run_actions = [{"error": str(exc)}]
+    if isinstance(run_actions, list):
+        run_actions = run_actions[-25:]
+    return {
+        "proposal": {k: v for k, v in proposal.items() if not str(k).startswith("jev_")},
+        "ticket_context": ticket_context,
+        "run_actions": run_actions,
+        "worker_authority": {
+            "database_reads": "allowed through typed xstudio_l2 interface",
+            "raw_sql_writes": "not allowed",
+            "arbitrary_exec": "not allowed",
+            "ticket_publication": "deterministic publisher only",
+            "production_or_configuration_mutation": "outside ordinary investigator authority unless an explicitly reviewed path exists",
+        },
+    }
+
+
+def _review_depth_candidate(preflight: dict[str, Any], proposal: dict[str, Any]) -> str:
+    result = preflight.get("result") if isinstance(preflight, dict) else None
+    answers = (result or {}).get("answers") if isinstance(result, dict) else {}
+    answers = answers or {}
+    def noul(name: str, default: float) -> float:
+        try:
+            a = answers.get(name) or {}
+            return float(a.get("noul")) if a.get("type") == "noul" else default
+        except (TypeError, ValueError):
+            return default
+    try:
+        risk_a = answers.get("review_risk") or {}
+        risk = float(risk_a.get("score")) if risk_a.get("type") == "score" else 3.0
+    except (TypeError, ValueError):
+        risk = 3.0
+
+    response_type = str(proposal.get("response_type") or "").upper()
+    low_risk = (
+        response_type in {"UPDATE", "QUESTION"}
+        and risk < 0.85
+        and noul("evidence_supports_core_claim", 0.0) >= 0.85
+        and noul("reply_overstates_evidence", 1.0) <= 0.15
+        and noul("reply_claims_action_was_performed", 1.0) <= 0.15
+    )
+    return "FOCUSED" if low_risk else "FULL"
+
+
+def _attach_jev_preflight(
+    args: argparse.Namespace,
+    proposal: dict[str, Any],
+) -> dict[str, Any]:
+    enriched = dict(proposal)
+    if enriched.get("jev_preflight"):
+        return enriched
+    state = _proposal_preflight_state(args, enriched)
+    preflight = _run_jev_workflow(
+        "proposal_preflight",
+        state,
+        ticket_id=str(enriched.get("ticket_id") or "") or None,
+        run_id=str(enriched.get("run_id") or "") or None,
+        audit_stage="PROPOSAL_PREFLIGHT",
+    )
+    enriched["jev_preflight"] = preflight.get("result") if preflight.get("ok") else {
+        "ok": False,
+        "reason": preflight.get("error") or "Jev preflight unavailable",
+    }
+    candidate = _review_depth_candidate(preflight, enriched)
+    enriched["jev_review_depth_candidate"] = candidate
+    adaptive = os.environ.get("CHITRAGUPTA_JEV_ADAPTIVE_REVIEW_ENABLED", "0").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    # Adaptive review currently changes review scope, never removes independent review.
+    enriched["review_depth"] = candidate if adaptive else "FULL"
+    return enriched
+
+
+# ---------------------------------------------------------------------------
 # Completion normalization and reviewer creation
 # ---------------------------------------------------------------------------
 
@@ -447,8 +577,12 @@ def create_reviewer_card(
         f"review_cycle: {cycle}\n"
         "pipeline_stage: review\n"
         f"proposal_json: {proposal_json}\n\n"
-        "Verify the frozen proposal above against live evidence. Approve with kanban_complete; "
-        "reject with kanban_block. The deterministic reconciler owns publication/rework."
+        f"review_depth: {proposal.get('review_depth') or 'FULL'}\n"
+        f"jev_review_depth_candidate: {proposal.get('jev_review_depth_candidate') or 'UNKNOWN'}\n\n"
+        "Jev preflight is advisory semantic evidence, never proof. Verify the frozen proposal "
+        "against live evidence. If review_depth is FOCUSED, concentrate on the core claim and any "
+        "Jev-flagged risk rather than repeating the whole investigation. Approve with "
+        "kanban_complete; reject with kanban_block. The deterministic reconciler owns publication/rework."
     )
     argv = [
         "kanban", "create", f"REVIEW[{cycle}]: L2 {ticket_no}",
@@ -488,6 +622,8 @@ def ensure_missing_reviewers(args: argparse.Namespace, *, dry_run: bool = False)
         proposal = _completion_metadata(task)
         if not _proposal_complete(proposal):
             continue
+        if not dry_run:
+            proposal = _attach_jev_preflight(args, proposal or {})
         if create_reviewer_card(source_task=task, proposal=proposal or {}, dry_run=dry_run):
             created += 1
     return created
@@ -897,7 +1033,13 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
 # Investigation bundle / claim
 # ---------------------------------------------------------------------------
 
-def _run_kb_retrieval(args: argparse.Namespace, ticket: dict[str, Any]) -> dict[str, Any]:
+def _run_kb_retrieval(
+    args: argparse.Namespace,
+    ticket: dict[str, Any],
+    *,
+    ticket_id: str | None = None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
     # PRE_INVESTIGATION query is requester-grounded. Deliberately exclude the
     # model/L1-generated SuspectedCause so a hypothesis cannot retrieve its own confirmation.
     query = " ".join(str(ticket.get(k) or "") for k in (
@@ -914,6 +1056,10 @@ def _run_kb_retrieval(args: argparse.Namespace, ticket: dict[str, Any]) -> dict[
         "--query", query,
         "--top", "3",
     ]
+    if ticket_id:
+        cmd += ["--ticket-id", ticket_id]
+    if run_id:
+        cmd += ["--run-id", run_id]
     if args.password:
         cmd += ["--password", args.password]
     try:
@@ -929,7 +1075,13 @@ def _run_kb_retrieval(args: argparse.Namespace, ticket: dict[str, Any]) -> dict[
     return data if isinstance(data, dict) else {"solutions": [], "abstained": True, "abstention_reason": "KB retriever returned a non-object."}
 
 
-def _investigation_bundle(args: argparse.Namespace, ticket_id: str, fallback_ticket: dict[str, Any]) -> str:
+def _investigation_bundle(
+    args: argparse.Namespace,
+    ticket_id: str,
+    fallback_ticket: dict[str, Any],
+    *,
+    run_id: str | None = None,
+) -> str:
     try:
         bundle = run_orchestrator(args, ["--investigate-bundle", ticket_id], timeout=90)
     except RuntimeError as exc:
@@ -943,7 +1095,9 @@ def _investigation_bundle(args: argparse.Namespace, ticket_id: str, fallback_tic
     # Orchestrator still has the old route-only solution lookup for compatibility. Never expose
     # two competing KB paths to the worker.
     bundle.pop("known_solutions", None)
-    bundle["kb_retrieval"] = _run_kb_retrieval(args, fallback_ticket)
+    bundle["kb_retrieval"] = _run_kb_retrieval(
+        args, fallback_ticket, ticket_id=ticket_id, run_id=run_id
+    )
     rendered = json.dumps(bundle, indent=2, default=str)
     if len(rendered) > 14000:
         rendered = rendered[:14000] + "\n... [bundle truncated at 14,000 chars]"
@@ -1061,7 +1215,7 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
         f"ticket_no: {ticket_no}\n"
         "review_cycle: 0\n"
         "pipeline_stage: investigation\n"
-        + _investigation_bundle(args, ticket_id, ticket)
+        + _investigation_bundle(args, ticket_id, ticket, run_id=run_id)
         + _query_instructions(run_id, ticket_id)
     )
     create = run_hermes([
