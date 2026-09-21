@@ -185,6 +185,11 @@ class FabricTests(unittest.TestCase):
                     },
                     "needs_additional_probe": {"type": "noul", "noul": 0.1},
                     "needs_local_model": {"type": "noul", "noul": 0.1},
+                    "execution_mode": {
+                        "type": "choice", "choice": "COMPOSE_ONLY", "confidence": 0.9,
+                        "probabilities": {"COMPOSE_ONLY": 0.9},
+                    },
+                    "needs_route_skill": {"type": "noul", "noul": 0.2},
                     "human_action_required": {"type": "noul", "noul": 0.1},
                     "confidence_quality": {
                         "type": "score", "score": 2.5, "confidence": 0.9,
@@ -204,6 +209,11 @@ class FabricTests(unittest.TestCase):
         self.assertIn("NONE", seen["questions"]["known_solution"]["criteria"])
         self.assertIn("RESOLUTION", seen["questions"]["response_type"]["criteria"])
         self.assertIn("NEEDS_HUMAN_ACTION", seen["questions"]["response_type"]["criteria"])
+        self.assertEqual(
+            set(seen["questions"]["execution_mode"]["criteria"]),
+            {"QWEN_FREE", "COMPOSE_ONLY", "FOCUSED_REASONING"},
+        )
+        self.assertIn("needs_route_skill", seen["questions"])
 
     def test_investigation_assessment_adds_context_attention_in_same_request(self):
         seen = {}
@@ -213,8 +223,11 @@ class FabricTests(unittest.TestCase):
             answers = {}
             for name, question in payload["questions"].items():
                 if question["type"] == "choice":
-                    choice = "NONE" if name == "known_solution" else (
-                        "UPDATE" if name == "response_type" else "UNKNOWN"
+                    choice = (
+                        "NONE" if name == "known_solution"
+                        else "UPDATE" if name == "response_type"
+                        else "COMPOSE_ONLY" if name == "execution_mode"
+                        else "UNKNOWN"
                     )
                     answers[name] = {
                         "type": "choice", "choice": choice, "confidence": 0.9,
