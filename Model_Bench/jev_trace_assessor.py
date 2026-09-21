@@ -65,11 +65,7 @@ def pending_runs(cur, top: int = 20) -> list[dict[str, Any]]:
               SELECT 1 FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
               WHERE t.RunID = r.ID AND t.IsDeleted = 0
           )
-          AND NOT EXISTS (
-              SELECT 1 FROM dbo.Hermes_Jev_Judgment_Trn_Tbl j
-              WHERE j.RunID = r.ID AND j.Stage = 'TRACE_ASSESSMENT'
-                AND j.IsDeleted = 0
-          )
+          AND JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.stage') IS NULL
         ORDER BY COALESCE(r.CompletedOn, r.ModifiedOn, r.CreatedOn) ASC;
         """,
         top,
