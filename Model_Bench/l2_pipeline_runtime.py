@@ -1256,10 +1256,21 @@ def infer_response_type(summary: str) -> str:
     return "UPDATE"
 
 
-def normalize_investigator_completions(*, dry_run: bool = False) -> int:
+
+def normalize_investigator_completions(
+    *,
+    dry_run: bool = False,
+    tasks: list[dict[str, Any]] | None = None,
+    active_run_ids: set[str] | None = None,
+) -> int:
+    """Normalize only completions that still belong to active SQL runs."""
     repaired = 0
-    for task in list_tasks("done"):
-        if (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
+    source_tasks = tasks if tasks is not None else list_tasks("done")
+    for task in source_tasks:
+        if task.get("status") != "done" or (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
+            continue
+        run_id = task_run_id(task)
+        if active_run_ids is not None and (not run_id or run_id not in active_run_ids):
             continue
         latest = latest_done_run(task["id"])
         if not latest:
@@ -1267,14 +1278,14 @@ def normalize_investigator_completions(*, dry_run: bool = False) -> int:
         metadata = dict(latest.get("metadata") or {})
         if _proposal_complete({
             **metadata,
-            "run_id": metadata.get("run_id") or task_run_id(task),
+            "run_id": metadata.get("run_id") or run_id,
             "ticket_id": metadata.get("ticket_id") or task_ticket_id(task),
         }):
             continue
         summary = (latest.get("summary") or "").strip()
         if len(summary) < MIN_SUMMARY_CHARS:
             continue
-        run_id = metadata.get("run_id") or task_run_id(task)
+        run_id = metadata.get("run_id") or run_id
         ticket_id = metadata.get("ticket_id") or task_ticket_id(task)
         if not run_id or not ticket_id:
             continue
@@ -1299,7 +1310,6 @@ def normalize_investigator_completions(*, dry_run: bool = False) -> int:
         else:
             print(f"WARNING: normalize failed for {task['id']}: {r.stderr.strip()[:300]}")
     return repaired
-
 
 def create_reviewer_card(
     *,
@@ -1442,15 +1452,16 @@ def _jev_primary_review(
     }
 
 
+
 def _pending_primary_review(
     task: dict[str, Any],
     tasks: list[dict[str, Any]],
-    args: argparse.Namespace,
+    active_run_ids: set[str],
 ) -> tuple[str, str, dict[str, Any]] | None:
     if task.get("status") != "done" or (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
         return None
     run_id, ticket_id = task_run_id(task), task_ticket_id(task)
-    if not run_id or not ticket_id or not safe_query_active_run(run_id, args):
+    if not run_id or not ticket_id or run_id not in active_run_ids:
         return None
     if _source_has_reviewer(tasks, task["id"]) or _source_has_rework(tasks, task["id"]):
         return None
@@ -1458,7 +1469,6 @@ def _pending_primary_review(
     if not _proposal_complete(proposal):
         return None
     return run_id, ticket_id, dict(proposal or {})
-
 
 def _apply_primary_review(
     args: argparse.Namespace,
@@ -1512,12 +1522,22 @@ def _apply_primary_review(
     counts["unavailable"] += int(not review.get("ok"))
 
 
-def process_jev_primary_reviews(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
-    """Run one Jev review per reviewable completion and apply its bounded result."""
+
+def process_jev_primary_reviews(
+    args: argparse.Namespace,
+    *,
+    dry_run: bool = False,
+    tasks: list[dict[str, Any]] | None = None,
+    active_run_ids: set[str] | None = None,
+) -> dict[str, int]:
+    """Run one Jev review per reviewable active completion."""
     counts = {"approved": 0, "reworked": 0, "local_review": 0, "escalated": 0, "unavailable": 0}
-    tasks = list_tasks()
-    for task in tasks:
-        pending = _pending_primary_review(task, tasks, args)
+    source_tasks = tasks if tasks is not None else list_tasks()
+    active_ids = active_run_ids
+    if active_ids is None:
+        active_ids = {str(row.get("ID")) for row in query_active_runs(args) if row.get("ID")}
+    for task in source_tasks:
+        pending = _pending_primary_review(task, source_tasks, active_ids)
         if pending is None:
             continue
         run_id, ticket_id, proposal = pending
@@ -1536,13 +1556,6 @@ def process_jev_primary_reviews(args: argparse.Namespace, *, dry_run: bool = Fal
             dry_run=dry_run,
         )
     return counts
-
-
-
-
-# ---------------------------------------------------------------------------
-# Rework/escalation
-# ---------------------------------------------------------------------------
 
 def _persist_rejected_ledger(args: argparse.Namespace, investigation_task_id: Optional[str], run_id: str) -> str:
     if not investigation_task_id:
@@ -1666,22 +1679,29 @@ def create_rework_card(
         return "created"
 
 
-def process_unreviewable_completions(args: argparse.Namespace, *, dry_run: bool = False) -> int:
-    """Turn a terminal investigator packaging failure into bounded rework.
 
-    A done investigator with a short/non-substantive summary and missing required metadata
-    cannot be reviewed or published. Leaving it active forever is worse than a bounded rework,
-    so this path creates the rework deterministically after normalization had a chance to salvage it.
-    """
-    tasks = list_tasks()
+def process_unreviewable_completions(
+    args: argparse.Namespace,
+    *,
+    dry_run: bool = False,
+    tasks: list[dict[str, Any]] | None = None,
+    active_run_ids: set[str] | None = None,
+) -> int:
+    """Turn terminal active-run packaging failures into bounded rework."""
+    source_tasks = tasks if tasks is not None else list_tasks()
     processed = 0
-    for task in tasks:
+    for task in source_tasks:
         if task.get("status") != "done" or (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
             continue
         run_id = task_run_id(task)
-        if not run_id or not safe_query_active_run(run_id, args):
+        if not run_id:
             continue
-        if _source_has_reviewer(tasks, task["id"]) or _source_has_rework(tasks, task["id"]):
+        if active_run_ids is not None:
+            if run_id not in active_run_ids:
+                continue
+        elif not safe_query_active_run(run_id, args):
+            continue
+        if _source_has_reviewer(source_tasks, task["id"]) or _source_has_rework(source_tasks, task["id"]):
             continue
         proposal = _completion_metadata(task)
         if _proposal_complete(proposal):
@@ -1698,7 +1718,6 @@ def process_unreviewable_completions(args: argparse.Namespace, *, dry_run: bool 
             processed += 1
     return processed
 
-
 def reviewer_block_reason(task: dict[str, Any]) -> str:
     profile = task.get("assignee") or ""
     runs = get_runs(task["id"])
@@ -1711,16 +1730,26 @@ def reviewer_block_reason(task: dict[str, Any]) -> str:
     return ((blocks[-1].get("summary") if blocks else None) or "Reviewer rejected without a recorded reason.").strip()
 
 
-def process_rejections(args: argparse.Namespace, *, dry_run: bool = False) -> int:
+
+def process_rejections(
+    args: argparse.Namespace,
+    *,
+    dry_run: bool = False,
+    tasks: list[dict[str, Any]] | None = None,
+    active_run_ids: set[str] | None = None,
+) -> int:
     processed = 0
-    for task in list_tasks("blocked"):
-        if (task.get("assignee") or "") not in REVIEWER_PROFILES:
+    source_tasks = tasks if tasks is not None else list_tasks()
+    active_ids = active_run_ids
+    if active_ids is None:
+        active_ids = {str(row.get("ID")) for row in query_active_runs(args) if row.get("ID")}
+    for task in source_tasks:
+        if task.get("status") != "blocked" or (task.get("assignee") or "") not in REVIEWER_PROFILES:
             continue
         run_id = task_run_id(task)
-        if not run_id or not safe_query_active_run(run_id, args):
+        if not run_id or run_id not in active_ids:
             continue
-        # A rework created from this exact review task is the durable idempotency marker.
-        if _source_has_rework(list_tasks(), task["id"]):
+        if _source_has_rework(source_tasks, task["id"]):
             continue
         reason = reviewer_block_reason(task)
         investigation_task_id = body_field(task.get("body"), "investigation_task_id")
@@ -1730,11 +1759,6 @@ def process_rejections(args: argparse.Namespace, *, dry_run: bool = False) -> in
         ):
             processed += 1
     return processed
-
-
-# ---------------------------------------------------------------------------
-# Approval / publish
-# ---------------------------------------------------------------------------
 
 def _post_publish_activity(args: argparse.Namespace, run_id: str, ticket_id: str, metadata: dict[str, Any]) -> None:
     response_type = str(metadata.get("response_type") or "UPDATE").upper()
@@ -1831,20 +1855,34 @@ def _publish_frozen_proposal(
     return "published"
 
 
-def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
-    """Publish only local-review approvals; Jev approvals use the same helper earlier."""
+
+def process_approvals(
+    args: argparse.Namespace,
+    *,
+    dry_run: bool = False,
+    tasks: list[dict[str, Any]] | None = None,
+    active_run_ids: set[str] | None = None,
+) -> dict[str, int]:
+    """Publish local-review approvals that still belong to active SQL runs."""
     counts = {
         "published": 0,
-        "already_published": 0,
+        "inactive_skipped": 0,
         "blocked_configuration": 0,
         "rework_created": 0,
     }
+    source_tasks = tasks if tasks is not None else list_tasks()
+    active_ids = active_run_ids
+    if active_ids is None:
+        active_ids = {str(row.get("ID")) for row in query_active_runs(args) if row.get("ID")}
 
-    for task in list_tasks("done"):
-        if (task.get("assignee") or "") not in REVIEWER_PROFILES:
+    for task in source_tasks:
+        if task.get("status") != "done" or (task.get("assignee") or "") not in REVIEWER_PROFILES:
             continue
         run_id, ticket_id = task_run_id(task), task_ticket_id(task)
         if not run_id or not ticket_id:
+            continue
+        if run_id not in active_ids:
+            counts["inactive_skipped"] += 1
             continue
 
         proposal = task_proposal(task)
@@ -1867,32 +1905,28 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dic
             source=f"local reviewer {task['id']}",
             dry_run=dry_run,
         )
-        if outcome == "published":
+        if outcome in {"published", "already_published"}:
             counts["published"] += 1
-        elif outcome == "already_published":
-            counts["already_published"] += 1
         elif outcome == "blocked_configuration":
             counts["blocked_configuration"] += 1
 
     return counts
 
 
-# ---------------------------------------------------------------------------
-# Recovery / audit
-# ---------------------------------------------------------------------------
-
 def recover_orphan_runs(
     args: argparse.Namespace,
     *,
     dry_run: bool = False,
     stale_after_minutes: int = ORPHAN_GRACE_MINUTES,
+    tasks: list[dict[str, Any]] | None = None,
+    active_runs: list[dict[str, Any]] | None = None,
 ) -> int:
-    # Any Kanban card referencing the run protects it, regardless of status. This covers
-    # ready/running/blocked work and a done reviewer awaiting deterministic publication.
-    tasks = list_tasks()
-    referenced_run_ids = {task_run_id(t) for t in tasks if task_run_id(t)}
+    """Recover true orphans from the same reconciliation snapshot."""
+    source_tasks = tasks if tasks is not None else list_tasks()
+    source_active = active_runs if active_runs is not None else query_active_runs(args)
+    referenced_run_ids = {task_run_id(t) for t in source_tasks if task_run_id(t)}
     recovered = 0
-    for row in query_active_runs(args):
+    for row in source_active:
         run_id = str(row.get("ID") or "")
         if not run_id or run_id in referenced_run_ids:
             continue
@@ -1916,7 +1950,6 @@ def recover_orphan_runs(
         except RuntimeError as exc:
             print(f"WARNING: orphan recovery failed for {run_id}: {exc}")
     return recovered
-
 
 def audit_done_reviewers(args: argparse.Namespace, *, dry_run: bool = False) -> int:
     """Read-only divergence count for reviewer-done vs SQL truth.
@@ -1948,17 +1981,59 @@ def audit_done_reviewers(args: argparse.Namespace, *, dry_run: bool = False) -> 
 # Reconciliation (ordering is a correctness contract)
 # ---------------------------------------------------------------------------
 
+
 def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
-    # Synchronous ordering removes the old Popen race (publisher reading metadata before
-    # repair completed). Reviewers do not exist until normalization/unreviewable handling
-    # has finished for their source completion.
-    normalized = normalize_investigator_completions(dry_run=dry_run)
-    unreviewable = process_unreviewable_completions(args, dry_run=dry_run)
-    jev_reviews = process_jev_primary_reviews(args, dry_run=dry_run)
-    rejections = process_rejections(args, dry_run=dry_run)
-    local_approvals = process_approvals(args, dry_run=dry_run)
+    """Reconcile one live snapshot instead of rescanning historical cards per stage."""
+    tasks = list_tasks()
+    active_runs = query_active_runs(args)
+    active_run_ids = {str(row.get("ID")) for row in active_runs if row.get("ID")}
+
+    if not active_run_ids:
+        return {
+            "normalized": 0,
+            "unreviewable_reworked": 0,
+            "jev_primary_reviews": {
+                "approved": 0,
+                "reworked": 0,
+                "local_review": 0,
+                "escalated": 0,
+                "unavailable": 0,
+            },
+            "local_reviewer_rejections": 0,
+            "local_reviewer_approvals": {
+                "published": 0,
+                "inactive_skipped": 0,
+                "blocked_configuration": 0,
+                "rework_created": 0,
+            },
+            "orphans_recovered": 0,
+            "snapshot": {
+                "active_run_count": 0,
+                "kanban_task_count": len(tasks),
+            },
+        }
+
+    normalized = normalize_investigator_completions(
+        dry_run=dry_run, tasks=tasks, active_run_ids=active_run_ids
+    )
+    unreviewable = process_unreviewable_completions(
+        args, dry_run=dry_run, tasks=tasks, active_run_ids=active_run_ids
+    )
+    jev_reviews = process_jev_primary_reviews(
+        args, dry_run=dry_run, tasks=tasks, active_run_ids=active_run_ids
+    )
+    rejections = process_rejections(
+        args, dry_run=dry_run, tasks=tasks, active_run_ids=active_run_ids
+    )
+    local_approvals = process_approvals(
+        args, dry_run=dry_run, tasks=tasks, active_run_ids=active_run_ids
+    )
     orphans = recover_orphan_runs(
-        args, dry_run=dry_run, stale_after_minutes=args.stale_after_minutes,
+        args,
+        dry_run=dry_run,
+        stale_after_minutes=args.stale_after_minutes,
+        tasks=tasks,
+        active_runs=active_runs,
     )
     return {
         "normalized": normalized,
@@ -1967,12 +2042,11 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
         "local_reviewer_rejections": rejections,
         "local_reviewer_approvals": local_approvals,
         "orphans_recovered": orphans,
+        "snapshot": {
+            "active_run_count": len(active_run_ids),
+            "kanban_task_count": len(tasks),
+        },
     }
-
-
-# ---------------------------------------------------------------------------
-# Investigation bundle / claim
-# ---------------------------------------------------------------------------
 
 def _run_kb_retrieval(
     args: argparse.Namespace,
