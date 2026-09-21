@@ -559,6 +559,255 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(result["local_reviewer_approvals"]["published"], 0)
 
 
+    def test_capacity_env_parser_fails_safe_and_clamps(self):
+        with patch.dict(mod.os.environ, {"TEST_CAPACITY": "not-an-int"}, clear=False):
+            self.assertEqual(
+                mod._int_env("TEST_CAPACITY", 8, minimum=1, maximum=64),
+                8,
+            )
+        with patch.dict(mod.os.environ, {"TEST_CAPACITY": "999"}, clear=False):
+            self.assertEqual(
+                mod._int_env("TEST_CAPACITY", 8, minimum=1, maximum=64),
+                64,
+            )
+
+    def test_dispatch_local_model_does_nothing_when_sql_slot_busy(self):
+        with patch.object(
+            mod, "run_orchestrator", return_value={"AcquireStatus": "BUSY"}
+        ) as orchestrator, patch.object(mod, "run_hermes") as hermes:
+            result = mod._dispatch_next_local_model_task(mod.default_args())
+
+        self.assertEqual(result["status"], "BUSY")
+        orchestrator.assert_called_once()
+        hermes.assert_not_called()
+
+    def test_dispatch_local_model_creates_exactly_one_task_and_binds_it(self):
+        spec = {
+            "title": "L2 Ticket_999",
+            "assignee": mod.INVESTIGATOR_PROFILE,
+            "body": "run_id: r1\nticket_id: t1\npipeline_stage: investigation",
+            "priority": mod.NEW_INVESTIGATION_PRIORITY,
+            "skills": ["xstudio-l2-ticket-workflow"],
+            "idempotency_key": "l2-ticket-r1",
+            "max_runtime": "20m",
+        }
+        acquired = {
+            "AcquireStatus": "ACQUIRED",
+            "RunID": "r1",
+            "TicketID": "t1",
+            "LocalModelPurpose": "INVESTIGATION",
+            "LocalModelWorkKey": "investigation-r1-0",
+            "PendingLocalModelJson": json.dumps(spec),
+        }
+
+        class HermesResult:
+            returncode = 0
+            stdout = '{"id":"t_qwen"}'
+            stderr = ""
+
+        def orchestrator(_args, extra, **_kwargs):
+            if extra == ["--local-model-action", "acquire"]:
+                return acquired
+            self.assertEqual(extra[:2], ["--local-model-action", "bind"])
+            self.assertIn("t_qwen", extra)
+            return {"LocalModelTaskID": "t_qwen"}
+
+        with patch.object(mod, "run_orchestrator", side_effect=orchestrator) as orch, \
+             patch.object(mod, "run_hermes", return_value=HermesResult()) as hermes:
+            result = mod._dispatch_next_local_model_task(mod.default_args())
+
+        self.assertEqual(result["status"], "DISPATCHED")
+        self.assertEqual(result["task_id"], "t_qwen")
+        self.assertEqual(result["purpose"], "INVESTIGATION")
+        self.assertEqual(hermes.call_count, 1)
+        self.assertEqual(orch.call_count, 2)
+
+    def test_dispatch_local_model_requeues_when_kanban_create_fails(self):
+        spec = {
+            "title": "L2 Ticket_999",
+            "assignee": mod.INVESTIGATOR_PROFILE,
+            "body": "run_id: r1\nticket_id: t1",
+            "priority": mod.NEW_INVESTIGATION_PRIORITY,
+            "skills": [],
+            "idempotency_key": "l2-ticket-r1",
+            "max_runtime": "20m",
+        }
+        acquired = {
+            "AcquireStatus": "ACQUIRED",
+            "RunID": "r1",
+            "TicketID": "t1",
+            "LocalModelPurpose": "INVESTIGATION",
+            "LocalModelWorkKey": "investigation-r1-0",
+            "PendingLocalModelJson": json.dumps(spec),
+        }
+
+        class HermesResult:
+            returncode = 1
+            stdout = ""
+            stderr = "create failed"
+
+        calls = []
+        def orchestrator(_args, extra, **_kwargs):
+            calls.append(extra)
+            if extra == ["--local-model-action", "acquire"]:
+                return acquired
+            self.assertIn("finish", extra)
+            self.assertIn("REQUEUE", extra)
+            return {"LocalModelState": "QUEUED"}
+
+        with patch.object(mod, "run_orchestrator", side_effect=orchestrator), \
+             patch.object(mod, "run_hermes", return_value=HermesResult()):
+            result = mod._dispatch_next_local_model_task(mod.default_args())
+
+        self.assertEqual(result["status"], "CREATE_FAILED_REQUEUED")
+        self.assertEqual(len(calls), 2)
+
+    def test_sync_local_model_completion_releases_only_terminal_bound_task(self):
+        tasks = [
+            {"id": "t_done", "status": "done"},
+            {"id": "t_running", "status": "running"},
+        ]
+        active = [
+            {
+                "ID": "r1",
+                "LocalModelState": "RUNNING",
+                "LocalModelTaskID": "t_done",
+            },
+            {
+                "ID": "r2",
+                "LocalModelState": "RUNNING",
+                "LocalModelTaskID": "t_running",
+            },
+        ]
+        with patch.object(mod, "_finish_local_model_work", return_value={}) as finish:
+            released = mod._sync_local_model_completions(
+                mod.default_args(), tasks, active
+            )
+
+        self.assertEqual(released, {"r1"})
+        finish.assert_called_once_with(
+            mod.default_args(),
+            run_id="r1",
+            task_id="t_done",
+            outcome="DONE",
+        )
+
+    def test_pending_primary_review_waits_for_existing_qwen_work(self):
+        task = {
+            "id": "t_inv",
+            "status": "done",
+            "assignee": mod.INVESTIGATOR_PROFILE,
+            "body": "run_id: r1\nticket_id: t1",
+        }
+        self.assertIsNone(
+            mod._pending_primary_review(
+                task,
+                [task],
+                {"r1"},
+                {"r1"},
+            )
+        )
+
+    def test_pipeline_status_treats_qwen_queue_without_card_as_intentional(self):
+        active = [{
+            "ID": "r1",
+            "TicketID": "t1",
+            "LocalModelState": "QUEUED",
+            "LocalModelPurpose": "INVESTIGATION",
+            "LocalModelTaskID": None,
+        }]
+        binding = {
+            "strict_resolution_status_binding": True,
+            "resolved_ticket_status": "Closed",
+        }
+        with patch.object(mod, "list_tasks", return_value=[]), \
+             patch.object(mod, "query_active_runs", return_value=active), \
+             patch.object(mod, "load_workflow_binding", return_value=binding):
+            result = mod.pipeline_status(mod.default_args())
+
+        self.assertEqual(result["anomalies"], [])
+        self.assertEqual(result["local_model"], {"running": 0, "queued": 1})
+        self.assertEqual(result["contract"]["max_qwen_running"], 1)
+        self.assertEqual(result["contract"]["max_pipeline_wip"], mod.MAX_PIPELINE_WIP)
+
+    def test_scout_can_fill_multiple_jev_runs_but_dispatches_one_qwen(self):
+        args = mod.default_args()
+        args.max_pipeline_wip = 8
+        args.max_qwen_waiting = 4
+        binding = {
+            "eligible_ticket_status": "Enter",
+            "strict_resolution_status_binding": True,
+            "resolved_ticket_status": "Closed",
+        }
+        polls = [
+            {
+                "status": "CLAIMED",
+                "run_id": f"r{i}",
+                "ticket_id": f"t{i}",
+                "ticket": {"TicketNo": f"Ticket_{i}"},
+            }
+            for i in range(1, 6)
+        ]
+        poll_iter = iter(polls)
+
+        def orchestrator(_args, extra, **_kwargs):
+            self.assertIn("--poll", extra)
+            return next(poll_iter)
+
+        def prepared(_args, _binding, poll):
+            return {
+                "status": "QUEUED_LOCAL_MODEL",
+                "run_id": poll["run_id"],
+                "ticket_id": poll["ticket_id"],
+                "execution_mode": "FOCUSED_REASONING",
+                "queue_status": "QUEUED",
+            }
+
+        with patch.object(mod, "reconcile", return_value={}), \
+             patch.object(mod, "load_workflow_binding", return_value=binding), \
+             patch.object(mod, "query_active_runs", return_value=[]), \
+             patch.object(mod, "run_orchestrator", side_effect=orchestrator), \
+             patch.object(mod, "_prepare_claimed_ticket", side_effect=prepared), \
+             patch.object(
+                 mod,
+                 "_dispatch_next_local_model_task",
+                 return_value={"status": "DISPATCHED", "run_id": "r1", "task_id": "tq"},
+             ) as dispatch:
+            result = mod.scout(args)
+
+        self.assertEqual(result["status"], "PIPELINE_FILLED")
+        self.assertEqual(result["claim_count"], 5)
+        self.assertEqual(result["local_model"], {"running": 1, "queued": 4})
+        dispatch.assert_called_once()
+
+    def test_local_reviewer_is_queued_instead_of_created_directly(self):
+        source = {
+            "id": "t_inv",
+            "body": "run_id: r1\nticket_id: t1\nticket_no: Ticket_1\nreview_cycle: 0",
+        }
+        proposal = {
+            "run_id": "r1",
+            "ticket_id": "t1",
+            "response_type": "UPDATE",
+            "reply_text": "Verified update",
+        }
+        with patch.object(
+            mod,
+            "_queue_local_model_task",
+            return_value={"QueueStatus": "QUEUED"},
+        ) as queue, patch.object(mod, "run_hermes") as hermes:
+            result = mod.create_reviewer_card(
+                mod.default_args(),
+                source_task=source,
+                proposal=proposal,
+            )
+
+        self.assertEqual(result, "queued")
+        kwargs = queue.call_args.kwargs
+        self.assertEqual(kwargs["purpose"], "REVIEW")
+        self.assertEqual(kwargs["priority"], mod.REVIEW_PRIORITY)
+        hermes.assert_not_called()
+
     def test_resolution_fails_closed_without_binding(self):
         with self.assertRaises(RuntimeError):
             mod._status_args_for_response(
