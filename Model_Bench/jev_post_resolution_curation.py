@@ -20,6 +20,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from Model_Bench.jev.audit import persist_rows, rows_for_result
+from Model_Bench.jev.candidate_rerank import rerank_candidates
 from Model_Bench.jev.kb_curation import assess_curation
 from Model_Bench.jev.policy import KB_JUDGMENTS_ENABLED
 
@@ -71,24 +72,37 @@ def pending_resolutions(cur, top: int = 20) -> list[dict[str, Any]]:
     return _dict_rows(cur)
 
 
-def candidate_articles(cur, run: dict[str, Any], top: int = 8) -> list[dict[str, Any]]:
+def candidate_articles(cur, run: dict[str, Any], top: int = 8) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     route = run.get("Route")
     cur.execute(
         """
-        SELECT TOP (?)
+        SELECT TOP 100
             ID, Title, ProblemSummary, RootCause, ResolutionSteps, Route, Tags,
-            UsageCount, CreatedOn, ModifiedOn
+            UsageCount, CreatedOn, ModifiedOn, KnowledgeType, ArticleStatus,
+            CanonicalKey, RevisionNo, LastVerifiedOn, ApplicabilityJson,
+            NegativeIndicatorsJson, VerificationJson, DiagnosticSteps,
+            VerificationSteps, ExpectedResult
         FROM dbo.Hermes_Solution_Article_Mst_Tbl
-        WHERE IsDeleted = 0 AND IsActive = 1
-          AND (? IS NULL OR Route = ? OR Route IS NULL)
+        WHERE IsDeleted = 0
+          AND ArticleStatus IN ('Approved','Candidate')
         ORDER BY
             CASE WHEN Route = ? THEN 0 ELSE 1 END,
             UsageCount DESC,
             COALESCE(ModifiedOn, CreatedOn) DESC;
         """,
-        top, route, route, route,
+        route,
     )
-    return _dict_rows(cur)
+    pool = _dict_rows(cur)
+    query = " ".join(str(run.get(k) or "") for k in (
+        "ProblemSummary", "RootCause", "Resolution", "Findings", "Route"
+    )).strip()
+    rerank = rerank_candidates(
+        query,
+        pool,
+        top=min(top, len(pool) or top),
+        candidate_kind="existing governed Solution article",
+    )
+    return (list(rerank.get("ranked") or pool[:top]), rerank)
 
 
 def main() -> int:
@@ -104,7 +118,15 @@ def main() -> int:
     try:
         cur = conn.cursor()
         for run in pending_resolutions(cur):
-            candidates = candidate_articles(cur, run)
+            candidates, rerank = candidate_articles(cur, run)
+            if rerank.get("ok"):
+                persist_rows(rows_for_result(
+                    result=rerank,
+                    stage="POST_RESOLUTION_KB_RERANK",
+                    state={"run": str(run["RunID"]), "candidate_count": len(candidates)},
+                    ticket_id=str(run["TicketID"]),
+                    run_id=str(run["RunID"]),
+                ))
             state = {
                 "verified_resolution": {
                     "route": run.get("Route"),
