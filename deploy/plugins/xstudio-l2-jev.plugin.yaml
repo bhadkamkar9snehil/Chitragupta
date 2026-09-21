@@ -1,4 +1,11 @@
 name: xstudio-l2-jev
-version: 1.0.0
-description: Bounded TypeSafe Jev/System-One workflows for Chitragupta
-entrypoint: __init__.py
+version: "1.0.0"
+description: "Bounded TypeSafe Jev/System-One workflows for Chitragupta. Registers xstudio_jev for reviewed ticket triage, evidence planning, investigation assessment, primary semantic review, KB applicability/curation, trace assessment, security screening, and profile/L1 routing. No arbitrary prompt surface."
+author: Snehil Bhadkamkar, Hermes Agent
+requires_env: []
+provides_hooks:
+  - pre_tool_call
+  - pre_llm_call
+  - on_session_end
+  - on_session_finalize
+  - on_session_reset
