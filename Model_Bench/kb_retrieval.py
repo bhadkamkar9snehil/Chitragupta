@@ -29,7 +29,6 @@ from typing import Any
 from jev import policy as jev_policy
 from jev.audit import persist_rows, rows_for_result
 from jev.kb_applicability import assess_kb_candidates
-from jev.security import assess_context_items
 from jev.ticket_triage import assess_ticket
 
 try:
@@ -545,7 +544,6 @@ def retrieve(
     )
 
     kb_semantics = {"ok": False, "reason": "KB Jev judgments disabled", "candidates": ranked}
-    security = {"ok": False, "reason": "Jev security screening disabled", "items": ranked}
 
     if ranked and jev_policy.KB_JUDGMENTS_ENABLED:
         kb_semantics = assess_kb_candidates({"query": query, "routes": routes}, ranked)
@@ -560,27 +558,6 @@ def retrieve(
                     -float(row.get("retrieval_score") or 0.0),
                 )
             )
-
-    if ranked and jev_policy.SECURITY_SCREEN_ENABLED:
-        security_items = [
-            {
-                "kb_id": row.get("kb_id"),
-                "source_ref": row.get("source_ref"),
-                "title": row.get("title"),
-                "problem_summary": row.get("problem_summary"),
-                "root_cause": row.get("root_cause"),
-                "resolution_steps": row.get("resolution_steps"),
-            }
-            for row in ranked
-        ]
-        security = assess_context_items(security_items)
-        if security.get("ok"):
-            security_by_id = {item.get("kb_id"): item for item in security.get("items") or []}
-            for row in ranked:
-                flags = (security_by_id.get(row.get("kb_id")) or {}).get("jev_untrusted_context") or {}
-                row["jev_untrusted_context"] = flags
-                max_risk = max((float(v or 0.0) for v in flags.values()), default=0.0)
-                row["context_handling"] = "QUOTE_ONLY_UNTRUSTED" if max_risk >= jev_policy.HIGH_RISK_NOUL else "NORMAL_UNTRUSTED_SOURCE"
 
     retrieval_telemetry = log_retrieval_telemetry(
         conn,
@@ -599,11 +576,6 @@ def retrieve(
             "KB_APPLICABILITY",
             {"query": query, "candidate_ids": [str(row.get("kb_id") or "") for row in ranked]},
             kb_semantics,
-        ),
-        (
-            "KB_SECURITY",
-            {"query": query, "candidate_ids": [str(row.get("kb_id") or "") for row in ranked]},
-            security,
         ),
     ):
         if result.get("ok"):
@@ -631,9 +603,10 @@ def retrieve(
             "latency_ms": kb_semantics.get("latency_ms"),
         },
         "jev_security": {
-            "ok": bool(security.get("ok")),
-            "model": security.get("model"),
-            "latency_ms": security.get("latency_ms"),
+            "ok": bool(kb_semantics.get("ok")) and jev_policy.SECURITY_SCREEN_ENABLED,
+            "model": kb_semantics.get("model"),
+            "latency_ms": kb_semantics.get("latency_ms"),
+            "coalesced_with": "KB_APPLICABILITY",
         },
         "jev_audit": audit_results,
         "retrieval_telemetry": retrieval_telemetry,
