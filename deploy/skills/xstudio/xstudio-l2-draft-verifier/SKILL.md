@@ -74,6 +74,14 @@ read_procedure
 
 Do not use terminal to recreate SQL transport. Raw writes and arbitrary stored procedures are outside the reviewer interface.
 
+## Jev proposal preflight
+
+The frozen `proposal_json` may contain a `jev_preflight` object plus `review_depth` / `jev_review_depth_candidate`. Treat these as **advisory semantic evidence**, not proof and not a prior approval.
+
+Use the probabilities to focus verification. In particular inspect high overclaim/action-claim risk, low evidence-support probability, response-type disagreement, and high review risk. A `FOCUSED` review means concentrate on the core claim and flagged risks instead of mechanically repeating the whole investigation; it does **not** lower the approval standard. A `FULL` review uses the normal procedure below.
+
+The reviewer remains independent. Approve or reject from live evidence and the frozen proposal, not because Jev agreed or disagreed.
+
 ## Verification procedure
 
 1. **Read the frozen proposal.** Confirm it contains `run_id`, `ticket_id`, `response_type`, and non-empty `reply_text`.
