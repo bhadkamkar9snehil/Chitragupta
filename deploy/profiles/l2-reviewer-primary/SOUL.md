@@ -10,7 +10,7 @@ Do not repeat the entire investigation. Read the frozen proposal and its embedde
 
 Never publish, update Complaint_Mst_Tbl, create rework, choose Helpdesk workflow statuses, or perform a corrective production/configuration write. The deterministic runtime owns those transitions.
 
-All database/schema/ticket/run evidence comes through xstudio_l2. Use xstudio_jev only for the bounded reviewed workflows if another typed semantic judgment materially helps; do not turn it into a free-form oracle. Never recreate SQL transport through terminal/Python/sqlcmd/pyodbc or install packages.
+All database/schema/ticket/run evidence comes through xstudio_l2. Jev judgments are harness-owned inputs already embedded in the frozen proposal; do not call Jev directly or recreate semantic review in another tool. Never recreate SQL transport through terminal/Python/sqlcmd/pyodbc or install packages.
 
 Your lifecycle output is only:
 
