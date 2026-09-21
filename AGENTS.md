@@ -27,57 +27,44 @@ Chitragupta does not replace the Helpdesk workflow. It claims an existing ticket
 
 `Model_Bench/l2_pipeline_runtime.py` is the single lifecycle authority.
 
-The current LM Studio deployment has one safe inference slot, so global SQL pipeline WIP is **1**. Finish existing work before claiming more.
+The current LM Studio deployment still has **one** safe local inference slot, but Jev/deterministic work is no longer serialized behind it. The default SQL pipeline capacity is **8 active runs** (`L2_MAX_PIPELINE_WIP`), while the shared local-model capacity is hard-limited to **one RUNNING Qwen task** with a default bounded waiting backlog of **4** (`L2_MAX_QWEN_WAITING`). SQL owns both admission invariants.
 
 ```text
 Complaint_Mst_Tbl Status='Enter'
         |
         v
-Ticket Scout (2-minute cron)
+Ticket Scout / reconcile
         |
-        | first runs synchronous reconcile()
+        +-- SQL pipeline slots available (default 8)
         |
-        +-- active SQL run exists --> WIP_LIMIT; claim nothing
+        +---- claim A -> Jev + bounded probes -> QWEN_FREE -> review/publish
         |
-        v
-Hermes_Orchestrator.py --poll
+        +---- claim B -> Jev + bounded probes -> queue COMPOSE_ONLY
         |
-        v
-JEV TRIAGE + EVIDENCE PLAN
+        +---- claim C -> Jev + bounded probes -> queue FOCUSED_REASONING
         |
-        v
-deterministic bounded probes
-        |
-        v
-JEV INVESTIGATION ASSESSMENT
- + META-ATTENTION + EXECUTION DEPTH
-        |
-        +-- QWEN_FREE (strict deterministic handoff gate)
-        |       |
-        |       v
-        |   JEV PRIMARY REVIEW -> deterministic handoff publish
-        |
-        v
-INVESTIGATOR [priority 10, only when needed]
-  l2-jev-investigator
-  COMPOSE_ONLY or FOCUSED_REASONING
-        |
-        | kanban_complete(metadata)
-        v
-normalize / freeze proposal
-        |
-        v
-JEV PRIMARY REVIEW
-   /       |          |             \
-APPROVE  REWORK  L3_ESCALATION  LOCAL_REVIEW
-   |       |          |              |
-   v       v          v              v
-publish  rework    L3 path       qwen reviewer
+        +---- ... until pipeline cap or bounded Qwen backlog
                                       |
-                                approve/reject
-                                  |       |
-                                  v       v
-                               publish  rework
+                                      v
+                         SQL LOCAL-MODEL ADMISSION
+                          exactly one RUNNING task
+                         priority: review > rework > new
+                                      |
+                                      v
+                         l2-jev-investigator / rework /
+                           local-review fallback
+                                      |
+                                      v
+                         normalize / freeze proposal
+                                      |
+                                      v
+                            JEV PRIMARY REVIEW
+                      /          |          |          \
+                 APPROVE      REWORK   L3_ESCALATION  LOCAL_REVIEW
+                    |            |           |             |
+                    v            v           v             v
+                 publish      queued       L3 path    queued reviewer
+                              rework
 ```
 
 ### Non-negotiable lifecycle rules
@@ -85,6 +72,11 @@ publish  rework    L3 path       qwen reviewer
 - New investigation priority = `10`.
 - Rework priority = `20`.
 - Review priority = `30`.
+- Pipeline capacity and local-model capacity are separate. SQL claim admission defaults to 8 active runs; all local Qwen purposes share one SQL-serialized RUNNING slot.
+- `COMPOSE_ONLY`, `FOCUSED_REASONING`, investigator rework, and local-review fallback all consume that same one local-model slot. `QWEN_FREE` consumes none.
+- Local-model work is frozen into `PendingLocalModelJson` before admission. Never create investigator/rework/reviewer Kanban cards outside the shared admission path.
+- Queued local-model work is valid active-run state even when no Kanban card exists yet. Do not classify it as an orphan.
+- Review priority `30` > rework `20` > new investigation `10` determines the single-Qwen queue order.
 - Jev recommends one execution depth in the same investigation-assessment call: `QWEN_FREE`, `COMPOSE_ONLY`, or `FOCUSED_REASONING`. Deterministic code owns the final gate.
 - `QWEN_FREE` is intentionally narrow: only high-confidence L3/human-action handoffs may skip Qwen, and only when current evidence is strong, no further probe/reasoning is needed, full-ticket trust screening is low-risk, the exact workflow handoff status is bound, and Jev primary review approves the frozen deterministic proposal.
 - `COMPOSE_ONLY` uses a smaller context budget and normally no additional live read; `FOCUSED_REASONING` receives the larger bounded context/recovery budget.
@@ -104,12 +96,14 @@ publish  rework    L3 path       qwen reviewer
 The central reconciler owns lifecycle sequencing synchronously. Current order:
 
 ```text
-1. normalize investigator/rework completions
-2. convert unreviewable terminal completions into bounded rework
-3. run Jev primary reviews and apply direct approve/rework/escalation or create local-review fallback
-4. process local-review rejections
-5. process local-review approvals through the same deterministic publisher
-6. recover true SQL/Kanban orphans
+1. release terminal local-model leases; recover stale leases only when no live local card owns the run
+2. normalize investigator/rework completions
+3. convert unreviewable terminal completions into queued bounded rework
+4. run Jev primary reviews and apply direct approve/rework/escalation or queue local-review fallback
+5. process local-review rejections
+6. process local-review approvals through the same deterministic publisher
+7. recover true SQL/Kanban orphans
+8. admit at most one next local-Qwen task
 ```
 
 The old design launched repair/reject/publisher as independent concurrent processes. Do not restore that pattern.
@@ -199,7 +193,7 @@ The production scout must never implement:
 SQL TOP N -> Python removes unsupported rows -> falsely report no work
 ```
 
-Global WIP=1 is stricter than the old temporary `MAX_INVESTIGATOR_BACKLOG=3` design. References to that old backlog cap are stale.
+Global WIP=1 is retired. The claim procedure enforces the configured multi-WIP cap atomically with `sp_getapplock('HermesL2:PipelineCapacity')`. Within the same Helpdesk priority, genuinely fresh/user-changed work precedes failed retries and old `UPDATE` continuations so continuation loops cannot starve new incidents.
 
 Do not manually use raw `Hermes_Orchestrator.py --poll` for production testing because it bypasses the scout's lifecycle/WIP gate.
 
@@ -310,6 +304,8 @@ claim
 -> deterministic identifier-bounded probes
 -> Jev investigation assessment + per-chunk meta-attention Scores
 -> deterministic context compiler (whole chunks; pinned current/live evidence)
+-> QWEN_FREE direct bounded handoff OR persist exact local-model work package
+-> SQL-serialized single-Qwen admission (COMPOSE_ONLY / FOCUSED_REASONING)
 -> l2-jev-investigator local synthesis/focused reads
 -> frozen proposal
 -> Jev primary review
