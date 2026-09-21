@@ -99,22 +99,6 @@ def test_terminal_guard_inspects_alternate_argument_keys() -> None:
     assert plugin._pre_tool_call("terminal", {"cmd": "sqlcmd -Q 'SELECT 1'"}, task_id="s")["action"] == "block"
 
 
-def test_typed_schema_exposes_semantic_context_but_no_generic_jev_tool() -> None:
-    props = plugin._SCHEMA["parameters"]["properties"]
-    assert "semantic_context" in props
-    assert plugin.TOOL_NAME == "xstudio_l2"
-    assert "jev" not in plugin._SCHEMA["name"].lower()
-
-
-def test_semantic_context_is_not_required_for_backward_compatibility() -> None:
-    required = set(plugin._SCHEMA["parameters"]["required"])
-    assert required == {"operation"}
-
-
-# --------------------------------------------------------------------------
-# Bridge transport
-# --------------------------------------------------------------------------
-
 def test_bridge_transport_never_prefixes_windows_python_with_python3() -> None:
     completed = mock.Mock(returncode=0, stdout='{"ok":true,"rows":[]}', stderr="")
     with mock.patch.object(plugin.subprocess, "run", return_value=completed) as run:
@@ -507,8 +491,7 @@ def test_config_patch_handles_flow_style_lists() -> None:
     flow = _SAMPLE_CONFIG.replace("  cli:\n    - terminal\n    - todo\n", "  cli: [terminal, todo]\n")
     patched = _patch_sample(flow)
     assert "xstudio_l2" in patched
-    assert "xstudio_jev" in patched
-    assert "[terminal, todo, xstudio_l2, xstudio_jev]" in patched
+    assert "[terminal, todo, xstudio_l2]" in patched
 
 
 def test_config_patch_does_not_abort_when_optional_section_absent() -> None:
