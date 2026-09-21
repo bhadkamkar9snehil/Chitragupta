@@ -97,13 +97,23 @@ Across all attempts, Jev System One performed semantic triage, execution plannin
 | TicketNo | Att | Recommended Mode | Rec Conf | Evid Suff | Needs Local | Decision | Rev Conf | Risk Score | Reply / Outcome Summary |
 | :--- | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
 | **Ticket_232** | 1 | *NULL* | *NULL* | *NULL* | *NULL* | `REWORK` | 0.06 | 1.29 | Reply noted schema resolution issues with `dbo.EAF_PER_HEAT`. Jev requested rework. |
-| **Ticket_232** | 2 | `FOCUSED_REASONING` | 0.49 | 0.22 | 0.61 | `APPROVE` | 0.08 | 0.97 | Reply confirmed `dbo.EAF_PER_HEAT` does not exist in `XStudio_Helpdesk`. Jev approved UPDATE. |
+| **Ticket_232** | 2 | `FOCUSED_REASONING` | 0.49 | 0.22 | 0.61 | `APPROVE`* | 0.08 | 0.97 | Reply noted `dbo.EAF_PER_HEAT` not in `XStudio_Helpdesk`. Raw Jev choice was APPROVE, but failed safety gates -> local reviewer card dispatched -> local reviewer approved. |
 | **Ticket_232** | 3 | `FOCUSED_REASONING` | 0.74 | 0.34 | 0.77 | `REWORK` | 0.20 | 0.92 | Addressed overclaiming certainty. Jev requested rework. |
-| **Ticket_232** | 4 | `FOCUSED_REASONING` | 0.36 | 0.49 | 0.72 | `APPROVE` | 0.25 | 0.94 | Confirmed `dbo.EAF_PER_HEAT` in `XStudio_Xbatch` contains `HeatTime` but not `PowerOnTime`/`PowerOffTime`. Approved UPDATE. |
+| **Ticket_232** | 4 | `FOCUSED_REASONING` | 0.36 | 0.49 | 0.72 | `APPROVE`* | 0.25 | 0.94 | Confirmed `dbo.EAF_PER_HEAT` in `XStudio_Xbatch` contains `HeatTime`. Raw Jev choice APPROVE failed safety gates -> local reviewer card dispatched -> local reviewer approved. |
 | **Ticket_232** | 5 | `FOCUSED_REASONING` | 0.64 | 0.40 | 0.78 | `REWORK` | 0.66 | 2.66 | **FAILED.** Hit review cycle cap: `"Automated review cycle cap reached after 3 cycles. Proposal overclaims schema verification"`. Escalated to L3. |
 | **Ticket_233** | 1 | `FOCUSED_REASONING` | 0.22 | 0.31 | 0.40 | `L3_ESCALATION` | 0.11 | 2.59 | Discovered requested table not accessible in `XStudio_Helpdesk`. Recommended L3. |
 | **Ticket_233** | 2 | `FOCUSED_REASONING` | 0.38 | 0.28 | 0.76 | `L3_ESCALATION` | 0.20 | 1.52 | Key finding: data source not accessible in Helpdesk DB; only logbook tables exist. Recommended L3. |
 | **Ticket_233** | 3 | `FOCUSED_REASONING` | 0.23 | 0.33 | 0.74 | `REWORK` $\rightarrow$ `L3` | 0.46 | 2.94 | Confirmed `PowerOnTime=47:35`, `PowerOffTime=7:55`, `HeatTime=55:30`. Completed as `L3_ESCALATION`. |
+
+> [!IMPORTANT]
+> ***Critical Distinction: Raw Jev Decision vs. Effective Deterministic Action**  
+> `Hermes_L2_Response_Trn_Tbl.JevReviewDecision` records the raw choice returned by the TypeSafe Jev API (`answers["decision"]["choice"]`). For Ticket_232 Attempt 2 (conf 0.08, risk 0.97) and Attempt 4 (conf 0.25, risk 0.94), Jev returned `APPROVE`.  
+> However, under `Model_Bench/l2_pipeline_runtime.py` (`_jev_primary_review`), direct approval (`safe_approve`) requires:
+> - `confidence >= 0.82` (Attempt 2: 0.08, Attempt 4: 0.25)
+> - `risk_score <= 0.85` (Attempt 2: 0.97, Attempt 4: 0.94)
+> - `evidence_sufficiency >= 0.80` (Attempt 2: 0.22, Attempt 4: 0.49)
+> - `overclaiming_risk <= 0.20`  
+> Because both attempts failed these deterministic thresholds, direct publication was vetoed. The runtime set `action = "LOCAL_REVIEW"`, creating a local Qwen reviewer card (`l2-reviewer-primary` / `l2-reviewer-fallback`). The *local reviewer* performed independent verification and approved the proposal via `kanban_complete`, which the deterministic publisher then published. Jev did not directly publish these proposals.
 
 ---
 
@@ -113,7 +123,8 @@ Execution of `dbo.Hermes_L2_Get_Candidate_Tickets_Usp @EligibleStatusCsv = 'Ente
 
 1. **`Ticket_232`**:  
    - Terminal status on Attempt 5: `ProcessStatus = 'FAILED'`.
-   - `NextEligibleOn` was set to **`2028-08-16 05:23:10.860`** (deterministic multi-year backoff upon reaching the review cycle cap).
+   - `NextEligibleOn` was set to **`2028-08-16 05:23:10.860`**.  
+     *Mechanism:* In `l2_pipeline_runtime.py:1913`, when the review cycle cap (`MAX_REVIEW_CYCLES = 3`) is reached, `_escalate_run` terminates the run by calling `--fail-run --retry-after-minutes 999999`. 999,999 minutes = 694.4 days (~1.9 years), which purposefully places `NextEligibleOn` in August 2028 as an intentional sentinel to prevent the ticket scout from perpetually re-polling the unresolvable incident.
 2. **`Ticket_233`**:  
    - Terminal status on Attempt 3: `ProcessStatus = 'COMPLETED'`, `ResponseType = 'L3_ESCALATION'`, `EscalateToL3 = 1`.
    - Tickets with an active escalation or terminal response are excluded by the candidate stored procedure.
@@ -135,6 +146,22 @@ Four escalation records exist across the two tickets in `dbo.Hermes_L3_Escalatio
 
 ## 7. Conclusions & Harness Validation
 
-1. **Lifecycle Invariant Resilience:** The pipeline correctly prevented infinite loops. When the worker repeatedly failed to resolve the schema across 3 review cycles, the deterministic controller terminated the attempt, marked the run as `FAILED`, persisted the escalation, and backed off `NextEligibleOn` to 2028.
+1. **Lifecycle Invariant Resilience:** The pipeline correctly prevented infinite loops. When the worker repeatedly failed to resolve the schema across 3 review cycles, the deterministic controller terminated the attempt, marked the run as `FAILED`, persisted the escalation, and backed off `NextEligibleOn` to 2028 (via the 999,999-minute backoff sentinel).
 2. **Tool Guard Efficacy:** The 14-call session budget and the 2-strike repeated-failure guard successfully blocked 28 rogue queries, protecting both SQL Server and the LLM context window.
-3. **Database Guidance:** The primary source of friction was worker confusion over whether target tables resided in `XStudio_Helpdesk` or `XStudio_Xbatch`. When directed to `XStudio_Xbatch`, the tables were found.
+3. **Database Misdirection vs. Evidence Availability:** Early attempts reported that plant data was "unavailable" or "not present in the live schema". This was a false conclusion caused by searching in `XStudio_Helpdesk` rather than `XStudio_Xbatch`. In `XStudio_Xbatch`, `dbo.EAF_PER_HEAT` exists and contains `HeatID` (matching `HeatNo`) and `HeatTime`. The evidence was available; the worker simply searched the wrong database.
+
+---
+
+## 8. Interface Hardening & Before/After Comparison
+
+To eliminate the 198 tool errors and blocked calls exposed by this audit, the `xstudio_l2` contract, bridge validation, and model guidance were hardened:
+
+| Category | Observed in Ticket 232 / 233 (Before) | Hardened Interface (After) | Verification |
+| :--- | :--- | :--- | :--- |
+| **Missing `database`** | 73 failures (`ValueError: database is required`) | `database` description lists routing rules; turn-level `_pre_llm_call` injects routing guidance; bridge rejects missing `database` with operation-specific error before SQL. | Verified in `test_operations_reject_missing_database_before_sql` |
+| **Wrong Database for Plant Data** | Repeated searches for `dbo.EAF_PER_HEAT` in `XStudio_Helpdesk` | Explicit instruction in schema and SOUL: *"Do NOT query XStudio_Helpdesk for plant/EAF/heat data. Use XStudio_Xbatch."* | Added to all 5 SOUL files and turn-level system message |
+| **Missing `identifiers`** | 12 calls to `validate_identifiers` without column list | Bridge `_validate_identifiers` requires non-empty `identifiers` (or `columns`) list, raising `ValueError` immediately. | Verified in `test_operations_reject_missing_required_arguments_before_sql` |
+| **Missing `ticket` / `parameters`** | Incomplete payloads for `probe_table` and `read_procedure` | Bridge requires `ticket` dict for `probe_table` and `parameters` dict for `read_procedure`. | Verified in unit tests and manual CLI invocation |
+| **Missing Operation Fields** | `table`, `columns`, `search`, `object_name`, `run_id` omitted | Comprehensive operation-by-operation required fields documented in schema `operation` description and enforced by bridge `_require`. | 41 unit tests in `Model_Bench/test_xstudio_l2_tools_plugin.py` |
+| **LM Studio Tool Compatibility** | Risk of schema rejection with complex JSON schema keywords | Empirical testing confirmed LM Studio rejects `oneOf`/`anyOf` with HTTP 400. Schema preserved as standard flat JSON object with turn-level injection. | Verified in `test_tool_schema_describes_database_routing_and_operation_contracts` |
+
