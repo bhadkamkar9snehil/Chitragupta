@@ -75,6 +75,47 @@ BEGIN
 END;
 GO
 
+
+/* Jev is a semantic reviewer/investigator for the same run, not a parallel
+   business object. Persist stage state directly on Hermes_L2_Response_Trn_Tbl;
+   detailed call telemetry belongs in Hermes_Agent_Trace_Trn_Tbl. */
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevTriageJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevTriageJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevInvestigationJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevInvestigationJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevTraceJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevTraceJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevKBCurationJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevKBCurationJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'ReviewMode') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD ReviewMode varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewDecision') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewDecision varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewConfidence') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewConfidence decimal(9,6) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevRiskScore') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevRiskScore decimal(9,6) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalReviewRequired') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalReviewRequired bit NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevModel') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevModel varchar(120) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewedOn') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewedOn datetime NULL;
+GO
+
 IF NOT EXISTS
 (
     SELECT 1
@@ -571,87 +612,16 @@ GO
 
 
 
-/* ============================================================================
-   TypeSafe Jev / System-One semantic judgment audit
-   One row per narrow typed judgment. Do not collapse these into a single
-   opaque AIConfidence value: route confidence, overclaim probability,
-   evidence support, KB applicability, trace failure class, etc. are distinct.
-   ============================================================================ */
-IF OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl', 'U') IS NULL
-BEGIN
-    CREATE TABLE dbo.Hermes_Jev_Judgment_Trn_Tbl
-    (
-        ID                  varchar(36)    NOT NULL
-            CONSTRAINT DF_Hermes_Jev_Judgment_ID DEFAULT (NEWID()),
-        TicketID            varchar(36)    NULL,
-        RunID               varchar(36)    NULL,
-        Stage               varchar(50)    NOT NULL,
-        JudgmentName        varchar(120)   NOT NULL,
-        QuestionVersion     varchar(30)    NOT NULL
-            CONSTRAINT DF_Hermes_Jev_QuestionVersion DEFAULT ('v1'),
-        Model               varchar(120)   NULL,
-        AnswerType          varchar(20)    NOT NULL,
-        ChoiceValue         nvarchar(500)  NULL,
-        NoulProbability     decimal(9,6)   NULL,
-        ScoreValue          decimal(9,6)   NULL,
-        Confidence          decimal(9,6)   NULL,
-        ProbabilitiesJson   nvarchar(max)  NULL,
-        InputHash           varchar(64)    NOT NULL,
-        PolicyVersion       varchar(100)   NOT NULL,
-        Accepted            bit            NULL,
-        LatencyMs           decimal(12,2)  NULL,
-        CreatedOn           datetime       NOT NULL
-            CONSTRAINT DF_Hermes_Jev_Judgment_CreatedOn DEFAULT (GETDATE()),
-        IsDeleted           bit            NOT NULL
-            CONSTRAINT DF_Hermes_Jev_Judgment_IsDeleted DEFAULT (0),
-        Source              varchar(20)    NULL
-            CONSTRAINT DF_Hermes_Jev_Judgment_Source DEFAULT ('Jev'),
-
-        CONSTRAINT PK_Hermes_Jev_Judgment PRIMARY KEY CLUSTERED (ID),
-        CONSTRAINT CK_Hermes_Jev_Judgment_AnswerType
-            CHECK (AnswerType IN ('choice', 'noul', 'score'))
-    );
-END;
+/* Remove the first-pass Jev side tables if an earlier dev build created them.
+   Jev now reuses the run row + Agent Trace instead of maintaining parallel state. */
+IF OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NOT NULL
+    DROP VIEW dbo.Hermes_Jev_Run_Assessment_Vw;
 GO
-
-IF NOT EXISTS
-(
-    SELECT 1 FROM sys.indexes
-    WHERE object_id = OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl')
-      AND name = 'IX_Hermes_Jev_Judgment_RunStage'
-)
-BEGIN
-    CREATE NONCLUSTERED INDEX IX_Hermes_Jev_Judgment_RunStage
-        ON dbo.Hermes_Jev_Judgment_Trn_Tbl(RunID, Stage, CreatedOn DESC)
-        INCLUDE (JudgmentName, AnswerType, ChoiceValue, NoulProbability, ScoreValue, Confidence)
-        WHERE IsDeleted = 0;
-END;
+IF OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl', 'U') IS NOT NULL
+    DROP TABLE dbo.Hermes_Jev_Judgment_Trn_Tbl;
 GO
-
-IF NOT EXISTS
-(
-    SELECT 1 FROM sys.indexes
-    WHERE object_id = OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl')
-      AND name = 'IX_Hermes_Jev_Judgment_Ticket'
-)
-BEGIN
-    CREATE NONCLUSTERED INDEX IX_Hermes_Jev_Judgment_Ticket
-        ON dbo.Hermes_Jev_Judgment_Trn_Tbl(TicketID, CreatedOn DESC)
-        WHERE IsDeleted = 0;
-END;
-GO
-
-IF NOT EXISTS
-(
-    SELECT 1 FROM sys.indexes
-    WHERE object_id = OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl')
-      AND name = 'UX_Hermes_Jev_Judgment_Idempotency'
-)
-BEGIN
-    CREATE UNIQUE NONCLUSTERED INDEX UX_Hermes_Jev_Judgment_Idempotency
-        ON dbo.Hermes_Jev_Judgment_Trn_Tbl(RunID, Stage, JudgmentName, InputHash, PolicyVersion)
-        WHERE RunID IS NOT NULL AND IsDeleted = 0;
-END;
+IF OBJECT_ID('dbo.Hermes_KB_Retrieval_Trn_Tbl', 'U') IS NOT NULL
+    DROP TABLE dbo.Hermes_KB_Retrieval_Trn_Tbl;
 GO
 
 
@@ -806,57 +776,6 @@ GO
 IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'OutcomeOn') IS NULL
     ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD OutcomeOn datetime NULL;
 GO
-
-/* Retrieval telemetry: similarity/relevance is not truth or successful use. */
-IF OBJECT_ID('dbo.Hermes_KB_Retrieval_Trn_Tbl', 'U') IS NULL
-BEGIN
-    CREATE TABLE dbo.Hermes_KB_Retrieval_Trn_Tbl
-    (
-        ID                   varchar(36)   NOT NULL
-            CONSTRAINT DF_Hermes_KB_Retrieval_ID DEFAULT (NEWID()),
-        TicketID             varchar(36)   NULL,
-        RunID                varchar(36)   NULL,
-        QueryPhase           varchar(30)   NOT NULL,
-        QueryHash            varchar(64)   NOT NULL,
-        KBID                 varchar(200)  NOT NULL,
-        SourceType           varchar(50)   NULL,
-        RankNo               int           NULL,
-        DenseRank            int           NULL,
-        SparseRank           int           NULL,
-        FusionScore          decimal(18,6) NULL,
-        DeterministicScore   decimal(18,6) NULL,
-        JevRelevance         decimal(9,6)  NULL,
-        JevApplicability     decimal(9,6)  NULL,
-        JevNegativeIndicator decimal(9,6)  NULL,
-        RouteMatch           bit           NULL,
-        ScopeMatch           bit           NULL,
-        Selected             bit           NULL,
-        SelectionDisposition varchar(50)   NULL,
-        RetrievedOn          datetime      NOT NULL
-            CONSTRAINT DF_Hermes_KB_Retrieval_RetrievedOn DEFAULT (GETDATE()),
-        CreatedOn            datetime      NOT NULL
-            CONSTRAINT DF_Hermes_KB_Retrieval_CreatedOn DEFAULT (GETDATE()),
-        IsDeleted            bit           NOT NULL
-            CONSTRAINT DF_Hermes_KB_Retrieval_IsDeleted DEFAULT (0),
-        CONSTRAINT PK_Hermes_KB_Retrieval PRIMARY KEY CLUSTERED (ID)
-    );
-END;
-GO
-
-IF NOT EXISTS
-(
-    SELECT 1 FROM sys.indexes
-    WHERE object_id = OBJECT_ID('dbo.Hermes_KB_Retrieval_Trn_Tbl')
-      AND name = 'IX_Hermes_KB_Retrieval_Run'
-)
-BEGIN
-    CREATE NONCLUSTERED INDEX IX_Hermes_KB_Retrieval_Run
-        ON dbo.Hermes_KB_Retrieval_Trn_Tbl(RunID, QueryPhase, RetrievedOn DESC)
-        INCLUDE (KBID, RankNo, JevRelevance, JevApplicability, JevNegativeIndicator, Selected)
-        WHERE IsDeleted = 0;
-END;
-GO
-
 
 /* ============================================================================
    Agent observer trace store.
@@ -3411,9 +3330,10 @@ GO
 
 
 -- ============================================================================
--- Jev semantic quality / preflight reporting
--- Raw judgments remain canonical in Hermes_Jev_Judgment_Trn_Tbl. This view
--- exposes named dimensions rather than inventing an opaque aggregate AI score.
+-- Jev semantic quality / review reporting.
+-- Jev is another bounded reviewer/investigator for the same run, so stage
+-- state lives directly on Hermes_L2_Response_Trn_Tbl. The view extracts named
+-- dimensions from those JSON columns; detailed calls remain in Agent Trace.
 -- ============================================================================
 IF OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NOT NULL
     DROP VIEW dbo.Hermes_Jev_Run_Assessment_Vw;
@@ -3422,56 +3342,62 @@ GO
 CREATE VIEW dbo.Hermes_Jev_Run_Assessment_Vw
 AS
 SELECT
-    j.RunID,
-    MAX(j.TicketID) AS TicketID,
+    r.ID AS RunID,
+    r.TicketID,
 
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'task_completed'
-             THEN j.NoulProbability END) AS TaskCompletedProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'evidence_actually_gathered'
-             THEN j.NoulProbability END) AS EvidenceGatheredProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'silent_failure'
-             THEN j.NoulProbability END) AS SilentFailureProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'false_success_claim'
-             THEN j.NoulProbability END) AS FalseSuccessClaimProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'policy_violation'
-             THEN j.NoulProbability END) AS PolicyViolationProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'transport_flailing'
-             THEN j.NoulProbability END) AS TransportFlailingProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'human_attention_needed'
-             THEN j.NoulProbability END) AS HumanAttentionProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'unnecessary_tool_repetition'
-             THEN j.ScoreValue END) AS UnnecessaryToolRepetitionScore,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'investigation_efficiency'
-             THEN j.ScoreValue END) AS InvestigationEfficiencyScore,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'attention_priority'
-             THEN j.ScoreValue END) AS AttentionPriorityScore,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'failure_class'
-             THEN j.ChoiceValue END) AS FailureClass,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'failure_class'
-             THEN j.Confidence END) AS FailureClassConfidence,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.task_completed.noul'))
+        AS TaskCompletedProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.evidence_actually_gathered.noul'))
+        AS EvidenceGatheredProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.silent_failure.noul'))
+        AS SilentFailureProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.false_success_claim.noul'))
+        AS FalseSuccessClaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.policy_violation.noul'))
+        AS PolicyViolationProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.transport_flailing.noul'))
+        AS TransportFlailingProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.human_attention_needed.noul'))
+        AS HumanAttentionProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.unnecessary_tool_repetition.score'))
+        AS UnnecessaryToolRepetitionScore,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.investigation_efficiency.score'))
+        AS InvestigationEfficiencyScore,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.attention_priority.score'))
+        AS AttentionPriorityScore,
+    JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.failure_class.choice')
+        AS FailureClass,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.failure_class.confidence'))
+        AS FailureClassConfidence,
 
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'evidence_supports_core_claim'
-             THEN j.NoulProbability END) AS PreflightEvidenceSupportProbability,
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'reply_overstates_evidence'
-             THEN j.NoulProbability END) AS PreflightOverclaimProbability,
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'reply_claims_action_was_performed'
-             THEN j.NoulProbability END) AS PreflightActionClaimProbability,
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'audit_shows_claimed_action'
-             THEN j.NoulProbability END) AS PreflightActionAuditProbability,
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'proposed_response_type'
-             THEN j.ChoiceValue END) AS JevProposedResponseType,
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'proposed_response_type'
-             THEN j.Confidence END) AS JevProposedResponseTypeConfidence,
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'review_risk'
-             THEN j.ScoreValue END) AS ReviewRiskScore,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.evidence_supports_core_claim.noul'))
+        AS PreflightEvidenceSupportProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.reply_overstates_evidence.noul'))
+        AS PreflightOverclaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.reply_claims_action_was_performed.noul'))
+        AS PreflightActionClaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.audit_shows_claimed_action.noul'))
+        AS PreflightActionAuditProbability,
+    JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.proposed_response_type.choice')
+        AS JevProposedResponseType,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.proposed_response_type.confidence'))
+        AS JevProposedResponseTypeConfidence,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.publication_risk.score'))
+        AS ReviewRiskScore,
 
-    MAX(CASE WHEN j.Stage = 'POST_RESOLUTION_KB' AND j.JudgmentName = 'curation_disposition'
-             THEN j.ChoiceValue END) AS KBCurationDisposition,
-    MAX(CASE WHEN j.Stage = 'POST_RESOLUTION_KB' AND j.JudgmentName = 'curation_disposition'
-             THEN j.Confidence END) AS KBCurationConfidence,
+    r.ReviewMode,
+    r.JevReviewDecision,
+    r.JevReviewConfidence,
+    r.JevRiskScore,
+    r.LocalReviewRequired,
 
-    MAX(j.CreatedOn) AS LastJevAssessmentOn
-FROM dbo.Hermes_Jev_Judgment_Trn_Tbl j
-WHERE j.IsDeleted = 0 AND j.RunID IS NOT NULL
-GROUP BY j.RunID;
+    JSON_VALUE(r.JevKBCurationJson, '$.POST_RESOLUTION_KB.answers.curation_disposition.choice')
+        AS KBCurationDisposition,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevKBCurationJson, '$.POST_RESOLUTION_KB.answers.curation_disposition.confidence'))
+        AS KBCurationConfidence,
+
+    r.JevModel,
+    r.JevReviewedOn AS LastJevAssessmentOn
+FROM dbo.Hermes_L2_Response_Trn_Tbl r
+WHERE r.IsDeleted = 0;
 GO
