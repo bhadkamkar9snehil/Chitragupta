@@ -428,35 +428,36 @@ Vector similarity must never auto-merge articles.
 
 `UsageCount` is not sufficient because retrieval, selection and successful application are different events.
 
-### 10.1 Add retrieval telemetry
+### 10.1 Reuse Agent Trace for retrieval telemetry
 
-Recommended table:
+Do **not** create a parallel KB/Jev telemetry business table.
+
+Retrieval is one event inside an existing Hermes run, so record it in
+`Hermes_Agent_Trace_Trn_Tbl` with a distinct event/tool name such as
+`kb_retrieval`.
+
+The trace payload should retain dimensions such as:
 
 ```text
-Hermes_KB_Retrieval_Trn_Tbl
-```
-
-Suggested fields:
-
-```text
-ID
 TicketID
 RunID
 QueryPhase              -- PRE_INVESTIGATION | POST_RESOLUTION
 QueryHash
-KBID
-SourceType
+KBID / SourceType
 Rank
-DenseRank
-SparseRank
-FusionScore
-RouteMatch
-ScopeMatch
-RetrievedOn
-Selected
-SelectionDisposition
-CreatedOn
+DenseRank / SparseRank / FusionScore when Qdrant exists
+deterministic relevance score
+Jev relevance
+Jev applicability
+Jev negative-indicator probability
+route/scope match
+selected / selection disposition
 ```
+
+This keeps retrieval, System-One calls, model/tool activity, and later outcomes on
+one run-level observability spine. The run's compact semantic stage state belongs
+on `Hermes_L2_Response_Trn_Tbl`, not in another lifecycle table.
+
 
 ### 10.2 Evolve ticket-solution reuse outcome
 
@@ -1416,32 +1417,41 @@ Any optimization must beat the baseline evaluation set without materially worsen
 
 # 28a. Jev semantic layer implementation status
 
-The TypeSafe Jev System-One layer is implemented around the KB without changing the core knowledge invariants above.
+The TypeSafe Jev System-One layer is active inside the KB path and follows the same
+one-spine rule as the rest of Chitragupta.
 
 Implemented now:
 
-- deterministic textual relevance remains the first gate;
+- requester-grounded deterministic textual relevance remains the initial SQL-article gate;
 - only Approved articles are eligible for normal retrieval once the governed schema is deployed;
-- one parallel ticket triage request provides route/ambiguity/complexity/live-state/schema/known-issue judgments;
+- one parallel Jev triage request provides route/ambiguity/complexity/live-state/schema/known-issue judgments;
+- Jev route selection is active when it clears its confidence gate, with deterministic fallback on unavailable/low-confidence output;
 - retrieved Solution candidates receive separate Jev relevance, applicability, negative-indicator, same-pattern and root-cause-family judgments;
+- those semantic dimensions actively rerank the bounded candidate set;
 - retrieved text receives untrusted-context/prompt-injection markings without silent deletion;
-- Hermes_KB_Retrieval_Trn_Tbl records deterministic and semantic retrieval dimensions separately;
-- post-resolution curation uses a bounded near-duplicate candidate pool and may suggest REUSE_EXISTING, UPDATE_EXISTING, CREATE_CANDIDATE or NONE;
-- post-resolution Jev curation is advisory only and cannot create, update, promote or merge an article;
+- KB retrieval telemetry is written to the existing `Hermes_Agent_Trace_Trn_Tbl`, not a separate retrieval table;
+- Jev ticket/KB/investigation stage summaries live on the existing `Hermes_L2_Response_Trn_Tbl`;
+- Jev-first evidence planning can use KB candidates alongside deterministic real SQL candidates before the local model starts;
+- post-resolution curation uses a bounded near-duplicate pool and may suggest `REUSE_EXISTING`, `UPDATE_EXISTING`, `CREATE_CANDIDATE`, or `NONE`;
+- Jev cannot directly create, approve, promote, supersede, or merge an article;
 - governed Solution fields (KnowledgeType, ArticleStatus, revision/provenance, applicability, negative indicators, verification/evidence structure) are present in the SQL migration;
-- reuse outcome fields distinguish actual use from successful outcome.
+- reuse-outcome fields distinguish actual use from successful outcome.
 
 Still intentionally pending from the larger KB program:
 
-- Qdrant hermes_kb_v1 indexing and dense+sparse/RRF retrieval;
+- Qdrant `hermes_kb_v1` indexing and dense+sparse/RRF retrieval;
 - Git semantic-section indexing;
 - formal KB evaluation corpus and threshold calibration;
 - automated article-health transitions from failed reuse/reopen;
 - promotion workflow/UI.
 
-When Qdrant is added, its output should feed the existing Jev applicability/reranking interface as candidate input. Do not replace provenance, lifecycle filters, abstention, or live verification with Jev.
+When Qdrant is added, its bounded candidate output should feed the existing Jev
+applicability/reranking interface. Qdrant and Jev remain retrieval/judgment layers,
+not provenance or truth authorities. Live verification and lifecycle governance
+remain mandatory where the current ticket depends on them.
 
-Shadow mode remains the default while real ticket outcomes are collected. Semantic relevance and applicability must be calibrated independently; neither is equivalent to source truth.
+Semantic relevance and applicability are separate probabilities and must remain
+separate from source authority, freshness, verified reuse outcomes, and live evidence.
 
 ---
 
