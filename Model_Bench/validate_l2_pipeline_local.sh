@@ -14,6 +14,10 @@ PY_FILES=(
   Model_Bench/audit_kanban_completions.py
   Model_Bench/enforce_publish_safety_net.py
   Model_Bench/configure_helpdesk_workflow.py
+  Model_Bench/kb_retrieval.py
+  Model_Bench/typesafe_jev.py
+  Model_Bench/test_typesafe_jev.py
+  Model_Bench/test_kb_retrieval.py
   Model_Bench/patch_profile_config.py
   Model_Bench/patch_tool_search_off.py
   Model_Bench/xstudio_l2_orchestrator_plugin/__init__.py
@@ -30,6 +34,9 @@ python3 Model_Bench/test_l2_pipeline_runtime.py
 
 echo "== Typed investigation-tool contract tests =="
 python3 Model_Bench/test_xstudio_l2_tools_plugin.py
+
+echo "== TypeSafe Jev routing contract tests =="
+python3 Model_Bench/test_typesafe_jev.py
 
 echo "== Knowledge/skill validation =="
 python3 Model_Bench/validate_knowledge_manifest.py
