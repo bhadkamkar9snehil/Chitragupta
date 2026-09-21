@@ -750,6 +750,167 @@ def create_reviewer_card(
         return None
 
 
+def _jev_primary_review(
+    args: argparse.Namespace,
+    proposal: dict[str, Any],
+) -> dict[str, Any]:
+    state = _proposal_preflight_state(args, proposal)
+    call = _run_jev_workflow(
+        "primary_review",
+        state,
+        ticket_id=str(proposal.get("ticket_id") or "") or None,
+        run_id=str(proposal.get("run_id") or "") or None,
+        audit_stage="PRIMARY_REVIEW",
+    )
+    if not call.get("ok"):
+        return {"ok": False, "decision": "LOCAL_REVIEW", "reason": call.get("error") or "Jev primary review unavailable"}
+    result = call.get("result") or {}
+    answers = result.get("answers") or {}
+    decision_answer = answers.get("decision") or {}
+    decision = str(decision_answer.get("choice") or "LOCAL_REVIEW")
+    try:
+        confidence = float(decision_answer.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    approve_threshold = float(os.environ.get("CHITRAGUPTA_JEV_DIRECT_APPROVAL_CONFIDENCE", "0.82"))
+    rework_threshold = float(os.environ.get("CHITRAGUPTA_JEV_DIRECT_REWORK_CONFIDENCE", "0.88"))
+    evidence = _noul_answer(result, "evidence_supports_core_claim", 0.0)
+    overclaim = _noul_answer(result, "reply_overstates_evidence", 1.0)
+    action_claim = _noul_answer(result, "reply_claims_action_was_performed", 0.0)
+    action_audit = _noul_answer(result, "audit_shows_claimed_action", 0.0 if action_claim >= 0.5 else 1.0)
+    root_established = _noul_answer(result, "root_cause_established", 0.0)
+    response_fit = _noul_answer(result, "response_type_fit", 0.0)
+    deep_reasoning = _noul_answer(result, "needs_deep_local_reasoning", 1.0)
+    risk = _score_answer(result, "publication_risk", 3.0)
+    response_type = str(proposal.get("response_type") or "").upper()
+
+    safe_approve = (
+        decision == "APPROVE"
+        and confidence >= approve_threshold
+        and evidence >= 0.80
+        and overclaim <= 0.20
+        and response_fit >= 0.80
+        and deep_reasoning <= 0.30
+        and risk <= 0.85
+        and (action_claim < 0.50 or action_audit >= 0.80)
+        and (response_type != "RESOLUTION" or root_established >= 0.72)
+    )
+
+    action = "LOCAL_REVIEW"
+    if safe_approve:
+        action = "APPROVE"
+    elif decision == "REWORK" and confidence >= rework_threshold:
+        action = "REWORK"
+    elif decision == "L3_ESCALATION" and confidence >= rework_threshold:
+        action = "L3_ESCALATION"
+
+    reason_answer = answers.get("rework_reason") or {}
+    reason_code = str(reason_answer.get("choice") or "OTHER")
+    reasons = {
+        "EVIDENCE_GAP": "Jev primary review found that the core claim is not adequately supported by current live evidence.",
+        "OVERCLAIM": "Jev primary review found that the reply overstates certainty, causation, completion, or success.",
+        "ACTION_AUTHORITY": "Jev primary review found an unsupported performed-action claim or worker-authority mismatch.",
+        "RESPONSE_TYPE": "Jev primary review found that the selected response type does not fit the evidence/current authority.",
+        "ROOT_CAUSE": "Jev primary review found the asserted root cause insufficiently established.",
+        "REQUESTER_INFO": "Jev primary review found that specific requester information is still required.",
+        "OTHER": "Jev primary review found a semantic/evidence issue that requires focused rework.",
+    }
+    return {
+        "ok": bool(result.get("ok")),
+        "action": action,
+        "jev_decision": decision,
+        "decision_confidence": confidence,
+        "reason_code": reason_code,
+        "reason": reasons.get(reason_code, reasons["OTHER"]),
+        "result": result,
+        "safety": {
+            "evidence_support": evidence,
+            "overclaim": overclaim,
+            "action_claim": action_claim,
+            "action_audit": action_audit,
+            "root_cause_established": root_established,
+            "response_type_fit": response_fit,
+            "needs_deep_local_reasoning": deep_reasoning,
+            "publication_risk": risk,
+        },
+    }
+
+
+def process_jev_primary_reviews(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
+    """Use Jev as the default reviewer; invoke local reviewer only for uncertainty."""
+    counts = {"approved": 0, "reworked": 0, "local_review": 0, "escalated": 0, "unavailable": 0}
+    tasks = list_tasks()
+    for task in tasks:
+        if task.get("status") != "done" or (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
+            continue
+        run_id, ticket_id = task_run_id(task), task_ticket_id(task)
+        if not run_id or not ticket_id or not safe_query_active_run(run_id, args):
+            continue
+        if _source_has_reviewer(tasks, task["id"]) or _source_has_rework(tasks, task["id"]):
+            continue
+        proposal = _completion_metadata(task)
+        if not _proposal_complete(proposal):
+            continue
+
+        review = (
+            {"action": "LOCAL_REVIEW", "ok": False, "reason": "dry-run"}
+            if dry_run else _jev_primary_review(args, proposal or {})
+        )
+        proposal = dict(proposal or {})
+        proposal["jev_primary_review"] = review
+
+        action = review.get("action") or "LOCAL_REVIEW"
+        if action == "APPROVE":
+            outcome = _publish_frozen_proposal(
+                args,
+                proposal,
+                source=f"Jev primary review for {task['id']}",
+                dry_run=dry_run,
+            )
+            if outcome == "published":
+                counts["approved"] += 1
+            elif outcome == "blocked_configuration":
+                counts["unavailable"] += 1
+            else:
+                # A deterministic publication failure should remain visible and
+                # retry on the next reconcile rather than falling through to a
+                # second semantic reviewer.
+                counts["unavailable"] += 1
+            continue
+
+        if action == "REWORK":
+            if create_rework_card(
+                args,
+                source_task=task,
+                reason=str(review.get("reason") or "Jev primary review requested focused rework."),
+                investigation_task_id=task["id"],
+                dry_run=dry_run,
+            ):
+                counts["reworked"] += 1
+            continue
+
+        if action == "L3_ESCALATION":
+            if _escalate_run(
+                args,
+                run_id=run_id,
+                ticket_id=ticket_id,
+                reason="Jev primary review selected L3 escalation with high confidence.",
+                cycle=task_review_cycle(task),
+                dry_run=dry_run,
+            ):
+                counts["escalated"] += 1
+            continue
+
+        # Uncertain/conflicting/high-deep-reasoning cases alone consume the local reviewer.
+        if create_reviewer_card(source_task=task, proposal=proposal, dry_run=dry_run):
+            counts["local_review"] += 1
+        if not review.get("ok"):
+            counts["unavailable"] += 1
+
+    return counts
+
+
 def ensure_missing_reviewers(args: argparse.Namespace, *, dry_run: bool = False) -> int:
     tasks = list_tasks()
     created = 0
