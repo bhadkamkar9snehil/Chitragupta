@@ -235,7 +235,7 @@ probe_table never issues a broad automatic query when no strong identifier maps 
 
 ### Harness-owned Jev workflows
 
-Deterministic runtime code owns Jev invocation. The Windows bridge exposes only the production workflows the harness currently needs: untrusted-context security screening, bounded evidence planning, investigation assessment, and primary proposal review. There is no model-facing Jev tool and no arbitrary-question surface.
+Deterministic runtime code owns Jev invocation. The Windows bridge exposes only the production workflows the runtime currently needs: bounded evidence planning, investigation assessment/meta-attention, and primary proposal review. Ticket trust screening is coalesced into ticket triage; KB trust screening is coalesced into KB applicability, so identical state is not sent through separate Jev requests. There is no model-facing Jev tool and no arbitrary-question surface.
 
 ### Storage: reuse the run and trace model
 
@@ -271,7 +271,6 @@ Model_Bench/jev/reviewer.py                 primary semantic reviewer
 Model_Bench/jev/kb_applicability.py         KB applicability
 Model_Bench/jev/kb_curation.py              KB curation
 Model_Bench/jev/trace_assessment.py         trace quality
-Model_Bench/jev/security.py                 untrusted-context screening
 Model_Bench/jev/audit.py                    existing-run + trace persistence
 Model_Bench/jev_workflow_bridge.py          Windows harness bridge
 deploy/profiles/l2-jev-investigator/        default Jev-first synthesis coordinator
@@ -281,7 +280,7 @@ The upstream TypeSafe skill is installed project-locally at `.agents/skills/type
 
 ### Active behavior and configuration
 
-Jev is active in harness-owned triage, evidence planning/assessment, KB semantic checks, trace assessment, security screening, and primary review. Deterministic structural rules remain higher authority: explicit identifier routing, schema existence, read-only SQL, procedure allowlists, workflow binding, WIP, and publication state are code-owned.
+Jev is active in harness-owned triage/trust screening, evidence planning/assessment/meta-attention, KB applicability/trust checks, trace assessment, and primary review. Deterministic structural rules remain higher authority: explicit identifier routing, schema existence, read-only SQL, procedure allowlists, workflow binding, WIP, and publication state are code-owned.
 
 ~~~text
 TYPESAFE_API_KEY                              required in Windows Python/service environment
