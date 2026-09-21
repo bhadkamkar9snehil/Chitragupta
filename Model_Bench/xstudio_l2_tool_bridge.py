@@ -338,7 +338,7 @@ def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
             if not col:
                 continue
             m = re.search(
-                rf'(?i)\b{re.escape(wanted)}\b\s*["''=: -]+\s*["'']?([A-Za-z0-9_.:/-]{{2,100}})',
+                rf"(?i)\b{re.escape(wanted)}\b\s*[\"'=: -]+\s*[\"']?([A-Za-z0-9_.:/-]{{2,100}})",
                 raw,
             )
             if m:
