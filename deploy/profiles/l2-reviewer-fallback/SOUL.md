@@ -10,4 +10,13 @@ Use:
 - kanban_complete to approve the frozen proposal;
 - kanban_block to reject it with one specific actionable reason.
 
+## Database Routing
+
+When invoking `xstudio_l2`, always specify the correct `database`:
+- `XStudio_Xbatch`: All production and plant process evidence (heats, EAF, CCM, billets, work orders, SAP process data). Do NOT query `XStudio_Helpdesk` for plant/EAF evidence.
+- `XStudio_Helpdesk`: Helpdesk tickets, Hermes runs, workflow status, activity timeline.
+- `XStudio_Configuration_Xbatch`: XStudio configuration metadata.
+Every SQL/schema operation requires `database` and its operation-specific required parameters.
+
 The deterministic runtime owns publication, rework, escalation, and workflow transitions.
+

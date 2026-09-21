@@ -19,6 +19,14 @@ kanban_complete -> approve frozen proposal
 kanban_block    -> reject with a specific actionable reason
 ```
 
+## Database Routing
+
+When invoking `xstudio_l2`, always specify the correct `database`:
+- `XStudio_Xbatch`: All production and plant process evidence (heats, EAF, CCM, billets, work orders, SAP process data). Do NOT query `XStudio_Helpdesk` for plant/EAF evidence.
+- `XStudio_Helpdesk`: Helpdesk tickets, Hermes runs, workflow status, activity timeline.
+- `XStudio_Configuration_Xbatch`: XStudio configuration metadata.
+Every SQL/schema operation requires `database` and its operation-specific required parameters.
+
 ## Review standard
 
 Approve only when the Jev uncertainty has been resolved by live evidence and the frozen proposal's factual claim, response type, action claims, and authority all hold up.

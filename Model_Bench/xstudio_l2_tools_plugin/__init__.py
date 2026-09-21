@@ -247,7 +247,12 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str]:
             "is blocked by the harness. Do not install dependencies. After two identical tool "
             "failures, change the evidence path instead of retrying. Jev planning/review is "
             "harness-owned; xstudio_l2 returns deterministic live evidence only. Do not attempt "
-            "to call TypeSafe/Jev directly or recreate semantic routing inside this tool."
+            "to call TypeSafe/Jev directly or recreate semantic routing inside this tool.\n"
+            "DATABASE ROUTING & OPERATION CONTRACTS:\n"
+            "- Target 'XStudio_Xbatch' for ALL production/plant process evidence (heats, EAF, CCM, billets, work orders, SAP postings). Plant/EAF evidence lives in XStudio_Xbatch, NOT XStudio_Helpdesk.\n"
+            "- Target 'XStudio_Helpdesk' for Helpdesk tickets, Hermes runs, workflow status, and activity timeline.\n"
+            "- Target 'XStudio_Configuration_Xbatch' for configuration metadata.\n"
+            "- Every SQL/schema operation REQUIRES 'database' and its operation-specific parameters (e.g. select: database+table+columns; query: database+sql; suggest_tables/find_objects: database+search; get_definition: database+object_name; validate_identifiers: database+table+identifiers)."
         )
     }
 
@@ -255,40 +260,132 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str]:
 _SCHEMA = {
     "name": TOOL_NAME,
     "description": (
-        "Typed XStudio L2 investigation interface. Use this instead of terminal/Python/sqlcmd "
-        "for database/schema/ticket/run/ledger work. The harness owns credentials, pyodbc, "
-        "Windows/WSL transport, read-only enforcement, auditing, retry limits, and safe "
-        "procedure allowlisting."
+        "Typed XStudio L2 investigation interface for database, schema, ticket, run, and ledger operations. "
+        "Use this instead of terminal/Python/sqlcmd. "
+        "DATABASE ROUTING: "
+        "- 'XStudio_Xbatch': All production and plant process evidence (heats, EAF, CCM, billets, work orders, SAP process data). "
+        "- 'XStudio_Helpdesk': Helpdesk tickets, Hermes runs, workflow status, activity timeline. "
+        "- 'XStudio_Configuration_Xbatch': XStudio configuration metadata. "
+        "Every SQL/schema operation REQUIRES 'database' and its operation-specific parameters."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "operation": {"type": "string", "enum": [
-                "select", "query", "probe_table", "suggest_tables", "find_objects",
-                "get_definition", "validate_identifiers", "read_procedure",
-                "get_ticket_context", "get_run_actions", "save_ledger"
-            ]},
-            "database": {"type": "string", "enum": [
-                "XStudio_Helpdesk", "XStudio_Xbatch", "XStudio_Configuration_Xbatch"
-            ]},
-            "run_id": {"type": "string"},
-            "ticket_id": {"type": "string"},
-            "ticket": {"type": "object"},
-            "table": {"type": "string"},
-            "columns": {"type": "array", "items": {"type": "string"}},
-            "where": {"type": "string"},
-            "order_by": {"type": "string"},
-            "top": {"type": "integer", "minimum": 1, "maximum": 100},
-            "sql": {"type": "string"},
-            "search": {"type": "string"},
-            "object_type": {"type": "string", "enum": ["TABLE", "VIEW", "PROCEDURE", "TRIGGER"]},
-            "schema": {"type": "string"},
-            "object_name": {"type": "string"},
-            "identifiers": {"type": "array", "items": {"type": "string"}},
-            "matched_columns": {"type": "array", "items": {"type": "string"}},
-            "procedure": {"type": "string"},
-            "parameters": {"type": "object"},
-            "ledger": {"type": "object"}
+            "operation": {
+                "type": "string",
+                "enum": [
+                    "select", "query", "probe_table", "suggest_tables", "find_objects",
+                    "get_definition", "validate_identifiers", "read_procedure",
+                    "get_ticket_context", "get_run_actions", "save_ledger"
+                ],
+                "description": (
+                    "Operation to execute. Required fields per operation:\n"
+                    "- 'select': requires [database, table, columns]\n"
+                    "- 'query': requires [database, sql]\n"
+                    "- 'probe_table': requires [database, table, ticket]\n"
+                    "- 'suggest_tables': requires [database, search]\n"
+                    "- 'find_objects': requires [database, search]\n"
+                    "- 'get_definition': requires [database, object_name]\n"
+                    "- 'validate_identifiers': requires [database, table, identifiers]\n"
+                    "- 'read_procedure': requires [database, run_id, procedure, parameters]\n"
+                    "- 'get_ticket_context': requires [ticket_id]\n"
+                    "- 'get_run_actions': requires [run_id]\n"
+                    "- 'save_ledger': requires [run_id, ledger]"
+                )
+            },
+            "database": {
+                "type": "string",
+                "enum": [
+                    "XStudio_Helpdesk", "XStudio_Xbatch", "XStudio_Configuration_Xbatch"
+                ],
+                "description": (
+                    "Target database. REQUIRED for select, query, probe_table, suggest_tables, "
+                    "find_objects, get_definition, validate_identifiers, read_procedure.\n"
+                    "ROUTING:\n"
+                    "* 'XStudio_Xbatch': Production/plant process evidence, heats, EAF, CCM, billets, work orders, SAP process data.\n"
+                    "* 'XStudio_Helpdesk': Helpdesk tickets, Hermes runs, Helpdesk workflow status, activity timeline.\n"
+                    "* 'XStudio_Configuration_Xbatch': XStudio configuration metadata.\n"
+                    "Do NOT query XStudio_Helpdesk for plant/EAF/heat data."
+                )
+            },
+            "table": {
+                "type": "string",
+                "description": "Target table or view name (e.g. 'dbo.EAF_PER_HEAT'). REQUIRED for: select, probe_table, validate_identifiers."
+            },
+            "columns": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of real column names to project. REQUIRED for: select. (Must be real columns; use find_objects or validate_identifiers first; do NOT pass wildcards or subqueries)."
+            },
+            "sql": {
+                "type": "string",
+                "description": "Read-only SELECT query string. REQUIRED for: query. (Write/DDL/EXEC statements are strictly blocked)."
+            },
+            "search": {
+                "type": "string",
+                "description": "Search keyword for table or object discovery. REQUIRED for: suggest_tables, find_objects."
+            },
+            "object_name": {
+                "type": "string",
+                "description": "Name of the SQL object to inspect. REQUIRED for: get_definition."
+            },
+            "schema": {
+                "type": "string",
+                "description": "Schema name for get_definition (defaults to 'dbo')."
+            },
+            "object_type": {
+                "type": "string",
+                "enum": ["TABLE", "VIEW", "PROCEDURE", "TRIGGER"],
+                "description": "Optional filter for find_objects."
+            },
+            "identifiers": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of column names to validate against allowlist. REQUIRED for: validate_identifiers."
+            },
+            "procedure": {
+                "type": "string",
+                "description": "Allowlisted diagnostic procedure name ('XMES_Get_API_Transaction_Summary'). REQUIRED for: read_procedure."
+            },
+            "parameters": {
+                "type": "object",
+                "description": "Parameter object matching procedure allowlist contract (e.g. {'APIType': '...'}). REQUIRED for: read_procedure."
+            },
+            "run_id": {
+                "type": "string",
+                "description": "Active Hermes run UUID. REQUIRED for: get_run_actions, save_ledger, read_procedure. Optional for select/query for action tracking."
+            },
+            "ticket_id": {
+                "type": "string",
+                "description": "Helpdesk ticket UUID. REQUIRED for: get_ticket_context."
+            },
+            "ticket": {
+                "type": "object",
+                "description": "Ticket context object containing fields like HeatNo/Description. REQUIRED for: probe_table."
+            },
+            "matched_columns": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional column names for probe_table."
+            },
+            "ledger": {
+                "type": "object",
+                "description": "Structured investigation ledger object to persist. REQUIRED for: save_ledger."
+            },
+            "where": {
+                "type": "string",
+                "description": "Optional WHERE clause condition for select (e.g. \"[HeatNo] = N'1604015'\")."
+            },
+            "order_by": {
+                "type": "string",
+                "description": "Optional ORDER BY clause for select."
+            },
+            "top": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Optional maximum rows to return (default 20, max 100)."
+            }
         },
         "required": ["operation"],
         "additionalProperties": False

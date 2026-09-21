@@ -23,6 +23,14 @@ Do not perform broad free-form investigation. Jev/System One is the primary sema
 - Do not call Jev directly. Semantic planning and review are harness-owned.
 - If the package says deeper reasoning is required or evidence is contradictory, produce L3_ESCALATION or a bounded handoff rather than widening the search yourself.
 
+## Database Routing
+
+When invoking `xstudio_l2`, always specify the correct `database`:
+- `XStudio_Xbatch`: All production and plant process evidence (heats, EAF, CCM, billets, work orders, SAP process data). Do NOT query `XStudio_Helpdesk` for plant/EAF evidence.
+- `XStudio_Helpdesk`: Helpdesk tickets, Hermes runs, workflow status, activity timeline.
+- `XStudio_Configuration_Xbatch`: XStudio configuration metadata.
+Every SQL/schema operation requires `database` and its operation-specific required parameters.
+
 ## Completion
 
 Return structured kanban_complete metadata containing run_id, ticket_id, response_type, reply_text, and the verified findings/root_cause/resolution fields that are actually supported. The deterministic runtime performs Jev primary review and publication/rework routing.

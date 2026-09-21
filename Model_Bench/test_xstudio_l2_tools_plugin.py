@@ -280,6 +280,121 @@ def test_database_must_be_explicitly_allowlisted() -> None:
         raise AssertionError("master must not be an allowed database")
 
 
+def test_tool_schema_describes_database_routing_and_operation_contracts() -> None:
+    schema_str = json.dumps(plugin._SCHEMA)
+    assert "oneOf" not in schema_str, "oneOf causes HTTP 400 with LM Studio; must remain flat"
+    assert "anyOf" not in schema_str, "anyOf causes HTTP 400 with LM Studio; must remain flat"
+
+    props = plugin._SCHEMA["parameters"]["properties"]
+    assert "operation" in props
+    op_desc = props["operation"]["description"]
+    for op in (
+        "select", "query", "probe_table", "suggest_tables", "find_objects",
+        "get_definition", "validate_identifiers", "read_procedure",
+        "get_ticket_context", "get_run_actions", "save_ledger"
+    ):
+        assert op in op_desc, f"operation {op} missing from schema description"
+
+    db_desc = props["database"]["description"]
+    assert "XStudio_Xbatch" in db_desc
+    assert "XStudio_Helpdesk" in db_desc
+    assert "XStudio_Configuration_Xbatch" in db_desc
+
+    context = plugin._pre_llm_call()["context"]
+    assert "DATABASE ROUTING" in context
+    assert "XStudio_Xbatch" in context
+    assert "XStudio_Helpdesk" in context
+
+
+def test_operations_reject_missing_database_before_sql() -> None:
+    fake_client = mock.MagicMock()
+    db_ops = [
+        ("select", {"table": "dbo.EAF_PER_HEAT", "columns": ["HeatNo"]}),
+        ("query", {"sql": "SELECT 1"}),
+        ("suggest_tables", {"search": "EAF"}),
+        ("find_objects", {"search": "EAF"}),
+        ("get_definition", {"object_name": "EAF_PER_HEAT"}),
+        ("validate_identifiers", {"table": "dbo.EAF_PER_HEAT", "identifiers": ["HeatNo"]}),
+        ("probe_table", {"table": "dbo.EAF_PER_HEAT", "ticket": {"HeatNo": "123"}}),
+        ("read_procedure", {"run_id": "r1", "procedure": "XMES_Get_API_Transaction_Summary", "parameters": {"APIType": "UD"}}),
+    ]
+    for op, payload in db_ops:
+        req = dict(payload, operation=op)
+        handler = bridge._CONNECTED_OPERATIONS.get(op)
+        if handler:
+            try:
+                handler(req, fake_client)
+            except ValueError as exc:
+                assert "database is required" in str(exc), f"op={op} did not mention database in error: {exc}"
+            else:
+                raise AssertionError(f"op={op} unexpectedly succeeded without database")
+        elif op == "validate_identifiers":
+            try:
+                bridge._validate_identifiers(req)
+            except ValueError as exc:
+                assert "database is required" in str(exc)
+            else:
+                raise AssertionError(f"op={op} unexpectedly succeeded without database")
+        elif op == "suggest_tables":
+            try:
+                bridge._database(req)
+            except ValueError as exc:
+                assert "database is required" in str(exc)
+            else:
+                raise AssertionError(f"op={op} unexpectedly succeeded without database")
+
+
+def test_operations_reject_missing_required_arguments_before_sql() -> None:
+    fake_client = mock.MagicMock()
+    cases = [
+        ("select", {"database": "XStudio_Xbatch"}, "table is required"),
+        ("select", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "columns is required"),
+        ("select", {"database": "XStudio_Xbatch", "table": "dbo.T", "columns": []}, "columns is required"),
+        ("query", {"database": "XStudio_Xbatch"}, "sql is required"),
+        ("query", {"database": "XStudio_Xbatch", "sql": ""}, "sql is required"),
+        ("suggest_tables", {"database": "XStudio_Xbatch"}, "search is required"),
+        ("find_objects", {"database": "XStudio_Xbatch"}, "search is required"),
+        ("get_definition", {"database": "XStudio_Xbatch"}, "object_name is required"),
+        ("validate_identifiers", {"database": "XStudio_Xbatch"}, "table is required"),
+        ("validate_identifiers", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "identifiers is required"),
+        ("validate_identifiers", {"database": "XStudio_Xbatch", "table": "dbo.T", "identifiers": []}, "identifiers is required"),
+        ("read_procedure", {"database": "XStudio_Xbatch"}, "run_id is required"),
+        ("read_procedure", {"database": "XStudio_Xbatch", "run_id": "r1"}, "procedure is required"),
+        ("read_procedure", {"database": "XStudio_Xbatch", "run_id": "r1", "procedure": "P"}, "parameters is required"),
+        ("get_ticket_context", {}, "ticket_id is required"),
+        ("get_run_actions", {}, "run_id is required"),
+        ("save_ledger", {}, "run_id is required"),
+        ("save_ledger", {"run_id": "r1"}, "ledger is required"),
+        ("probe_table", {"database": "XStudio_Xbatch"}, "table is required"),
+        ("probe_table", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "ticket is required"),
+    ]
+    for op, payload, err in cases:
+        req = dict(payload, operation=op)
+        handler = bridge._CONNECTED_OPERATIONS.get(op)
+        try:
+            if handler:
+                handler(req, fake_client)
+            elif op == "validate_identifiers":
+                bridge._validate_identifiers(req)
+            elif op == "suggest_tables":
+                bridge._require(req, "search")
+            else:
+                raise ValueError(f"unknown op: {op}")
+        except ValueError as exc:
+            assert err in str(exc), f"op={op} expected {err!r} in {exc!r}"
+        else:
+            raise AssertionError(f"op={op} unexpectedly succeeded with payload {payload}")
+
+
+def test_dispatch_requires_operation() -> None:
+    try:
+        bridge.dispatch({})
+    except ValueError as exc:
+        assert "operation is required" in str(exc)
+    else:
+        raise AssertionError("dispatch without operation must fail")
+
+
 # --------------------------------------------------------------------------
 # Result bounding
 # --------------------------------------------------------------------------

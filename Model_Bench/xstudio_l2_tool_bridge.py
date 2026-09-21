@@ -95,7 +95,9 @@ def _database(req: dict[str, Any], *, required: bool = True) -> str | None:
     if value is None and not required:
         return None
     if not value:
-        raise ValueError("database is required")
+        op = req.get("operation")
+        op_msg = f" for operation={op}" if op else ""
+        raise ValueError(f"database is required{op_msg}")
     if value not in ALLOWED_DATABASES:
         raise ValueError(f"database {value!r} is not allowed; choose one of {sorted(ALLOWED_DATABASES)}")
     return str(value)
@@ -117,7 +119,10 @@ def _load_allowlist() -> dict[str, Any]:
 def _validate_identifiers(req: dict[str, Any]) -> dict[str, Any]:
     database = _database(req)
     table = str(_require(req, "table")).strip()
-    requested_columns = [str(x).strip() for x in (req.get("identifiers") or req.get("columns") or []) if str(x).strip()]
+    raw_identifiers = req.get("identifiers") or req.get("columns")
+    if not raw_identifiers or not isinstance(raw_identifiers, list) or not any(str(x).strip() for x in raw_identifiers):
+        raise ValueError("identifiers is required for operation=validate_identifiers")
+    requested_columns = [str(x).strip() for x in raw_identifiers if str(x).strip()]
     tables = _load_allowlist().get(database) or {}
     if not isinstance(tables, dict):
         raise ValueError(f"database {database!r} is absent from schema allowlist")
@@ -264,7 +269,7 @@ def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
     """Probe one allowlisted table by one strong ticket identifier."""
     database = str(_database(req))
     table = str(_require(req, "table")).strip()
-    ticket = req.get("ticket") or {}
+    ticket = _require(req, "ticket")
     if not isinstance(ticket, dict):
         raise ValueError("ticket must be an object")
 
@@ -322,7 +327,7 @@ def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
     database = _database(req)
     run_id = str(_require(req, "run_id"))
     procedure = str(_require(req, "procedure"))
-    parameters = req.get("parameters") or {}
+    parameters = _require(req, "parameters")
     if not isinstance(parameters, dict):
         raise ValueError("parameters must be an object")
 
