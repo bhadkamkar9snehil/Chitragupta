@@ -128,10 +128,16 @@ def main():
         cur = conn.cursor()
         for e in parsed:
             written_at = e.get("written_at")
-            event_on = None
+            from datetime import datetime, timezone
             if written_at is not None:
-                from datetime import datetime, timezone
                 event_on = datetime.fromtimestamp(written_at, tz=timezone.utc)
+            elif e.get("event_on_ist"):
+                try:
+                    event_on = datetime.fromisoformat(e["event_on_ist"]).astimezone(timezone.utc)
+                except Exception:
+                    event_on = datetime.now(timezone.utc)
+            else:
+                event_on = datetime.now(timezone.utc)
 
             usage = e.get("usage")
             args_json = e.get("args")

@@ -498,6 +498,7 @@ def _live_local_model_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]
         for task in tasks
         if (task.get("assignee") or "") in (INVESTIGATOR_PROFILES | REVIEWER_PROFILES)
         and str(task.get("status") or "").lower() in LIVE_KANBAN_STATUSES
+        and str(task.get("status") or "").lower() not in _LOCAL_MODEL_TERMINAL_TASK_STATES
     ]
 
 
@@ -2037,7 +2038,10 @@ def is_reviewer_rejection(task: dict[str, Any]) -> bool:
     if str(task.get("status") or "").lower() == "blocked":
         return True
     result_val = str(task.get("result") or "").strip().upper()
-    if result_val in ("REJECT", "REJECTED", "BLOCK", "BLOCKED"):
+    if (
+        result_val in ("REJECT", "REJECTED", "BLOCK", "BLOCKED")
+        or result_val.startswith(("REJECT", "BLOCK"))
+    ):
         return True
     profile = task.get("assignee") or ""
     task_id = task.get("id")
@@ -2078,6 +2082,8 @@ def reviewer_block_reason(task: dict[str, Any]) -> str:
     summary = candidates[-1].get("summary") if candidates else None
     if not summary and runs:
         summary = runs[-1].get("summary")
+    if not summary and task.get("result"):
+        summary = str(task.get("result"))
     return (summary or "Reviewer rejected without a recorded reason.").strip()
 
 

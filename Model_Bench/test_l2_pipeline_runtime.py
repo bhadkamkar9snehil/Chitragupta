@@ -707,6 +707,22 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(result["task_ids"], ["legacy-qwen"])
         orchestrator.assert_not_called()
 
+    def test_dispatch_ignores_terminal_blocked_cards(self):
+        tasks = [{
+            "id": "legacy-blocked",
+            "status": "blocked",
+            "assignee": mod.REVIEWER_PROFILE,
+        }]
+        with patch.object(
+            mod, "run_orchestrator", return_value={"AcquireStatus": "EMPTY"}
+        ) as orchestrator:
+            result = mod._dispatch_next_local_model_task(
+                mod.default_args(), tasks=tasks
+            )
+
+        self.assertEqual(result["status"], "EMPTY")
+        orchestrator.assert_called_once()
+
     def test_stale_local_model_lease_requeues_only_without_live_owner(self):
         active = [{
             "ID": "r1",
@@ -941,6 +957,26 @@ class PipelineContractTests(unittest.TestCase):
             count = mod.process_rejections(mod.default_args(), dry_run=True)
         self.assertEqual(count, 1)
         rework.assert_called_once()
+
+    def test_process_rejections_handles_done_tasks_with_rejection_prefix(self):
+        task = {
+            "id": "t-done-rej-prefix",
+            "assignee": mod.REVIEWER_PROFILE,
+            "status": "done",
+            "result": "REJECT - ACTION_AUTHORITY mismatch confirmed",
+            "body": "run_id: r2\nticket_id: t2\ninvestigation_task_id: t-inv-2\nreview_cycle: 0\n",
+        }
+        with patch.object(mod, "list_tasks", return_value=[task]), \
+             patch.object(mod, "query_active_runs", return_value=[{"ID": "r2"}]), \
+             patch.object(mod, "_source_has_rework", return_value=False), \
+             patch.object(mod, "get_runs", return_value=[{"summary": "Jev flag confirmed"}]), \
+             patch.object(mod, "create_rework_card", return_value="created") as rework:
+            count = mod.process_rejections(mod.default_args(), dry_run=True)
+            self.assertEqual(count, 1)
+            rework.assert_called_once()
+            self.assertTrue(mod.is_reviewer_rejection(task))
+            reason = mod.reviewer_block_reason(task)
+            self.assertIn("Jev flag confirmed", reason)
 
 
 if __name__ == "__main__":
