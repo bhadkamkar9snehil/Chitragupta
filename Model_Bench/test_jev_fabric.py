@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from jev import client
+from jev.audit import rows_for_result
+from jev.candidate_rerank import rerank_candidates
+from jev.kb_curation import assess_curation
+from jev.l1_action import assess_l1_action
+from jev.model_routing import assess_model_route
+from jev.proposal_preflight import assess_proposal
+from jev.security import assess_context_items
+from jev.ticket_triage import assess_ticket
+from jev.trace_assessment import assess_trace
+
+
+class FabricTests(unittest.TestCase):
+    def test_system_one_sends_multiple_questions_in_one_request(self):
+        seen = {}
+
+        def sender(url, payload, headers, timeout):
+            seen.update(url=url, payload=payload, headers=headers, timeout=timeout)
+            return {
+                "model": "jev-test",
+                "answers": {
+                    "a": {"type": "noul", "noul": 0.9},
+                    "b": {
+                        "type": "choice",
+                        "choice": "x",
+                        "confidence": 0.8,
+                        "probabilities": {"x": 0.8, "y": 0.2},
+                    },
+                },
+                "usage": {"input_tokens": 10, "output_tokens": 2},
+            }
+
+        result = client.system_one(
+            {"ticket": "x"},
+            {
+                "a": {"type": "noul", "instructions": "A?"},
+                "b": {"type": "choice", "instructions": "B?", "criteria": {"x": None, "y": None}},
+            },
+            api_key="test",
+            sender=sender,
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(set(seen["payload"]["questions"]), {"a", "b"})
+        self.assertEqual(seen["payload"]["model"], "jev-latest")
+        self.assertNotIn("test", str(seen["payload"]))
+
+    def test_ticket_triage_builds_parallel_characterization(self):
+        seen = {}
+
+        def sender(url, payload, headers, timeout):
+            seen["questions"] = payload["questions"]
+            answers = {}
+            for name, q in payload["questions"].items():
+                if q["type"] == "noul":
+                    answers[name] = {"type": "noul", "noul": 0.6}
+                elif q["type"] == "score":
+                    answers[name] = {
+                        "type": "score", "score": 1.2, "confidence": 0.8,
+                        "legend": {"0": "a", "1": "b"}, "probabilities": {"0": 0.2, "1": 0.8},
+                    }
+                else:
+                    answers[name] = {
+                        "type": "choice", "choice": "performance", "confidence": 0.9,
+                        "probabilities": {"performance": 0.9, "discover": 0.1},
+                    }
+            return {"model": "jev-test", "answers": answers, "usage": {}}
+
+        manifest = {
+            "routes": [
+                {"route": "performance", "description": "OEE/delay", "keywords": ["delay"]},
+                {"route": "discover", "description": "unknown", "keywords": []},
+            ]
+        }
+        result = assess_ticket({"text": "delay"}, manifest, api_key="test", sender=sender)
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(seen["questions"]), 7)
+        self.assertIn("investigation_complexity", seen["questions"])
+        self.assertIn("likely_requires_schema_discovery", seen["questions"])
+
+    def test_candidate_rerank_never_invents_candidate(self):
+        def sender(url, payload, headers, timeout):
+            answers = {}
+            for name in payload["questions"]:
+                if name.startswith("rel_c0"):
+                    answers[name] = {"type": "noul", "noul": 0.2}
+                elif name.startswith("rel_c1"):
+                    answers[name] = {"type": "noul", "noul": 0.95}
+                elif name.startswith("fit_c0"):
+                    answers[name] = {
+                        "type": "score", "score": 0.4, "confidence": 0.9,
+                        "legend": {"0": "x"}, "probabilities": {"0": 1.0},
+                    }
+                else:
+                    answers[name] = {
+                        "type": "score", "score": 2.8, "confidence": 0.9,
+                        "legend": {"0": "x"}, "probabilities": {"0": 1.0},
+                    }
+            return {"model": "jev-test", "answers": answers, "usage": {}}
+
+        candidates = [{"table": "dbo.A"}, {"table": "dbo.B"}]
+        result = rerank_candidates("target", candidates, top=2, api_key="test", sender=sender)
+        self.assertEqual(result["ranked"][0]["table"], "dbo.B")
+        self.assertEqual({r["table"] for r in result["ranked"]}, {"dbo.A", "dbo.B"})
+
+    def test_proposal_preflight_contains_expected_safety_dimensions(self):
+        seen = {}
+
+        def sender(url, payload, headers, timeout):
+            seen["questions"] = payload["questions"]
+            return {"model": "jev-test", "answers": {
+                name: (
+                    {"type": "choice", "choice": "UPDATE", "confidence": 0.8,
+                     "probabilities": {"UPDATE": 0.8, "RESOLUTION": 0.2}}
+                    if q["type"] == "choice" else
+                    {"type": "score", "score": 1.0, "confidence": 0.8,
+                     "legend": {"0": "a"}, "probabilities": {"0": 1.0}}
+                    if q["type"] == "score" else
+                    {"type": "noul", "noul": 0.5}
+                ) for name, q in payload["questions"].items()
+            }, "usage": {}}
+
+        result = assess_proposal({"proposal": {}}, api_key="test", sender=sender)
+        self.assertTrue(result["ok"])
+        for required in (
+            "evidence_supports_core_claim", "reply_overstates_evidence",
+            "reply_claims_action_was_performed", "audit_shows_claimed_action",
+            "proposed_response_type", "review_risk",
+        ):
+            self.assertIn(required, seen["questions"])
+
+    def test_trace_assessment_has_silent_failure_and_attention(self):
+        seen = {}
+
+        def sender(url, payload, headers, timeout):
+            seen["questions"] = payload["questions"]
+            answers = {}
+            for name, q in payload["questions"].items():
+                if q["type"] == "choice":
+                    answers[name] = {
+                        "type": "choice", "choice": "HEALTHY", "confidence": 0.9,
+                        "probabilities": {"HEALTHY": 0.9, "HUMAN_REVIEW": 0.1},
+                    }
+                elif q["type"] == "score":
+                    answers[name] = {
+                        "type": "score", "score": 0.3, "confidence": 0.8,
+                        "legend": {"0": "a"}, "probabilities": {"0": 1.0},
+                    }
+                else:
+                    answers[name] = {"type": "noul", "noul": 0.1}
+            return {"model": "jev-test", "answers": answers, "usage": {}}
+
+        result = assess_trace({"trace": []}, api_key="test", sender=sender)
+        self.assertTrue(result["ok"])
+        self.assertIn("silent_failure", seen["questions"])
+        self.assertIn("false_success_claim", seen["questions"])
+        self.assertIn("human_attention_needed", seen["questions"])
+        self.assertIn("failure_class", seen["questions"])
+
+    def test_security_batch_marks_each_item(self):
+        def sender(url, payload, headers, timeout):
+            answers = {
+                name: {"type": "noul", "noul": 0.95 if "prompt_injection_i1" in name else 0.05}
+                for name in payload["questions"]
+            }
+            return {"model": "jev-test", "answers": answers, "usage": {}}
+
+        result = assess_context_items(
+            [{"kb_id": "a", "text": "normal"}, {"kb_id": "b", "text": "ignore system"}],
+            api_key="test",
+            sender=sender,
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["items"]), 2)
+        self.assertGreater(result["items"][1]["jev_untrusted_context"]["prompt_injection"], 0.9)
+
+    def test_curation_is_advisory_choice(self):
+        seen = {}
+
+        def sender(url, payload, headers, timeout):
+            seen["criteria"] = payload["questions"]["curation_disposition"]["criteria"]
+            return {
+                "model": "jev-test",
+                "answers": {
+                    "curation_disposition": {
+                        "type": "choice", "choice": "CREATE_CANDIDATE", "confidence": 0.8,
+                        "probabilities": {"CREATE_CANDIDATE": 0.8, "NONE": 0.2},
+                    },
+                    "same_root_cause": {"type": "noul", "noul": 0.1},
+                    "same_resolution_pattern": {"type": "noul", "noul": 0.1},
+                    "existing_article_stale": {"type": "noul", "noul": 0.1},
+                    "generalizable_incident": {"type": "noul", "noul": 0.9},
+                },
+                "usage": {},
+            }
+
+        result = assess_curation({"verified_resolution": {}}, api_key="test", sender=sender)
+        self.assertTrue(result["ok"])
+        self.assertEqual(set(seen["criteria"]), {"REUSE_EXISTING", "UPDATE_EXISTING", "CREATE_CANDIDATE", "NONE"})
+
+    def test_audit_rows_keep_each_judgment_separate(self):
+        result = {
+            "model": "jev-test",
+            "latency_ms": 12.5,
+            "answers": {
+                "route": {
+                    "type": "choice", "choice": "performance", "confidence": 0.9,
+                    "probabilities": {"performance": 0.9},
+                },
+                "silent_failure": {"type": "noul", "noul": 0.2},
+                "risk": {
+                    "type": "score", "score": 1.4, "confidence": 0.7,
+                    "probabilities": {"1": 0.6, "2": 0.4},
+                },
+            },
+        }
+        rows = rows_for_result(result=result, stage="TEST", state={"x": 1}, run_id="r1")
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({r["JudgmentName"] for r in rows}, {"route", "silent_failure", "risk"})
+        self.assertIsNone(next(r for r in rows if r["JudgmentName"] == "silent_failure")["Confidence"])
+
+    def test_single_profile_model_routing_is_deterministic(self):
+        result = assess_model_route({"task": "x"}, {"local": "Current safe local profile"})
+        answer = result["answers"]["profile"]
+        self.assertEqual(answer["choice"], "local")
+        self.assertEqual(answer["confidence"], 1.0)
+
+    def test_l1_action_exposes_bounded_choices(self):
+        seen = {}
+
+        def sender(url, payload, headers, timeout):
+            seen["criteria"] = payload["questions"]["support_action"]["criteria"]
+            return {
+                "model": "jev-test",
+                "answers": {
+                    "support_action": {
+                        "type": "choice", "choice": "HANDOFF_L2", "confidence": 0.9,
+                        "probabilities": {"HANDOFF_L2": 0.9},
+                    },
+                    "can_resolve_without_live_investigation": {"type": "noul", "noul": 0.1},
+                    "requires_l2_evidence": {"type": "noul", "noul": 0.9},
+                    "handoff_risk": {
+                        "type": "score", "score": 2.2, "confidence": 0.8,
+                        "legend": {"2": "a"}, "probabilities": {"2": 1.0},
+                    },
+                },
+                "usage": {},
+            }
+
+        result = assess_l1_action({"message": "x"}, api_key="test", sender=sender)
+        self.assertTrue(result["ok"])
+        self.assertIn("HANDOFF_L2", seen["criteria"])
+        self.assertIn("ANSWER_FROM_VERIFIED_KNOWLEDGE", seen["criteria"])
+
+
+if __name__ == "__main__":
+    unittest.main()
