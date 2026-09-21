@@ -265,7 +265,7 @@ _SCHEMA = {
         "type": "object",
         "properties": {
             "operation": {"type": "string", "enum": [
-                "select", "query", "suggest_tables", "find_objects",
+                "select", "query", "probe_table", "suggest_tables", "find_objects",
                 "get_definition", "validate_identifiers", "read_procedure",
                 "get_ticket_context", "get_run_actions", "save_ledger"
             ]},
@@ -274,6 +274,7 @@ _SCHEMA = {
             ]},
             "run_id": {"type": "string"},
             "ticket_id": {"type": "string"},
+            "ticket": {"type": "object"},
             "table": {"type": "string"},
             "columns": {"type": "array", "items": {"type": "string"}},
             "where": {"type": "string"},
@@ -286,6 +287,7 @@ _SCHEMA = {
             "schema": {"type": "string"},
             "object_name": {"type": "string"},
             "identifiers": {"type": "array", "items": {"type": "string"}},
+            "matched_columns": {"type": "array", "items": {"type": "string"}},
             "procedure": {"type": "string"},
             "parameters": {"type": "object"},
             "ledger": {"type": "object"}
