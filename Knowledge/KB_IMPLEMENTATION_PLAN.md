@@ -1414,6 +1414,37 @@ Any optimization must beat the baseline evaluation set without materially worsen
 
 ---
 
+# 28a. Jev semantic layer implementation status
+
+The TypeSafe Jev System-One layer is implemented around the KB without changing the core knowledge invariants above.
+
+Implemented now:
+
+- deterministic textual relevance remains the first gate;
+- only Approved articles are eligible for normal retrieval once the governed schema is deployed;
+- one parallel ticket triage request provides route/ambiguity/complexity/live-state/schema/known-issue judgments;
+- retrieved Solution candidates receive separate Jev relevance, applicability, negative-indicator, same-pattern and root-cause-family judgments;
+- retrieved text receives untrusted-context/prompt-injection markings without silent deletion;
+- Hermes_KB_Retrieval_Trn_Tbl records deterministic and semantic retrieval dimensions separately;
+- post-resolution curation uses a bounded near-duplicate candidate pool and may suggest REUSE_EXISTING, UPDATE_EXISTING, CREATE_CANDIDATE or NONE;
+- post-resolution Jev curation is advisory only and cannot create, update, promote or merge an article;
+- governed Solution fields (KnowledgeType, ArticleStatus, revision/provenance, applicability, negative indicators, verification/evidence structure) are present in the SQL migration;
+- reuse outcome fields distinguish actual use from successful outcome.
+
+Still intentionally pending from the larger KB program:
+
+- Qdrant hermes_kb_v1 indexing and dense+sparse/RRF retrieval;
+- Git semantic-section indexing;
+- formal KB evaluation corpus and threshold calibration;
+- automated article-health transitions from failed reuse/reopen;
+- promotion workflow/UI.
+
+When Qdrant is added, its output should feed the existing Jev applicability/reranking interface as candidate input. Do not replace provenance, lifecycle filters, abstention, or live verification with Jev.
+
+Shadow mode remains the default while real ticket outcomes are collected. Semantic relevance and applicability must be calibrated independently; neither is equivalent to source truth.
+
+---
+
 # 29. Implementation file map
 
 Expected areas of change by phase.
@@ -1534,15 +1565,17 @@ The KB implementation is considered complete when all of the following are true:
 
 # 33. Immediate next implementation slice
 
-After local validation of the current baseline, implement **Phase 1 only** first:
+The schema/lifecycle foundation, Approved-only compatibility path, Jev applicability layer, retrieval telemetry, and advisory post-resolution curation are now implemented on the Jev integration branch.
 
-1. design and add SQL lifecycle/provenance fields;
-2. preserve backward compatibility;
-3. change new resolution-derived knowledge from unconditional article creation to explicit Candidate/none/reuse-ready flow;
-4. ensure normal retrieval only considers Approved articles;
-5. add local tests for lifecycle filtering and duplicate-safe identity.
+Before Qdrant cutover:
 
-Do **not** begin the Qdrant hybrid index before Phase 1-3 have corrected knowledge creation, lifecycle and reuse semantics. Better retrieval over a polluted article corpus would only make bad knowledge easier to find.
+1. run the full local SQL migration/postflight and Python contract suite;
+2. exercise naturally arriving tickets in Jev shadow mode and build calibration data;
+3. confirm existing Solution creation/publication code does not bypass Candidate/governance policy;
+4. add the maintained local KB evaluation corpus;
+5. then implement the versioned Qdrant dense+sparse/RRF index and feed its candidate set into the already-built Jev applicability layer.
+
+Do not switch production retrieval to Qdrant until Phase 1-3 lifecycle/governance behavior and evaluation gates are proven locally.
 
 ---
 
