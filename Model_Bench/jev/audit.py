@@ -17,15 +17,10 @@ from .policy import AUDIT_ENABLED, POLICY_VERSION
 _STAGE_COLUMNS = {
     "TICKET_TRIAGE": "JevTriageJson",
     "TICKET_SECURITY": "JevTriageJson",
-    "MODEL_ROUTING": "JevTriageJson",
     "KB_APPLICABILITY": "JevInvestigationJson",
     "KB_SECURITY": "JevInvestigationJson",
-    "TOOL_CANDIDATE_RERANK": "JevInvestigationJson",
-    "TOOL_QUERY_SEMANTICS": "JevInvestigationJson",
-    "TOOL_ROW_RERANK": "JevInvestigationJson",
     "JEV_EVIDENCE_PLAN": "JevInvestigationJson",
     "JEV_INVESTIGATION": "JevInvestigationJson",
-    "PROPOSAL_PREFLIGHT": "JevReviewJson",
     "PRIMARY_REVIEW": "JevReviewJson",
     "TRACE_ASSESSMENT": "JevTraceJson",
     "POST_RESOLUTION_KB": "JevKBCurationJson",
@@ -141,9 +136,26 @@ def _merge_stage_json(existing: str | None, stage: str, payload: dict[str, Any])
     return json.dumps(current, separators=(",", ":"), default=str)
 
 
+def _same_stage_input(existing: str | None, stage: str, first: dict[str, Any]) -> bool:
+    try:
+        current = json.loads(existing) if existing else {}
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(current, dict):
+        return False
+    prior = current.get(stage)
+    if not isinstance(prior, dict):
+        return False
+    return (
+        prior.get("input_hash") == first.get("InputHash")
+        and prior.get("policy_version") == first.get("PolicyVersion")
+        and prior.get("question_version") == first.get("QuestionVersion")
+    )
+
+
 def _review_summary(answers: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
     decision_a = answers.get("decision") or {}
-    risk_a = answers.get("publication_risk") or answers.get("review_risk") or {}
+    risk_a = answers.get("publication_risk") or {}
     decision = decision_a.get("choice") if decision_a.get("type") == "choice" else None
     confidence = decision_a.get("confidence") if decision_a.get("type") == "choice" else None
     risk = risk_a.get("score") if risk_a.get("type") == "score" else None
@@ -176,6 +188,8 @@ def _persist_group(conn, rows: list[dict[str, Any]]) -> int:
         cur.execute(f"SELECT {column} FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE ID = ? AND IsDeleted = 0", run_id)
         found = cur.fetchone()
         if found is not None:
+            if _same_stage_input(found[0], stage, first):
+                return 0
             merged = _merge_stage_json(found[0], stage, payload)
             if stage == "PRIMARY_REVIEW":
                 decision, confidence, risk, local_required = _review_summary(answers)
