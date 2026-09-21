@@ -102,6 +102,21 @@ def trace_events(cur, run_id: str) -> list[dict[str, Any]]:
     return compact
 
 
+def ticket_feedback(cur, ticket_id: str) -> list[dict[str, Any]]:
+    """Later CSAT/reopen feedback, when available, is valuable calibration context."""
+    cur.execute(
+        """
+        SELECT TOP 10 SatisfactionRating, FeedbackText, IsReopen,
+               ReopenedFromTicketID, SubmittedOn
+        FROM dbo.Hermes_Ticket_Feedback_Trn_Tbl
+        WHERE TicketID = ? AND IsDeleted = 0
+        ORDER BY SubmittedOn DESC;
+        """,
+        ticket_id,
+    )
+    return _dict_rows(cur)
+
+
 def sql_actions(cur, run_id: str) -> list[dict[str, Any]]:
     cur.execute(
         """
@@ -148,6 +163,7 @@ def state_for(cur, run: dict[str, Any]) -> dict[str, Any]:
         },
         "tool_and_model_trace": trace_events(cur, str(run["RunID"])),
         "sql_action_audit": sql_actions(cur, str(run["RunID"])),
+        "customer_feedback_and_reopen": ticket_feedback(cur, str(run["TicketID"])),
     }
 
 
