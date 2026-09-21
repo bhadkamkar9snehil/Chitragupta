@@ -1481,23 +1481,71 @@ def process_unreviewable_completions(args: argparse.Namespace, *, dry_run: bool 
     return processed
 
 
+def is_reviewer_rejection(task: dict[str, Any]) -> bool:
+    if str(task.get("status") or "").lower() == "blocked":
+        return True
+    result_val = str(task.get("result") or "").strip().upper()
+    if result_val in ("REJECT", "REJECTED", "BLOCK", "BLOCKED"):
+        return True
+    profile = task.get("assignee") or ""
+    task_id = task.get("id")
+    if not task_id:
+        return False
+    runs = get_runs(task_id)
+    for r in runs:
+        if profile and r.get("profile") != profile:
+            continue
+        if r.get("outcome") == "blocked":
+            return True
+        summary = str(r.get("summary") or "").strip().lower()
+        if summary.startswith("reject") or "rejected frozen proposal" in summary:
+            return True
+    return False
+
+
 def reviewer_block_reason(task: dict[str, Any]) -> str:
     profile = task.get("assignee") or ""
-    runs = get_runs(task["id"])
-    blocks = [
+    task_id = task.get("id") or ""
+    runs = get_runs(task_id) if task_id else []
+    candidates = [
         r for r in runs
-        if r.get("outcome") == "blocked" and (not profile or r.get("profile") == profile)
+        if (not profile or r.get("profile") == profile)
+        and (
+            r.get("outcome") == "blocked"
+            or str(r.get("summary") or "").strip().lower().startswith("reject")
+            or "rejected frozen proposal" in str(r.get("summary") or "").lower()
+        )
     ]
-    if not blocks:
-        blocks = [r for r in runs if r.get("outcome") == "blocked"]
-    return ((blocks[-1].get("summary") if blocks else None) or "Reviewer rejected without a recorded reason.").strip()
+    if not candidates:
+        candidates = [
+            r for r in runs
+            if r.get("outcome") == "blocked"
+            or str(r.get("summary") or "").strip().lower().startswith("reject")
+            or "rejected frozen proposal" in str(r.get("summary") or "").lower()
+        ]
+    summary = candidates[-1].get("summary") if candidates else None
+    if not summary and runs:
+        summary = runs[-1].get("summary")
+    return (summary or "Reviewer rejected without a recorded reason.").strip()
 
 
 def process_rejections(args: argparse.Namespace, *, dry_run: bool = False) -> int:
     processed = 0
-    for task in list_tasks("blocked"):
-        if (task.get("assignee") or "") not in REVIEWER_PROFILES:
-            continue
+    candidate_tasks = []
+    seen_ids = set()
+    for status_filter in ("blocked", "done"):
+        for task in list_tasks(status_filter):
+            task_id = task.get("id")
+            if not task_id or task_id in seen_ids:
+                continue
+            seen_ids.add(task_id)
+            if (task.get("assignee") or "") not in REVIEWER_PROFILES:
+                continue
+            if not is_reviewer_rejection(task):
+                continue
+            candidate_tasks.append(task)
+
+    for task in candidate_tasks:
         run_id = task_run_id(task)
         if not run_id or not safe_query_active_run(run_id, args):
             continue
@@ -1625,6 +1673,8 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dic
     for task in list_tasks("done"):
         if (task.get("assignee") or "") not in REVIEWER_PROFILES:
             continue
+        if is_reviewer_rejection(task):
+            continue
         run_id, ticket_id = task_run_id(task), task_ticket_id(task)
         if not run_id or not ticket_id:
             continue
@@ -1709,6 +1759,8 @@ def audit_done_reviewers(args: argparse.Namespace, *, dry_run: bool = False) -> 
     false_positives = 0
     for task in list_tasks("done"):
         if (task.get("assignee") or "") not in REVIEWER_PROFILES:
+            continue
+        if is_reviewer_rejection(task):
             continue
         run_id = task_run_id(task)
         if not run_id:
