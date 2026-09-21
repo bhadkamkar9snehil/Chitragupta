@@ -1,6 +1,6 @@
 ---
 name: xstudio-l2-ticket-workflow
-description: "Investigate one already-claimed XStudio L2 Helpdesk ticket and hand a structured proposal to the deterministic deferred-review stage."
+description: "Investigate one already-claimed XStudio L2 Helpdesk ticket and hand a structured proposal to deterministic Jev-primary review/publication."
 version: 1.0.0
 author: Snehil Bhadkamkar, Hermes Agent
 license: MIT
@@ -13,7 +13,7 @@ metadata:
 
 # XStudio L2 Ticket Workflow
 
-Use this skill only for an investigator/rework card that already belongs to one claimed L2 SQL run. Claiming, reviewer creation, rework scheduling, publication, and workflow transitions are deterministic runtime responsibilities.
+Use this skill only for an investigator/rework card that already belongs to one claimed L2 SQL run. Claiming, local-review fallback creation, rework scheduling, publication, and workflow transitions are deterministic runtime responsibilities.
 
 ## Current lifecycle
 
@@ -91,7 +91,7 @@ These are **leads, not proof**:
 4. **Start with the narrowest high-value live read.** Prefer verified comprehensive views before hand-building joins.
 5. **Discover rather than guess.** Use `suggest_tables`, `find_objects`, `get_definition`, and `validate_identifiers` when schema/object names are uncertain.
 6. **Verify the actual incident.** Knowledge files, old tickets, history, Qdrant hits, and mem0 are leads; live ticket-specific evidence is the authority when available.
-7. **Record meaningful findings.** Use `save_ledger` for ticket-specific evidence that the reviewer or later continuation should be able to inspect.
+7. **Record meaningful findings.** Use `save_ledger` for ticket-specific evidence that the review stage or later continuation should be able to inspect.
 8. **Choose the response type conservatively.**
 9. **Complete your own Kanban card with structured metadata.** Do not publish the ticket yourself.
 
@@ -99,7 +99,7 @@ These are **leads, not proof**:
 
 ### `RESOLUTION`
 
-Use only when the outcome is verified strongly enough that the user-facing ticket may be closed after independent review.
+Use only when the outcome is verified strongly enough that the user-facing ticket may be closed after semantic review.
 
 ### `QUESTION`
 
@@ -160,4 +160,4 @@ After rework completion is normalized, the reconciler runs a **fresh Jev primary
 
 ## Completion rule
 
-Do not end by saying “done” in prose. The required handoff is the structured Kanban completion. Publication happens later, deterministically, only after reviewer approval.
+Do not end by saying “done” in prose. The required handoff is the structured Kanban completion. Publication happens later, deterministically, only after semantic review approval.
