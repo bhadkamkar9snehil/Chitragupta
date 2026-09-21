@@ -9,10 +9,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from jev import client
 from jev.audit import rows_for_result
-from jev.candidate_rerank import rerank_candidates
 from jev.evidence_plan import plan_evidence
 from jev.investigation_assessment import assess_investigation
-from jev.kb_curation import assess_curation
+from jev.kb_curation import assess_curation, rerank_articles
 from jev.reviewer import review_proposal
 from jev.security import assess_context_items
 from jev.ticket_triage import assess_ticket
@@ -86,15 +85,15 @@ class FabricTests(unittest.TestCase):
         self.assertIn("investigation_complexity", seen["questions"])
         self.assertIn("likely_requires_schema_discovery", seen["questions"])
 
-    def test_candidate_rerank_never_invents_candidate(self):
+    def test_kb_article_rerank_never_invents_candidate(self):
         def sender(url, payload, headers, timeout):
             answers = {}
             for name in payload["questions"]:
-                if name.startswith("rel_c0"):
+                if name.startswith("relevant_c0"):
                     answers[name] = {"type": "noul", "noul": 0.2}
-                elif name.startswith("rel_c1"):
+                elif name.startswith("relevant_c1"):
                     answers[name] = {"type": "noul", "noul": 0.95}
-                elif name.startswith("fit_c0"):
+                elif name.startswith("same_pattern_c0"):
                     answers[name] = {
                         "type": "score", "score": 0.4, "confidence": 0.9,
                         "legend": {"0": "x"}, "probabilities": {"0": 1.0},
@@ -107,7 +106,7 @@ class FabricTests(unittest.TestCase):
             return {"model": "jev-test", "answers": answers, "usage": {}}
 
         candidates = [{"table": "dbo.A"}, {"table": "dbo.B"}]
-        result = rerank_candidates("target", candidates, top=2, api_key="test", sender=sender)
+        result = rerank_articles("target", candidates, top=2, api_key="test", sender=sender)
         self.assertEqual(result["ranked"][0]["table"], "dbo.B")
         self.assertEqual({r["table"] for r in result["ranked"]}, {"dbo.A", "dbo.B"})
 
