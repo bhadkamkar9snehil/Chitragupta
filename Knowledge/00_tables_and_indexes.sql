@@ -653,3 +653,199 @@ BEGIN
         WHERE RunID IS NOT NULL AND IsDeleted = 0;
 END;
 GO
+
+
+/* ============================================================================
+   Governed reusable-knowledge lifecycle required by Jev applicability/curation.
+   These ALTERs migrate the existing Solution table in place and preserve all
+   legacy content. Jev suggestions never directly change ArticleStatus.
+   ============================================================================ */
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'KnowledgeType') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD KnowledgeType varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ArticleStatus') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ArticleStatus varchar(30) NOT NULL
+        CONSTRAINT DF_Hermes_Solution_ArticleStatus DEFAULT ('Approved') WITH VALUES;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'CanonicalKey') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD CanonicalKey varchar(250) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'RevisionNo') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD RevisionNo int NOT NULL
+        CONSTRAINT DF_Hermes_Solution_RevisionNo DEFAULT (1) WITH VALUES;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ContentHash') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ContentHash varchar(64) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'SourceTicketID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD SourceTicketID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'SourceRunID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD SourceRunID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'SupersedesSolutionID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD SupersedesSolutionID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'SupersededBySolutionID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD SupersededBySolutionID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ApprovedOn') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ApprovedOn datetime NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ApprovedBy') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ApprovedBy varchar(200) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'LastVerifiedOn') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD LastVerifiedOn datetime NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'LastVerifiedRunID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD LastVerifiedRunID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ApplicabilityJson') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ApplicabilityJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'NegativeIndicatorsJson') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD NegativeIndicatorsJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'VerificationJson') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD VerificationJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'EvidenceJson') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD EvidenceJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'DiagnosticSteps') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD DiagnosticSteps nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'VerificationSteps') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD VerificationSteps nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ExpectedResult') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ExpectedResult nvarchar(max) NULL;
+GO
+
+UPDATE dbo.Hermes_Solution_Article_Mst_Tbl
+SET KnowledgeType = COALESCE(KnowledgeType, 'KnownIssue'),
+    ArticleStatus = CASE
+        WHEN ArticleStatus IS NOT NULL THEN ArticleStatus
+        WHEN IsActive = 1 THEN 'Approved'
+        ELSE 'Deprecated'
+    END
+WHERE KnowledgeType IS NULL OR ArticleStatus IS NULL;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.check_constraints
+    WHERE parent_object_id = OBJECT_ID('dbo.Hermes_Solution_Article_Mst_Tbl')
+      AND name = 'CK_Hermes_Solution_ArticleStatus'
+)
+BEGIN
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl
+    ADD CONSTRAINT CK_Hermes_Solution_ArticleStatus
+        CHECK (ArticleStatus IN ('Candidate','Approved','NeedsReview','Superseded','Deprecated'));
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.check_constraints
+    WHERE parent_object_id = OBJECT_ID('dbo.Hermes_Solution_Article_Mst_Tbl')
+      AND name = 'CK_Hermes_Solution_KnowledgeType'
+)
+BEGIN
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl
+    ADD CONSTRAINT CK_Hermes_Solution_KnowledgeType
+        CHECK (KnowledgeType IS NULL OR KnowledgeType IN ('KnownIssue','Diagnostic','HowTo'));
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Solution_Article_Mst_Tbl')
+      AND name = 'IX_Hermes_Solution_StatusRoute'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Solution_StatusRoute
+        ON dbo.Hermes_Solution_Article_Mst_Tbl(ArticleStatus, Route, KnowledgeType)
+        INCLUDE (CanonicalKey, LastVerifiedOn, UsageCount)
+        WHERE IsDeleted = 0;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Solution_Article_Mst_Tbl')
+      AND name = 'IX_Hermes_Solution_CanonicalKey'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Solution_CanonicalKey
+        ON dbo.Hermes_Solution_Article_Mst_Tbl(CanonicalKey)
+        WHERE CanonicalKey IS NOT NULL AND IsDeleted = 0;
+END;
+GO
+
+/* Distinguish retrieval, actual use, and verified outcome. */
+IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'UseDisposition') IS NULL
+    ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD UseDisposition varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'OutcomeStatus') IS NULL
+    ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD OutcomeStatus varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'OutcomeReason') IS NULL
+    ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD OutcomeReason nvarchar(1000) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'OutcomeOn') IS NULL
+    ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD OutcomeOn datetime NULL;
+GO
+
+/* Retrieval telemetry: similarity/relevance is not truth or successful use. */
+IF OBJECT_ID('dbo.Hermes_KB_Retrieval_Trn_Tbl', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Hermes_KB_Retrieval_Trn_Tbl
+    (
+        ID                   varchar(36)   NOT NULL
+            CONSTRAINT DF_Hermes_KB_Retrieval_ID DEFAULT (NEWID()),
+        TicketID             varchar(36)   NULL,
+        RunID                varchar(36)   NULL,
+        QueryPhase           varchar(30)   NOT NULL,
+        QueryHash            varchar(64)   NOT NULL,
+        KBID                 varchar(200)  NOT NULL,
+        SourceType           varchar(50)   NULL,
+        RankNo               int           NULL,
+        DenseRank            int           NULL,
+        SparseRank           int           NULL,
+        FusionScore          decimal(18,6) NULL,
+        DeterministicScore   decimal(18,6) NULL,
+        JevRelevance         decimal(9,6)  NULL,
+        JevApplicability     decimal(9,6)  NULL,
+        JevNegativeIndicator decimal(9,6)  NULL,
+        RouteMatch           bit           NULL,
+        ScopeMatch           bit           NULL,
+        Selected             bit           NULL,
+        SelectionDisposition varchar(50)   NULL,
+        RetrievedOn          datetime      NOT NULL
+            CONSTRAINT DF_Hermes_KB_Retrieval_RetrievedOn DEFAULT (GETDATE()),
+        CreatedOn            datetime      NOT NULL
+            CONSTRAINT DF_Hermes_KB_Retrieval_CreatedOn DEFAULT (GETDATE()),
+        IsDeleted            bit           NOT NULL
+            CONSTRAINT DF_Hermes_KB_Retrieval_IsDeleted DEFAULT (0),
+        CONSTRAINT PK_Hermes_KB_Retrieval PRIMARY KEY CLUSTERED (ID)
+    );
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_KB_Retrieval_Trn_Tbl')
+      AND name = 'IX_Hermes_KB_Retrieval_Run'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_KB_Retrieval_Run
+        ON dbo.Hermes_KB_Retrieval_Trn_Tbl(RunID, QueryPhase, RetrievedOn DESC)
+        INCLUDE (KBID, RankNo, JevRelevance, JevApplicability, JevNegativeIndicator, Selected)
+        WHERE IsDeleted = 0;
+END;
+GO
