@@ -28,60 +28,67 @@ REWORK_REASONS = {
 }
 
 
-def review_proposal(state: dict[str, Any], *, api_key: str | None = None, sender=None) -> dict[str, Any]:
-    questions = {
-        "decision": {
-            "type": "choice",
-            "instructions": (
-                "Act as the primary bounded semantic reviewer. Choose APPROVE only when the "
-                "frozen proposal is supported by the supplied live evidence and action audit, "
-                "does not overclaim, and matches worker authority. Use LOCAL_REVIEW when deeper "
-                "reasoning is genuinely required rather than guessing."
-            ),
-            "criteria": DECISIONS,
-        },
-        "rework_reason": {
-            "type": "choice",
-            "instructions": "If the decision is REWORK, choose the main correctable reason. Otherwise choose OTHER.",
-            "criteria": REWORK_REASONS,
-        },
-        "evidence_supports_core_claim": {
-            "type": "noul",
-            "instructions": "Does the supplied evidence materially support the proposal's core factual claim?",
-        },
-        "reply_overstates_evidence": {
-            "type": "noul",
-            "instructions": "Does the reply overstate certainty, causation, completion, or success relative to the evidence?",
-        },
-        "reply_claims_action_was_performed": {
-            "type": "noul",
-            "instructions": "Does the reply claim or clearly imply that a corrective/configuration/production action was performed?",
-        },
-        "audit_shows_claimed_action": {
-            "type": "noul",
-            "instructions": "If the reply claims an action was performed, is that action supported by the action audit? If no action is claimed, answer yes.",
-        },
-        "root_cause_established": {
-            "type": "noul",
-            "instructions": "If a root cause is asserted, is it established by current evidence rather than merely plausible?",
-        },
-        "response_type_fit": {
-            "type": "noul",
-            "instructions": "Does the proposed response type fit the evidence, unresolved uncertainty, requester-information needs, and worker authority?",
-        },
-        "needs_deep_local_reasoning": {
-            "type": "noul",
-            "instructions": "Would a stronger local/System-2 reviewer materially improve correctness because evidence is conflicting, nuanced, or underdetermined?",
-        },
-        "publication_risk": {
-            "type": "score",
-            "instructions": "Rate semantic/publication risk of publishing the frozen proposal now.",
-            "criteria": [
-                "Low: narrow claims directly supported; no authority mismatch.",
-                "Moderate: one focused uncertainty remains.",
-                "High: material evidence/claim ambiguity or response-type risk.",
-                "Very high: likely false success, unsupported action, major overclaim, or unsafe outcome.",
-            ],
-        },
-    }
-    return system_one(state, questions, api_key=api_key, sender=sender)
+QUESTIONS = {
+    "decision": {
+        "type": "choice",
+        "instructions": (
+            "Act as the primary bounded semantic reviewer. Choose APPROVE only when the "
+            "frozen proposal is supported by the supplied live evidence and action audit, "
+            "does not overclaim, and matches worker authority. Use LOCAL_REVIEW when deeper "
+            "reasoning is genuinely required rather than guessing."
+        ),
+        "criteria": DECISIONS,
+    },
+    "rework_reason": {
+        "type": "choice",
+        "instructions": "If the decision is REWORK, choose the main correctable reason. Otherwise choose OTHER.",
+        "criteria": REWORK_REASONS,
+    },
+    "evidence_supports_core_claim": {
+        "type": "noul",
+        "instructions": "Does the supplied evidence materially support the proposal's core factual claim?",
+    },
+    "reply_overstates_evidence": {
+        "type": "noul",
+        "instructions": "Does the reply overstate certainty, causation, completion, or success relative to the evidence?",
+    },
+    "reply_claims_action_was_performed": {
+        "type": "noul",
+        "instructions": "Does the reply claim or clearly imply that a corrective/configuration/production action was performed?",
+    },
+    "audit_shows_claimed_action": {
+        "type": "noul",
+        "instructions": "If the reply claims an action was performed, is that action supported by the action audit? If no action is claimed, answer yes.",
+    },
+    "root_cause_established": {
+        "type": "noul",
+        "instructions": "If a root cause is asserted, is it established by current evidence rather than merely plausible?",
+    },
+    "response_type_fit": {
+        "type": "noul",
+        "instructions": "Does the proposed response type fit the evidence, unresolved uncertainty, requester-information needs, and worker authority?",
+    },
+    "needs_deep_local_reasoning": {
+        "type": "noul",
+        "instructions": "Would a stronger local/System-2 reviewer materially improve correctness because evidence is conflicting, nuanced, or underdetermined?",
+    },
+    "publication_risk": {
+        "type": "score",
+        "instructions": "Rate semantic/publication risk of publishing the frozen proposal now.",
+        "criteria": [
+            "Low: narrow claims directly supported; no authority mismatch.",
+            "Moderate: one focused uncertainty remains.",
+            "High: material evidence/claim ambiguity or response-type risk.",
+            "Very high: likely false success, unsupported action, major overclaim, or unsafe outcome.",
+        ],
+    },
+}
+
+
+def review_proposal(
+    state: dict[str, Any],
+    *,
+    api_key: str | None = None,
+    sender=None,
+) -> dict[str, Any]:
+    return system_one(state, QUESTIONS, api_key=api_key, sender=sender)
