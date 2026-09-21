@@ -186,6 +186,7 @@ class PipelineContractTests(unittest.TestCase):
              patch.object(mod, "_run_xstudio_bridge", return_value={"ok": True, "probe_possible": True, "rows": [{"HeatNo": "H1"}]}) as probe:
             package = mod._jev_first_investigation(
                 ticket={"HeatNo": "H1"},
+                ticket_context={"TicketNo": "T1", "HeatNo": "H1", "BriefDetails": "heat issue"},
                 run_id="r1",
                 ticket_id="t1",
                 suggested_tables=[
@@ -197,6 +198,89 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(probe.call_count, 1)
         self.assertEqual(package["local_model_scope"], "COMPOSE_ONLY")
         self.assertEqual(package["max_additional_live_reads"], 1)
+
+    def test_context_compiler_pins_ticket_and_live_evidence_even_when_jev_scores_low(self):
+        chunks = [
+            {
+                "id": "ticket", "kind": "ticket", "authority": "CURRENT_TICKET",
+                "source": "ticket", "attention_question": "context_c0",
+                "minimum_level": 2, "fallback_level": 3,
+                "content": {"BriefDetails": "current symptom"},
+                "compact": {"BriefDetails": "current symptom"},
+                "summary": {"BriefDetails": "current symptom"},
+            },
+            {
+                "id": "kb_solution_0", "kind": "knowledge", "authority": "APPROVED_KB_LEAD",
+                "source": "solution:1", "attention_question": "context_c1",
+                "minimum_level": 0, "fallback_level": 1,
+                "content": {"title": "old issue"}, "compact": {"title": "old issue"},
+                "summary": {"title": "old issue"},
+            },
+            {
+                "id": "live_probe_0", "kind": "live_evidence", "authority": "LIVE_SQL_EVIDENCE",
+                "source": "XStudio_Xbatch.dbo.Heat", "attention_question": "context_c2",
+                "minimum_level": 2, "fallback_level": 3,
+                "content": {"rows": [{"HeatNo": "H1", "Status": "Failed"}]},
+                "compact": {"rows": [{"HeatNo": "H1", "Status": "Failed"}]},
+                "summary": {"row_count": 1},
+            },
+        ]
+        assessment = {
+            "ok": True,
+            "answers": {
+                "context_c0": {"type": "score", "score": 0.0, "confidence": 0.9},
+                "context_c1": {"type": "score", "score": 0.0, "confidence": 0.9},
+                "context_c2": {"type": "score", "score": 0.0, "confidence": 0.9},
+                "known_solution": {"type": "choice", "choice": "NONE", "confidence": 0.9},
+            },
+        }
+        view = mod._compile_model_context(chunks, assessment, budget_chars=4000)
+        included = {row["id"]: row for row in view["chunks"]}
+        self.assertIn("ticket", included)
+        self.assertIn("live_probe_0", included)
+        self.assertEqual(included["ticket"]["presentation"], "COMPACT")
+        self.assertEqual(included["live_probe_0"]["presentation"], "COMPACT")
+        self.assertNotIn("kb_solution_0", included)
+        self.assertEqual(view["omitted"][0]["id"], "kb_solution_0")
+
+    def test_context_compiler_pins_jev_selected_known_solution(self):
+        chunks = [{
+            "id": "kb_solution_0", "kind": "knowledge", "authority": "APPROVED_KB_LEAD",
+            "source": "solution:1", "attention_question": "context_c0",
+            "minimum_level": 0, "fallback_level": 1,
+            "content": {"title": "known fix", "resolution_steps": "verified steps"},
+            "compact": {"title": "known fix", "resolution_steps": "verified steps"},
+            "summary": {"title": "known fix"},
+        }]
+        assessment = {
+            "ok": True,
+            "answers": {
+                "known_solution": {"type": "choice", "choice": "s0", "confidence": 0.95},
+                "context_c0": {"type": "score", "score": 0.0, "confidence": 0.9},
+            },
+        }
+        view = mod._compile_model_context(chunks, assessment, budget_chars=2000)
+        self.assertEqual(view["chunks"][0]["id"], "kb_solution_0")
+        self.assertEqual(view["chunks"][0]["presentation"], "COMPACT")
+
+    def test_context_compiler_omits_whole_low_value_chunk_instead_of_global_truncation(self):
+        huge = "x" * 12000
+        chunks = [{
+            "id": "history", "kind": "history", "authority": "HISTORICAL_RUNS",
+            "source": "prior attempts", "attention_question": "context_c0",
+            "minimum_level": 0, "fallback_level": 1,
+            "content": {"text": huge}, "compact": {"text": huge},
+            "summary": {"text": huge},
+        }]
+        assessment = {
+            "ok": True,
+            "answers": {"context_c0": {"type": "score", "score": 2.9, "confidence": 0.9}},
+        }
+        view = mod._compile_model_context(chunks, assessment, budget_chars=100)
+        self.assertEqual(view["chunks"], [])
+        self.assertEqual(view["omitted"][0]["reason"], "context budget")
+        # The compiler result remains valid structured JSON; no assembled JSON string is sliced.
+        json.loads(json.dumps(view))
 
     def test_resolution_fails_closed_without_binding(self):
         with self.assertRaises(RuntimeError):
