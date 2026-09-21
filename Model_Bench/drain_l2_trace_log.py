@@ -173,8 +173,7 @@ def main():
                 UPDATE dbo.Hermes_Agent_Trace_Trn_Tbl
                 SET
                     RunID = COALESCE(RunID, ?),
-                    TicketID = COALESCE(TicketID, ?),
-                    ModifiedOn = GETDATE()
+                    TicketID = COALESCE(TicketID, ?)
                 WHERE TaskID = ?
                   AND IsDeleted = 0
                   AND (RunID IS NULL OR TicketID IS NULL);
