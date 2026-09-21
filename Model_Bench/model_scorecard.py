@@ -71,18 +71,21 @@ def fetch_runs(server, database, username, password, since=None, until=None, run
         cur = conn.cursor()
         cur.execute("SELECT CASE WHEN OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NULL THEN 0 ELSE 1 END")
         has_jev = bool(cur.fetchone()[0])
+        jev_fields = [
+            "TaskCompletedProbability", "EvidenceGatheredProbability",
+            "SilentFailureProbability", "FalseSuccessClaimProbability",
+            "PolicyViolationProbability", "TransportFlailingProbability",
+            "HumanAttentionProbability", "UnnecessaryToolRepetitionScore",
+            "InvestigationEfficiencyScore", "AttentionPriorityScore",
+            "FailureClass", "FailureClassConfidence",
+            "ReviewEvidenceSupportProbability", "ReviewOverclaimProbability",
+            "ReviewActionClaimProbability", "ReviewActionAuditProbability",
+            "ReviewRiskScore", "JevReviewDecision", "JevReviewConfidence",
+        ]
         jev_cols = (
-            ", j.TaskCompletedProbability, j.EvidenceGatheredProbability, "
-            "j.SilentFailureProbability, j.FalseSuccessClaimProbability, "
-            "j.PolicyViolationProbability, j.TransportFlailingProbability, "
-            "j.HumanAttentionProbability, j.UnnecessaryToolRepetitionScore, "
-            "j.InvestigationEfficiencyScore, j.AttentionPriorityScore, "
-            "j.FailureClass, j.FailureClassConfidence, "
-            "j.PreflightEvidenceSupportProbability, j.PreflightOverclaimProbability, "
-            "j.JevProposedResponseType, j.JevProposedResponseTypeConfidence, j.ReviewRiskScore "
+            ", " + ", ".join(f"j.{name}" for name in jev_fields)
             if has_jev else
-            ", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, "
-            "NULL, NULL, NULL, NULL, NULL, NULL, NULL"
+            ", " + ", ".join("NULL" for _ in jev_fields)
         )
         join = " LEFT JOIN dbo.Hermes_Jev_Run_Assessment_Vw j ON j.RunID = r.ID " if has_jev else ""
         base = (
@@ -104,9 +107,9 @@ def fetch_runs(server, database, username, password, since=None, until=None, run
             "human_attention_probability", "unnecessary_tool_repetition_score",
             "investigation_efficiency_score", "attention_priority_score",
             "failure_class", "failure_class_confidence",
-            "preflight_evidence_support_probability", "preflight_overclaim_probability",
-            "jev_proposed_response_type", "jev_proposed_response_type_confidence",
-            "review_risk_score",
+            "review_evidence_support_probability", "review_overclaim_probability",
+            "review_action_claim_probability", "review_action_audit_probability",
+            "review_risk_score", "jev_review_decision", "jev_review_confidence",
         ]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
     finally:
@@ -178,11 +181,11 @@ def score(runs):
     ]
     semantic["avg_inefficiency_score_0_to_3"] = round(sum(ineff) / len(ineff), 3) if ineff else None
     semantic["avg_repetition_score_0_to_3"] = round(sum(repeat) / len(repeat), 3) if repeat else None
-    semantic["high_confidence_response_type_disagreement"] = sum(
+    semantic["high_confidence_non_approve_review"] = sum(
         1 for r in runs
-        if r.get("jev_proposed_response_type")
-        and (r.get("jev_proposed_response_type_confidence") or 0) >= 0.70
-        and str(r.get("response_type") or "").upper() != str(r.get("jev_proposed_response_type") or "").upper()
+        if r.get("jev_review_decision")
+        and (r.get("jev_review_confidence") or 0) >= 0.70
+        and str(r.get("jev_review_decision") or "").upper() != "APPROVE"
     )
 
     return {
@@ -240,7 +243,7 @@ def main():
     print(f"  High human-attention probability:  {sem['high_human_attention']}")
     print(f"  Avg inefficiency score 0-3:        {sem['avg_inefficiency_score_0_to_3']}")
     print(f"  Avg repetition score 0-3:          {sem['avg_repetition_score_0_to_3']}")
-    print(f"  High-confidence response-type disagreement: {sem['high_confidence_response_type_disagreement']}")
+    print(f"  High-confidence non-approve Jev reviews: {sem['high_confidence_non_approve_review']}")
     print("  Failure-class breakdown:")
     for fc, count in sorted(sem["failure_class_counts"].items()):
         print(f"    {fc}: {count}")
