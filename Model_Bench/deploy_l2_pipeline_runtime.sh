@@ -67,8 +67,6 @@ test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
 # likewise repo-local: there is no runtime package installation or profile copy.
 test -f "$ROOT/Model_Bench/kb_retrieval.py" \
   || { echo "FATAL: Model_Bench/kb_retrieval.py is missing" >&2; exit 1; }
-test -f "$ROOT/Model_Bench/typesafe_jev.py" \
-  || { echo "FATAL: Model_Bench/typesafe_jev.py is missing" >&2; exit 1; }
 test -f "$ROOT/Model_Bench/jev_workflow_bridge.py" \
   || { echo "FATAL: Model_Bench/jev_workflow_bridge.py is missing" >&2; exit 1; }
 test -f "$ROOT/Model_Bench/jev_trace_assessor.py" \
@@ -88,15 +86,13 @@ cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow
 # depends on an event hook because ticket_scout reconciles before every claim.
 deploy_plugins() {
   local profile="$1" plugin src dir
-  for plugin in xstudio-l2-orchestrator xstudio-l2-tools xstudio-l2-trace xstudio-l2-jev; do
+  for plugin in xstudio-l2-orchestrator xstudio-l2-tools xstudio-l2-trace; do
     if [[ "$plugin" == "xstudio-l2-orchestrator" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_orchestrator_plugin"
     elif [[ "$plugin" == "xstudio-l2-tools" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_tools_plugin"
-    elif [[ "$plugin" == "xstudio-l2-trace" ]]; then
-      src="$ROOT/Model_Bench/xstudio_l2_trace_plugin"
     else
-      src="$ROOT/Model_Bench/xstudio_l2_jev_plugin"
+      src="$ROOT/Model_Bench/xstudio_l2_trace_plugin"
     fi
     dir="$HOME/.hermes/profiles/$profile/plugins/$plugin"
     mkdir -p "$dir"
@@ -158,8 +154,7 @@ done
 # never rewrites dispatch settings, API ports, model choice, or credentials.
 echo "== Shared plugin install (required for toolset discovery) =="
 install_shared_plugin_for_discovery xstudio-l2-tools "$ROOT/Model_Bench/xstudio_l2_tools_plugin"
-install_shared_plugin_for_discovery xstudio-l2-jev "$ROOT/Model_Bench/xstudio_l2_jev_plugin"
-echo "installed xstudio-l2-tools and xstudio-l2-jev into $HOME/.hermes/plugins for toolset discovery"
+echo "installed xstudio-l2-tools into $HOME/.hermes/plugins for toolset discovery"
 
 echo "== Profile config (idempotent, additive) =="
 for profile in "${ACTIVE_PROFILES[@]}"; do
@@ -189,7 +184,7 @@ fi
 
 echo
 echo "Deployed deterministic L2 lifecycle + typed XStudio harness + trace observer + Jev System-One fabric."
-echo "Typed tools: xstudio_l2 + xstudio_jev. Jev is primary semantic review and bounded planning. Retired terminal transports (Hermes_Orchestrator.py,"
+echo "Typed worker tool: xstudio_l2. Jev planning/review remains harness-owned. Retired terminal transports (Hermes_Orchestrator.py,"
 echo "Windows Python, sqlcmd, pyodbc, pip) are blocked by plugin hook + approvals.deny."
 echo "Known retired deployed lifecycle scripts are removed on every deploy."
 echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"
