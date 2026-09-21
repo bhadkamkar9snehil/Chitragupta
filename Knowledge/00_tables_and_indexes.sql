@@ -612,6 +612,19 @@ GO
 
 
 
+/* Remove the first-pass Jev side tables if an earlier dev build created them.
+   Jev now reuses the run row + Agent Trace instead of maintaining parallel state. */
+IF OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NOT NULL
+    DROP VIEW dbo.Hermes_Jev_Run_Assessment_Vw;
+GO
+IF OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl', 'U') IS NOT NULL
+    DROP TABLE dbo.Hermes_Jev_Judgment_Trn_Tbl;
+GO
+IF OBJECT_ID('dbo.Hermes_KB_Retrieval_Trn_Tbl', 'U') IS NOT NULL
+    DROP TABLE dbo.Hermes_KB_Retrieval_Trn_Tbl;
+GO
+
+
 /* ============================================================================
    Governed reusable-knowledge lifecycle required by Jev applicability/curation.
    These ALTERs migrate the existing Solution table in place and preserve all
