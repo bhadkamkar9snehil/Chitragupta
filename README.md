@@ -260,7 +260,6 @@ Model_Bench/jev/ticket_triage.py            ticket characterization/routing
 Model_Bench/jev/evidence_plan.py            bounded evidence selection
 Model_Bench/jev/investigation_assessment.py structured evidence interpretation
 Model_Bench/jev/reviewer.py                 primary semantic reviewer
-Model_Bench/jev/candidate_rerank.py         bounded real-candidate reranking for KB curation
 Model_Bench/jev/kb_applicability.py         KB applicability
 Model_Bench/jev/kb_curation.py              KB curation
 Model_Bench/jev/trace_assessment.py         trace quality
