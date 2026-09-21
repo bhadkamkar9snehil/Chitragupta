@@ -582,60 +582,6 @@ def _proposal_preflight_state(
     }
 
 
-def _review_depth_candidate(preflight: dict[str, Any], proposal: dict[str, Any]) -> str:
-    result = preflight.get("result") if isinstance(preflight, dict) else None
-    answers = (result or {}).get("answers") if isinstance(result, dict) else {}
-    answers = answers or {}
-    def noul(name: str, default: float) -> float:
-        try:
-            a = answers.get(name) or {}
-            return float(a.get("noul")) if a.get("type") == "noul" else default
-        except (TypeError, ValueError):
-            return default
-    try:
-        risk_a = answers.get("review_risk") or {}
-        risk = float(risk_a.get("score")) if risk_a.get("type") == "score" else 3.0
-    except (TypeError, ValueError):
-        risk = 3.0
-
-    response_type = str(proposal.get("response_type") or "").upper()
-    low_risk = (
-        response_type in {"UPDATE", "QUESTION"}
-        and risk < 0.85
-        and noul("evidence_supports_core_claim", 0.0) >= 0.85
-        and noul("reply_overstates_evidence", 1.0) <= 0.15
-        and noul("reply_claims_action_was_performed", 1.0) <= 0.15
-    )
-    return "FOCUSED" if low_risk else "FULL"
-
-
-def _attach_jev_preflight(
-    args: argparse.Namespace,
-    proposal: dict[str, Any],
-) -> dict[str, Any]:
-    enriched = dict(proposal)
-    if enriched.get("jev_preflight"):
-        return enriched
-    state = _proposal_preflight_state(args, enriched)
-    preflight = _run_jev_workflow(
-        "proposal_preflight",
-        state,
-        ticket_id=str(enriched.get("ticket_id") or "") or None,
-        run_id=str(enriched.get("run_id") or "") or None,
-        audit_stage="PROPOSAL_PREFLIGHT",
-    )
-    enriched["jev_preflight"] = preflight.get("result") if preflight.get("ok") else {
-        "ok": False,
-        "reason": preflight.get("error") or "Jev preflight unavailable",
-    }
-    candidate = _review_depth_candidate(preflight, enriched)
-    enriched["jev_review_depth_candidate"] = candidate
-    adaptive = os.environ.get("CHITRAGUPTA_JEV_ADAPTIVE_REVIEW_ENABLED", "0").strip().lower() in {
-        "1", "true", "yes", "on"
-    }
-    # Adaptive review currently changes review scope, never removes independent review.
-    enriched["review_depth"] = candidate if adaptive else "FULL"
-    return enriched
 
 
 # ---------------------------------------------------------------------------
@@ -911,25 +857,6 @@ def process_jev_primary_reviews(args: argparse.Namespace, *, dry_run: bool = Fal
     return counts
 
 
-def ensure_missing_reviewers(args: argparse.Namespace, *, dry_run: bool = False) -> int:
-    tasks = list_tasks()
-    created = 0
-    for task in tasks:
-        if task.get("status") != "done" or (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
-            continue
-        run_id = task_run_id(task)
-        if not run_id or not safe_query_active_run(run_id, args):
-            continue
-        if _source_has_reviewer(tasks, task["id"]) or _source_has_rework(tasks, task["id"]):
-            continue
-        proposal = _completion_metadata(task)
-        if not _proposal_complete(proposal):
-            continue
-        if not dry_run:
-            proposal = _attach_jev_preflight(args, proposal or {})
-        if create_reviewer_card(source_task=task, proposal=proposal or {}, dry_run=dry_run):
-            created += 1
-    return created
 
 
 # ---------------------------------------------------------------------------
