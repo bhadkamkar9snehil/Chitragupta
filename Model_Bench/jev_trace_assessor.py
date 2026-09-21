@@ -19,6 +19,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from Model_Bench.jev.audit import persist_rows, rows_for_result
+from Model_Bench.jev.client import typesafe_available
 from Model_Bench.jev.policy import TRACE_ASSESSMENT_ENABLED
 from Model_Bench.jev.trace_assessment import assess_trace
 
@@ -171,8 +172,8 @@ def main() -> int:
     if not TRACE_ASSESSMENT_ENABLED:
         print("Jev trace assessment disabled.")
         return 0
-    if not os.environ.get("TYPESAFE_API_KEY"):
-        print("TYPESAFE_API_KEY not configured; skipping Jev trace assessment.")
+    if not typesafe_available():
+        print("TypeSafe Jev credential not configured; skipping Jev trace assessment.")
         return 0
 
     conn = connect()
