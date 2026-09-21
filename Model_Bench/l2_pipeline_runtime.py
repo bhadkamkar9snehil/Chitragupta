@@ -725,12 +725,21 @@ def _compile_model_context(
     budget_chars: int,
 ) -> dict[str, Any]:
     """Build a query-aware view without mutating or globally truncating raw evidence."""
+    known_answer = (assessment.get("answers") or {}).get("known_solution") or {}
+    selected_solution = (
+        str(known_answer.get("choice") or "")
+        if known_answer.get("type") == "choice"
+        else ""
+    )
     prepared = []
     for index, chunk in enumerate(chunks):
-        level, score, confidence = _attention_level(assessment, chunk)
+        effective = dict(chunk)
+        if selected_solution.startswith("s") and chunk.get("id") == f"kb_solution_{selected_solution[1:]}":
+            effective["minimum_level"] = max(2, int(chunk.get("minimum_level") or 0))
+        level, score, confidence = _attention_level(assessment, effective)
         prepared.append({
             "index": index,
-            "chunk": chunk,
+            "chunk": effective,
             "desired_level": level,
             "score": score,
             "confidence": confidence,
@@ -836,15 +845,37 @@ def _jev_first_investigation(
     prior_attempts: Any = None,
 ) -> dict[str, Any]:
     """Classify -> choose real evidence -> gather bounded live data -> assess it."""
-    if os.environ.get("CHITRAGUPTA_JEV_FIRST_INVESTIGATION_ENABLED", "1").strip().lower() in {
-        "0", "false", "no", "off"
-    }:
-        return {"enabled": False, "reason": "Jev-first investigation disabled"}
-
     candidates = [row for row in suggested_tables if isinstance(row, dict)][:12]
     known_solutions = [
         row for row in (kb_retrieval.get("solutions") or []) if isinstance(row, dict)
     ][:8]
+    routing_context = {
+        "triage": kb_retrieval.get("ticket_characterization") or {},
+        "route_candidates": kb_retrieval.get("route_candidates") or [],
+    }
+    if os.environ.get("CHITRAGUPTA_JEV_FIRST_INVESTIGATION_ENABLED", "1").strip().lower() in {
+        "0", "false", "no", "off"
+    }:
+        assessment = {"ok": False, "reason": "Jev-first investigation disabled", "answers": {}}
+        chunks = _make_context_chunks(
+            ticket_context=ticket_context,
+            routing_context=routing_context,
+            prior_ledger=prior_ledger,
+            prior_attempts=prior_attempts,
+            candidates=candidates,
+            known_solutions=known_solutions,
+            evidence_plan={"ok": False, "reason": "Jev-first investigation disabled"},
+            probes=[],
+        )
+        return {
+            "enabled": False,
+            "reason": "Jev-first investigation disabled",
+            "assessment": assessment,
+            "context_chunks": chunks,
+            "local_model_scope": "FOCUSED_REASONING",
+            "max_additional_live_reads": 3,
+        }
+
     plan_state = {
         "ticket": ticket,
         "candidates": candidates,
@@ -897,10 +928,6 @@ def _jev_first_investigation(
             "probe": probe,
         })
 
-    routing_context = {
-        "triage": kb_retrieval.get("ticket_characterization") or {},
-        "route_candidates": kb_retrieval.get("route_candidates") or [],
-    }
     chunks = _make_context_chunks(
         ticket_context=ticket_context,
         routing_context=routing_context,
@@ -1876,7 +1903,7 @@ def _investigation_bundle(
         "untrusted_context_policy": bundle.get("untrusted_context_policy"),
     }
     rendered = json.dumps(model_bundle, indent=2, default=str)
-    model_bundle["context_view"]["final_bundle_chars"] = len(rendered)
+    model_bundle["context_view"]["rendered_chars_estimate"] = len(rendered)
     model_bundle["context_view"]["target_total_chars"] = MODEL_CONTEXT_BUDGET_CHARS
     rendered = json.dumps(model_bundle, indent=2, default=str)
     return (
