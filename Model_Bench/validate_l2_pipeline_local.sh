@@ -19,6 +19,8 @@ PY_FILES=(
   Model_Bench/jev_workflow_bridge.py
   Model_Bench/jev_trace_assessor.py
   Model_Bench/jev_post_resolution_curation.py
+  Model_Bench/generate_readable_trace_summary.py
+  Model_Bench/drain_and_summarize.py
   Model_Bench/jev/__init__.py
   Model_Bench/jev/policy.py
   Model_Bench/jev/client.py
