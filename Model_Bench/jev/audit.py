@@ -78,22 +78,42 @@ def persist_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "TrustServerCertificate=yes;Encrypt=no;",
         timeout=10,
     )
-    sql = """
+    insert_sql = """
     INSERT INTO dbo.Hermes_Jev_Judgment_Trn_Tbl
     (TicketID, RunID, Stage, JudgmentName, QuestionVersion, Model, AnswerType,
      ChoiceValue, NoulProbability, ScoreValue, Confidence, ProbabilitiesJson,
      InputHash, PolicyVersion, Accepted, LatencyMs)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
+    exists_sql = """
+    SELECT TOP 1 1
+    FROM dbo.Hermes_Jev_Judgment_Trn_Tbl
+    WHERE RunID = ? AND Stage = ? AND JudgmentName = ? AND InputHash = ?
+      AND PolicyVersion = ? AND IsDeleted = 0;
+    """
+    persisted = 0
     try:
         cur = conn.cursor()
         for row in rows:
-            cur.execute(sql, *(row.get(k) for k in (
+            run_id = row.get("RunID")
+            if run_id:
+                cur.execute(
+                    exists_sql,
+                    run_id,
+                    row.get("Stage"),
+                    row.get("JudgmentName"),
+                    row.get("InputHash"),
+                    row.get("PolicyVersion"),
+                )
+                if cur.fetchone():
+                    continue
+            cur.execute(insert_sql, *(row.get(k) for k in (
                 "TicketID", "RunID", "Stage", "JudgmentName", "QuestionVersion", "Model",
                 "AnswerType", "ChoiceValue", "NoulProbability", "ScoreValue", "Confidence",
                 "ProbabilitiesJson", "InputHash", "PolicyVersion", "Accepted", "LatencyMs"
             )))
+            persisted += 1
         conn.commit()
-        return {"ok": True, "persisted": len(rows)}
+        return {"ok": True, "persisted": persisted, "skipped_existing": len(rows) - persisted}
     finally:
         conn.close()
