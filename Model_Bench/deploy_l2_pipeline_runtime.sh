@@ -178,6 +178,12 @@ echo "== Profile config (idempotent, additive) =="
 for profile in "${ACTIVE_PROFILES[@]}"; do
   config="$HOME/.hermes/profiles/$profile/config.yaml"
   if [[ -f "$config" ]]; then
+    # Converge configs after retiring the worker-facing Jev plugin/toolset.
+    # Remove only the exact list entries we previously owned.
+    sed -i \
+      -e '/^[[:space:]]*- xstudio-l2-jev[[:space:]]*$/d' \
+      -e '/^[[:space:]]*- xstudio_jev[[:space:]]*$/d' \
+      "$config"
     python3 "$ROOT/Model_Bench/patch_profile_config.py" "$config"
     # Never make the worker DISCOVER xstudio_l2. Deferred tool-search is a fine
     # trade for a large model and a trap for the 9B local one: on Ticket_360 the
@@ -192,6 +198,10 @@ done
 # The root config drives plugin discovery, which is what makes `xstudio_l2` a
 # recognised toolset name instead of an unknown one that gets filtered out.
 echo "== Root config (plugin discovery) =="
+sed -i \
+  -e '/^[[:space:]]*- xstudio-l2-jev[[:space:]]*$/d' \
+  -e '/^[[:space:]]*- xstudio_jev[[:space:]]*$/d' \
+  "$HOME/.hermes/config.yaml"
 python3 "$ROOT/Model_Bench/patch_profile_config.py" --enable-plugin-only "$HOME/.hermes/config.yaml"
 
 if [[ "${1:-}" != "--no-restart" ]]; then
