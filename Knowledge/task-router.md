@@ -26,6 +26,19 @@ execution-model.md
 
 These define the current lifecycle and the read-only worker boundary. Then choose the narrowest route below.
 
+## Semantic route assist
+
+The dispatcher may use TypeSafe Jev to prioritize the canonical routes in this document before investigation. This does not change the route catalog or evidence rules.
+
+- A single strong identifier mapping remains authoritative and skips Jev.
+- If an identifier maps to multiple routes, Jev may disambiguate only within that set.
+- With no strong identifier, Jev may select among the canonical manifest routes, including \`discover\`.
+- A Jev result is accepted only above the configured confidence threshold.
+- Missing credentials, disabled configuration, request failure, malformed output, or low confidence preserves the deterministic route ordering.
+- Route choice remains a lead: Solution retrieval still requires ticket-text relevance and current-ticket claims still require live evidence.
+
+Implementation details and environment configuration are documented in \`README.md\` and \`AGENTS.md\`.
+
 ## Core routing
 
 | Ticket pattern | Route | Skill | Load first | Live evidence leads |
