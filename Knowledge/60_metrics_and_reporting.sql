@@ -347,9 +347,10 @@ GO
 
 
 -- ============================================================================
--- Jev semantic quality / preflight reporting
--- Raw judgments remain canonical in Hermes_Jev_Judgment_Trn_Tbl. This view
--- exposes named dimensions rather than inventing an opaque aggregate AI score.
+-- Jev semantic quality / review reporting.
+-- Jev is another bounded reviewer/investigator for the same run, so stage
+-- state lives directly on Hermes_L2_Response_Trn_Tbl. The view extracts named
+-- dimensions from those JSON columns; detailed calls remain in Agent Trace.
 -- ============================================================================
 IF OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NOT NULL
     DROP VIEW dbo.Hermes_Jev_Run_Assessment_Vw;
@@ -358,56 +359,62 @@ GO
 CREATE VIEW dbo.Hermes_Jev_Run_Assessment_Vw
 AS
 SELECT
-    j.RunID,
-    MAX(j.TicketID) AS TicketID,
+    r.ID AS RunID,
+    r.TicketID,
 
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'task_completed'
-             THEN j.NoulProbability END) AS TaskCompletedProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'evidence_actually_gathered'
-             THEN j.NoulProbability END) AS EvidenceGatheredProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'silent_failure'
-             THEN j.NoulProbability END) AS SilentFailureProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'false_success_claim'
-             THEN j.NoulProbability END) AS FalseSuccessClaimProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'policy_violation'
-             THEN j.NoulProbability END) AS PolicyViolationProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'transport_flailing'
-             THEN j.NoulProbability END) AS TransportFlailingProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'human_attention_needed'
-             THEN j.NoulProbability END) AS HumanAttentionProbability,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'unnecessary_tool_repetition'
-             THEN j.ScoreValue END) AS UnnecessaryToolRepetitionScore,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'investigation_efficiency'
-             THEN j.ScoreValue END) AS InvestigationEfficiencyScore,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'attention_priority'
-             THEN j.ScoreValue END) AS AttentionPriorityScore,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'failure_class'
-             THEN j.ChoiceValue END) AS FailureClass,
-    MAX(CASE WHEN j.Stage = 'TRACE_ASSESSMENT' AND j.JudgmentName = 'failure_class'
-             THEN j.Confidence END) AS FailureClassConfidence,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.task_completed.noul'))
+        AS TaskCompletedProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.evidence_actually_gathered.noul'))
+        AS EvidenceGatheredProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.silent_failure.noul'))
+        AS SilentFailureProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.false_success_claim.noul'))
+        AS FalseSuccessClaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.policy_violation.noul'))
+        AS PolicyViolationProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.transport_flailing.noul'))
+        AS TransportFlailingProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.human_attention_needed.noul'))
+        AS HumanAttentionProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.unnecessary_tool_repetition.score'))
+        AS UnnecessaryToolRepetitionScore,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.investigation_efficiency.score'))
+        AS InvestigationEfficiencyScore,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.attention_priority.score'))
+        AS AttentionPriorityScore,
+    JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.failure_class.choice')
+        AS FailureClass,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.failure_class.confidence'))
+        AS FailureClassConfidence,
 
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'evidence_supports_core_claim'
-             THEN j.NoulProbability END) AS PreflightEvidenceSupportProbability,
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'reply_overstates_evidence'
-             THEN j.NoulProbability END) AS PreflightOverclaimProbability,
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'reply_claims_action_was_performed'
-             THEN j.NoulProbability END) AS PreflightActionClaimProbability,
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'audit_shows_claimed_action'
-             THEN j.NoulProbability END) AS PreflightActionAuditProbability,
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'proposed_response_type'
-             THEN j.ChoiceValue END) AS JevProposedResponseType,
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'proposed_response_type'
-             THEN j.Confidence END) AS JevProposedResponseTypeConfidence,
-    MAX(CASE WHEN j.Stage = 'PROPOSAL_PREFLIGHT' AND j.JudgmentName = 'review_risk'
-             THEN j.ScoreValue END) AS ReviewRiskScore,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.evidence_supports_core_claim.noul'))
+        AS PreflightEvidenceSupportProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.reply_overstates_evidence.noul'))
+        AS PreflightOverclaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.reply_claims_action_was_performed.noul'))
+        AS PreflightActionClaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.audit_shows_claimed_action.noul'))
+        AS PreflightActionAuditProbability,
+    JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.proposed_response_type.choice')
+        AS JevProposedResponseType,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.proposed_response_type.confidence'))
+        AS JevProposedResponseTypeConfidence,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.publication_risk.score'))
+        AS ReviewRiskScore,
 
-    MAX(CASE WHEN j.Stage = 'POST_RESOLUTION_KB' AND j.JudgmentName = 'curation_disposition'
-             THEN j.ChoiceValue END) AS KBCurationDisposition,
-    MAX(CASE WHEN j.Stage = 'POST_RESOLUTION_KB' AND j.JudgmentName = 'curation_disposition'
-             THEN j.Confidence END) AS KBCurationConfidence,
+    r.ReviewMode,
+    r.JevReviewDecision,
+    r.JevReviewConfidence,
+    r.JevRiskScore,
+    r.LocalReviewRequired,
 
-    MAX(j.CreatedOn) AS LastJevAssessmentOn
-FROM dbo.Hermes_Jev_Judgment_Trn_Tbl j
-WHERE j.IsDeleted = 0 AND j.RunID IS NOT NULL
-GROUP BY j.RunID;
+    JSON_VALUE(r.JevKBCurationJson, '$.POST_RESOLUTION_KB.answers.curation_disposition.choice')
+        AS KBCurationDisposition,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevKBCurationJson, '$.POST_RESOLUTION_KB.answers.curation_disposition.confidence'))
+        AS KBCurationConfidence,
+
+    r.JevModel,
+    r.JevReviewedOn AS LastJevAssessmentOn
+FROM dbo.Hermes_L2_Response_Trn_Tbl r
+WHERE r.IsDeleted = 0;
 GO
