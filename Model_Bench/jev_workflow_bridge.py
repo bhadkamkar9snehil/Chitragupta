@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Windows-side bridge for the four harness-owned Jev workflows.
+"""Windows-side bridge for the three runtime Jev workflows.
 
 JSON in on stdin, JSON out on stdout. The Hermes model never calls this bridge
 or chooses a Jev workflow; deterministic Chitragupta runtime code does.
@@ -20,14 +20,9 @@ from Model_Bench.jev.audit import persist_rows, rows_for_result
 from Model_Bench.jev.evidence_plan import plan_evidence
 from Model_Bench.jev.investigation_assessment import assess_investigation
 from Model_Bench.jev.reviewer import review_proposal
-from Model_Bench.jev.security import assess_untrusted_context
 
 
 WorkflowHandler = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
-
-
-def _security(req: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
-    return assess_untrusted_context(str(req.get("source") or "untrusted"), state)
 
 
 def _evidence_plan(req: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -47,7 +42,6 @@ def _primary_review(_req: dict[str, Any], state: dict[str, Any]) -> dict[str, An
 
 
 _WORKFLOWS: dict[str, WorkflowHandler] = {
-    "security": _security,
     "evidence_plan": _evidence_plan,
     "investigation_assessment": _investigation_assessment,
     "primary_review": _primary_review,
