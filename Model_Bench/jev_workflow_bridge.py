@@ -20,6 +20,8 @@ from Model_Bench.jev.audit import persist_rows, rows_for_result
 from Model_Bench.jev.candidate_rerank import rerank_candidates
 from Model_Bench.jev.kb_applicability import assess_kb_candidates
 from Model_Bench.jev.kb_curation import assess_curation
+from Model_Bench.jev.model_routing import assess_model_route
+from Model_Bench.jev.l1_action import assess_l1_action
 from Model_Bench.jev.proposal_preflight import assess_proposal
 from Model_Bench.jev.review_risk import assess_review_risk
 from Model_Bench.jev.security import assess_context_items, assess_untrusted_context
@@ -57,6 +59,10 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
             dict(req.get("manifest") or {}),
             allowed_routes=req.get("allowed_routes"),
         )
+    elif workflow == "model_routing":
+        result = assess_model_route(state, dict(req.get("profiles") or {}))
+    elif workflow == "l1_action":
+        result = assess_l1_action(state, actions=req.get("actions"))
     else:
         raise ValueError(f"unsupported Jev workflow: {workflow}")
 
