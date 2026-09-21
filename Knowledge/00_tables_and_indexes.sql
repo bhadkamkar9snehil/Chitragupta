@@ -898,3 +898,17 @@ BEGIN
         WHERE IsDeleted = 0;
 END;
 GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl')
+      AND name = 'IX_Hermes_Agent_Trace_Task'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_Task
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(TaskID, EventOn ASC)
+        INCLUDE (RunID, TicketID, EventType)
+        WHERE IsDeleted = 0 AND TaskID IS NOT NULL;
+END;
+GO
