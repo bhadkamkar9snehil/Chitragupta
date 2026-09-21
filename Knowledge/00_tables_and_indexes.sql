@@ -856,3 +856,72 @@ BEGIN
         WHERE IsDeleted = 0;
 END;
 GO
+
+
+/* ============================================================================
+   Agent observer trace store.
+   The writer procedure lives in 50_response_and_workflow.sql and the compute/
+   Jev reporting views live in 60_metrics_and_reporting.sql. Keep this table in
+   the base schema so a fresh full install is self-contained.
+   ============================================================================ */
+IF OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Hermes_Agent_Trace_Trn_Tbl
+    (
+        ID               bigint IDENTITY(1,1) NOT NULL,
+        EventType        varchar(50)     NOT NULL,
+        EventOn          datetime        NOT NULL,
+        SessionID        varchar(100)    NULL,
+        TaskID           varchar(100)    NULL,
+        TurnID           varchar(100)    NULL,
+        ToolCallID       varchar(100)    NULL,
+        ApiRequestID     varchar(100)    NULL,
+        ToolName         varchar(200)    NULL,
+        Status           varchar(30)     NULL,
+        DurationMs       int             NULL,
+        ArgsJson         nvarchar(max)   NULL,
+        ResultJson       nvarchar(max)   NULL,
+        ErrorMessage     nvarchar(max)   NULL,
+        Model            varchar(200)    NULL,
+        Provider         varchar(100)    NULL,
+        UsageJson        nvarchar(max)   NULL,
+        RunID            varchar(36)     NULL,
+        TicketID         varchar(36)     NULL,
+        Source           varchar(20)     NULL,
+        CreatedOn        datetime        NOT NULL
+            CONSTRAINT DF_Hermes_Agent_Trace_CreatedOn DEFAULT (GETDATE()),
+        IsDeleted        bit             NOT NULL
+            CONSTRAINT DF_Hermes_Agent_Trace_IsDeleted DEFAULT (0),
+
+        CONSTRAINT PK_Hermes_Agent_Trace PRIMARY KEY CLUSTERED (ID)
+    );
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl')
+      AND name = 'IX_Hermes_Agent_Trace_Run'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_Run
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(RunID, EventOn ASC)
+        INCLUDE (TicketID, EventType, ToolName, Status, DurationMs, Model)
+        WHERE IsDeleted = 0;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl')
+      AND name = 'IX_Hermes_Agent_Trace_Ticket'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_Ticket
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(TicketID, EventOn ASC)
+        INCLUDE (RunID, EventType, SessionID)
+        WHERE IsDeleted = 0;
+END;
+GO
