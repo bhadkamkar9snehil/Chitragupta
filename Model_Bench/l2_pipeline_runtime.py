@@ -501,34 +501,28 @@ def _live_local_model_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]
     ]
 
 
-def _dispatch_next_local_model_task(
+
+def _invalid_local_model_package(
     args: argparse.Namespace,
-    *,
-    dry_run: bool = False,
-    tasks: list[dict[str, Any]] | None = None,
+    run_id: str,
+    exc: Exception,
 ) -> dict[str, Any]:
-    """Start at most one queued Qwen task.
+    _finish_local_model_work(args, run_id=run_id, task_id=None, outcome="DONE")
+    try:
+        run_orchestrator(args, [
+            "--fail-run", "--run-id", run_id,
+            "--error-message", f"Invalid persisted local-model work package: {exc}",
+            "--retry-after-minutes", "5",
+        ])
+    except RuntimeError:
+        pass
+    return {"status": "INVALID_WORK_PACKAGE", "run_id": run_id, "error": str(exc)}
 
-    SQL is the durable slot authority. The Kanban precheck protects a rolling
-    migration where an older live task predates the SQL lease columns.
-    """
-    if dry_run:
-        return {"status": "DRY_RUN"}
 
-    source_tasks = tasks if tasks is not None else list_tasks()
-    live_local = _live_local_model_tasks(source_tasks)
-    if live_local:
-        return {
-            "status": "KANBAN_LOCAL_MODEL_BUSY",
-            "task_ids": [str(task.get("id") or "") for task in live_local],
-        }
-
-    acquired = run_orchestrator(args, ["--local-model-action", "acquire"])
-    if not isinstance(acquired, dict):
-        return {"status": "EMPTY"}
-    if acquired.get("AcquireStatus") != "ACQUIRED":
-        return {"status": str(acquired.get("AcquireStatus") or "EMPTY")}
-
+def _materialize_acquired_local_model_task(
+    args: argparse.Namespace,
+    acquired: dict[str, Any],
+) -> dict[str, Any]:
     run_id = str(acquired.get("RunID") or "")
     work_key = str(acquired.get("LocalModelWorkKey") or "")
     try:
@@ -537,16 +531,7 @@ def _dispatch_next_local_model_task(
             raise ValueError("work package is not an object")
         argv = _local_task_argv(spec)
     except (json.JSONDecodeError, ValueError, TypeError) as exc:
-        _finish_local_model_work(args, run_id=run_id, task_id=None, outcome="DONE")
-        try:
-            run_orchestrator(args, [
-                "--fail-run", "--run-id", run_id,
-                "--error-message", f"Invalid persisted local-model work package: {exc}",
-                "--retry-after-minutes", "5",
-            ])
-        except RuntimeError:
-            pass
-        return {"status": "INVALID_WORK_PACKAGE", "run_id": run_id, "error": str(exc)}
+        return _invalid_local_model_package(args, run_id, exc)
 
     created = run_hermes(argv)
     if created.returncode != 0:
@@ -556,6 +541,7 @@ def _dispatch_next_local_model_task(
             "run_id": run_id,
             "error": created.stderr.strip()[:500],
         }
+
     try:
         task_id = str((json.loads(created.stdout) or {}).get("id") or "")
     except json.JSONDecodeError:
@@ -578,6 +564,31 @@ def _dispatch_next_local_model_task(
         "task_id": task_id,
         "bound": bool(bound),
     }
+
+
+def _dispatch_next_local_model_task(
+    args: argparse.Namespace,
+    *,
+    dry_run: bool = False,
+    tasks: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Admit at most one queued Qwen task."""
+    if dry_run:
+        return {"status": "DRY_RUN"}
+
+    live_local = _live_local_model_tasks(tasks if tasks is not None else list_tasks())
+    if live_local:
+        return {
+            "status": "KANBAN_LOCAL_MODEL_BUSY",
+            "task_ids": [str(task.get("id") or "") for task in live_local],
+        }
+
+    acquired = run_orchestrator(args, ["--local-model-action", "acquire"])
+    if not isinstance(acquired, dict):
+        return {"status": "EMPTY"}
+    if acquired.get("AcquireStatus") != "ACQUIRED":
+        return {"status": str(acquired.get("AcquireStatus") or "EMPTY")}
+    return _materialize_acquired_local_model_task(args, acquired)
 
 
 def _sync_local_model_completions(
@@ -2913,65 +2924,75 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
 # Status / diagnosis
 # ---------------------------------------------------------------------------
 
+
+def _status_task_view(task: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": task.get("id"),
+        "title": task.get("title"),
+        "status": task.get("status"),
+        "assignee": task.get("assignee"),
+        "pipeline_stage": body_field(task.get("body"), "pipeline_stage"),
+        "review_cycle": task_review_cycle(task),
+        "source": body_field(task.get("body"), "investigation_task_id")
+                  or body_field(task.get("body"), "rework_source_id"),
+    }
+
+
+def _active_run_anomalies(
+    row: dict[str, Any],
+    owned: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rid = str(row.get("ID"))
+    local_state = str(row.get("LocalModelState") or "")
+    local_task_id = str(row.get("LocalModelTaskID") or "")
+    if not owned:
+        if local_state == "QUEUED":
+            return []
+        if local_state == "RUNNING" and local_task_id:
+            return [{
+                "run_id": rid,
+                "type": "RUNNING_LOCAL_MODEL_TASK_NOT_VISIBLE_IN_KANBAN",
+                "task_id": local_task_id,
+            }]
+        return [{"run_id": rid, "type": "ACTIVE_SQL_WITH_NO_KANBAN_OR_QUEUE"}]
+
+    investigators = [t for t in owned if t.get("assignee") in INVESTIGATOR_PROFILES]
+    reviewers = [t for t in owned if t.get("assignee") in REVIEWER_PROFILES]
+    anomalies: list[dict[str, Any]] = []
+    if (
+        not investigators
+        and row.get("LocalModelPurpose") != "REVIEW"
+        and local_state not in {"QUEUED", "RUNNING"}
+    ):
+        anomalies.append({"run_id": rid, "type": "ACTIVE_RUN_WITHOUT_INVESTIGATOR_CARD"})
+    if (
+        investigators
+        and not reviewers
+        and all(t.get("status") == "done" for t in investigators)
+        and local_state not in {"QUEUED", "RUNNING"}
+    ):
+        anomalies.append({"run_id": rid, "type": "DONE_INVESTIGATION_WITHOUT_REVIEWER_OR_REWORK"})
+    if any(t.get("status") == "done" for t in reviewers):
+        anomalies.append({"run_id": rid, "type": "REVIEW_APPROVED_PUBLISH_PENDING_OR_BLOCKED"})
+    if any(is_reviewer_rejection(t) for t in reviewers):
+        anomalies.append({"run_id": rid, "type": "REVIEW_REJECTED_REWORK_PENDING_OR_ACTIVE"})
+    return anomalies
+
+
 def pipeline_status(args: argparse.Namespace) -> dict[str, Any]:
     tasks = list_tasks()
     active = query_active_runs(args)
     by_run: dict[str, list[dict[str, Any]]] = {}
     for task in tasks:
         rid = task_run_id(task)
-        if not rid:
-            continue
-        by_run.setdefault(rid, []).append({
-            "id": task.get("id"),
-            "title": task.get("title"),
-            "status": task.get("status"),
-            "assignee": task.get("assignee"),
-            "pipeline_stage": body_field(task.get("body"), "pipeline_stage"),
-            "review_cycle": task_review_cycle(task),
-            "source": body_field(task.get("body"), "investigation_task_id")
-                      or body_field(task.get("body"), "rework_source_id"),
-        })
+        if rid:
+            by_run.setdefault(rid, []).append(_status_task_view(task))
 
-    anomalies: list[dict[str, Any]] = []
-    for row in active:
-        rid = str(row.get("ID"))
-        owned = by_run.get(rid, [])
-        local_state = str(row.get("LocalModelState") or "")
-        local_task_id = str(row.get("LocalModelTaskID") or "")
-
-        if not owned:
-            if local_state == "QUEUED":
-                continue
-            if local_state == "RUNNING" and local_task_id:
-                anomalies.append({
-                    "run_id": rid,
-                    "type": "RUNNING_LOCAL_MODEL_TASK_NOT_VISIBLE_IN_KANBAN",
-                    "task_id": local_task_id,
-                })
-            else:
-                anomalies.append({"run_id": rid, "type": "ACTIVE_SQL_WITH_NO_KANBAN_OR_QUEUE"})
-            continue
-
-        investigators = [t for t in owned if t.get("assignee") in INVESTIGATOR_PROFILES]
-        reviewers = [t for t in owned if t.get("assignee") in REVIEWER_PROFILES]
-        if (
-            not investigators
-            and row.get("LocalModelPurpose") not in {"REVIEW"}
-            and local_state not in {"QUEUED", "RUNNING"}
-        ):
-            anomalies.append({"run_id": rid, "type": "ACTIVE_RUN_WITHOUT_INVESTIGATOR_CARD"})
-        if (
-            investigators
-            and not reviewers
-            and all(t.get("status") == "done" for t in investigators)
-            and local_state not in {"QUEUED", "RUNNING"}
-        ):
-            anomalies.append({"run_id": rid, "type": "DONE_INVESTIGATION_WITHOUT_REVIEWER_OR_REWORK"})
-        if any(t.get("status") == "done" for t in reviewers):
-            anomalies.append({"run_id": rid, "type": "REVIEW_APPROVED_PUBLISH_PENDING_OR_BLOCKED"})
-        if any(is_reviewer_rejection(t) for t in reviewers):
-            anomalies.append({"run_id": rid, "type": "REVIEW_REJECTED_REWORK_PENDING_OR_ACTIVE"})
-
+    anomalies = [
+        anomaly
+        for row in active
+        for anomaly in _active_run_anomalies(row, by_run.get(str(row.get("ID")), []))
+    ]
     binding = load_workflow_binding()
     binding_ready, binding_reason = _binding_ready_for_claims(binding)
     return {
