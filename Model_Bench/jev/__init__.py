@@ -15,6 +15,9 @@ from .review_risk import assess_review_risk
 from .security import assess_untrusted_context
 from .model_routing import assess_model_route
 from .l1_action import assess_l1_action
+from .evidence_plan import plan_evidence
+from .investigation_assessment import assess_investigation
+from .reviewer import review_proposal
 
 __all__ = [
     "system_one",
@@ -29,4 +32,7 @@ __all__ = [
     "assess_untrusted_context",
     "assess_model_route",
     "assess_l1_action",
+    "plan_evidence",
+    "assess_investigation",
+    "review_proposal",
 ]
