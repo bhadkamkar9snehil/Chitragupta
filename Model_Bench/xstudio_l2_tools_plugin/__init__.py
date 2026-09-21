@@ -868,10 +868,55 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str]:
             f"live_calls_remaining:{max(0, MAX_TOOL_CALLS - used)}}}. "
             "Any raw Python/sqlcmd/pyodbc/pip command shown in older task text is legacy and "
             "is blocked by the harness. Do not install dependencies. After two identical tool "
-            "failures, change the evidence path instead of retrying."
+            "failures, change the evidence path instead of retrying. Jev planning/review is "
+            "harness-owned; xstudio_l2 returns deterministic live evidence only. Do not attempt "
+            "to call TypeSafe/Jev directly or recreate semantic routing inside this tool."
         )
     }
 
+
+_SCHEMA = {
+    "name": TOOL_NAME,
+    "description": (
+        "Typed XStudio L2 investigation interface. Use this instead of terminal/Python/sqlcmd "
+        "for database/schema/ticket/run/ledger work. The harness owns credentials, pyodbc, "
+        "Windows/WSL transport, read-only enforcement, auditing, retry limits, and safe "
+        "procedure allowlisting."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "operation": {"type": "string", "enum": [
+                "select", "query", "probe_table", "suggest_tables", "find_objects",
+                "get_definition", "validate_identifiers", "read_procedure",
+                "get_ticket_context", "get_run_actions", "save_ledger"
+            ]},
+            "database": {"type": "string", "enum": [
+                "XStudio_Helpdesk", "XStudio_Xbatch", "XStudio_Configuration_Xbatch"
+            ]},
+            "run_id": {"type": "string"},
+            "ticket_id": {"type": "string"},
+            "ticket": {"type": "object"},
+            "table": {"type": "string"},
+            "columns": {"type": "array", "items": {"type": "string"}},
+            "where": {"type": "string"},
+            "order_by": {"type": "string"},
+            "top": {"type": "integer", "minimum": 1, "maximum": 100},
+            "sql": {"type": "string"},
+            "search": {"type": "string"},
+            "object_type": {"type": "string", "enum": ["TABLE", "VIEW", "PROCEDURE", "TRIGGER"]},
+            "schema": {"type": "string"},
+            "object_name": {"type": "string"},
+            "identifiers": {"type": "array", "items": {"type": "string"}},
+            "matched_columns": {"type": "array", "items": {"type": "string"}},
+            "procedure": {"type": "string"},
+            "parameters": {"type": "object"},
+            "ledger": {"type": "object"}
+        },
+        "required": ["operation"],
+        "additionalProperties": False
+    }
+}
 
 def register(ctx: Any) -> None:
     for name, schema in TOOL_SCHEMAS.items():

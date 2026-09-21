@@ -459,6 +459,58 @@ def test_work_order_context_uses_fixed_validated_recipes() -> None:
     assert any("CampaignNo" in call["sql"] for call in calls)
 
 
+def test_probe_table_uses_real_identifier_and_never_broad_fishes() -> None:
+    class FakeOrchestrator:
+        @staticmethod
+        def build_query_mechanically(**kwargs):
+            assert kwargs["table"] == "dbo.Heat_Vw"
+            assert "[HeatNo] = N'H123'" in kwargs["where"]
+            assert "HeatNo" in kwargs["columns"]
+            return {"ok": True, "sql": "SELECT ...", "table": "dbo.Heat_Vw"}
+
+        @staticmethod
+        def run_readonly_query(client, sql, database, run_id=None):
+            assert database == "XStudio_Xbatch"
+            assert run_id == "r1"
+            return [{"HeatNo": "H123", "Status": "Running"}]
+
+    allowlist = {"XStudio_Xbatch": {"dbo.Heat_Vw": ["HeatNo", "Status", "Reason", "EventTime"]}}
+    with mock.patch.object(bridge, "_load_allowlist", return_value=allowlist), \
+         mock.patch.object(bridge, "_orchestrator", return_value=FakeOrchestrator()):
+        result = bridge._probe_table({
+            "operation": "probe_table",
+            "database": "XStudio_Xbatch",
+            "table": "dbo.Heat_Vw",
+            "ticket": {"HeatNo": "H123"},
+            "run_id": "r1",
+            "matched_columns": ["Status"],
+        }, object())
+    assert result["ok"] is True
+    assert result["probe_possible"] is True
+    assert result["identifier"] == {"column": "HeatNo", "value": "H123"}
+    assert result["rows"][0]["Status"] == "Running"
+
+
+def test_probe_table_refuses_broad_read_without_strong_identifier() -> None:
+    class FakeOrchestrator:
+        @staticmethod
+        def build_query_mechanically(**kwargs):
+            raise AssertionError("broad automatic query must not be built")
+
+    allowlist = {"XStudio_Xbatch": {"dbo.Heat_Vw": ["HeatNo", "Status", "Reason"]}}
+    with mock.patch.object(bridge, "_load_allowlist", return_value=allowlist), \
+         mock.patch.object(bridge, "_orchestrator", return_value=FakeOrchestrator()):
+        result = bridge._probe_table({
+            "operation": "probe_table",
+            "database": "XStudio_Xbatch",
+            "table": "dbo.Heat_Vw",
+            "ticket": {"Description": "something looks wrong"},
+        }, object())
+    assert result["ok"] is True
+    assert result["probe_possible"] is False
+    assert result["rows"] == []
+
+
 def test_database_must_be_explicitly_allowlisted() -> None:
     try:
         bridge._database({"database": "master"})
@@ -731,6 +783,17 @@ def test_config_patch_adds_plugin_toolset_and_deny_rules() -> None:
     assert "    - xstudio_l2\n" in patched
     assert "'*sqlcmd*'" in patched and "'*Hermes_Orchestrator.py*'" in patched
     assert "'*pip install*'" in patched
+
+
+def test_config_patch_adds_all_profile_hook_plugins_on_fresh_config() -> None:
+    fresh = _SAMPLE_CONFIG.replace(
+        "    - xstudio-l2-trace\n    - xstudio-l2-orchestrator\n",
+        "",
+    )
+    patched = _patch_sample(fresh)
+    assert "    - xstudio-l2-orchestrator\n" in patched
+    assert "    - xstudio-l2-tools\n" in patched
+    assert "    - xstudio-l2-trace\n" in patched
 
 
 def test_config_patch_is_idempotent() -> None:

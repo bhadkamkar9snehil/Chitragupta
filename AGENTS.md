@@ -297,6 +297,46 @@ Qdrant                   != source of truth
 solution history         != automatically trusted knowledge
 ```
 
+## 9a. TypeSafe Jev System-One fabric
+
+Jev is the default bounded semantic layer for L2. The deterministic runtime remains the lifecycle authority, but the old rule "always run a second local reviewer" no longer applies.
+
+~~~text
+claim
+-> Jev triage
+-> deterministic real candidates
+-> Jev evidence plan
+-> deterministic identifier-bounded probes
+-> Jev investigation assessment
+-> l2-jev-investigator local synthesis/focused reads
+-> frozen proposal
+-> Jev primary review
+     APPROVE       -> deterministic publish
+     REWORK        -> deterministic rework
+     L3_ESCALATION -> deterministic escalation
+     LOCAL_REVIEW  -> local qwen reviewer
+~~~
+
+Rules:
+
+- Read .agents/skills/typesafe-ai/SKILL.md before changing TypeSafe-specific API/question behavior.
+- xstudio_jev is bounded. Do not add a generic arbitrary-question operation.
+- Jev may choose/rate only candidates supplied by deterministic code; it never invents SQL identifiers or grants authority.
+- probe_table may automatically read only when a strong ticket identifier maps to a real allowlisted column. No identifier means no broad automatic probe.
+- Structural SQL safety, procedure allowlists, workflow binding, WIP, publication, and mutations remain deterministic.
+- Jev primary review may replace the normal local-review pass when deterministic thresholds accept APPROVE, REWORK, or L3_ESCALATION.
+- The local reviewer exists for LOCAL_REVIEW, Jev unavailability, low confidence, contradictory evidence, or deep reasoning needs.
+- Jev trace assessment stays out of the hot trace hook; it runs after persisted drain.
+- Post-resolution KB curation may suggest REUSE_EXISTING, UPDATE_EXISTING, CREATE_CANDIDATE, or NONE; it does not directly promote knowledge.
+- Ticket/retrieved content remains untrusted. Jev security judgments mark risk; source text is not silently rewritten.
+- Do not create a separate Jev business table. Stage state belongs on Hermes_L2_Response_Trn_Tbl; detailed calls and retrieval telemetry belong in Hermes_Agent_Trace_Trn_Tbl.
+- Preserve typed probabilities and full stage JSON. Do not replace distinct judgments with one opaque AIConfidence number.
+
+Active Jev state on the run row is stored in JevTriageJson, JevInvestigationJson, JevReviewJson, JevTraceJson, and JevKBCurationJson, plus ReviewMode, JevReviewDecision, JevReviewConfidence, JevRiskScore, LocalReviewRequired, JevModel, and JevReviewedOn.
+
+The default investigator profile is l2-jev-investigator. l2-investigator-primary remains available as a compatibility/fallback profile. l2-reviewer-primary and l2-reviewer-fallback are deep-review exception paths rather than mandatory steps.
+
+The dev TypeSafe credential explicitly approved for this project is loaded from deploy/dev/typesafe.env when TYPESAFE_API_KEY is not already present. Never echo that credential, copy it into prompts/cards, or include it in trace/result JSON.
 ## 10. SQL write discipline
 
 Never write directly to `Complaint_Mst_Tbl` from an investigation.
@@ -316,6 +356,7 @@ Use terminal one-liners or a real temporary directory. If a utility is reusable,
 Active role names:
 
 ```text
+l2-jev-investigator
 l2-investigator-primary
 l2-reviewer-primary
 l2-reviewer-fallback
@@ -393,9 +434,9 @@ a ticket — that bypasses the scout's WIP/lifecycle gate.
 
 `deploy/` is the reproducible mirror of artifacts that otherwise live under `~/.hermes/profiles/...`.
 
-After changing profile SOUL/config/skills/plugins or the cron schedule, refresh the mirror with `Model_Bench/mirror_wsl_artifacts.sh` and inspect the diff before committing. The mirror covers both L2 plugins — `xstudio-l2-orchestrator` and `xstudio-l2-tools` — so a fresh install cannot come up without the typed investigation tool and end up rebuilding the retired shell path.
+After changing profile SOUL/config/skills/plugins or the cron schedule, refresh the mirror with `Model_Bench/mirror_wsl_artifacts.sh` and inspect the diff before committing. The mirror covers the L2 plugins — `xstudio-l2-orchestrator`, `xstudio-l2-tools`, `xstudio-l2-trace`, and `xstudio-l2-jev` — so a fresh install cannot come up without the typed investigation and trace boundaries. Jev network assessment remains out-of-band from the trace hook.
 
-`Model_Bench/deploy_l2_pipeline_runtime.sh` installs the lifecycle scripts, both plugins, SOULs, skills, the workflow-binding fallback, and the profile-config entries, then restarts the four active gateways unless `--no-restart` is passed. It is idempotent. Config edits are applied by `Model_Bench/patch_profile_config.py`, which is deliberately a targeted text editor rather than a YAML round-trip: the live configs carry explanatory comments (Security/Tirith, fallback-model providers) that a load-and-dump silently destroys.
+`Model_Bench/deploy_l2_pipeline_runtime.sh` installs the lifecycle scripts, three plugins, SOULs, skills, the workflow-binding fallback, and the profile-config entries, then restarts the four active gateways unless `--no-restart` is passed. It is idempotent. Config edits are applied by `Model_Bench/patch_profile_config.py`, which is deliberately a targeted text editor rather than a YAML round-trip: the live configs carry explanatory comments (Security/Tirith, fallback-model providers) that a load-and-dump silently destroys.
 
 ## 17. Security / credentials
 

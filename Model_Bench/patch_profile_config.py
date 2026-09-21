@@ -41,13 +41,14 @@ DENY_ENTRIES = [
     "'*uv pip*'",
 ]
 
-PLUGIN_ENTRIES = ["xstudio-l2-tools"]
+PROFILE_PLUGIN_ENTRIES = ["xstudio-l2-orchestrator", "xstudio-l2-tools", "xstudio-l2-trace"]
+ROOT_PLUGIN_ENTRIES = ["xstudio-l2-tools"]
 TOOLSET_ENTRIES = ["xstudio_l2"]
 
 SECTIONS: list[tuple[list[str], list[str], bool]] = [
     # (key path, entries to ensure, required)
     (["approvals", "deny"], DENY_ENTRIES, True),
-    (["plugins", "enabled"], PLUGIN_ENTRIES, True),
+    (["plugins", "enabled"], PROFILE_PLUGIN_ENTRIES, True),
     (["platform_toolsets", "cli"], TOOLSET_ENTRIES, True),
     (["known_plugin_toolsets", "cli"], TOOLSET_ENTRIES, False),
 ]
@@ -166,7 +167,7 @@ def main(argv: list[str]) -> int:
     # per-profile toolset/deny entries.
     if "--enable-plugin-only" in argv:
         global SECTIONS
-        SECTIONS = [(["plugins", "enabled"], PLUGIN_ENTRIES, True)]
+        SECTIONS = [(["plugins", "enabled"], ROOT_PLUGIN_ENTRIES, True)]
     paths = [Path(a) for a in argv if not a.startswith("--")]
     if not paths:
         print(__doc__)

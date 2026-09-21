@@ -11,6 +11,27 @@ ELSE IF OBJECT_DEFINITION(OBJECT_ID('dbo.Hermes_L2_Get_Candidate_Tickets_Usp')) 
 IF OBJECT_ID('dbo.Hermes_L2_Default_Update_Continuation_Trg', 'TR') IS NULL
     INSERT INTO @Failures VALUES ('update_continuation_hardening', 'Apply Knowledge/55_update_retry_hardening.sql; UPDATE responses can otherwise become permanently ineligible.');
 
+IF OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl', 'U') IS NULL
+    INSERT INTO @Failures VALUES ('agent_trace_table', 'Hermes_Agent_Trace_Trn_Tbl is missing; trace observability and Jev trace assessment cannot operate.');
+
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewJson') IS NULL
+    INSERT INTO @Failures VALUES ('jev_run_state', 'Jev run/review columns are missing on Hermes_L2_Response_Trn_Tbl.');
+
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevInvestigationJson') IS NULL
+    INSERT INTO @Failures VALUES ('jev_investigation_state', 'Jev investigation state column is missing on Hermes_L2_Response_Trn_Tbl.');
+
+IF OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NULL
+    INSERT INTO @Failures VALUES ('jev_assessment_view', 'Hermes_Jev_Run_Assessment_Vw is missing; deploy Knowledge/60_metrics_and_reporting.sql from the current bundle.');
+
+IF OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl', 'U') IS NULL
+    INSERT INTO @Failures VALUES ('agent_trace', 'Hermes_Agent_Trace_Trn_Tbl is missing; Jev call/retrieval telemetry reuses this existing trace store.');
+
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ArticleStatus') IS NULL
+    INSERT INTO @Failures VALUES ('kb_article_lifecycle', 'Solution article governance columns are missing (ArticleStatus/KnowledgeType/applicability).');
+
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ApplicabilityJson') IS NULL
+    INSERT INTO @Failures VALUES ('kb_applicability', 'ApplicabilityJson is missing from Hermes_Solution_Article_Mst_Tbl.');
+
 IF EXISTS
 (
     SELECT TicketID

@@ -75,6 +75,47 @@ BEGIN
 END;
 GO
 
+
+/* Jev is a semantic reviewer/investigator for the same run, not a parallel
+   business object. Persist stage state directly on Hermes_L2_Response_Trn_Tbl;
+   detailed call telemetry belongs in Hermes_Agent_Trace_Trn_Tbl. */
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevTriageJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevTriageJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevInvestigationJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevInvestigationJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevTraceJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevTraceJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevKBCurationJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevKBCurationJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'ReviewMode') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD ReviewMode varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewDecision') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewDecision varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewConfidence') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewConfidence decimal(9,6) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevRiskScore') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevRiskScore decimal(9,6) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalReviewRequired') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalReviewRequired bit NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevModel') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevModel varchar(120) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewedOn') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewedOn datetime NULL;
+GO
+
 IF NOT EXISTS
 (
     SELECT 1
@@ -647,6 +688,241 @@ BEGIN
 
         CONSTRAINT PK_Hermes_Escalation_Rule PRIMARY KEY CLUSTERED (ID)
     );
+END;
+GO
+
+
+
+/* Remove the first-pass Jev side tables if an earlier dev build created them.
+   Jev now reuses the run row + Agent Trace instead of maintaining parallel state. */
+IF OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NOT NULL
+    DROP VIEW dbo.Hermes_Jev_Run_Assessment_Vw;
+GO
+IF OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl', 'U') IS NOT NULL
+    DROP TABLE dbo.Hermes_Jev_Judgment_Trn_Tbl;
+GO
+IF OBJECT_ID('dbo.Hermes_KB_Retrieval_Trn_Tbl', 'U') IS NOT NULL
+    DROP TABLE dbo.Hermes_KB_Retrieval_Trn_Tbl;
+GO
+
+
+/* ============================================================================
+   Governed reusable-knowledge lifecycle required by Jev applicability/curation.
+   These ALTERs migrate the existing Solution table in place and preserve all
+   legacy content. Jev suggestions never directly change ArticleStatus.
+   ============================================================================ */
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'KnowledgeType') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD KnowledgeType varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ArticleStatus') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ArticleStatus varchar(30) NOT NULL
+        CONSTRAINT DF_Hermes_Solution_ArticleStatus DEFAULT ('Approved') WITH VALUES;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'CanonicalKey') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD CanonicalKey varchar(250) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'RevisionNo') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD RevisionNo int NOT NULL
+        CONSTRAINT DF_Hermes_Solution_RevisionNo DEFAULT (1) WITH VALUES;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ContentHash') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ContentHash varchar(64) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'SourceTicketID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD SourceTicketID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'SourceRunID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD SourceRunID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'SupersedesSolutionID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD SupersedesSolutionID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'SupersededBySolutionID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD SupersededBySolutionID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ApprovedOn') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ApprovedOn datetime NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ApprovedBy') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ApprovedBy varchar(200) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'LastVerifiedOn') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD LastVerifiedOn datetime NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'LastVerifiedRunID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD LastVerifiedRunID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ApplicabilityJson') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ApplicabilityJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'NegativeIndicatorsJson') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD NegativeIndicatorsJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'VerificationJson') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD VerificationJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'EvidenceJson') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD EvidenceJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'DiagnosticSteps') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD DiagnosticSteps nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'VerificationSteps') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD VerificationSteps nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ExpectedResult') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ExpectedResult nvarchar(max) NULL;
+GO
+
+UPDATE dbo.Hermes_Solution_Article_Mst_Tbl
+SET KnowledgeType = COALESCE(KnowledgeType, 'KnownIssue'),
+    ArticleStatus = CASE
+        WHEN ArticleStatus IS NOT NULL THEN ArticleStatus
+        WHEN IsActive = 1 THEN 'Approved'
+        ELSE 'Deprecated'
+    END
+WHERE KnowledgeType IS NULL OR ArticleStatus IS NULL;
+GO
+
+-- The NOT NULL default above migrates all legacy rows as Approved. Preserve
+-- legacy IsActive=0 semantics by marking those rows Deprecated.
+UPDATE dbo.Hermes_Solution_Article_Mst_Tbl
+SET ArticleStatus = 'Deprecated'
+WHERE IsDeleted = 0 AND IsActive = 0 AND ArticleStatus = 'Approved';
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.check_constraints
+    WHERE parent_object_id = OBJECT_ID('dbo.Hermes_Solution_Article_Mst_Tbl')
+      AND name = 'CK_Hermes_Solution_ArticleStatus'
+)
+BEGIN
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl
+    ADD CONSTRAINT CK_Hermes_Solution_ArticleStatus
+        CHECK (ArticleStatus IN ('Candidate','Approved','NeedsReview','Superseded','Deprecated'));
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.check_constraints
+    WHERE parent_object_id = OBJECT_ID('dbo.Hermes_Solution_Article_Mst_Tbl')
+      AND name = 'CK_Hermes_Solution_KnowledgeType'
+)
+BEGIN
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl
+    ADD CONSTRAINT CK_Hermes_Solution_KnowledgeType
+        CHECK (KnowledgeType IS NULL OR KnowledgeType IN ('KnownIssue','Diagnostic','HowTo'));
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Solution_Article_Mst_Tbl')
+      AND name = 'IX_Hermes_Solution_StatusRoute'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Solution_StatusRoute
+        ON dbo.Hermes_Solution_Article_Mst_Tbl(ArticleStatus, Route, KnowledgeType)
+        INCLUDE (CanonicalKey, LastVerifiedOn, UsageCount)
+        WHERE IsDeleted = 0;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Solution_Article_Mst_Tbl')
+      AND name = 'IX_Hermes_Solution_CanonicalKey'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Solution_CanonicalKey
+        ON dbo.Hermes_Solution_Article_Mst_Tbl(CanonicalKey)
+        WHERE CanonicalKey IS NOT NULL AND IsDeleted = 0;
+END;
+GO
+
+/* Distinguish retrieval, actual use, and verified outcome. */
+IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'UseDisposition') IS NULL
+    ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD UseDisposition varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'OutcomeStatus') IS NULL
+    ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD OutcomeStatus varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'OutcomeReason') IS NULL
+    ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD OutcomeReason nvarchar(1000) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'OutcomeOn') IS NULL
+    ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD OutcomeOn datetime NULL;
+GO
+
+/* ============================================================================
+   Agent observer trace store.
+   The writer procedure lives in 50_response_and_workflow.sql and the compute/
+   Jev reporting views live in 60_metrics_and_reporting.sql. Keep this table in
+   the base schema so a fresh full install is self-contained.
+   ============================================================================ */
+IF OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Hermes_Agent_Trace_Trn_Tbl
+    (
+        ID               bigint IDENTITY(1,1) NOT NULL,
+        EventType        varchar(50)     NOT NULL,
+        EventOn          datetime        NOT NULL,
+        SessionID        varchar(100)    NULL,
+        TaskID           varchar(100)    NULL,
+        TurnID           varchar(100)    NULL,
+        ToolCallID       varchar(100)    NULL,
+        ApiRequestID     varchar(100)    NULL,
+        ToolName         varchar(200)    NULL,
+        Status           varchar(30)     NULL,
+        DurationMs       int             NULL,
+        ArgsJson         nvarchar(max)   NULL,
+        ResultJson       nvarchar(max)   NULL,
+        ErrorMessage     nvarchar(max)   NULL,
+        Model            varchar(200)    NULL,
+        Provider         varchar(100)    NULL,
+        UsageJson        nvarchar(max)   NULL,
+        RunID            varchar(36)     NULL,
+        TicketID         varchar(36)     NULL,
+        Source           varchar(20)     NULL,
+        CreatedOn        datetime        NOT NULL
+            CONSTRAINT DF_Hermes_Agent_Trace_CreatedOn DEFAULT (GETDATE()),
+        IsDeleted        bit             NOT NULL
+            CONSTRAINT DF_Hermes_Agent_Trace_IsDeleted DEFAULT (0),
+
+        CONSTRAINT PK_Hermes_Agent_Trace PRIMARY KEY CLUSTERED (ID)
+    );
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl')
+      AND name = 'IX_Hermes_Agent_Trace_Run'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_Run
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(RunID, EventOn ASC)
+        INCLUDE (TicketID, EventType, ToolName, Status, DurationMs, Model)
+        WHERE IsDeleted = 0;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl')
+      AND name = 'IX_Hermes_Agent_Trace_Ticket'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_Ticket
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(TicketID, EventOn ASC)
+        INCLUDE (RunID, EventType, SessionID)
+        WHERE IsDeleted = 0;
 END;
 GO
 
@@ -3353,5 +3629,79 @@ SELECT
     END AS ObservabilityStatus
 FROM dbo.Hermes_L2_Response_Trn_Tbl r
 LEFT JOIN dbo.Hermes_L2_Compute_Per_Ticket_Vw c ON c.RunID = r.ID
+WHERE r.IsDeleted = 0;
+GO
+
+
+-- ============================================================================
+-- Jev semantic quality / review reporting.
+-- Jev is another bounded reviewer/investigator for the same run, so stage
+-- state lives directly on Hermes_L2_Response_Trn_Tbl. The view extracts named
+-- dimensions from those JSON columns; detailed calls remain in Agent Trace.
+-- ============================================================================
+IF OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NOT NULL
+    DROP VIEW dbo.Hermes_Jev_Run_Assessment_Vw;
+GO
+
+CREATE VIEW dbo.Hermes_Jev_Run_Assessment_Vw
+AS
+SELECT
+    r.ID AS RunID,
+    r.TicketID,
+
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.task_completed.noul'))
+        AS TaskCompletedProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.evidence_actually_gathered.noul'))
+        AS EvidenceGatheredProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.silent_failure.noul'))
+        AS SilentFailureProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.false_success_claim.noul'))
+        AS FalseSuccessClaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.policy_violation.noul'))
+        AS PolicyViolationProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.transport_flailing.noul'))
+        AS TransportFlailingProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.human_attention_needed.noul'))
+        AS HumanAttentionProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.unnecessary_tool_repetition.score'))
+        AS UnnecessaryToolRepetitionScore,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.investigation_efficiency.score'))
+        AS InvestigationEfficiencyScore,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.attention_priority.score'))
+        AS AttentionPriorityScore,
+    JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.failure_class.choice')
+        AS FailureClass,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.failure_class.confidence'))
+        AS FailureClassConfidence,
+
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.evidence_supports_core_claim.noul'))
+        AS PreflightEvidenceSupportProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.reply_overstates_evidence.noul'))
+        AS PreflightOverclaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.reply_claims_action_was_performed.noul'))
+        AS PreflightActionClaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.audit_shows_claimed_action.noul'))
+        AS PreflightActionAuditProbability,
+    JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.proposed_response_type.choice')
+        AS JevProposedResponseType,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.proposed_response_type.confidence'))
+        AS JevProposedResponseTypeConfidence,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.publication_risk.score'))
+        AS ReviewRiskScore,
+
+    r.ReviewMode,
+    r.JevReviewDecision,
+    r.JevReviewConfidence,
+    r.JevRiskScore,
+    r.LocalReviewRequired,
+
+    JSON_VALUE(r.JevKBCurationJson, '$.POST_RESOLUTION_KB.answers.curation_disposition.choice')
+        AS KBCurationDisposition,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevKBCurationJson, '$.POST_RESOLUTION_KB.answers.curation_disposition.confidence'))
+        AS KBCurationConfidence,
+
+    r.JevModel,
+    r.JevReviewedOn AS LastJevAssessmentOn
+FROM dbo.Hermes_L2_Response_Trn_Tbl r
 WHERE r.IsDeleted = 0;
 GO

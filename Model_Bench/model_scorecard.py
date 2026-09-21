@@ -29,11 +29,11 @@ Metrics computed, for a given time window:
                          real work)
   - response_type_counts: breakdown (UPDATE/QUESTION/RESOLUTION/L3_ESCALATION)
 
-This does NOT compute hallucination rate automatically (that requires
-correlating each run's session transcript, which isn't linked to run_id in
-a queryable way today) -- for that, keep spot-checking with
-validate_identifiers.py against specific claims the model made, same as
-this session has been doing manually.
+Jev semantic trace assessment now adds automated quality signals for every
+assessed run: silent-failure probability, false-success probability, policy
+violation probability, evidence gathering, human-attention need, failure class,
+and investigation efficiency/repetition scores. These are calibrated semantic
+judgments, not ground-truth labels; keep deterministic outcome metrics separate.
 
 Usage:
     python model_scorecard.py --model-label gemma-4-e4b-it \
@@ -69,23 +69,45 @@ def fetch_runs(server, database, username, password, since=None, until=None, run
     )
     try:
         cur = conn.cursor()
+        cur.execute("SELECT CASE WHEN OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NULL THEN 0 ELSE 1 END")
+        has_jev = bool(cur.fetchone()[0])
+        jev_cols = (
+            ", j.TaskCompletedProbability, j.EvidenceGatheredProbability, "
+            "j.SilentFailureProbability, j.FalseSuccessClaimProbability, "
+            "j.PolicyViolationProbability, j.TransportFlailingProbability, "
+            "j.HumanAttentionProbability, j.UnnecessaryToolRepetitionScore, "
+            "j.InvestigationEfficiencyScore, j.AttentionPriorityScore, "
+            "j.FailureClass, j.FailureClassConfidence, "
+            "j.PreflightEvidenceSupportProbability, j.PreflightOverclaimProbability, "
+            "j.JevProposedResponseType, j.JevProposedResponseTypeConfidence, j.ReviewRiskScore "
+            if has_jev else
+            ", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, "
+            "NULL, NULL, NULL, NULL, NULL, NULL, NULL"
+        )
+        join = " LEFT JOIN dbo.Hermes_Jev_Run_Assessment_Vw j ON j.RunID = r.ID " if has_jev else ""
+        base = (
+            "SELECT r.ID, r.TicketID, r.ProcessStatus, r.ResponseType, r.ReplyText, "
+            "r.CompletedOn, r.ClaimedOn " + jev_cols +
+            " FROM dbo.Hermes_L2_Response_Trn_Tbl r " + join
+        )
         if run_ids:
             placeholders = ",".join("?" for _ in run_ids)
-            cur.execute(
-                f"SELECT ID, TicketID, ProcessStatus, ResponseType, ReplyText, "
-                f"CompletedOn, ClaimedOn FROM Hermes_L2_Response_Trn_Tbl "
-                f"WHERE ID IN ({placeholders})",
-                run_ids,
-            )
+            cur.execute(base + f" WHERE r.ID IN ({placeholders})", run_ids)
         else:
-            cur.execute(
-                "SELECT ID, TicketID, ProcessStatus, ResponseType, ReplyText, "
-                "CompletedOn, ClaimedOn FROM Hermes_L2_Response_Trn_Tbl "
-                "WHERE ClaimedOn >= ? AND ClaimedOn <= ?",
-                since, until,
-            )
-        cols = ["run_id", "ticket_id", "process_status", "response_type",
-                "reply_text", "completed_on", "claimed_on"]
+            cur.execute(base + " WHERE r.ClaimedOn >= ? AND r.ClaimedOn <= ?", since, until)
+        cols = [
+            "run_id", "ticket_id", "process_status", "response_type",
+            "reply_text", "completed_on", "claimed_on",
+            "task_completed_probability", "evidence_gathered_probability",
+            "silent_failure_probability", "false_success_claim_probability",
+            "policy_violation_probability", "transport_flailing_probability",
+            "human_attention_probability", "unnecessary_tool_repetition_score",
+            "investigation_efficiency_score", "attention_priority_score",
+            "failure_class", "failure_class_confidence",
+            "preflight_evidence_support_probability", "preflight_overclaim_probability",
+            "jev_proposed_response_type", "jev_proposed_response_type_confidence",
+            "review_risk_score",
+        ]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
     finally:
         conn.close()
@@ -119,6 +141,50 @@ def score(runs):
         if r["completed_on"] and r["claimed_on"]
     ]
 
+    assessed = [r for r in runs if r.get("failure_class")]
+    failure_class_counts = {}
+    for r in assessed:
+        fc = r.get("failure_class") or "(none)"
+        failure_class_counts[fc] = failure_class_counts.get(fc, 0) + 1
+
+    high = 0.80
+    semantic = {
+        "assessed_runs": len(assessed),
+        "assessment_rate": round(len(assessed) / claimed, 3) if claimed else None,
+        "failure_class_counts": failure_class_counts,
+        "high_silent_failure": sum(
+            1 for r in assessed if (r.get("silent_failure_probability") or 0) >= high
+        ),
+        "high_false_success_claim": sum(
+            1 for r in assessed if (r.get("false_success_claim_probability") or 0) >= high
+        ),
+        "high_policy_violation": sum(
+            1 for r in assessed if (r.get("policy_violation_probability") or 0) >= high
+        ),
+        "high_human_attention": sum(
+            1 for r in assessed if (r.get("human_attention_probability") or 0) >= high
+        ),
+        "high_transport_flailing": sum(
+            1 for r in assessed if (r.get("transport_flailing_probability") or 0) >= high
+        ),
+    }
+    ineff = [
+        float(r["investigation_efficiency_score"])
+        for r in assessed if r.get("investigation_efficiency_score") is not None
+    ]
+    repeat = [
+        float(r["unnecessary_tool_repetition_score"])
+        for r in assessed if r.get("unnecessary_tool_repetition_score") is not None
+    ]
+    semantic["avg_inefficiency_score_0_to_3"] = round(sum(ineff) / len(ineff), 3) if ineff else None
+    semantic["avg_repetition_score_0_to_3"] = round(sum(repeat) / len(repeat), 3) if repeat else None
+    semantic["high_confidence_response_type_disagreement"] = sum(
+        1 for r in runs
+        if r.get("jev_proposed_response_type")
+        and (r.get("jev_proposed_response_type_confidence") or 0) >= 0.70
+        and str(r.get("response_type") or "").upper() != str(r.get("jev_proposed_response_type") or "").upper()
+    )
+
     return {
         "claimed": claimed,
         "verified_published": len(verified),
@@ -128,6 +194,7 @@ def score(runs):
         "genuine_rate": round(len(genuine) / claimed, 3) if claimed else None,
         "avg_duration_sec": round(sum(durations) / len(durations), 1) if durations else None,
         "response_type_counts": response_type_counts,
+        "jev_semantic_quality": semantic,
     }
 
 
@@ -163,6 +230,20 @@ def main():
     print("Response type breakdown:")
     for rt, count in sorted(result["response_type_counts"].items()):
         print(f"  {rt}: {count}")
+    sem = result["jev_semantic_quality"]
+    print("Jev semantic quality (advisory/calibration signals):")
+    print(f"  Assessed runs:                     {sem['assessed_runs']} ({sem['assessment_rate']})")
+    print(f"  High silent-failure probability:   {sem['high_silent_failure']}")
+    print(f"  High false-success probability:    {sem['high_false_success_claim']}")
+    print(f"  High policy-violation probability: {sem['high_policy_violation']}")
+    print(f"  High transport-flailing probability: {sem['high_transport_flailing']}")
+    print(f"  High human-attention probability:  {sem['high_human_attention']}")
+    print(f"  Avg inefficiency score 0-3:        {sem['avg_inefficiency_score_0_to_3']}")
+    print(f"  Avg repetition score 0-3:          {sem['avg_repetition_score_0_to_3']}")
+    print(f"  High-confidence response-type disagreement: {sem['high_confidence_response_type_disagreement']}")
+    print("  Failure-class breakdown:")
+    for fc, count in sorted(sem["failure_class_counts"].items()):
+        print(f"    {fc}: {count}")
 
 
 if __name__ == "__main__":

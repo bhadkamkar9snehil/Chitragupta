@@ -22,7 +22,30 @@ PY_FILES=(
   Model_Bench/audit_kanban_completions.py
   Model_Bench/enforce_publish_safety_net.py
   Model_Bench/configure_helpdesk_workflow.py
+  Model_Bench/kb_retrieval.py
+  Model_Bench/jev_workflow_bridge.py
+  Model_Bench/jev_trace_assessor.py
+  Model_Bench/jev_post_resolution_curation.py
+  Model_Bench/generate_readable_trace_summary.py
+  Model_Bench/drain_and_summarize.py
+  Model_Bench/jev/__init__.py
+  Model_Bench/jev/policy.py
+  Model_Bench/jev/client.py
+  Model_Bench/jev/ticket_triage.py
+  Model_Bench/jev/candidate_rerank.py
+  Model_Bench/jev/trace_assessment.py
+  Model_Bench/jev/kb_applicability.py
+  Model_Bench/jev/kb_curation.py
+  Model_Bench/jev/security.py
+  Model_Bench/jev/evidence_plan.py
+  Model_Bench/jev/investigation_assessment.py
+  Model_Bench/jev/reviewer.py
+  Model_Bench/jev/audit.py
+  Model_Bench/model_scorecard.py
+  Model_Bench/test_jev_fabric.py
+  Model_Bench/test_kb_retrieval.py
   Model_Bench/patch_profile_config.py
+  Model_Bench/patch_tool_search_off.py
   Model_Bench/xstudio_l2_orchestrator_plugin/__init__.py
   Model_Bench/xstudio_l2_tools_plugin/__init__.py
   Model_Bench/xstudio_l2_tool_bridge.py
@@ -31,6 +54,13 @@ PY_FILES=(
   Model_Bench/validate_gbrain_knowledge.py
   Model_Bench/test_validate_gbrain_knowledge.py
 )
+
+echo "== Secret hygiene =="
+if git ls-files | grep -E '(^|/)[^/]*\.env$' >/dev/null; then
+  echo "FAIL: tracked .env credential file found; credentials must come from process/service environment" >&2
+  git ls-files | grep -E '(^|/)[^/]*\.env$' >&2
+  exit 1
+fi
 
 echo "== Python syntax =="
 python3 -m py_compile "${PY_FILES[@]}"
@@ -41,11 +71,29 @@ python3 Model_Bench/test_l2_pipeline_runtime.py
 echo "== Typed investigation-tool contract tests =="
 python3 Model_Bench/test_xstudio_l2_tools_plugin.py
 
+echo "== TypeSafe Jev fabric contract tests =="
+python3 Model_Bench/test_jev_fabric.py
+
 echo "== Knowledge/skill validation =="
 python3 Model_Bench/validate_knowledge_manifest.py
 python3 Model_Bench/test_kb_retrieval.py
 python3 Model_Bench/test_validate_gbrain_knowledge.py
 python3 Model_Bench/validate_gbrain_knowledge.py
+
+echo "== Retired live-deployment guard =="
+DEPLOYED_SCRIPTS="$HOME/.hermes/profiles/l2-investigator/scripts"
+retired_found=0
+for retired in dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py; do
+  if [[ -e "$DEPLOYED_SCRIPTS/$retired" ]]; then
+    echo "FAIL: retired script is still deployed live: $DEPLOYED_SCRIPTS/$retired" >&2
+    retired_found=1
+  fi
+done
+if [[ "$retired_found" -ne 0 ]]; then
+  echo "Run: bash Model_Bench/deploy_l2_pipeline_runtime.sh" >&2
+  exit 1
+fi
+echo "PASS: no known retired lifecycle scripts remain in the live scripts directory"
 
 echo "== Live workflow discovery (read-only) =="
 python3 Model_Bench/configure_helpdesk_workflow.py
@@ -66,6 +114,12 @@ SQL deployment note:
   55_update_retry_hardening sources. Do not re-apply those merely because
   the numbered source files exist.
 
+Jev deployment note:
+  Jev is harness-owned. Set TYPESAFE_API_KEY in the Windows Python/service
+  environment; no repository credential fallback exists. Jev-first investigation
+  and Jev primary review are enabled. The local reviewer is the uncertainty/
+  deep-reasoning fallback.
+
 After deploying/regenerating the SQL bundle, run:
   Knowledge/98_pipeline_postflight.sql
 
@@ -74,6 +128,12 @@ Do not guess replacement status names.
 
 For the next naturally arriving fresh ticket, verify its trace uses named xstudio_*
 tools from the xstudio_l2 toolset for
+Live deployment note:
+  deploy_l2_pipeline_runtime.sh now removes known retired lifecycle scripts from
+  ~/.hermes/profiles/l2-investigator/scripts. Validation fails if those stale
+  copies reappear even when they are absent from Git.
+
+For the next naturally arriving fresh ticket, verify its trace uses xstudio_l2 for
 database/schema/ticket evidence and does not attempt to recreate SQL transport via
 terminal, an interpreter, pyodbc/sqlcmd, or package installation.
 EOF

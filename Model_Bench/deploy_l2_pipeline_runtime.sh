@@ -16,6 +16,11 @@ ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary l2-
 INVESTIGATOR_PROFILES=(l2-investigator l2-investigator-primary)
 REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
 HERMES_PYTHON="$HOME/.hermes/hermes-agent/venv/bin/python"
+SCRIPTS_DIR="$HOME/.hermes/profiles/l2-investigator/scripts"
+ACTIVE_PROFILES=(l2-jev-investigator l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
+INVESTIGATOR_PROFILES=(l2-jev-investigator l2-investigator l2-investigator-primary)
+REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
+RETIRED_DEPLOYED_SCRIPTS=(dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py)
 
 test -x "$HERMES_PYTHON" \
   || { echo "FATAL: Hermes Python not found at $HERMES_PYTHON" >&2; exit 1; }
@@ -27,6 +32,39 @@ fi
 
 echo "== GBrain knowledge sync and readiness =="
 bash "$ROOT/Model_Bench/sync_gbrain_knowledge.sh"
+# Seed the new Jev-first Hermes profile from the repo on first deployment.
+JEV_PROFILE_DIR="$HOME/.hermes/profiles/l2-jev-investigator"
+mkdir -p "$JEV_PROFILE_DIR"
+if [[ ! -f "$JEV_PROFILE_DIR/config.yaml" ]]; then
+  cp "$ROOT/deploy/profiles/l2-jev-investigator/config.yaml" "$JEV_PROFILE_DIR/config.yaml"
+fi
+
+# Repo deletion is not deployment deletion. Earlier cleanup removed these files
+# from Git but left old copies under ~/.hermes/profiles/.../scripts, which made
+# the live machine look like it still had two orchestration systems. Remove the
+# known retired entrypoints explicitly on every deploy so repo and live state
+# converge idempotently.
+for retired in "${RETIRED_DEPLOYED_SCRIPTS[@]}"; do
+  if [[ -e "$SCRIPTS_DIR/$retired" ]]; then
+    rm -f "$SCRIPTS_DIR/$retired"
+    echo "removed retired deployed script: $retired"
+  fi
+done
+
+for f in \
+  l2_pipeline_runtime.py \
+  ticket_scout.py \
+  reconcile_l2_pipeline.py \
+  kanban_approval_publisher.py \
+  kanban_reject_bridge.py \
+  repair_incomplete_completions.py \
+  audit_kanban_completions.py \
+  enforce_publish_safety_net.py \
+  run_coalesced.py \
+  drain_and_summarize.py
+ do
+  cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
+ done
 
 for profile in "${ACTIVE_PROFILES[@]}"; do
   scripts_dir="$HOME/.hermes/profiles/$profile/scripts"
@@ -67,15 +105,36 @@ test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
 # tools in the `xstudio_l2` toolset and
 # enforces the execution guard. Correctness never depends on the event hook,
 # because ticket_scout runs the same reconciler before every new claim.
+# KB retrieval executes directly from the repo path. Its TypeSafe Jev helper is
+# likewise repo-local: there is no runtime package installation or profile copy.
+test -f "$ROOT/Model_Bench/kb_retrieval.py" \
+  || { echo "FATAL: Model_Bench/kb_retrieval.py is missing" >&2; exit 1; }
+test -f "$ROOT/Model_Bench/jev_workflow_bridge.py" \
+  || { echo "FATAL: Model_Bench/jev_workflow_bridge.py is missing" >&2; exit 1; }
+test -f "$ROOT/Model_Bench/jev_trace_assessor.py" \
+  || { echo "FATAL: Model_Bench/jev_trace_assessor.py is missing" >&2; exit 1; }
+test -f "$ROOT/Model_Bench/jev_post_resolution_curation.py" \
+  || { echo "FATAL: Model_Bench/jev_post_resolution_curation.py is missing" >&2; exit 1; }
+test -f "$ROOT/Model_Bench/jev/client.py" \
+  || { echo "FATAL: Model_Bench/jev fabric is missing" >&2; exit 1; }
+
+# Keep the workflow binding beside the deployed scripts as a fallback. The
+# runtime also reads the canonical repo copy directly.
+cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
+
+# Deploy the orchestrator, typed-tools, and trace observer plugins to every
+# active role. Trace remains a cheap local observer; all Jev network work runs
+# later from the drain pipeline, never inside observer hooks. Correctness never
+# depends on an event hook because ticket_scout reconciles before every claim.
 deploy_plugins() {
   local profile="$1" plugin src dir
   for plugin in xstudio-l2-orchestrator xstudio-l2-tools xstudio-l2-trace; do
     if [[ "$plugin" == "xstudio-l2-orchestrator" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_orchestrator_plugin"
-    elif [[ "$plugin" == "xstudio-l2-trace" ]]; then
-      src="$ROOT/Model_Bench/xstudio_l2_trace_plugin"
-    else
+    elif [[ "$plugin" == "xstudio-l2-tools" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_tools_plugin"
+    else
+      src="$ROOT/Model_Bench/xstudio_l2_trace_plugin"
     fi
     dir="$HOME/.hermes/profiles/$profile/plugins/$plugin"
     mkdir -p "$dir"
@@ -93,6 +152,7 @@ deploy_plugins() {
 # from every session -- which is exactly why the first typed-harness ticket saw
 # its terminal fallback blocked but never got a typed XStudio tool as an alternative.
 # xstudio-l2-trace was already installed in both places for this same reason.
+# from every session -- exactly what the first typed-harness live run exposed.
 install_shared_plugin_for_discovery() {
   local plugin="$1" src="$2" dir="$HOME/.hermes/plugins/$1"
   mkdir -p "$dir"
@@ -176,4 +236,8 @@ echo "Deployed deterministic L2 lifecycle + typed XStudio investigation harness.
 echo "Typed tools: named xstudio_* tools in xstudio_l2. SQL transport runs natively in WSL behind the harness."
 echo "Model-driven terminal transports (Hermes_Orchestrator.py, Windows Python,"
 echo "sqlcmd, pyodbc, pip) remain blocked by plugin hook + approvals.deny."
+echo "Deployed deterministic L2 lifecycle + typed XStudio harness + trace observer + Jev System-One fabric."
+echo "Typed worker tool: xstudio_l2. Jev planning/review remains harness-owned. Retired terminal transports (Hermes_Orchestrator.py,"
+echo "Windows Python, sqlcmd, pyodbc, pip) are blocked by plugin hook + approvals.deny."
+echo "Known retired deployed lifecycle scripts are removed on every deploy."
 echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"

@@ -4,7 +4,8 @@
 This is intentionally NOT mem0 retrieval and NOT schema discovery.
 
 Responsibilities:
-- infer canonical route candidates from Knowledge/manifest.json;
+- infer deterministic canonical route candidates from Knowledge/manifest.json;
+- optionally use TypeSafe Jev as a confidence-gated semantic route chooser;
 - search active Hermes_Solution_Article_Mst_Tbl articles by the ticket's actual
   words, not merely by a broad route;
 - return IDs + provenance so an investigator/reviewer can name the source;
@@ -17,6 +18,7 @@ episodic state remains in InvestigationJson; neither belongs here.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -25,6 +27,12 @@ import re
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from jev import policy as jev_policy
+from jev.audit import persist_rows, rows_for_result
+from jev.kb_applicability import assess_kb_candidates
+from jev.security import assess_context_items
+from jev.ticket_triage import assess_ticket
 
 try:
     import pyodbc
@@ -241,6 +249,121 @@ def route_candidates(query: str, manifest: dict[str, Any], top: int = 3) -> list
     ]
 
 
+
+def _strong_identifier_routes(query: str, manifest: dict[str, Any]) -> list[str]:
+    """Return canonical routes supported by explicit identifier names in the ticket."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for pattern, routes, _reason in _identifier_routes(manifest):
+        if not pattern.search(query):
+            continue
+        for route in routes:
+            if route not in seen:
+                seen.add(route)
+                ordered.append(route)
+    return ordered
+
+
+def resolve_route_candidates(
+    query: str,
+    manifest: dict[str, Any],
+    top: int = 3,
+    *,
+    jev_decider=None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Fuse deterministic routing with an optional Jev semantic Choice.
+
+    Explicit identifiers remain structural authority. A single unambiguous
+    identifier route skips Jev entirely. When an identifier maps to multiple
+    routes (for example TransactionID -> API transaction or SAP posting), Jev
+    may disambiguate only inside that allowed set. Without an identifier, Jev
+    may choose from the full canonical manifest, including discover.
+
+    Any unavailable/error/low-confidence Jev result falls back to the exact
+    deterministic ordering returned by route_candidates().
+    """
+    deterministic = route_candidates(query, manifest, top=top)
+    identifier_routes = _strong_identifier_routes(query, manifest)
+
+    routing: dict[str, Any] = {
+        "mode": "deterministic",
+        "deterministic_candidates": deterministic,
+        "identifier_routes": identifier_routes,
+        "jev": None,
+    }
+
+    if len(identifier_routes) == 1:
+        routing["jev"] = {
+            "enabled": False,
+            "accepted": False,
+            "reason": "single explicit identifier route is authoritative",
+        }
+        return deterministic, routing
+
+    if jev_decider is None:
+        routing["jev"] = {
+            "enabled": False,
+            "accepted": False,
+            "reason": "no semantic route decision supplied",
+        }
+        return deterministic, routing
+
+    try:
+        jev = jev_decider(
+            query,
+            manifest,
+            allowed_routes=identifier_routes if len(identifier_routes) > 1 else None,
+        )
+    except Exception as exc:  # injected semantic decision must never break retrieval
+        jev = {
+            "enabled": True,
+            "accepted": False,
+            "reason": "Jev decider raised unexpectedly",
+            "error_type": type(exc).__name__,
+        }
+
+    routing["jev"] = jev
+    if not jev.get("accepted"):
+        return deterministic, routing
+
+    choice = str(jev.get("choice") or "")
+    canonical = {str(r.get("route") or "") for r in manifest.get("routes", [])}
+    if choice not in canonical:
+        routing["jev"] = {
+            **jev,
+            "accepted": False,
+            "reason": "Jev choice was not a canonical manifest route",
+        }
+        return deterministic, routing
+    if identifier_routes and choice not in identifier_routes:
+        routing["jev"] = {
+            **jev,
+            "accepted": False,
+            "reason": "Jev choice escaped explicit identifier constraints",
+        }
+        return deterministic, routing
+
+    existing = {r["route"]: r for r in deterministic}
+    base = dict(existing.get(choice) or {"route": choice, "score": 0.0, "reasons": []})
+    reasons = list(base.get("reasons") or [])
+    reasons.insert(0, f"Jev semantic choice; confidence={float(jev.get('confidence') or 0.0):.3f}")
+    base["reasons"] = reasons
+    base["semantic_source"] = "typesafe_jev"
+    base["semantic_confidence"] = float(jev.get("confidence") or 0.0)
+
+    fused = [base]
+    for candidate in deterministic:
+        if candidate["route"] == choice:
+            continue
+        fused.append(candidate)
+        if len(fused) >= top:
+            break
+
+    routing["selected_route"] = choice
+    routing["mode"] = "jev"
+    return fused[:top], routing
+
+
 def knowledge_docs_for_routes(manifest: dict[str, Any], routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     defs = {r.get("route"): r for r in manifest.get("routes", [])}
     seen: set[str] = set()
@@ -279,13 +402,32 @@ def connect(server: str, database: str, username: str, password: str | None):
 def fetch_articles(conn) -> list[dict[str, Any]]:
     cur = conn.cursor()
     cur.execute(
-        """
-        SELECT ID, Title, ProblemSummary, RootCause, ResolutionSteps,
-               Route, Tags, UsageCount, CreatedOn, ModifiedOn
-        FROM dbo.Hermes_Solution_Article_Mst_Tbl
-        WHERE IsActive = 1 AND IsDeleted = 0;
-        """
+        "SELECT CASE WHEN COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ArticleStatus') "
+        "IS NULL THEN 0 ELSE 1 END"
     )
+    governed = bool(cur.fetchone()[0])
+    if governed:
+        cur.execute(
+            """
+            SELECT ID, Title, ProblemSummary, RootCause, ResolutionSteps,
+                   Route, Tags, UsageCount, CreatedOn, ModifiedOn,
+                   KnowledgeType, ArticleStatus, CanonicalKey, RevisionNo,
+                   ContentHash, SourceTicketID, SourceRunID, LastVerifiedOn,
+                   ApplicabilityJson, NegativeIndicatorsJson, VerificationJson,
+                   EvidenceJson, DiagnosticSteps, VerificationSteps, ExpectedResult
+            FROM dbo.Hermes_Solution_Article_Mst_Tbl
+            WHERE IsActive = 1 AND IsDeleted = 0 AND ArticleStatus = 'Approved';
+            """
+        )
+    else:
+        cur.execute(
+            """
+            SELECT ID, Title, ProblemSummary, RootCause, ResolutionSteps,
+                   Route, Tags, UsageCount, CreatedOn, ModifiedOn
+            FROM dbo.Hermes_Solution_Article_Mst_Tbl
+            WHERE IsActive = 1 AND IsDeleted = 0;
+            """
+        )
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
 
@@ -367,6 +509,21 @@ def rank_articles(
                 "usage_count": int(article.get("UsageCount") or 0),
                 "created_on": article.get("CreatedOn"),
                 "modified_on": article.get("ModifiedOn"),
+                "knowledge_type": article.get("KnowledgeType"),
+                "article_status": article.get("ArticleStatus") or ("Approved" if article.get("IsActive", 1) else None),
+                "canonical_key": article.get("CanonicalKey"),
+                "revision_no": article.get("RevisionNo"),
+                "content_hash": article.get("ContentHash"),
+                "source_ticket_id": article.get("SourceTicketID"),
+                "source_run_id": article.get("SourceRunID"),
+                "last_verified_on": article.get("LastVerifiedOn"),
+                "applicability": article.get("ApplicabilityJson"),
+                "negative_indicators": article.get("NegativeIndicatorsJson"),
+                "verification": article.get("VerificationJson"),
+                "evidence": article.get("EvidenceJson"),
+                "diagnostic_steps": article.get("DiagnosticSteps"),
+                "verification_steps": article.get("VerificationSteps"),
+                "expected_result": article.get("ExpectedResult"),
                 "retrieval_score": round(score, 2),
                 "matched_terms": matched_terms,
                 "retrieval_reasons": reasons,
@@ -378,6 +535,89 @@ def rank_articles(
     return ranked[:top]
 
 
+def _triage_route_decider(triage: dict[str, Any]):
+    def decide(query: str, manifest: dict[str, Any], *, allowed_routes=None) -> dict[str, Any]:
+        del query, manifest, allowed_routes
+        answer = (triage.get("answers") or {}).get("route") or {}
+        if not triage.get("ok") or answer.get("type") != "choice":
+            return {
+                "enabled": bool(triage.get("enabled")),
+                "accepted": False,
+                "reason": triage.get("reason") or "Jev triage route unavailable",
+            }
+        confidence = float(answer.get("confidence") or 0.0)
+        return {
+            "enabled": True,
+            "accepted": confidence >= jev_policy.MIN_CHOICE_CONFIDENCE,
+            "choice": answer.get("choice"),
+            "confidence": confidence,
+            "probabilities": answer.get("probabilities") or {},
+            "model": triage.get("model"),
+            "reason": None if confidence >= jev_policy.MIN_CHOICE_CONFIDENCE
+                else "Jev confidence below configured threshold",
+        }
+    return decide
+
+
+def _compose_kb_score(row: dict[str, Any]) -> float:
+    relevance = float(row.get("jev_relevance") or 0.0)
+    applicability = float(row.get("jev_applicability") or 0.0)
+    same_pattern = float(row.get("jev_same_failure_pattern") or 0.0)
+    same_root = float(row.get("jev_same_root_cause_family") or 0.0)
+    negative = float(row.get("jev_negative_indicator") or 0.0)
+    return round(
+        (2.0 * relevance) + (2.0 * applicability) + same_pattern + (0.5 * same_root) - (2.5 * negative),
+        6,
+    )
+
+
+def log_retrieval_telemetry(
+    conn,
+    *,
+    query: str,
+    routes: list[dict[str, Any]],
+    ranked: list[dict[str, Any]],
+    ticket_id: str | None,
+    run_id: str | None,
+) -> dict[str, Any]:
+    """Reuse Agent Trace for retrieval telemetry; do not create a Jev/KB side table."""
+    if not ranked:
+        return {"ok": True, "inserted": 0}
+    try:
+        query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()
+        route_names = {r.get("route") for r in routes}
+        compact = []
+        for rank_no, row in enumerate(ranked, start=1):
+            compact.append({
+                "rank": rank_no,
+                "kb_id": row.get("kb_id"),
+                "source_type": row.get("source_type"),
+                "deterministic_score": row.get("retrieval_score"),
+                "jev_relevance": row.get("jev_relevance"),
+                "jev_applicability": row.get("jev_applicability"),
+                "jev_negative_indicator": row.get("jev_negative_indicator"),
+                "route_match": bool(row.get("route") in route_names),
+            })
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO dbo.Hermes_Agent_Trace_Trn_Tbl
+            (EventType, EventOn, ToolName, Status, ArgsJson, ResultJson,
+             Provider, RunID, TicketID, Source)
+            VALUES
+            ('kb_retrieval', GETDATE(), 'kb_retrieval', 'ok', ?, ?, 'chitragupta', ?, ?, 'KB');
+            """,
+            json.dumps({"query_hash": query_hash, "phase": "PRE_INVESTIGATION"}, separators=(",", ":")),
+            json.dumps({"candidates": compact}, separators=(",", ":"), default=str),
+            run_id,
+            ticket_id,
+        )
+        conn.commit()
+        return {"ok": True, "inserted": 1}
+    except Exception as exc:
+        return {"ok": False, "inserted": 0, "reason": f"{type(exc).__name__}: {exc}"}
+
+
 def retrieve(
     conn,
     query: str,
@@ -385,8 +625,23 @@ def retrieve(
     top: int = 5,
     min_score: float = 7.0,
     min_matched_terms: int = MIN_MATCHED_TERMS,
+    *,
+    ticket_id: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
-    routes = route_candidates(query, manifest)
+    identifier_routes = _strong_identifier_routes(query, manifest)
+    triage = assess_ticket(
+        {"query": query},
+        manifest,
+        allowed_routes=identifier_routes if identifier_routes else None,
+    )
+    routes, routing = resolve_route_candidates(
+        query,
+        manifest,
+        jev_decider=_triage_route_decider(triage),
+    )
+    routing["triage"] = triage
+
     ranked = rank_articles(
         fetch_articles(conn),
         query,
@@ -397,16 +652,99 @@ def retrieve(
     )
     gbrain = retrieve_gbrain(query, manifest["gbrain"])
 
+    kb_semantics = {"ok": False, "reason": "KB Jev judgments disabled", "candidates": ranked}
+    security = {"ok": False, "reason": "Jev security screening disabled", "items": ranked}
+
+    if ranked and jev_policy.KB_JUDGMENTS_ENABLED:
+        kb_semantics = assess_kb_candidates({"query": query, "routes": routes}, ranked)
+        if kb_semantics.get("ok"):
+            ranked = list(kb_semantics.get("candidates") or ranked)
+            for row in ranked:
+                row["jev_kb_composite"] = _compose_kb_score(row)
+            ranked.sort(
+                key=lambda row: (
+                    bool(float(row.get("jev_negative_indicator") or 0.0) >= jev_policy.HIGH_RISK_NOUL),
+                    -float(row.get("jev_kb_composite") or 0.0),
+                    -float(row.get("retrieval_score") or 0.0),
+                )
+            )
+
+    if ranked and jev_policy.SECURITY_SCREEN_ENABLED:
+        security_items = [
+            {
+                "kb_id": row.get("kb_id"),
+                "source_ref": row.get("source_ref"),
+                "title": row.get("title"),
+                "problem_summary": row.get("problem_summary"),
+                "root_cause": row.get("root_cause"),
+                "resolution_steps": row.get("resolution_steps"),
+            }
+            for row in ranked
+        ]
+        security = assess_context_items(security_items)
+        if security.get("ok"):
+            security_by_id = {item.get("kb_id"): item for item in security.get("items") or []}
+            for row in ranked:
+                flags = (security_by_id.get(row.get("kb_id")) or {}).get("jev_untrusted_context") or {}
+                row["jev_untrusted_context"] = flags
+                max_risk = max((float(v or 0.0) for v in flags.values()), default=0.0)
+                row["context_handling"] = "QUOTE_ONLY_UNTRUSTED" if max_risk >= jev_policy.HIGH_RISK_NOUL else "NORMAL_UNTRUSTED_SOURCE"
+
+    retrieval_telemetry = log_retrieval_telemetry(
+        conn,
+        query=query,
+        routes=routes,
+        ranked=ranked,
+        ticket_id=ticket_id,
+        run_id=run_id,
+    )
+
+    # Best-effort audit. Retrieval must never fail because audit persistence is unavailable.
+    audit_results = []
+    for stage, state, result in (
+        ("TICKET_TRIAGE", {"query": query}, triage),
+        ("KB_APPLICABILITY", {"query": query, "candidate_count": len(ranked)}, kb_semantics),
+        ("KB_SECURITY", {"query": query, "candidate_count": len(ranked)}, security),
+    ):
+        if result.get("ok"):
+            try:
+                audit_results.append(persist_rows(rows_for_result(
+                    result=result,
+                    stage=stage,
+                    state=state,
+                    ticket_id=ticket_id,
+                    run_id=run_id,
+                )))
+            except Exception as exc:
+                audit_results.append({"ok": False, "reason": f"{type(exc).__name__}: {exc}"})
+
     return {
         "query": query,
         "route_candidates": routes,
+        "routing": routing,
+        "ticket_characterization": triage.get("answers") if triage.get("ok") else {},
         "knowledge_documents": knowledge_docs_for_routes(manifest, routes),
         "solutions": ranked,
         "gbrain": gbrain,
+        "jev_kb_applicability": {
+            "ok": bool(kb_semantics.get("ok")),
+            "model": kb_semantics.get("model"),
+            "latency_ms": kb_semantics.get("latency_ms"),
+        },
+        "jev_security": {
+            "ok": bool(security.get("ok")),
+            "model": security.get("model"),
+            "latency_ms": security.get("latency_ms"),
+        },
+        "jev_audit": audit_results,
+        "retrieval_telemetry": retrieval_telemetry,
         "abstained": not ranked and gbrain.get("abstained", True),
         "abstention_reason": None if ranked or not gbrain.get("abstained", True) else "No reusable knowledge met the relevance threshold.",
         "retrieval_policy": {
             "route_only_match_allowed": False,
+            "semantic_route_is_active": True,
+            "semantic_kb_reranking_is_active": True,
+            "jev_low_confidence_falls_back_to_deterministic": True,
             "min_score": min_score,
             "min_matched_terms": min_matched_terms,
             "top": top,
@@ -426,6 +764,8 @@ def main() -> int:
     group = ap.add_mutually_exclusive_group(required=True)
     group.add_argument("--query", help="Ticket text/problem description to retrieve against")
     group.add_argument("--check-gbrain", action="store_true")
+    ap.add_argument("--ticket-id")
+    ap.add_argument("--run-id")
     ap.add_argument("--top", type=int, default=5)
     ap.add_argument("--min-score", type=float, default=7.0)
     ap.add_argument("--min-matched-terms", type=int, default=MIN_MATCHED_TERMS)
@@ -445,6 +785,8 @@ def main() -> int:
             top=max(1, args.top),
             min_score=args.min_score,
             min_matched_terms=max(1, args.min_matched_terms),
+            ticket_id=args.ticket_id,
+            run_id=args.run_id,
         )
     finally:
         conn.close()

@@ -191,6 +191,147 @@ def _escape_sql_string(value: Any) -> str:
     return str(value).replace("'", "''")
 
 
+_IDENTIFIER_PRIORITY = [
+    "transactionid", "heatno", "batchno", "workorderno", "workorder",
+    "productionorder", "orderno", "materialdocument", "recipeid", "recipeno",
+    "equipmentid", "equipment", "heatid", "batchid",
+]
+
+_PROBE_COLUMN_WORDS = (
+    "status", "state", "reason", "error", "message", "date", "time",
+    "actual", "set", "value", "code", "type", "name", "result", "document",
+)
+
+
+def _flatten_scalars(value: Any, prefix: str = "") -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            name = f"{prefix}.{key}" if prefix else str(key)
+            out.extend(_flatten_scalars(child, name))
+    elif isinstance(value, list):
+        for i, child in enumerate(value[:20]):
+            out.extend(_flatten_scalars(child, f"{prefix}[{i}]"))
+    elif value is not None and not isinstance(value, (dict, list)):
+        text = str(value).strip()
+        if text and len(text) <= 300:
+            out.append((prefix.split(".")[-1].split("[")[0], text))
+    return out
+
+
+def _allowed_table(database: str, table: str) -> tuple[str, list[str]] | None:
+    tables = _load_allowlist().get(database) or {}
+    table_key = table.split(".")[-1].strip("[]").lower()
+    for qualified, columns in tables.items():
+        if qualified.split(".")[-1].strip("[]").lower() == table_key:
+            return qualified, [str(column) for column in columns]
+    return None
+
+
+def _ticket_scalar_map(ticket: dict[str, Any]) -> dict[str, str]:
+    scalars: dict[str, str] = {}
+    for key, value in _flatten_scalars(ticket):
+        normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+        if normalized and normalized not in scalars:
+            scalars[normalized] = value
+    return scalars
+
+
+def _probe_filter(ticket: dict[str, Any], columns: list[str]) -> tuple[str, str] | None:
+    lookup = {column.replace("_", "").lower(): column for column in columns}
+    scalars = _ticket_scalar_map(ticket)
+    for identifier in _IDENTIFIER_PRIORITY:
+        if identifier in lookup and identifier in scalars:
+            return lookup[identifier], scalars[identifier]
+
+    raw = json.dumps(ticket, default=str)
+    for identifier in _IDENTIFIER_PRIORITY:
+        column = lookup.get(identifier)
+        if not column:
+            continue
+        match = re.search(
+            rf"(?i)\b{re.escape(identifier)}\b\s*[\"'=: -]+\s*[\"']?([A-Za-z0-9_.:/-]{{2,100}})",
+            raw,
+        )
+        if match:
+            return column, match.group(1)
+    return None
+
+
+def _probe_columns(filter_column: str, real_columns: list[str], requested: list[Any]) -> list[str]:
+    lookup = {re.sub(r"[^a-z0-9]", "", column.lower()): column for column in real_columns}
+    columns = [filter_column]
+    for candidate in requested:
+        real = lookup.get(re.sub(r"[^a-z0-9]", "", str(candidate).lower()))
+        if real and real not in columns:
+            columns.append(real)
+    for column in real_columns:
+        lower = column.lower()
+        if any(word in lower for word in _PROBE_COLUMN_WORDS) and column not in columns:
+            columns.append(column)
+        if len(columns) >= 12:
+            break
+    return columns[:12]
+
+
+def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    """Probe one allowlisted table by one strong ticket identifier."""
+    database = str(_database(req))
+    table = str(_require(req, "table")).strip()
+    ticket = req.get("ticket") or {}
+    if not isinstance(ticket, dict):
+        raise ValueError("ticket must be an object")
+
+    resolved = _allowed_table(database, table)
+    if resolved is None:
+        return {
+            "ok": False,
+            "operation": "probe_table",
+            "error": f"table/view {table!r} is not present in the schema allowlist",
+            "retry_same_call": False,
+        }
+    qualified, real_columns = resolved
+    selected_filter = _probe_filter(ticket, real_columns)
+    if selected_filter is None:
+        return {
+            "ok": True,
+            "operation": "probe_table",
+            "database": database,
+            "table": qualified,
+            "probe_possible": False,
+            "reason": "No strong ticket identifier maps to a real column; automatic broad reads are intentionally avoided.",
+            "rows": [],
+        }
+
+    filter_column, filter_value = selected_filter
+    columns = _probe_columns(filter_column, real_columns, req.get("matched_columns") or [])
+    built = _orchestrator().build_query_mechanically(
+        table=qualified,
+        columns=columns,
+        where=f"[{filter_column}] = N'{_escape_sql_string(filter_value)}'",
+        order_by=None,
+        top=_top(req, 20),
+        database=database,
+    )
+    if not built.get("ok"):
+        return {"operation": "probe_table", **built, "retry_same_call": False}
+
+    rows = _orchestrator().run_readonly_query(
+        client, built["sql"], database=database, run_id=req.get("run_id")
+    )
+    return {
+        "ok": True,
+        "operation": "probe_table",
+        "database": database,
+        "table": qualified,
+        "probe_possible": True,
+        "identifier": {"column": filter_column, "value": filter_value},
+        "columns": columns,
+        "sql": built.get("sql"),
+        "rows": rows,
+    }
+
+
 def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
     database = _database(req)
     run_id = str(_require(req, "run_id"))
@@ -460,109 +601,146 @@ def _resolve_heat(req: dict[str, Any], client: Any) -> dict[str, Any]:
     }
 
 
+def _select(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    database = str(_database(req))
+    built = _orchestrator().build_query_mechanically(
+        table=str(_require(req, "table")),
+        columns=[str(x) for x in _require(req, "columns")],
+        where=req.get("where"),
+        order_by=req.get("order_by"),
+        top=_top(req, 20),
+        database=database,
+    )
+    if not built.get("ok"):
+        return {"operation": "select", **built, "retry_same_call": False}
+    rows = _orchestrator().run_readonly_query(
+        client, built["sql"], database=database, run_id=req.get("run_id")
+    )
+    return {
+        "ok": True,
+        "operation": "select",
+        "database": database,
+        "table": built.get("table"),
+        "sql": built.get("sql"),
+        "warning": built.get("warning") or built.get("ambiguity_warning"),
+        "rows": rows,
+    }
+
+
+def _query(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    database = str(_database(req))
+    sql = str(_require(req, "sql")).strip()
+    if not is_read_only_sql(sql):
+        return {
+            "ok": False,
+            "operation": "query",
+            "error": (
+                "query is read-only and cannot contain write/DDL/EXEC keywords; "
+                "use read_procedure only for explicitly allowlisted diagnostics"
+            ),
+            "retry_same_call": False,
+        }
+    rows = _orchestrator().run_readonly_query(
+        client, sql, database=database, run_id=req.get("run_id")
+    )
+    return {"ok": True, "operation": "query", "database": database, "rows": rows}
+
+
+def _find_objects(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    database = str(_database(req))
+    rows = client.find_sql_objects(
+        database_name=database,
+        search_text=str(_require(req, "search")),
+        object_type=req.get("object_type"),
+        top_n=_top(req, 20),
+    )
+    return {"ok": True, "operation": "find_objects", "database": database, "objects": rows}
+
+
+def _get_definition(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    database = str(_database(req))
+    schema = str(req.get("schema") or "dbo").strip("[]")
+    name = str(_require(req, "object_name"))
+    if "." in name:
+        parts = [part.strip().strip("[]") for part in name.split(".")]
+        if len(parts) != 2 or not all(parts):
+            raise ValueError("object_name must be an object or schema.object; specify database separately")
+        if req.get("schema") and schema.casefold() != parts[0].casefold():
+            raise ValueError("schema conflicts with qualified object_name")
+        schema, name = parts
+    result = client.get_sql_object_definition(
+        database_name=database,
+        schema_name=schema,
+        object_name=name.strip("[]"),
+    )
+    return {"ok": True, "operation": "get_definition", "database": database, "definition": result}
+
+
+def _get_ticket_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "operation": "get_ticket_context",
+        "ticket": client.get_ticket_context(str(_require(req, "ticket_id"))),
+    }
+
+
+def _get_run_actions(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "operation": "get_run_actions",
+        "actions": client.get_run_actions(str(_require(req, "run_id"))),
+    }
+
+
+def _save_ledger(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    run_id = str(_require(req, "run_id"))
+    ledger = _require(req, "ledger")
+    if not isinstance(ledger, dict):
+        raise ValueError("ledger must be an object")
+    client.save_investigation_ledger(run_id, ledger)
+    return {"ok": True, "operation": "save_ledger", "run_id": run_id, "saved": True}
+
+
+_CONNECTED_OPERATIONS = {
+    "probe_table": _probe_table,
+    "select": _select,
+    "query": _query,
+    "find_objects": _find_objects,
+    "get_definition": _get_definition,
+    "get_ticket_context": _get_ticket_context,
+    "get_run_actions": _get_run_actions,
+    "save_ledger": _save_ledger,
+    "read_procedure": _read_procedure,
+    "heat_context": _heat_context,
+    "sap_api_context": _sap_api_context,
+    "work_order_context": _work_order_context,
+    "resolve_heat": _resolve_heat,
+}
+
+
 def dispatch(req: dict[str, Any]) -> dict[str, Any]:
     operation = str(_require(req, "operation"))
-
-    # Operations that need no live connection are handled before opening one.
     if operation == "validate_identifiers":
         return _validate_identifiers(req)
     if operation == "suggest_tables":
-        database = _database(req)
+        database = str(_database(req))
         result = _orchestrator().suggest_tables_mechanically(
-            str(_require(req, "search")), top=_top(req, 8), database=database)
+            str(_require(req, "search")), top=_top(req, 8), database=database
+        )
         return {"operation": operation, **result}
 
-    client: Any = None
-    try:
-        client = _client()
-
-        if operation == "select":
-            database = _database(req)
-            built = _orchestrator().build_query_mechanically(
-                table=str(_require(req, "table")),
-                columns=[str(x) for x in _require(req, "columns")],
-                where=req.get("where"), order_by=req.get("order_by"),
-                top=_top(req, 20), database=database,
-            )
-            if not built.get("ok"):
-                return {"operation": operation, **built, "retry_same_call": False}
-            rows = _orchestrator().run_readonly_query(
-                client, built["sql"], database=database, run_id=req.get("run_id"))
-            return {"ok": True, "operation": operation, "database": database,
-                    "table": built.get("table"), "sql": built.get("sql"),
-                    "warning": built.get("warning") or built.get("ambiguity_warning"), "rows": rows}
-
-        if operation == "query":
-            database = _database(req)
-            sql = str(_require(req, "sql")).strip()
-            if not is_read_only_sql(sql):
-                return {"ok": False, "operation": operation,
-                        "error": ("query is read-only and cannot contain write/DDL/EXEC keywords; "
-                                  "use read_procedure only for explicitly allowlisted diagnostics"),
-                        "retry_same_call": False}
-            rows = _orchestrator().run_readonly_query(
-                client, sql, database=database, run_id=req.get("run_id"))
-            return {"ok": True, "operation": operation, "database": database, "rows": rows}
-
-        if operation == "find_objects":
-            database = _database(req)
-            rows = client.find_sql_objects(database_name=database,
-                search_text=str(_require(req, "search")), object_type=req.get("object_type"), top_n=_top(req, 20))
-            return {"ok": True, "operation": operation, "database": database, "objects": rows}
-
-        if operation == "get_definition":
-            database = _database(req)
-            schema = str(req.get("schema") or "dbo").strip("[]")
-            name = str(_require(req, "object_name"))
-            if "." in name:
-                parts = [part.strip().strip("[]") for part in name.split(".")]
-                if len(parts) != 2 or not all(parts):
-                    raise ValueError("object_name must be an object or schema.object; specify database separately")
-                if req.get("schema") and schema.casefold() != parts[0].casefold():
-                    raise ValueError("schema conflicts with qualified object_name")
-                schema, name = parts
-            result = client.get_sql_object_definition(database_name=database,
-                schema_name=schema, object_name=name.strip("[]"))
-            return {"ok": True, "operation": operation, "database": database, "definition": result}
-
-        if operation == "get_ticket_context":
-            return {"ok": True, "operation": operation,
-                    "ticket": client.get_ticket_context(str(_require(req, "ticket_id")))}
-
-        if operation == "get_run_actions":
-            return {"ok": True, "operation": operation,
-                    "actions": client.get_run_actions(str(_require(req, "run_id")))}
-
-        if operation == "save_ledger":
-            run_id = str(_require(req, "run_id"))
-            ledger = _require(req, "ledger")
-            if not isinstance(ledger, dict):
-                raise ValueError("ledger must be an object")
-            client.save_investigation_ledger(run_id, ledger)
-            return {"ok": True, "operation": operation, "run_id": run_id, "saved": True}
-
-        if operation == "read_procedure":
-            return _read_procedure(req, client)
-
-        if operation == "heat_context":
-            return _heat_context(req, client)
-
-        if operation == "sap_api_context":
-            return _sap_api_context(req, client)
-
-        if operation == "work_order_context":
-            return _work_order_context(req, client)
-
-        if operation == "resolve_heat":
-            return _resolve_heat(req, client)
-
+    handler = _CONNECTED_OPERATIONS.get(operation)
+    if handler is None:
         raise ValueError(f"unsupported operation: {operation}")
+
+    client = _client()
+    try:
+        return handler(req, client)
     finally:
-        if client is not None:
-            try:
-                client.close()
-            except Exception:
-                pass
+        try:
+            client.close()
+        except Exception:
+            pass
 
 
 def _compact(value: Any, depth: int = 0) -> Any:

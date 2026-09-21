@@ -1,10 +1,10 @@
 # Chitragupta L2 Pipeline State Machine
 
 Status: **runtime contract**
-Branch: `main`
+
 
 This document defines the lifecycle implemented by `Model_Bench/l2_pipeline_runtime.py`.
-If this document and the runtime disagree, fix the drift immediately; neither should be allowed to remain stale.
+If this document and the runtime disagree, fix the drift immediately.
 
 ## 1. Core invariant
 
@@ -33,21 +33,19 @@ on 2026-09-18). Their available tools are file, skills,
 Kanban and typed XStudio evidence. These bounds must be validated against actual
 worker traces whenever the model deployment changes.
 
-The current LM Studio deployment has one safe inference slot (`max_in_progress: 1`). Throughput therefore comes from **finishing the active ticket before claiming another one**.
+The current LM Studio deployment has one safe local inference slot. Chitragupta therefore uses Jev/System One to remove bounded classification, selection, and review work from that slot.
 
-Global SQL pipeline WIP is one active Hermes run.
+Global SQL pipeline WIP remains one active Hermes run.
 
 ```text
-review priority              30
-rework investigation         20
-new investigation            10
+local deep-review priority     30
+rework investigation           20
+new investigation              10
 ```
 
 A fresh Helpdesk claim is allowed only when `Hermes_L2_Response_Trn_Tbl` has no active run after reconciliation.
 
 ## 2. Normal lifecycle
-
-Reviewer creation is deliberately **deferred** until the source investigator/rework completion has been normalized and is reviewable.
 
 ```text
 Complaint_Mst_Tbl Status=eligible
@@ -56,36 +54,46 @@ Complaint_Mst_Tbl Status=eligible
 Hermes_L2_Claim_Ticket_Usp
           |
           v
-INVESTIGATOR card [priority 10]
+JEV TRIAGE
+  route / ambiguity / complexity /
+  live-state/schema/known-issue likelihood
+          |
+          v
+deterministic real candidates
+          |
+          v
+JEV EVIDENCE PLAN
+          |
+          v
+identifier-bounded probe_table reads
+(max 3; no strong identifier => no broad automatic probe)
+          |
+          v
+JEV INVESTIGATION ASSESSMENT
+          |
+          v
+l2-jev-investigator card [priority 10]
+  COMPOSE_ONLY or FOCUSED_REASONING
           |
           | kanban_complete(metadata)
           v
-normalize / validate proposal
-          |
-          | only when complete/reviewable
-          v
-REVIEWER card [priority 30]
-  frozen proposal_json
-       /     \
- approve     reject
-    |           |
-    v           v
-PUBLISH      REWORK card [priority 20]
-    |           |
-    |           | kanban_complete(metadata)
-    |           v
-    |       normalize / validate
-    |           |
-    |           v
-    |       NEW REVIEWER [priority 30]
-    |           |
-    +-----------+
+normalize / validate frozen proposal
           |
           v
-SQL / Helpdesk terminal or waiting state
+JEV PRIMARY REVIEW
+      /          |             |              \
+ APPROVE       REWORK      L3_ESCALATION   LOCAL_REVIEW
+    |             |             |              |
+    v             v             v              v
+ PUBLISH      REWORK[+1]     L3 path      qwen reviewer
+                                                  |
+                                           approve / reject
+                                             |        |
+                                             v        v
+                                          PUBLISH   REWORK
 ```
 
-The investigator never publishes or creates its own reviewer. The reviewer never publishes, reassigns the ticket, or retypes the response for publication.
+The local reviewer is no longer mandatory. It is an exception path for Jev uncertainty, conflicting evidence, low confidence, service unavailability, or cases where Jev explicitly says deeper System-2 reasoning is useful.
 
 Missing requester-only information uses QUESTION with an explicit customer question,
 not recurring UPDATEs. The flat proposal adapter preserves investigative notes and
@@ -98,13 +106,41 @@ is returned for bounded rework before publication. A requester-dependent step mu
 instead be a QUESTION. Reviewer turn instructions are role-specific, and reviewers
 cannot use the investigator proposal-submission tool.
 
-## 3. Frozen proposal contract
+## 3. Jev-first investigation contract
 
-The reviewer judges a frozen `proposal_json` created from normalized investigator/rework completion metadata.
+The runtime assembles evidence before the local investigator receives its card.
 
-The publication payload must come from that frozen reviewed proposal rather than from a later reconstruction of task prose.
+The order is:
 
-At minimum the proposal carries the fields needed for deterministic publication, including:
+1. requester-grounded KB/route query;
+2. Jev parallel ticket characterization;
+3. deterministic schema candidate generation;
+4. Jev candidate selection/rating;
+5. deterministic `probe_table` reads for the highest-value candidates;
+6. Jev assessment of the resulting evidence package;
+7. local coordinator receives the compact package.
+
+`probe_table` is deliberately conservative:
+
+- the table/view must exist in `Knowledge/schema_allowlist.json`;
+- a strong ticket identifier such as HeatNo, BatchNo, TransactionID, WorkOrder, ProductionOrder, MaterialDocument, RecipeNo, or Equipment must map to a real column;
+- the query is built mechanically through the existing guarded query builder;
+- output is bounded;
+- if no identifier maps, automatic probing returns `probe_possible=false` rather than issuing a broad read.
+
+When Jev returns high evidence sufficiency and low need for deeper reasoning, the local profile is `COMPOSE_ONLY` and gets at most one additional live read. Otherwise it is `FOCUSED_REASONING` with a small additional-read budget.
+
+The default profile is:
+
+```text
+l2-jev-investigator
+```
+
+`l2-investigator-primary` remains a compatibility/fallback profile.
+
+## 4. Frozen proposal contract
+
+The local investigator/rework worker completes with structured metadata. At minimum:
 
 ```text
 run_id
@@ -113,7 +149,7 @@ response_type
 reply_text
 ```
 
-and, when present:
+and, when supported:
 
 ```text
 problem_summary
@@ -122,58 +158,172 @@ root_cause
 resolution
 ```
 
-A reviewer card must not exist for an incomplete/unreviewable proposal in the normal post-migration topology.
+The deterministic runtime normalizes this into one frozen proposal. Jev primary review and any local fallback reviewer judge that exact proposal.
 
-## 4. Review-cycle semantics
+No reviewer or publisher should reconstruct a different proposal from free-form comments.
 
-`review_cycle` is the pipeline counter for reviewer/rework loops and is separate from SQL `AttemptNo`.
+## 5. Jev primary review
+
+Jev primary review is a bounded System One workflow, not a free-form reviewer agent.
+
+Its main decision is:
 
 ```text
-cycle 0 = initial investigation review
-cycle 1 = first rework review
-cycle 2 = second rework review
+APPROVE
+REWORK
+LOCAL_REVIEW
+L3_ESCALATION
 ```
 
-`MAX_REVIEW_CYCLES = 3` means a rejection at cycle 2 escalates instead of creating cycle 3.
+It also independently judges evidence support, overclaim, performed-action claims, action-audit support, root-cause establishment, response-type fit, need for deep local reasoning, and publication risk.
 
-SQL `AttemptNo` is reserved for genuinely new SQL claim/run attempts. It is not a reviewer-rework counter.
+Deterministic code—not Jev—owns the thresholds for directly acting on a typed review.
 
-## 5. Rejection topology
+A direct Jev approval currently requires all of the following:
 
-A reject is terminal for that reviewer card.
+```text
+decision                APPROVE
+decision confidence     >= 0.82
+evidence support        >= 0.80
+overclaim probability   <= 0.20
+response-type fit       >= 0.80
+deep-reasoning need     <= 0.30
+publication-risk score  <= 0.85
+performed-action claim  absent OR action audit support >= 0.80
+RESOLUTION              root-cause establishment >= 0.72
+```
 
-The reconciler then:
+High-confidence `REWORK` or `L3_ESCALATION` currently require decision confidence >= 0.88.
 
-1. records/preserves the reviewer objection;
-2. persists useful prior investigation state to the run ledger;
-3. creates a fresh `REWORK[n]` investigator card at priority 20;
-4. waits for that rework to complete and be normalized;
-5. creates a fresh reviewer for the normalized rework proposal at priority 30;
-6. escalates rather than creating another rework when the review-cycle cap is reached.
+If an approval misses any safety gate, it does **not** publish. It falls to `LOCAL_REVIEW`.
 
-The important invariant is:
+## 6. Local deep-review fallback
 
-> Every reviewable investigator/rework proposal must have exactly one reviewer, and reviewer creation happens after proposal normalization.
+A local reviewer card is created only for the fallback path.
 
-## 6. Approval and publication
+It carries:
 
-A reviewer approval is represented structurally by the reviewer reaching `done`.
+```text
+run_id
+ticket_id
+ticket_no
+investigation_task_id
+review_cycle
+pipeline_stage: review
+proposal_json: <frozen proposal including Jev primary review>
+```
 
-The deterministic publication path:
+The reviewer should inspect the exact uncertainty that caused fallback and perform the smallest sufficient live verification. It must not restart the investigation by default.
 
-1. reads the reviewer's frozen `proposal_json`;
-2. applies the verified Helpdesk workflow binding;
-3. calls `Hermes_Orchestrator.py --publish-response --force-run-id`;
+Its only lifecycle outputs are:
+
+```text
+kanban_complete -> approve frozen proposal
+kanban_block    -> reject with one actionable reason
+```
+
+The reviewer never publishes or mutates Helpdesk state.
+
+## 7. One deterministic publication path
+
+Both Jev direct approval and local-review approval call the same `_publish_frozen_proposal()` path.
+
+That path:
+
+1. confirms the run is still active and not already published;
+2. applies `deploy/helpdesk_workflow_binding.json`;
+3. calls the audited `Hermes_Orchestrator.py --publish-response --force-run-id` path;
 4. verifies SQL/Helpdesk postconditions;
-5. records the human-readable activity entry.
+5. writes the human-readable ticket activity.
 
-The investigator does not publish. The reviewer does not publish.
+Jev and the local reviewer do not choose raw Helpdesk status names.
 
-A resolved ticket is **not** automatically converted into a solution article. KB promotion/deduplication is governed by `Knowledge/KB_IMPLEMENTATION_PLAN.md`.
+## 8. Rework-cycle semantics
 
-## 7. Helpdesk workflow binding
+`review_cycle` remains separate from SQL `AttemptNo`.
 
-Workflow status names are harness configuration, not model output.
+```text
+cycle 0 = initial proposal
+cycle 1 = first focused rework
+cycle 2 = second focused rework
+```
+
+`MAX_REVIEW_CYCLES = 3` means a rejection/rework request at the cap escalates instead of creating an unbounded loop.
+
+A Jev `REWORK` and a local-review rejection use the same deterministic rework path and preserve prior verified findings in the ledger.
+
+## 9. Jev state and observability
+
+Jev is another bounded investigator/reviewer of the same run. It does not have a separate business table.
+
+Stage summaries live on `Hermes_L2_Response_Trn_Tbl`:
+
+```text
+JevTriageJson
+JevInvestigationJson
+JevReviewJson
+JevTraceJson
+JevKBCurationJson
+ReviewMode
+JevReviewDecision
+JevReviewConfidence
+JevRiskScore
+LocalReviewRequired
+JevModel
+JevReviewedOn
+```
+
+Detailed System One calls reuse `Hermes_Agent_Trace_Trn_Tbl` with `EventType='jev_system_one'`.
+
+KB retrieval telemetry also reuses Agent Trace.
+
+## 10. Trace assessment
+
+`xstudio-l2-trace` remains a cheap local observer and does not call TypeSafe in the hot hook.
+
+After `drain_l2_trace_log.py` persists events, Jev assesses completed runs for:
+
+- task completion;
+- evidence actually gathered;
+- silent failure;
+- false success;
+- unnecessary tool repetition;
+- investigation efficiency;
+- policy violation;
+- transport flailing;
+- human-attention need and priority;
+- failure class.
+
+This feeds semantic quality reporting and model comparison without making the trace hook a network dependency.
+
+## 11. KB lifecycle
+
+Route similarity or semantic similarity is not truth.
+
+Normal retrieval uses governed approved Solution articles, then Jev adds:
+
+- relevance;
+- applicability;
+- negative-indicator probability;
+- same-failure-pattern probability;
+- same-root-cause-family probability.
+
+Current-ticket claims still require live evidence.
+
+After a verified `RESOLUTION`, Jev may suggest:
+
+```text
+REUSE_EXISTING
+UPDATE_EXISTING
+CREATE_CANDIDATE
+NONE
+```
+
+That suggestion does not directly promote or mutate an article.
+
+## 12. Helpdesk workflow binding
+
+Workflow status names remain deterministic configuration.
 
 Canonical deployment file:
 
@@ -181,7 +331,7 @@ Canonical deployment file:
 deploy/helpdesk_workflow_binding.json
 ```
 
-Current live-verified values are:
+Current live-verified values remain:
 
 ```text
 eligible_ticket_status            Enter
@@ -191,131 +341,54 @@ l3_ticket_status                  null
 needs_human_action_ticket_status  null
 ```
 
-`Closed` and `Ask` were derived from live Helpdesk evidence. Unproven L3/human-action ticket statuses remain unbound rather than invented.
+When strict resolution binding is enabled, `RESOLUTION` fails closed if the resolved ticket status is not configured.
 
-When `strict_resolution_status_binding=true`, `RESOLUTION` must fail closed if `resolved_ticket_status` is not configured. This prevents:
+## 13. Reconciliation ordering
 
-```text
-Hermes run = COMPLETED / RESOLUTION
-Helpdesk ticket = still visibly unresolved
-```
+One reconciler owns lifecycle mutation.
 
-Use `Model_Bench/configure_helpdesk_workflow.py` / live discovery before changing these values.
-
-## 8. Reconciliation ordering
-
-One reconciler owns lifecycle mutation. Current synchronous ordering is:
+Current synchronous order:
 
 ```text
 1. normalize investigator/rework completions
-2. convert unreviewable terminal completions into bounded rework
-3. create missing reviewers for normalized reviewable completions
-4. process reviewer rejections
-5. process reviewer approvals / deterministic publish
+2. convert unreviewable completions into bounded rework
+3. run Jev primary reviews
+     - direct approve/publish where safety gates pass
+     - direct focused rework where accepted
+     - direct L3 escalation where accepted
+     - create local reviewer only for fallback
+4. process local-review rejections
+5. process local-review approvals through the same publisher
 6. recover true SQL/Kanban orphans
 ```
 
-The old design spawned repair/reject/publisher concurrently. That race is retired and must not be reintroduced.
+Do not restore separate publisher/reject/reviewer schedulers.
 
-## 9. Event delivery and backstop
+## 14. Event delivery and backstop
 
-`Model_Bench/xstudio_l2_orchestrator_plugin/` triggers `reconcile_l2_pipeline.py` after successful:
+`xstudio-l2-orchestrator` triggers reconciliation after successful Kanban completion/block events.
 
-```text
-kanban_complete
-kanban_block
-```
+Event delivery is the fast path.
 
-Event delivery is the fast path, not a correctness dependency.
+The 2-minute `ticket_scout.py` run remains the durable reconcile-first backstop and only claims when global WIP is zero.
 
-The 2-minute `ticket_scout.py` job runs reconciliation before every claim attempt and is the durable mutating backstop.
+## 15. Stale/orphan recovery
 
-`run_coalesced.py` prevents overlapping event-triggered reconciler executions.
+Age alone never makes a run stale.
 
-The old independently scheduled mutating jobs for publish safety-net / completion repair were deliberately removed. They are compatibility entrypoints only and must not be scheduled as separate lifecycle authorities.
+Any Kanban card referencing the exact run protects it, including investigation, rework, or local-review fallback.
 
-The remaining completion audit is read-only.
+A run is auto-failed for clean retry only when it is active in SQL, has no Kanban task referencing it, and exceeds the orphan grace period.
 
-## 10. Stale/orphan recovery
+## 16. Candidate filtering / UPDATE continuation
 
-A run is not stale merely because it is old.
+`Knowledge/25_ticket_dispatch_hardening.sql` performs non-L2 customization filtering before `TOP (@BatchSize)`.
 
-Any Kanban card that references the run protects it, regardless of whether it is `todo`, `ready`, `running`, `blocked`, scheduled, review-related, or a done reviewer awaiting deterministic publication.
+`Knowledge/55_update_retry_hardening.sql` provides bounded continuation behavior for published `UPDATE` responses.
 
-A SQL run is auto-failed for clean retry only when:
+Both are part of the generated full-install bundle.
 
-1. it is still active in SQL;
-2. no Kanban task at any stage references that exact `run_id`; and
-3. it exceeds the orphan grace period.
-
-The retired `l2-review` board is not queried by the production liveness path.
-
-## 11. Ticket claiming
-
-The scout first reconciles and then checks active SQL runs.
-
-If any active run remains:
-
-```text
-status = WIP_LIMIT
-```
-
-and no ticket is claimed.
-
-Only when WIP is zero does the scout invoke the atomic poll/claim path and create **one investigator card**.
-
-The reviewer is **not** created during claim. It is created later by reconciliation after the investigator completion has been normalized and validated as reviewable.
-
-If investigator-card creation fails after SQL claim, the run is failed promptly for clean retry rather than being abandoned.
-
-Do not bypass this production gate with a manual raw `Hermes_Orchestrator.py --poll` test.
-
-## 12. Candidate filtering
-
-`Knowledge/25_ticket_dispatch_hardening.sql` puts the non-L2 customization exclusion inside `Hermes_L2_Get_Candidate_Tickets_Usp` **before `TOP (@BatchSize)`**.
-
-This prevents the old failure where the first N candidates were removed client-side and the scout falsely reported `NO_CLAIMABLE_TICKET` while valid incidents existed deeper in the queue.
-
-The `25` hardening source is now included in the regenerated `Knowledge/00_Hermes_L2_FULL_INSTALL.sql` bundle; it is no longer an omitted post-install-only change.
-
-## 13. UPDATE continuation hardening
-
-`Knowledge/55_update_retry_hardening.sql` is also part of the regenerated full-install bundle.
-
-A published `UPDATE` must have bounded continuation behavior (`NextEligibleOn`) rather than becoming permanently unclaimable or immediately churning.
-
-## 14. Pipeline status / diagnosis
-
-Use the deployed runtime status command:
-
-```bash
-python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
-```
-
-It should expose:
-
-- active SQL runs;
-- Kanban cards grouped/correlated by `run_id`;
-- topology anomalies;
-- workflow binding;
-- priority/WIP/review-cycle contract.
-
-A healthy active run should be explainable as one of the current pipeline stages rather than as an unexplained SQL row.
-
-## 15. Cron contract
-
-Current L2 scheduling is intentionally simple:
-
-```text
-L2 Ticket Scout                every 2m   mutating central reconcile + optional claim
-L2 Kanban Completion Audit     every 10m  read-only divergence audit
-```
-
-Session maintenance and mem0 patch maintenance are unrelated infrastructure jobs.
-
-Do not recreate independent publisher/reject/repair cron loops.
-
-## 16. Deployment
+## 17. Deployment and validation
 
 From the repo under WSL:
 
@@ -326,20 +399,26 @@ python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 ```
 
-The generated SQL install bundle already includes the `25` and `55` hardening files. Run `Knowledge/98_pipeline_postflight.sql` and `Knowledge/99_postflight.sql` after deployment as appropriate.
+Jev is active, not shadowed. The dev deployment loads the explicitly approved TypeSafe credential from `deploy/dev/typesafe.env` when `TYPESAFE_API_KEY` is absent.
 
-Do not use GitHub Actions as a substitute for live pipeline validation; correctness depends on the real Hermes/Kanban/SQL/WSL/LM Studio environment.
+Run `Knowledge/98_pipeline_postflight.sql` and `Knowledge/99_postflight.sql` after SQL deployment as appropriate.
 
-## 17. Historical designs that are not current
+Correctness still requires validation on the real Hermes/Kanban/SQL/WSL/LM Studio host.
 
-The following are historical only:
+## 18. Historical designs that are not current
 
-- backlog threshold 3 as the claim governor;
-- creating investigator and reviewer as a pair during claim;
+Do not restore:
+
+- mandatory local-model review for every proposal;
+- pre-created/parent-gated reviewer cards;
+- a separate `l2-review` board;
+- separate Jev business/audit tables;
+- Jev shadow mode as the normal operating topology;
+- backlog threshold 3 as claim governor;
 - SQL `AttemptNo` as the rework counter;
-- separate `l2-review` board;
 - `kanban_forward_bridge.py`;
-- separately scheduled publisher/reject/repair lifecycle authorities;
-- model-based profile names used as role identity.
+- independently scheduled publisher/reject/repair lifecycle authorities;
+- model-based profile names used as role identity;
+- agent-built Python/pyodbc/sqlcmd database transport.
 
 Do not use historical `Plans/` or `Agent_Comms/` material to override this state-machine contract.

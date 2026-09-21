@@ -231,6 +231,109 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(set(names), {"api_transaction", "sap_posting"})
 
 
+class JevFusionTests(unittest.TestCase):
+    def test_single_identifier_route_skips_jev(self):
+        def should_not_run(*args, **kwargs):
+            raise AssertionError("Jev must not run for one unambiguous identifier route")
+
+        routes, routing = kb.resolve_route_candidates(
+            "HeatNo 1604015 delay value looks wrong",
+            MANIFEST,
+            jev_decider=should_not_run,
+        )
+        self.assertEqual(routes[0]["route"], "heat_execution")
+        self.assertEqual(routing["mode"], "deterministic")
+        self.assertEqual(routing["identifier_routes"], ["heat_execution"])
+        self.assertIn("authoritative", routing["jev"]["reason"])
+
+    def test_ambiguous_identifier_constrains_jev_choice(self):
+        manifest = dict(MANIFEST)
+        manifest["identifier_routing"] = {
+            **MANIFEST["identifier_routing"],
+            "TransactionID": ["api_transaction", "sap_posting"],
+        }
+        manifest["routes"] = MANIFEST["routes"] + [
+            {
+                "route": "api_transaction",
+                "description": "API transaction failure",
+                "keywords": ["API", "transaction ID"],
+                "load": [],
+            },
+            {
+                "route": "sap_posting",
+                "description": "SAP posting failure",
+                "keywords": ["SAP", "posting"],
+                "load": [],
+            },
+        ]
+        seen = {}
+
+        def decider(query, supplied_manifest, *, allowed_routes=None):
+            seen["allowed_routes"] = list(allowed_routes or [])
+            return {
+                "enabled": True,
+                "accepted": True,
+                "choice": "sap_posting",
+                "confidence": 0.91,
+                "probabilities": {"api_transaction": 0.09, "sap_posting": 0.91},
+                "model": "jev-test",
+            }
+
+        routes, routing = kb.resolve_route_candidates(
+            "TransactionID 123 failed before posting",
+            manifest,
+            jev_decider=decider,
+        )
+        self.assertEqual(set(seen["allowed_routes"]), {"api_transaction", "sap_posting"})
+        self.assertEqual(routes[0]["route"], "sap_posting")
+        self.assertEqual(routing["mode"], "jev")
+        self.assertEqual(routing["selected_route"], "sap_posting")
+
+    def test_semantic_choice_can_promote_canonical_route_without_identifier(self):
+        def decider(query, supplied_manifest, *, allowed_routes=None):
+            self.assertIsNone(allowed_routes)
+            return {
+                "enabled": True,
+                "accepted": True,
+                "choice": "performance",
+                "confidence": 0.86,
+                "probabilities": {"performance": 0.86, "discover": 0.14},
+                "model": "jev-test",
+            }
+
+        routes, routing = kb.resolve_route_candidates(
+            "screen behaves strangely",
+            MANIFEST,
+            jev_decider=decider,
+        )
+        self.assertEqual(routes[0]["route"], "performance")
+        self.assertEqual(routes[0]["semantic_source"], "typesafe_jev")
+        self.assertEqual(routing["mode"], "jev")
+
+    def test_low_confidence_jev_preserves_deterministic_order(self):
+        deterministic = kb.route_candidates("delay equipment missing", MANIFEST)
+
+        def decider(query, supplied_manifest, *, allowed_routes=None):
+            return {
+                "enabled": True,
+                "accepted": False,
+                "choice": "heat_execution",
+                "confidence": 0.51,
+                "probabilities": {"performance": 0.49, "heat_execution": 0.51},
+                "model": "jev-test",
+                "reason": "Jev confidence below configured threshold",
+            }
+
+        routes, routing = kb.resolve_route_candidates(
+            "delay equipment missing",
+            MANIFEST,
+            jev_decider=decider,
+        )
+        self.assertEqual(routes, deterministic)
+        self.assertEqual(routing["mode"], "deterministic")
+        self.assertFalse(routing["jev"]["accepted"])
+
+
 class ArticleRankingTests(unittest.TestCase):
     def setUp(self):
         self.routes = [{"route": "performance", "score": 10.0, "reasons": ["keywords: delay"]}]

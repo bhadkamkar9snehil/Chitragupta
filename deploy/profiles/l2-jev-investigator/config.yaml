@@ -1,0 +1,36 @@
+model:
+  default: qwen/qwen3.5-9b
+  provider: lmstudio
+  base_url: http://100.111.69.102:1235/v1
+  context_length: 32768
+agent:
+  reasoning_effort: minimal
+memory:
+  provider: mem0
+plugins:
+  enabled:
+    - xstudio-l2-trace
+    - xstudio-l2-orchestrator
+    - xstudio-l2-tools
+kanban:
+  dispatch_in_gateway: false
+onboarding:
+  seen:
+    tool_progress_prompt: true
+_config_version: 40
+platforms:
+  api_server:
+    host: 0.0.0.0
+    port: 8648
+platform_toolsets:
+  cli:
+    - kanban
+    - skills
+    - xstudio_l2
+known_plugin_toolsets:
+  cli:
+    - xstudio_l2
+    - xstudio_jev
+tools:
+  tool_search:
+    enabled: off
