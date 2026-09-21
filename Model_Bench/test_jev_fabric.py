@@ -177,6 +177,54 @@ class FabricTests(unittest.TestCase):
         self.assertIn("RESOLUTION", seen["questions"]["response_type"]["criteria"])
         self.assertIn("NEEDS_HUMAN_ACTION", seen["questions"]["response_type"]["criteria"])
 
+    def test_investigation_assessment_adds_context_attention_in_same_request(self):
+        seen = {}
+
+        def sender(url, payload, headers, timeout):
+            seen["questions"] = payload["questions"]
+            answers = {}
+            for name, question in payload["questions"].items():
+                if question["type"] == "choice":
+                    choice = "NONE" if name == "known_solution" else (
+                        "UPDATE" if name == "response_type" else "UNKNOWN"
+                    )
+                    answers[name] = {
+                        "type": "choice", "choice": choice, "confidence": 0.9,
+                        "probabilities": {choice: 0.9},
+                    }
+                elif question["type"] == "score":
+                    answers[name] = {
+                        "type": "score", "score": 2.0, "confidence": 0.9,
+                        "legend": {"0": "omit", "3": "full"},
+                        "probabilities": {"2": 1.0},
+                    }
+                else:
+                    answers[name] = {"type": "noul", "noul": 0.5}
+            return {"model": "jev-test", "answers": answers, "usage": {}}
+
+        state = {
+            "ticket": {"BriefDetails": "heat failure"},
+            "known_solutions": [],
+            "context_chunks": [{
+                "id": "ticket",
+                "kind": "ticket",
+                "authority": "CURRENT_TICKET",
+                "source": "Helpdesk",
+                "state_path": "ticket",
+                "attention_question": "context_c0",
+            }],
+        }
+        result = assess_investigation(state, api_key="test", sender=sender)
+        self.assertTrue(result["ok"])
+        self.assertIn("evidence_sufficient", seen["questions"])
+        self.assertIn("context_c0", seen["questions"])
+        self.assertEqual(seen["questions"]["context_c0"]["type"], "score")
+        self.assertEqual(len(seen["questions"]["context_c0"]["criteria"]), 4)
+        self.assertEqual(
+            seen["questions"]["context_c0"]["instructions"]["chunk_path"],
+            "ticket",
+        )
+
     def test_primary_reviewer_is_bounded_to_four_decisions_and_explicit_risks(self):
         seen = {}
 
