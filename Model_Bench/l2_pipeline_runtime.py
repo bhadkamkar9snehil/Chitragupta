@@ -1430,9 +1430,8 @@ def _investigation_bundle(
         ),
     }
 
-    # Future multi-profile routing is collected in shadow mode when operators
-    # provide explicit allowed candidates. It cannot invent or activate a
-    # profile outside this configuration.
+    # Optional profile routing is bounded to operator-supplied candidates.
+    # It cannot invent or activate a profile outside this configuration.
     profile_json = os.environ.get("CHITRAGUPTA_JEV_PROFILE_CANDIDATES_JSON")
     if profile_json:
         try:
@@ -1733,10 +1732,12 @@ def cli(argv: Optional[list[str]] = None) -> int:
         elif args.mode == "reconcile":
             result = reconcile(args, dry_run=args.dry_run)
         elif args.mode == "repair":
+            # Compatibility entrypoint: repair now means normalize/package and
+            # run the same Jev-primary review routing used by reconcile.
             result = {
                 "normalized": normalize_investigator_completions(dry_run=args.dry_run),
                 "unreviewable_reworked": process_unreviewable_completions(args, dry_run=args.dry_run),
-                "reviewers_created": ensure_missing_reviewers(args, dry_run=args.dry_run),
+                "jev_primary_reviews": process_jev_primary_reviews(args, dry_run=args.dry_run),
             }
         elif args.mode == "publish":
             result = process_approvals(args, dry_run=args.dry_run)
