@@ -163,6 +163,7 @@ def resolve_route_candidates(
     top: int = 3,
     *,
     jev_decider=None,
+    semantic_shadow: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Fuse deterministic routing with an optional Jev semantic Choice.
 
@@ -245,8 +246,12 @@ def resolve_route_candidates(
         if len(fused) >= top:
             break
 
-    routing["mode"] = "jev"
     routing["selected_route"] = choice
+    if semantic_shadow:
+        routing["mode"] = "jev_shadow"
+        routing["jev_suggested_candidates"] = fused[:top]
+        return deterministic, routing
+    routing["mode"] = "jev"
     return fused[:top], routing
 
 
@@ -444,6 +449,7 @@ def retrieve(
         query,
         manifest,
         jev_decider=_triage_route_decider(triage),
+        semantic_shadow=jev_policy.SHADOW_MODE,
     )
     routing["triage"] = triage
 
