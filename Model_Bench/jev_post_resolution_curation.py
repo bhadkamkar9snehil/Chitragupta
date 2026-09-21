@@ -20,6 +20,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from Model_Bench.jev.audit import persist_rows, rows_for_result
+from Model_Bench.jev.client import typesafe_available
 from Model_Bench.jev.candidate_rerank import rerank_candidates
 from Model_Bench.jev.kb_curation import assess_curation
 from Model_Bench.jev.policy import KB_JUDGMENTS_ENABLED
@@ -109,8 +110,8 @@ def main() -> int:
     if not KB_JUDGMENTS_ENABLED:
         print("Jev KB judgments disabled.")
         return 0
-    if not os.environ.get("TYPESAFE_API_KEY"):
-        print("TYPESAFE_API_KEY not configured; skipping Jev KB curation.")
+    if not typesafe_available():
+        print("TypeSafe Jev credential not configured; skipping Jev KB curation.")
         return 0
 
     conn = connect()
