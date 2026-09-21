@@ -190,6 +190,17 @@ def _resolve_task_ids_blocking(kanban_task_id: str) -> None:
         _TASK_CACHE[kanban_task_id] = {"run_id": run_id, "ticket_id": ticket_id}
         _RESOLVING.discard(kanban_task_id)
 
+    # Emit one explicit correlation record after the asynchronous resolver
+    # finishes. The drain uses this to backfill the first hook events that may
+    # have been written before run_id/ticket_id were known.
+    if run_id or ticket_id:
+        _write_event({
+            "event_type": "trace_context",
+            "task_id": kanban_task_id,
+            "run_id": run_id,
+            "ticket_id": ticket_id,
+        })
+
 
 def _get_or_start_resolve() -> Dict[str, Optional[str]]:
     """Resolves THIS process's own kanban task (see _MY_KANBAN_TASK_ID) --
