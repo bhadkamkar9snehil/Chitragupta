@@ -478,10 +478,9 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
             req=req,
         )
         if jev.get("ok") and jev.get("ranked"):
+            response["deterministic_candidates"] = candidates
             response["jev_suggested_candidates"] = jev["ranked"]
-            if not jev_policy.SHADOW_MODE:
-                response["deterministic_candidates"] = candidates
-                response["candidates"] = jev["ranked"]
+            response["candidates"] = jev["ranked"]
         return response
 
     client: Any = None
@@ -513,10 +512,15 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
                 sql=str(built.get("sql") or ""),
                 req=audit_req,
             )
+            focus_applied = bool(row_jev.get("ok") and suggested_rows and len(rows) > 8)
+            model_rows = suggested_rows if focus_applied else rows
             return {"ok": True, "operation": operation, "database": database,
                     "table": built.get("table"), "sql": built.get("sql"),
                     "warning": built.get("warning") or built.get("ambiguity_warning"),
-                    "rows": rows, "jev_suggested_rows": suggested_rows,
+                    "rows": model_rows,
+                    "raw_row_count": len(rows) if isinstance(rows, list) else None,
+                    "row_focus_applied": focus_applied,
+                    "jev_suggested_rows": suggested_rows,
                     "jev_row_rerank": row_jev, "jev_row_audit": row_audit}
 
         if operation == "query":
@@ -601,7 +605,12 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
                 sql=sql,
                 req=audit_req,
             )
-            return {"ok": True, "operation": operation, "database": database, "rows": rows,
+            focus_applied = bool(row_jev.get("ok") and suggested_rows and len(rows) > 8)
+            model_rows = suggested_rows if focus_applied else rows
+            return {"ok": True, "operation": operation, "database": database,
+                    "rows": model_rows,
+                    "raw_row_count": len(rows) if isinstance(rows, list) else None,
+                    "row_focus_applied": focus_applied,
                     "jev_semantics": jev_semantics, "jev_audit": jev_audit,
                     "jev_suggested_rows": suggested_rows,
                     "jev_row_rerank": row_jev, "jev_row_audit": row_audit}
@@ -625,10 +634,9 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
                 req=req,
             )
             if jev.get("ok") and jev.get("ranked"):
+                response["deterministic_objects"] = rows
                 response["jev_suggested_objects"] = jev["ranked"]
-                if not jev_policy.SHADOW_MODE:
-                    response["deterministic_objects"] = rows
-                    response["objects"] = jev["ranked"]
+                response["objects"] = jev["ranked"]
             return response
 
         if operation == "get_definition":
