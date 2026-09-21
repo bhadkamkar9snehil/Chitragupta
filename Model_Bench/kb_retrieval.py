@@ -472,43 +472,40 @@ def log_retrieval_telemetry(
     ticket_id: str | None,
     run_id: str | None,
 ) -> dict[str, Any]:
-    """Best-effort PRE_INVESTIGATION telemetry; retrieval never depends on it."""
+    """Reuse Agent Trace for retrieval telemetry; do not create a Jev/KB side table."""
     if not ranked:
         return {"ok": True, "inserted": 0}
     try:
+        query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()
+        route_names = {r.get("route") for r in routes}
+        compact = []
+        for rank_no, row in enumerate(ranked, start=1):
+            compact.append({
+                "rank": rank_no,
+                "kb_id": row.get("kb_id"),
+                "source_type": row.get("source_type"),
+                "deterministic_score": row.get("retrieval_score"),
+                "jev_relevance": row.get("jev_relevance"),
+                "jev_applicability": row.get("jev_applicability"),
+                "jev_negative_indicator": row.get("jev_negative_indicator"),
+                "route_match": bool(row.get("route") in route_names),
+            })
         cur = conn.cursor()
         cur.execute(
-            "SELECT CASE WHEN OBJECT_ID('dbo.Hermes_KB_Retrieval_Trn_Tbl', 'U') "
-            "IS NULL THEN 0 ELSE 1 END"
+            """
+            INSERT INTO dbo.Hermes_Agent_Trace_Trn_Tbl
+            (EventType, EventOn, ToolName, Status, ArgsJson, ResultJson,
+             Provider, RunID, TicketID, Source)
+            VALUES
+            ('kb_retrieval', GETDATE(), 'kb_retrieval', 'ok', ?, ?, 'chitragupta', ?, ?, 'KB');
+            """,
+            json.dumps({"query_hash": query_hash, "phase": "PRE_INVESTIGATION"}, separators=(",", ":")),
+            json.dumps({"candidates": compact}, separators=(",", ":"), default=str),
+            run_id,
+            ticket_id,
         )
-        if not bool(cur.fetchone()[0]):
-            return {"ok": False, "inserted": 0, "reason": "retrieval telemetry table not deployed"}
-        route_names = {r.get("route") for r in routes}
-        query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()
-        sql = """
-        INSERT INTO dbo.Hermes_KB_Retrieval_Trn_Tbl
-        (TicketID, RunID, QueryPhase, QueryHash, KBID, SourceType, RankNo,
-         DeterministicScore, JevRelevance, JevApplicability,
-         JevNegativeIndicator, RouteMatch, Selected)
-        VALUES (?, ?, 'PRE_INVESTIGATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0);
-        """
-        for rank_no, row in enumerate(ranked, start=1):
-            cur.execute(
-                sql,
-                ticket_id,
-                run_id,
-                query_hash,
-                row.get("kb_id"),
-                row.get("source_type"),
-                rank_no,
-                row.get("retrieval_score"),
-                row.get("jev_relevance"),
-                row.get("jev_applicability"),
-                row.get("jev_negative_indicator"),
-                1 if row.get("route") in route_names else 0,
-            )
         conn.commit()
-        return {"ok": True, "inserted": len(ranked)}
+        return {"ok": True, "inserted": 1}
     except Exception as exc:
         return {"ok": False, "inserted": 0, "reason": f"{type(exc).__name__}: {exc}"}
 
