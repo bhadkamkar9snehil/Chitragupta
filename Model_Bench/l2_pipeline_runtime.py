@@ -1841,23 +1841,30 @@ def _investigation_bundle(
     )
     bundle["preloaded_route_skill"] = _route_skill(selected_route)
 
-    # Ticket/request text is untrusted model input. Jev marks possible prompt
-    # injection/policy-override/action text; it never silently deletes content.
-    ticket_security = _run_jev_workflow(
-        "security",
-        {"ticket": fallback_ticket},
-        ticket_id=ticket_id,
-        run_id=run_id,
-        audit_stage="TICKET_SECURITY",
-    )
-    bundle["jev_ticket_security"] = (
-        ticket_security.get("result") if ticket_security.get("ok")
-        else {"ok": False, "reason": ticket_security.get("error") or "unavailable"}
-    )
-    sec_answers = (
-        (bundle.get("jev_ticket_security") or {}).get("answers")
-        if isinstance(bundle.get("jev_ticket_security"), dict) else {}
+    # Ticket/request text is untrusted model input. Trust screening is coalesced
+    # into the existing ticket-triage System One request so the same ticket state
+    # is not sent to Jev twice.
+    characterization = (
+        (bundle.get("kb_retrieval") or {}).get("ticket_characterization")
+        if isinstance(bundle.get("kb_retrieval"), dict)
+        else {}
     ) or {}
+    security_names = {
+        "contains_agent_instruction",
+        "attempts_policy_override",
+        "looks_like_prompt_injection",
+        "contains_untrusted_action_text",
+    }
+    sec_answers = {
+        key: value for key, value in characterization.items()
+        if key in security_names and isinstance(value, dict)
+    }
+    bundle["jev_ticket_security"] = {
+        "ok": bool(sec_answers),
+        "answers": sec_answers,
+        "coalesced_with": "TICKET_TRIAGE",
+        "reason": None if sec_answers else "ticket trust screening unavailable",
+    }
     high_untrusted = False
     for answer in sec_answers.values():
         if isinstance(answer, dict) and answer.get("type") == "noul":
