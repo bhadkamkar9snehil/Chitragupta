@@ -37,15 +37,16 @@ WINDOWS_PYTHON = "/mnt/c/Python314/python.exe"
 ORCHESTRATOR_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Hermes_Orchestrator.py"
 KB_RETRIEVER_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\kb_retrieval.py"
 JEV_WORKFLOW_BRIDGE_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\jev_workflow_bridge.py"
+XSTUDIO_TOOL_BRIDGE_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\xstudio_l2_tool_bridge.py"
 DEFAULT_SERVER = "10.2.6.204"
 DEFAULT_DATABASE = "XStudio_Helpdesk"
 DEFAULT_USER = "sa"
 DEFAULT_ELIGIBLE_STATUS = "Enter"
 
-INVESTIGATOR_PROFILE = os.environ.get("L2_INVESTIGATOR_PROFILE", "l2-investigator-primary")
+INVESTIGATOR_PROFILE = os.environ.get("L2_INVESTIGATOR_PROFILE", "l2-jev-investigator")
 REVIEWER_PROFILE = os.environ.get("L2_REVIEWER_PROFILE", "l2-reviewer-primary")
 REVIEWER_PROFILES = {REVIEWER_PROFILE, "l2-reviewer-primary", "l2-reviewer-fallback"}
-INVESTIGATOR_PROFILES = {INVESTIGATOR_PROFILE, "l2-investigator-primary", "l2-investigator"}
+INVESTIGATOR_PROFILES = {INVESTIGATOR_PROFILE, "l2-jev-investigator", "l2-investigator-primary", "l2-investigator"}
 
 # Finish work before starting work. With max_in_progress=1 this is the scheduling
 # policy that prevents reviewer/rework starvation.
@@ -408,6 +409,147 @@ def _run_jev_workflow(
         data["ok"] = False
         data["error"] = f"Jev bridge exited {proc.returncode}"
     return data
+
+
+def _run_xstudio_bridge(request: dict[str, Any], *, timeout: int = 45) -> dict[str, Any]:
+    """Invoke the guarded Windows typed-tool bridge directly from lifecycle code."""
+    try:
+        proc = subprocess.run(
+            [_orch_python(), XSTUDIO_TOOL_BRIDGE_WIN],
+            input=json.dumps(request, separators=(",", ":"), default=str),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "error": f"xstudio bridge unavailable: {type(exc).__name__}: {exc}"}
+    try:
+        data = json.loads((proc.stdout or "").strip() or "{}")
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "xstudio bridge returned invalid JSON"}
+    return data if isinstance(data, dict) else {"ok": False, "error": "xstudio bridge returned non-object JSON"}
+
+
+def _noul_answer(result: dict[str, Any], name: str, default: float = 0.0) -> float:
+    try:
+        answer = (result.get("answers") or {}).get(name) or {}
+        return float(answer.get("noul")) if answer.get("type") == "noul" else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _score_answer(result: dict[str, Any], name: str, default: float = 0.0) -> float:
+    try:
+        answer = (result.get("answers") or {}).get(name) or {}
+        return float(answer.get("score")) if answer.get("type") == "score" else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _jev_first_investigation(
+    *,
+    ticket: dict[str, Any],
+    run_id: str | None,
+    ticket_id: str,
+    suggested_tables: list[dict[str, Any]],
+    kb_retrieval: dict[str, Any],
+) -> dict[str, Any]:
+    """Classify -> choose real evidence -> gather bounded live data -> assess it."""
+    if os.environ.get("CHITRAGUPTA_JEV_FIRST_INVESTIGATION_ENABLED", "1").strip().lower() in {
+        "0", "false", "no", "off"
+    }:
+        return {"enabled": False, "reason": "Jev-first investigation disabled"}
+
+    candidates = [row for row in suggested_tables if isinstance(row, dict)][:12]
+    known_solutions = [
+        row for row in (kb_retrieval.get("solutions") or []) if isinstance(row, dict)
+    ][:8]
+    plan_state = {
+        "ticket": ticket,
+        "candidates": candidates,
+        "known_solutions": known_solutions,
+        "triage": kb_retrieval.get("ticket_characterization") or {},
+        "route_candidates": kb_retrieval.get("route_candidates") or [],
+    }
+    plan_call = _run_jev_workflow(
+        "evidence_plan",
+        plan_state,
+        ticket_id=ticket_id,
+        run_id=run_id,
+        audit_stage="JEV_EVIDENCE_PLAN",
+    )
+    plan = plan_call.get("result") if plan_call.get("ok") else {
+        "ok": False, "reason": plan_call.get("error") or "evidence plan unavailable"
+    }
+
+    selected: list[tuple[float, float, int, dict[str, Any]]] = []
+    if isinstance(plan, dict) and plan.get("ok"):
+        for i, candidate in enumerate(candidates):
+            inspect = _noul_answer(plan, f"inspect_c{i}", 0.0)
+            value = _score_answer(plan, f"value_c{i}", 0.0)
+            if inspect >= 0.60:
+                selected.append((value, inspect, i, candidate))
+    selected.sort(key=lambda row: (-row[0], -row[1], row[2]))
+    selected = selected[:3]
+
+    probes: list[dict[str, Any]] = []
+    for value, inspect, i, candidate in selected:
+        database = candidate.get("database")
+        table = candidate.get("table")
+        if not database or not table:
+            continue
+        probe = _run_xstudio_bridge({
+            "operation": "probe_table",
+            "database": database,
+            "table": table,
+            "ticket": ticket,
+            "run_id": run_id,
+            "ticket_id": ticket_id,
+            "matched_columns": candidate.get("matched_columns") or [],
+            "top": 20,
+        })
+        probes.append({
+            "candidate_index": i,
+            "candidate": candidate,
+            "plan_inspect_probability": inspect,
+            "plan_value_score": value,
+            "probe": probe,
+        })
+
+    assessment_state = {
+        "ticket": ticket,
+        "triage": kb_retrieval.get("ticket_characterization") or {},
+        "route_candidates": kb_retrieval.get("route_candidates") or [],
+        "known_solutions": known_solutions,
+        "evidence_plan": plan,
+        "live_probes": probes,
+    }
+    assessment_call = _run_jev_workflow(
+        "investigation_assessment",
+        assessment_state,
+        ticket_id=ticket_id,
+        run_id=run_id,
+        audit_stage="JEV_INVESTIGATION",
+    )
+    assessment = assessment_call.get("result") if assessment_call.get("ok") else {
+        "ok": False, "reason": assessment_call.get("error") or "investigation assessment unavailable"
+    }
+
+    compose_only = (
+        isinstance(assessment, dict)
+        and assessment.get("ok")
+        and _noul_answer(assessment, "evidence_sufficient", 0.0) >= 0.80
+        and _noul_answer(assessment, "needs_local_model", 1.0) <= 0.20
+    )
+    return {
+        "enabled": True,
+        "evidence_plan": plan,
+        "selected_candidate_count": len(selected),
+        "live_probes": probes,
+        "assessment": assessment,
+        "local_model_scope": "COMPOSE_ONLY" if compose_only else "FOCUSED_REASONING",
+        "max_additional_live_reads": 1 if compose_only else 3,
+    }
 
 
 def _proposal_preflight_state(
@@ -1117,6 +1259,14 @@ def _investigation_bundle(
     bundle.pop("known_solutions", None)
     bundle["kb_retrieval"] = _run_kb_retrieval(
         args, fallback_ticket, ticket_id=ticket_id, run_id=run_id
+    )
+    suggested_tables = bundle.get("suggested_tables")
+    bundle["jev_first_investigation"] = _jev_first_investigation(
+        ticket=fallback_ticket,
+        run_id=run_id,
+        ticket_id=ticket_id,
+        suggested_tables=suggested_tables if isinstance(suggested_tables, list) else [],
+        kb_retrieval=bundle["kb_retrieval"] if isinstance(bundle["kb_retrieval"], dict) else {},
     )
     route_candidates = (bundle.get("kb_retrieval") or {}).get("route_candidates") or []
     selected_route = (
