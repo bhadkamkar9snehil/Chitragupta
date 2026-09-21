@@ -17,6 +17,7 @@ ACTIVE_PROFILES=(l2-jev-investigator l2-investigator l2-investigator-primary l2-
 INVESTIGATOR_PROFILES=(l2-jev-investigator l2-investigator l2-investigator-primary)
 REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
 RETIRED_DEPLOYED_SCRIPTS=(dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py)
+RETIRED_PLUGIN_DIRS=(xstudio-l2-jev)
 
 mkdir -p "$SCRIPTS_DIR"
 
@@ -36,6 +37,23 @@ for retired in "${RETIRED_DEPLOYED_SCRIPTS[@]}"; do
   if [[ -e "$SCRIPTS_DIR/$retired" ]]; then
     rm -f "$SCRIPTS_DIR/$retired"
     echo "removed retired deployed script: $retired"
+  fi
+done
+
+for profile in "${ACTIVE_PROFILES[@]}"; do
+  for retired_plugin in "${RETIRED_PLUGIN_DIRS[@]}"; do
+    stale="$HOME/.hermes/profiles/$profile/plugins/$retired_plugin"
+    if [[ -d "$stale" ]]; then
+      rm -rf "$stale"
+      echo "removed retired profile plugin: $stale"
+    fi
+  done
+done
+for retired_plugin in "${RETIRED_PLUGIN_DIRS[@]}"; do
+  stale="$HOME/.hermes/plugins/$retired_plugin"
+  if [[ -d "$stale" ]]; then
+    rm -rf "$stale"
+    echo "removed retired shared plugin: $stale"
   fi
 done
 
