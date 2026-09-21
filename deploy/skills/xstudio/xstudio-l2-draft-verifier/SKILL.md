@@ -27,7 +27,7 @@ The card contains the exact proposal_json plus Jev primary-review output. Judge 
 4. Perform only the smallest additional live read needed to resolve that dispute.
 5. Approve with kanban_complete or reject with kanban_block.
 
-Use xstudio_jev only for bounded reviewed workflows. Do not ask arbitrary semantic questions or use it as a substitute for the live evidence check that caused this fallback.
+Jev is harness-owned. Use its embedded judgments only to focus verification; do not call Jev directly or substitute semantic judgment for the live evidence check that caused this fallback.
 
 ## Approval
 
