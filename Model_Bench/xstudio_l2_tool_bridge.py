@@ -35,6 +35,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from Model_Bench.jev.candidate_rerank import rerank_candidates
 from Model_Bench.jev.tool_semantics import assess_tool_call
+from Model_Bench.jev.audit import persist_rows, rows_for_result
 from Model_Bench.jev import policy as jev_policy
 
 
@@ -181,6 +182,28 @@ def _escape_sql_string(value: Any) -> str:
     return str(value).replace("'", "''")
 
 
+def _audit_jev(
+    result: dict[str, Any],
+    *,
+    stage: str,
+    state: dict[str, Any],
+    req: dict[str, Any],
+) -> dict[str, Any]:
+    if not result.get("ok"):
+        return {"ok": False, "persisted": 0, "reason": "no successful Jev result"}
+    try:
+        return persist_rows(rows_for_result(
+            result=result,
+            stage=stage,
+            state=state,
+            ticket_id=str(req.get("ticket_id") or "") or None,
+            run_id=str(req.get("run_id") or "") or None,
+        ))
+    except Exception as exc:
+        return {"ok": False, "persisted": 0, "reason": f"{type(exc).__name__}: {exc}"}
+
+
+
 def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
     database = _database(req)
     run_id = str(_require(req, "run_id"))
@@ -253,6 +276,12 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
                 search, candidates, top=len(candidates), candidate_kind="real SQL table/view candidate"
             )
         response = {"operation": operation, **result, "jev_rerank": jev}
+        response["jev_audit"] = _audit_jev(
+            jev,
+            stage="TOOL_CANDIDATE_RERANK",
+            state={"query": search, "candidate_kind": "table_or_view", "candidates": candidates},
+            req=req,
+        )
         if jev.get("ok") and jev.get("ranked"):
             response["jev_suggested_candidates"] = jev["ranked"]
             if not jev_policy.SHADOW_MODE:
@@ -301,15 +330,19 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
                 except Exception:
                     previous_reads = []
 
-            jev_semantics = assess_tool_call({
+            semantics_state = {
                 "investigation_context": req.get("semantic_context") or "",
                 "proposed_call": {"operation": "query", "database": database, "sql": sql},
                 "previous_reads": previous_reads,
-            })
+            }
+            jev_semantics = assess_tool_call(semantics_state)
+            jev_audit = _audit_jev(
+                jev_semantics, stage="TOOL_QUERY_SEMANTICS", state=semantics_state, req=req
+            )
             rows = _orchestrator().run_readonly_query(
                 client, sql, database=database, run_id=req.get("run_id"))
             return {"ok": True, "operation": operation, "database": database, "rows": rows,
-                    "jev_semantics": jev_semantics}
+                    "jev_semantics": jev_semantics, "jev_audit": jev_audit}
 
         if operation == "find_objects":
             database = _database(req)
@@ -323,6 +356,12 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
                 )
             response = {"ok": True, "operation": operation, "database": database,
                         "objects": rows, "jev_rerank": jev}
+            response["jev_audit"] = _audit_jev(
+                jev,
+                stage="TOOL_CANDIDATE_RERANK",
+                state={"query": search, "candidate_kind": "sql_object", "candidates": rows},
+                req=req,
+            )
             if jev.get("ok") and jev.get("ranked"):
                 response["jev_suggested_objects"] = jev["ranked"]
                 if not jev_policy.SHADOW_MODE:
