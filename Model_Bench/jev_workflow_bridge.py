@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Windows-side bridge for Chitragupta Jev workflows.
+"""Windows-side bridge for the four harness-owned Jev workflows.
 
-JSON in on stdin, JSON out on stdout. This keeps TypeSafe network access and
-SQL judgment persistence deterministic and harness-owned when the caller is a
-WSL lifecycle process.
+JSON in on stdin, JSON out on stdout. The Hermes model never calls this bridge
+or chooses a Jev workflow; deterministic Chitragupta runtime code does.
 """
 from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,94 +17,53 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from Model_Bench.jev.audit import persist_rows, rows_for_result
-from Model_Bench.jev.candidate_rerank import rerank_candidates
-from Model_Bench.jev.kb_applicability import assess_kb_candidates
-from Model_Bench.jev.kb_curation import assess_curation
-from Model_Bench.jev.model_routing import assess_model_route
-from Model_Bench.jev.l1_action import assess_l1_action
-from Model_Bench.jev.reviewer import review_proposal
 from Model_Bench.jev.evidence_plan import plan_evidence
 from Model_Bench.jev.investigation_assessment import assess_investigation
-from Model_Bench.jev.proposal_preflight import assess_proposal
-from Model_Bench.jev.review_risk import assess_review_risk
-from Model_Bench.jev.security import assess_context_items, assess_untrusted_context
-from Model_Bench.jev.ticket_triage import assess_ticket
-from Model_Bench.jev.trace_assessment import assess_trace
-from Model_Bench.jev import policy as jev_policy
+from Model_Bench.jev.reviewer import review_proposal
+from Model_Bench.jev.security import assess_untrusted_context
+
+
+WorkflowHandler = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
+
+
+def _security(req: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    return assess_untrusted_context(str(req.get("source") or "untrusted"), state)
+
+
+def _evidence_plan(req: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    return plan_evidence(
+        dict(req.get("ticket") or state.get("ticket") or {}),
+        list(req.get("candidates") or state.get("candidates") or []),
+        known_solutions=list(req.get("known_solutions") or state.get("known_solutions") or []),
+    )
+
+
+def _investigation_assessment(_req: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    return assess_investigation(state)
+
+
+def _primary_review(_req: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    return review_proposal(state)
+
+
+_WORKFLOWS: dict[str, WorkflowHandler] = {
+    "security": _security,
+    "evidence_plan": _evidence_plan,
+    "investigation_assessment": _investigation_assessment,
+    "primary_review": _primary_review,
+}
 
 
 def dispatch(req: dict[str, Any]) -> dict[str, Any]:
     workflow = str(req.get("workflow") or "")
-    state = req.get("state") or {}
+    handler = _WORKFLOWS.get(workflow)
+    if handler is None:
+        raise ValueError(f"unsupported harness Jev workflow: {workflow}")
 
-    feature_enabled = {
-        "proposal_preflight": jev_policy.PREFLIGHT_ENABLED,
-        "review_risk": jev_policy.PREFLIGHT_ENABLED,
-        "trace_assessment": jev_policy.TRACE_ASSESSMENT_ENABLED,
-        "kb_curation": jev_policy.KB_JUDGMENTS_ENABLED,
-        "kb_applicability": jev_policy.KB_JUDGMENTS_ENABLED,
-        "security": jev_policy.SECURITY_SCREEN_ENABLED,
-        "security_batch": jev_policy.SECURITY_SCREEN_ENABLED,
-        "candidate_rerank": jev_policy.TOOL_RERANK_ENABLED,
-        "ticket_triage": jev_policy.JEV_ENABLED,
-        "model_routing": jev_policy.JEV_ENABLED,
-        "l1_action": jev_policy.JEV_ENABLED,
-    }.get(workflow, True)
-    if not feature_enabled:
-        return {
-            "workflow": workflow,
-            "result": {
-                "ok": False,
-                "enabled": False,
-                "reason": f"Jev workflow {workflow} is disabled by Chitragupta policy",
-                "answers": {},
-            },
-            "audit": {"ok": True, "persisted": 0, "reason": "workflow disabled"},
-        }
-    if workflow == "proposal_preflight":
-        result = assess_proposal(state)
-    elif workflow == "review_risk":
-        result = assess_review_risk(state)
-    elif workflow == "trace_assessment":
-        result = assess_trace(state)
-    elif workflow == "kb_curation":
-        result = assess_curation(state)
-    elif workflow == "security":
-        result = assess_untrusted_context(str(req.get("source") or "untrusted"), state)
-    elif workflow == "security_batch":
-        result = assess_context_items(list(req.get("items") or []))
-    elif workflow == "candidate_rerank":
-        result = rerank_candidates(
-            str(req.get("query") or ""),
-            list(req.get("candidates") or []),
-            top=int(req.get("top") or 5),
-            candidate_kind=str(req.get("candidate_kind") or "candidate"),
-        )
-    elif workflow == "kb_applicability":
-        result = assess_kb_candidates(dict(req.get("ticket") or {}), list(req.get("candidates") or []))
-    elif workflow == "ticket_triage":
-        result = assess_ticket(
-            dict(req.get("ticket") or {}),
-            dict(req.get("manifest") or {}),
-            allowed_routes=req.get("allowed_routes"),
-        )
-    elif workflow == "model_routing":
-        embedded_profiles = state.get("profiles") if isinstance(state, dict) else None
-        result = assess_model_route(state, dict(req.get("profiles") or embedded_profiles or {}))
-    elif workflow == "l1_action":
-        result = assess_l1_action(state, actions=req.get("actions"))
-    elif workflow == "primary_review":
-        result = review_proposal(state)
-    elif workflow == "evidence_plan":
-        result = plan_evidence(
-            dict(req.get("ticket") or state.get("ticket") or {}),
-            list(req.get("candidates") or state.get("candidates") or []),
-            known_solutions=list(req.get("known_solutions") or state.get("known_solutions") or []),
-        )
-    elif workflow == "investigation_assessment":
-        result = assess_investigation(state)
-    else:
-        raise ValueError(f"unsupported Jev workflow: {workflow}")
+    state = req.get("state") or {}
+    if not isinstance(state, dict):
+        raise ValueError("state must be a JSON object")
+    result = handler(req, state)
 
     audit = {"ok": True, "persisted": 0}
     if result.get("ok") and req.get("audit_stage"):
@@ -117,10 +76,7 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
             question_version=str(req.get("question_version") or "v1"),
             accepted=req.get("accepted"),
         )
-        try:
-            audit = persist_rows(rows)
-        except Exception as exc:
-            audit = {"ok": False, "persisted": 0, "reason": f"{type(exc).__name__}: {exc}"}
+        audit = persist_rows(rows)
     return {"workflow": workflow, "result": result, "audit": audit}
 
 
