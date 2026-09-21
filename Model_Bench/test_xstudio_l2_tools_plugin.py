@@ -235,6 +235,58 @@ def test_read_procedure_escapes_quotes_in_parameter_values() -> None:
     assert "O''Brien''" in captured["sql"]
 
 
+def test_probe_table_uses_real_identifier_and_never_broad_fishes() -> None:
+    class FakeOrchestrator:
+        @staticmethod
+        def build_query_mechanically(**kwargs):
+            assert kwargs["table"] == "dbo.Heat_Vw"
+            assert "[HeatNo] = N'H123'" in kwargs["where"]
+            assert "HeatNo" in kwargs["columns"]
+            return {"ok": True, "sql": "SELECT ...", "table": "dbo.Heat_Vw"}
+
+        @staticmethod
+        def run_readonly_query(client, sql, database, run_id=None):
+            assert database == "XStudio_Xbatch"
+            assert run_id == "r1"
+            return [{"HeatNo": "H123", "Status": "Running"}]
+
+    allowlist = {"XStudio_Xbatch": {"dbo.Heat_Vw": ["HeatNo", "Status", "Reason", "EventTime"]}}
+    with mock.patch.object(bridge, "_load_allowlist", return_value=allowlist), \
+         mock.patch.object(bridge, "_orchestrator", return_value=FakeOrchestrator()):
+        result = bridge._probe_table({
+            "operation": "probe_table",
+            "database": "XStudio_Xbatch",
+            "table": "dbo.Heat_Vw",
+            "ticket": {"HeatNo": "H123"},
+            "run_id": "r1",
+            "matched_columns": ["Status"],
+        }, object())
+    assert result["ok"] is True
+    assert result["probe_possible"] is True
+    assert result["identifier"] == {"column": "HeatNo", "value": "H123"}
+    assert result["rows"][0]["Status"] == "Running"
+
+
+def test_probe_table_refuses_broad_read_without_strong_identifier() -> None:
+    class FakeOrchestrator:
+        @staticmethod
+        def build_query_mechanically(**kwargs):
+            raise AssertionError("broad automatic query must not be built")
+
+    allowlist = {"XStudio_Xbatch": {"dbo.Heat_Vw": ["HeatNo", "Status", "Reason"]}}
+    with mock.patch.object(bridge, "_load_allowlist", return_value=allowlist), \
+         mock.patch.object(bridge, "_orchestrator", return_value=FakeOrchestrator()):
+        result = bridge._probe_table({
+            "operation": "probe_table",
+            "database": "XStudio_Xbatch",
+            "table": "dbo.Heat_Vw",
+            "ticket": {"Description": "something looks wrong"},
+        }, object())
+    assert result["ok"] is True
+    assert result["probe_possible"] is False
+    assert result["rows"] == []
+
+
 def test_database_must_be_explicitly_allowlisted() -> None:
     try:
         bridge._database({"database": "master"})
@@ -455,7 +507,8 @@ def test_config_patch_handles_flow_style_lists() -> None:
     flow = _SAMPLE_CONFIG.replace("  cli:\n    - terminal\n    - todo\n", "  cli: [terminal, todo]\n")
     patched = _patch_sample(flow)
     assert "xstudio_l2" in patched
-    assert "[terminal, todo, xstudio_l2]" in patched
+    assert "xstudio_jev" in patched
+    assert "[terminal, todo, xstudio_l2, xstudio_jev]" in patched
 
 
 def test_config_patch_does_not_abort_when_optional_section_absent() -> None:
