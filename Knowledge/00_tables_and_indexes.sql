@@ -116,6 +116,39 @@ IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewedOn') IS NULL
     ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewedOn datetime NULL;
 GO
 
+/* Local-model admission state lives on the run row: one lifecycle owner,
+   no parallel scheduler table. Jev-only work does not consume this slot. */
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'ExecutionMode') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD ExecutionMode varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelState') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelState varchar(20) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelPurpose') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelPurpose varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelPriority') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelPriority int NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelWorkKey') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelWorkKey varchar(255) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'PendingLocalModelJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD PendingLocalModelJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelTaskID') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelTaskID varchar(100) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelQueuedOn') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelQueuedOn datetime NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelStartedOn') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelStartedOn datetime NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelCompletedOn') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelCompletedOn datetime NULL;
+GO
+
 IF NOT EXISTS
 (
     SELECT 1
@@ -153,6 +186,27 @@ IF NOT EXISTS
 BEGIN
     CREATE NONCLUSTERED INDEX IX_Hermes_L2_Response_RunState
         ON dbo.Hermes_L2_Response_Trn_Tbl(IsActive, ProcessStatus, NextEligibleOn, HeartbeatOn);
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_L2_Response_Trn_Tbl')
+      AND name = 'IX_Hermes_L2_Response_LocalModelQueue'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_L2_Response_LocalModelQueue
+        ON dbo.Hermes_L2_Response_Trn_Tbl
+        (
+            LocalModelState,
+            LocalModelPriority DESC,
+            LocalModelQueuedOn,
+            ClaimedOn
+        )
+        INCLUDE (ID, TicketID, LocalModelPurpose, LocalModelTaskID, LocalModelWorkKey, ExecutionMode)
+        WHERE IsActive = 1 AND IsDeleted = 0;
 END;
 GO
 
