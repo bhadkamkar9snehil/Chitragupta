@@ -339,6 +339,46 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
             jev_audit = _audit_jev(
                 jev_semantics, stage="TOOL_QUERY_SEMANTICS", state=semantics_state, req=req
             )
+
+            if jev_policy.SEMANTIC_TOOL_BLOCKING_ENABLED and jev_semantics.get("ok"):
+                answers = jev_semantics.get("answers") or {}
+                def _n(name: str, default: float = 0.0) -> float:
+                    try:
+                        a = answers.get(name) or {}
+                        return float(a.get("noul")) if a.get("type") == "noul" else default
+                    except (TypeError, ValueError):
+                        return default
+                try:
+                    risk_a = answers.get("semantic_risk") or {}
+                    risk = float(risk_a.get("score")) if risk_a.get("type") == "score" else 0.0
+                except (TypeError, ValueError):
+                    risk = 0.0
+                semantic_block = (
+                    risk >= 2.5
+                    and (
+                        _n("relevant_to_investigation", 1.0) <= 0.10
+                        or _n("excessively_broad") >= 0.95
+                        or _n("likely_duplicate_of_previous_read") >= 0.95
+                    )
+                )
+                if semantic_block:
+                    return {
+                        "ok": True,
+                        "operation": operation,
+                        "database": database,
+                        "executed": False,
+                        "semantic_blocked": True,
+                        "retry_same_call": False,
+                        "message": (
+                            "Jev semantic circuit breaker blocked this structurally-safe read as "
+                            "high-confidence waste/irrelevance. Narrow the evidence goal or choose "
+                            "a different typed read. This gate is deployment-configurable."
+                        ),
+                        "jev_semantics": jev_semantics,
+                        "jev_audit": jev_audit,
+                        "rows": [],
+                    }
+
             rows = _orchestrator().run_readonly_query(
                 client, sql, database=database, run_id=req.get("run_id"))
             return {"ok": True, "operation": operation, "database": database, "rows": rows,
