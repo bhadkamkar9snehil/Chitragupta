@@ -139,7 +139,6 @@ class FabricTests(unittest.TestCase):
 
         def sender(url, payload, headers, timeout):
             seen["questions"] = payload["questions"]
-            qs = payload["questions"]
             return {
                 "model": "jev-test",
                 "answers": {
@@ -186,7 +185,6 @@ class FabricTests(unittest.TestCase):
             answers = {}
             for name, q in payload["questions"].items():
                 if q["type"] == "choice":
-                    criteria = q["criteria"]
                     pick = "APPROVE" if name == "decision" else "OTHER"
                     answers[name] = {
                         "type": "choice", "choice": pick, "confidence": 0.9,
