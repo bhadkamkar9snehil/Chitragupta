@@ -4,7 +4,8 @@
 This is intentionally NOT mem0 retrieval and NOT schema discovery.
 
 Responsibilities:
-- infer canonical route candidates from Knowledge/manifest.json;
+- infer deterministic canonical route candidates from Knowledge/manifest.json;
+- optionally use TypeSafe Jev as a confidence-gated semantic route chooser;
 - search active Hermes_Solution_Article_Mst_Tbl articles by the ticket's actual
   words, not merely by a broad route;
 - return IDs + provenance so an investigator/reviewer can name the source;
@@ -23,6 +24,8 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+
+import typesafe_jev
 
 try:
     import pyodbc
@@ -132,6 +135,114 @@ def route_candidates(query: str, manifest: dict[str, Any], top: int = 3) -> list
         {"route": route, "score": round(score, 2), "reasons": reasons.get(route, [])}
         for route, score in ranked
     ]
+
+
+
+def _strong_identifier_routes(query: str, manifest: dict[str, Any]) -> list[str]:
+    """Return canonical routes supported by explicit identifier names in the ticket."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for pattern, routes, _reason in _identifier_routes(manifest):
+        if not pattern.search(query):
+            continue
+        for route in routes:
+            if route not in seen:
+                seen.add(route)
+                ordered.append(route)
+    return ordered
+
+
+def resolve_route_candidates(
+    query: str,
+    manifest: dict[str, Any],
+    top: int = 3,
+    *,
+    jev_decider=None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Fuse deterministic routing with an optional Jev semantic Choice.
+
+    Explicit identifiers remain structural authority. A single unambiguous
+    identifier route skips Jev entirely. When an identifier maps to multiple
+    routes (for example TransactionID -> API transaction or SAP posting), Jev
+    may disambiguate only inside that allowed set. Without an identifier, Jev
+    may choose from the full canonical manifest, including discover.
+
+    Any unavailable/error/low-confidence Jev result falls back to the exact
+    deterministic ordering returned by route_candidates().
+    """
+    deterministic = route_candidates(query, manifest, top=top)
+    identifier_routes = _strong_identifier_routes(query, manifest)
+
+    routing: dict[str, Any] = {
+        "mode": "deterministic",
+        "deterministic_candidates": deterministic,
+        "identifier_routes": identifier_routes,
+        "jev": None,
+    }
+
+    if len(identifier_routes) == 1:
+        routing["jev"] = {
+            "enabled": False,
+            "accepted": False,
+            "reason": "single explicit identifier route is authoritative",
+        }
+        return deterministic, routing
+
+    decider = jev_decider or typesafe_jev.choose_route
+    try:
+        jev = decider(
+            query,
+            manifest,
+            allowed_routes=identifier_routes if len(identifier_routes) > 1 else None,
+        )
+    except Exception as exc:  # caller-supplied/test decider must not break retrieval
+        jev = {
+            "enabled": True,
+            "accepted": False,
+            "reason": "Jev decider raised unexpectedly",
+            "error_type": type(exc).__name__,
+        }
+
+    routing["jev"] = jev
+    if not jev.get("accepted"):
+        return deterministic, routing
+
+    choice = str(jev.get("choice") or "")
+    canonical = {str(r.get("route") or "") for r in manifest.get("routes", [])}
+    if choice not in canonical:
+        routing["jev"] = {
+            **jev,
+            "accepted": False,
+            "reason": "Jev choice was not a canonical manifest route",
+        }
+        return deterministic, routing
+    if identifier_routes and choice not in identifier_routes:
+        routing["jev"] = {
+            **jev,
+            "accepted": False,
+            "reason": "Jev choice escaped explicit identifier constraints",
+        }
+        return deterministic, routing
+
+    existing = {r["route"]: r for r in deterministic}
+    base = dict(existing.get(choice) or {"route": choice, "score": 0.0, "reasons": []})
+    reasons = list(base.get("reasons") or [])
+    reasons.insert(0, f"Jev semantic choice; confidence={float(jev.get('confidence') or 0.0):.3f}")
+    base["reasons"] = reasons
+    base["semantic_source"] = "typesafe_jev"
+    base["semantic_confidence"] = float(jev.get("confidence") or 0.0)
+
+    fused = [base]
+    for candidate in deterministic:
+        if candidate["route"] == choice:
+            continue
+        fused.append(candidate)
+        if len(fused) >= top:
+            break
+
+    routing["mode"] = "jev"
+    routing["selected_route"] = choice
+    return fused[:top], routing
 
 
 def knowledge_docs_for_routes(manifest: dict[str, Any], routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -279,7 +390,7 @@ def retrieve(
     min_score: float = 7.0,
     min_matched_terms: int = MIN_MATCHED_TERMS,
 ) -> dict[str, Any]:
-    routes = route_candidates(query, manifest)
+    routes, routing = resolve_route_candidates(query, manifest)
     ranked = rank_articles(
         fetch_articles(conn),
         query,
@@ -292,12 +403,15 @@ def retrieve(
     return {
         "query": query,
         "route_candidates": routes,
+        "routing": routing,
         "knowledge_documents": knowledge_docs_for_routes(manifest, routes),
         "solutions": ranked,
         "abstained": not bool(ranked),
         "abstention_reason": None if ranked else "No active solution article met the relevance threshold.",
         "retrieval_policy": {
             "route_only_match_allowed": False,
+            "semantic_route_is_advisory": True,
+            "jev_low_confidence_falls_back": True,
             "min_score": min_score,
             "min_matched_terms": min_matched_terms,
             "top": top,
