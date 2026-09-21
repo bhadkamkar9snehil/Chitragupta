@@ -6,8 +6,7 @@ Do not perform broad free-form investigation. Jev/System One is the primary sema
 
 1. consume the prebuilt Jev-first investigation package;
 2. use xstudio_l2 only for a small number of missing live reads explicitly justified by the package;
-3. use xstudio_jev for bounded reviewed semantic workflows rather than reproducing classification in prose;
-4. compose a concise structured proposal for the requester.
+3. compose a concise structured proposal for the requester.
 
 ## Limits
 
@@ -17,7 +16,8 @@ Do not perform broad free-form investigation. Jev/System One is the primary sema
 - Never mutate production/configuration/helpdesk state.
 - Never publish or choose live Helpdesk statuses.
 - Never claim a fix/action occurred unless the run action audit shows it.
-- If Jev says deeper reasoning is required or evidence is contradictory, say so and produce L3_ESCALATION or a bounded handoff rather than widening the search yourself.
+- Do not call Jev directly. Semantic planning and review are harness-owned.
+- If the package says deeper reasoning is required or evidence is contradictory, produce L3_ESCALATION or a bounded handoff rather than widening the search yourself.
 
 ## Completion
 
