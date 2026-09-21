@@ -52,6 +52,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -145,6 +146,22 @@ _TASK_CACHE: Dict[str, Dict[str, Optional[str]]] = {}
 _RESOLVING: set = set()
 _TASK_CACHE_MAX = 500
 
+
+def _hermes_executable() -> str:
+    """Resolve Hermes from the current venv first, then PATH/home fallbacks."""
+    candidates = [
+        Path(sys.executable).with_name("hermes"),
+        Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "hermes",
+    ]
+    path_hit = shutil.which("hermes")
+    if path_hit:
+        candidates.insert(0, Path(path_hit))
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return "hermes"
+
+
 # 2026-09-04 correction: the observer hooks' own `task_id` kwarg turned out
 # (confirmed live) to just equal `session_id` for a top-level kanban worker
 # (no subagent involved) -- NOT the kanban board's own t_xxxxxxxx task id,
@@ -172,7 +189,7 @@ def _resolve_task_ids_blocking(kanban_task_id: str) -> None:
     run_id = ticket_id = None
     try:
         result = subprocess.run(
-            ["hermes", "kanban", "show", kanban_task_id, "--json"],
+            [_hermes_executable(), "kanban", "show", kanban_task_id, "--json"],
             capture_output=True, text=True, timeout=8,
         )
         if result.returncode == 0:
