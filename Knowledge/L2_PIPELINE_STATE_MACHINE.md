@@ -45,13 +45,22 @@ identifier-bounded probe_table reads
           v
 JEV INVESTIGATION ASSESSMENT
  + per-chunk meta-attention Scores
+ + typed execution depth
+ + typed route-skill need
           |
           v
-DETERMINISTIC CONTEXT COMPILER
+DETERMINISTIC EXECUTION + CONTEXT COMPILER
  whole chunks; pinned ticket/live evidence
+ mode-specific context budget
+          |
+          +-- QWEN_FREE handoff candidate
+          |       -> exact workflow binding required
+          |       -> full-ticket trust gate
+          |       -> fresh Jev primary review
+          |       -> deterministic publish only if approved
           |
           v
-l2-jev-investigator card [priority 10]
+l2-jev-investigator card [priority 10, only when needed]
   COMPOSE_ONLY or FOCUSED_REASONING
           |
           | kanban_complete(metadata)
@@ -121,7 +130,11 @@ The context budget is applied to **whole chunks**. Optional material degrades `F
 
 This compiler changes only what is shown to the local model. It does not mutate raw evidence, change evidence authority, or make historical/KB material proof of the current incident.
 
-When Jev returns high evidence sufficiency and low need for deeper reasoning, the local profile is `COMPOSE_ONLY` and gets at most one additional live read. Otherwise it is `FOCUSED_REASONING` with a small additional-read budget.
+The same assessment also returns an advisory execution mode: `QWEN_FREE`, `COMPOSE_ONLY`, or `FOCUSED_REASONING`. Runtime policy independently resolves that recommendation.
+
+`QWEN_FREE` is intentionally not a generic "Jev is confident" shortcut. It is accepted only for high-confidence `L3_ESCALATION` or `NEEDS_HUMAN_ACTION` outcomes, with strong evidence quality, low remaining probe/System-2 need, and (for human action) high human-action probability. Full-ticket security screening can veto it. The live workflow binding must contain an exact terminal handoff status, and the resulting deterministic proposal must still pass the normal Jev primary review before publication. Any failure falls back to the local-model path without mutating Helpdesk state.
+
+`COMPOSE_ONLY` uses a smaller model-facing context budget and normally zero additional live reads. `FOCUSED_REASONING` gets the larger bounded context/recovery budget. The route-specific skill is loaded only when Jev's `needs_route_skill` judgment crosses deterministic policy; base lifecycle/safety skills remain attached.
 
 The default profile is:
 
