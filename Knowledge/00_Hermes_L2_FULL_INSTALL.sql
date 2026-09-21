@@ -3370,18 +3370,14 @@ SELECT
     TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.failure_class.confidence'))
         AS FailureClassConfidence,
 
-    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.evidence_supports_core_claim.noul'))
-        AS PreflightEvidenceSupportProbability,
-    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.reply_overstates_evidence.noul'))
-        AS PreflightOverclaimProbability,
-    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.reply_claims_action_was_performed.noul'))
-        AS PreflightActionClaimProbability,
-    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.audit_shows_claimed_action.noul'))
-        AS PreflightActionAuditProbability,
-    JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.proposed_response_type.choice')
-        AS JevProposedResponseType,
-    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PROPOSAL_PREFLIGHT.answers.proposed_response_type.confidence'))
-        AS JevProposedResponseTypeConfidence,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.evidence_supports_core_claim.noul'))
+        AS ReviewEvidenceSupportProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.reply_overstates_evidence.noul'))
+        AS ReviewOverclaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.reply_claims_action_was_performed.noul'))
+        AS ReviewActionClaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.audit_shows_claimed_action.noul'))
+        AS ReviewActionAuditProbability,
     TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.publication_risk.score'))
         AS ReviewRiskScore,
 
