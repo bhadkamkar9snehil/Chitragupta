@@ -33,6 +33,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from Model_Bench.jev.candidate_rerank import rerank_candidates
+from Model_Bench.jev.tool_semantics import assess_tool_call
+from Model_Bench.jev import policy as jev_policy
+
 
 def _orchestrator():
     """Import the guarded orchestrator primitives lazily.
@@ -239,9 +243,22 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
         return _validate_identifiers(req)
     if operation == "suggest_tables":
         database = _database(req)
+        search = str(_require(req, "search"))
         result = _orchestrator().suggest_tables_mechanically(
-            str(_require(req, "search")), top=_top(req, 8), database=database)
-        return {"operation": operation, **result}
+            search, top=_top(req, 8), database=database)
+        candidates = list(result.get("candidates") or []) if isinstance(result, dict) else []
+        jev = {"ok": False, "reason": "tool reranking disabled"}
+        if jev_policy.TOOL_RERANK_ENABLED and candidates:
+            jev = rerank_candidates(
+                search, candidates, top=len(candidates), candidate_kind="real SQL table/view candidate"
+            )
+        response = {"operation": operation, **result, "jev_rerank": jev}
+        if jev.get("ok") and jev.get("ranked"):
+            response["jev_suggested_candidates"] = jev["ranked"]
+            if not jev_policy.SHADOW_MODE:
+                response["deterministic_candidates"] = candidates
+                response["candidates"] = jev["ranked"]
+        return response
 
     client: Any = None
     try:
@@ -271,15 +288,47 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
                         "error": ("query is read-only and cannot contain write/DDL/EXEC keywords; "
                                   "use read_procedure only for explicitly allowlisted diagnostics"),
                         "retry_same_call": False}
+
+            previous_reads: list[dict[str, Any]] = []
+            if req.get("run_id"):
+                try:
+                    prior = client.get_run_actions(str(req["run_id"])) or []
+                    previous_reads = [
+                        {"action_type": x.get("ActionType"), "object": x.get("ObjectName"),
+                         "purpose": x.get("Purpose"), "sql": x.get("SqlText")}
+                        for x in prior[-8:] if isinstance(x, dict)
+                    ]
+                except Exception:
+                    previous_reads = []
+
+            jev_semantics = assess_tool_call({
+                "investigation_context": req.get("semantic_context") or "",
+                "proposed_call": {"operation": "query", "database": database, "sql": sql},
+                "previous_reads": previous_reads,
+            })
             rows = _orchestrator().run_readonly_query(
                 client, sql, database=database, run_id=req.get("run_id"))
-            return {"ok": True, "operation": operation, "database": database, "rows": rows}
+            return {"ok": True, "operation": operation, "database": database, "rows": rows,
+                    "jev_semantics": jev_semantics}
 
         if operation == "find_objects":
             database = _database(req)
+            search = str(_require(req, "search"))
             rows = client.find_sql_objects(database_name=database,
-                search_text=str(_require(req, "search")), object_type=req.get("object_type"), top_n=_top(req, 20))
-            return {"ok": True, "operation": operation, "database": database, "objects": rows}
+                search_text=search, object_type=req.get("object_type"), top_n=_top(req, 20))
+            jev = {"ok": False, "reason": "tool reranking disabled"}
+            if jev_policy.TOOL_RERANK_ENABLED and rows:
+                jev = rerank_candidates(
+                    search, rows, top=len(rows), candidate_kind="real SQL object candidate"
+                )
+            response = {"ok": True, "operation": operation, "database": database,
+                        "objects": rows, "jev_rerank": jev}
+            if jev.get("ok") and jev.get("ranked"):
+                response["jev_suggested_objects"] = jev["ranked"]
+                if not jev_policy.SHADOW_MODE:
+                    response["deterministic_objects"] = rows
+                    response["objects"] = jev["ranked"]
+            return response
 
         if operation == "get_definition":
             database = _database(req)
