@@ -1999,7 +1999,7 @@ def _investigation_bundle(
     fallback_ticket: dict[str, Any],
     *,
     run_id: str | None = None,
-) -> tuple[str, str | None]:
+) -> tuple[str, str | None, dict[str, Any] | None]:
     try:
         bundle = run_orchestrator(args, ["--investigate-bundle", ticket_id], timeout=90)
     except RuntimeError as exc:
@@ -2028,13 +2028,21 @@ def _investigation_bundle(
         prior_ledger=bundle.get("prior_ledger"),
         prior_attempts=bundle.get("prior_attempts"),
     )
+    investigation = (
+        bundle.get("jev_first_investigation")
+        if isinstance(bundle.get("jev_first_investigation"), dict)
+        else {}
+    )
     route_candidates = (bundle.get("kb_retrieval") or {}).get("route_candidates") or []
     selected_route = (
         str(route_candidates[0].get("route") or "")
         if route_candidates and isinstance(route_candidates[0], dict)
         else ""
     )
-    bundle["preloaded_route_skill"] = _route_skill(selected_route)
+    route_skill_candidate = _route_skill(selected_route)
+    bundle["preloaded_route_skill"] = (
+        route_skill_candidate if investigation.get("load_route_skill") else None
+    )
 
     # Routing is deliberately requester-grounded and excludes model/L1 suspected-cause
     # text. Trust screening needs the broader untrusted ticket, so it remains a separate
@@ -2074,21 +2082,20 @@ def _investigation_bundle(
         ),
     }
 
-    investigation = (
-        bundle.get("jev_first_investigation")
-        if isinstance(bundle.get("jev_first_investigation"), dict)
-        else {}
-    )
     assessment = investigation.get("assessment") if isinstance(investigation, dict) else {}
     chunks = investigation.get("context_chunks") if isinstance(investigation, dict) else []
+    execution_mode = str(investigation.get("execution_mode") or "FOCUSED_REASONING")
+    context_budget = _context_budget_for_mode(execution_mode)
     context_view = _compile_model_context(
         chunks if isinstance(chunks, list) else [],
         assessment if isinstance(assessment, dict) else {},
-        budget_chars=max(1000, MODEL_CONTEXT_BUDGET_CHARS - MODEL_CONTEXT_RESERVED_CHARS),
+        budget_chars=max(1000, context_budget),
     )
     model_bundle = {
         "ticket_id": ticket_id,
         "bundle_warning": bundle.get("bundle_warning"),
+        "execution_mode": execution_mode,
+        "execution_contract": investigation.get("execution_contract") or {},
         "local_model_scope": investigation.get("local_model_scope"),
         "max_additional_live_reads": investigation.get("max_additional_live_reads"),
         "jev_investigation_assessment": _assessment_for_model(
@@ -2101,7 +2108,10 @@ def _investigation_bundle(
     }
     rendered = json.dumps(model_bundle, indent=2, default=str)
     model_bundle["context_view"]["rendered_chars_estimate"] = len(rendered)
-    model_bundle["context_view"]["target_total_chars"] = MODEL_CONTEXT_BUDGET_CHARS
+    model_bundle["context_view"]["target_total_chars"] = min(
+        MODEL_CONTEXT_BUDGET_CHARS,
+        context_budget + MODEL_CONTEXT_RESERVED_CHARS,
+    )
     rendered = json.dumps(model_bundle, indent=2, default=str)
     return (
         (
@@ -2115,6 +2125,11 @@ def _investigation_bundle(
             f"{rendered}\n"
         ),
         bundle.get("preloaded_route_skill"),
+        (
+            investigation.get("qwen_free_proposal")
+            if isinstance(investigation.get("qwen_free_proposal"), dict)
+            else None
+        ),
     )
 
 
@@ -2223,9 +2238,54 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
     ticket_no = str(ticket.get("TicketNo") or ticket_id)
     _archive_stale_cards_for_ticket(ticket_id, run_id)
 
-    investigation_bundle, route_skill = _investigation_bundle(
+    investigation_bundle, route_skill, qwen_free_proposal = _investigation_bundle(
         args, ticket_id, ticket, run_id=run_id
     )
+
+    qwen_free_fallback_reason: str | None = None
+    if qwen_free_proposal:
+        try:
+            _, expected_handoff_status = _status_args_for_response(binding, qwen_free_proposal)
+        except RuntimeError as exc:
+            expected_handoff_status = None
+            qwen_free_fallback_reason = str(exc)
+
+        # A Qwen-free handoff may finish a ticket only when the live workflow
+        # binding names the exact handoff status. Otherwise fall back to the
+        # normal local composer/reasoner without mutating Helpdesk state.
+        if expected_handoff_status:
+            fast_review = _jev_primary_review(args, qwen_free_proposal)
+            if fast_review.get("action") == "APPROVE":
+                publish_outcome = _publish_frozen_proposal(
+                    args,
+                    qwen_free_proposal,
+                    source="Jev Qwen-free deterministic handoff",
+                )
+                if publish_outcome in {"published", "already_published"}:
+                    return {
+                        "status": "JEV_QWEN_FREE_PUBLISHED",
+                        "run_id": run_id,
+                        "ticket_id": ticket_id,
+                        "response_type": qwen_free_proposal.get("response_type"),
+                        "primary_review": fast_review,
+                        "publish_outcome": publish_outcome,
+                        "investigator_task_id": None,
+                        "reviewer_task_id": None,
+                        "reconcile": reconciliation,
+                    }
+                qwen_free_fallback_reason = (
+                    f"deterministic publish returned {publish_outcome}; use local fallback"
+                )
+            else:
+                qwen_free_fallback_reason = (
+                    "Jev primary review did not approve the deterministic fast path: "
+                    f"{fast_review.get('action') or 'unknown'}"
+                )
+        elif qwen_free_fallback_reason is None:
+            qwen_free_fallback_reason = (
+                "workflow binding has no exact terminal status for this handoff outcome"
+            )
+
     body = (
         f"run_id: {run_id}\n"
         f"ticket_id: {ticket_id}\n"
@@ -2233,6 +2293,14 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
         "review_cycle: 0\n"
         "pipeline_stage: investigation\n"
         + investigation_bundle
+        + (
+            "\n--- Qwen-free fast-path fallback ---\n"
+            + qwen_free_fallback_reason
+            + "\nThe deterministic fast path made no Helpdesk mutation. Continue using the "
+              "local_model_scope and compiled context above; do not restart discovery.\n"
+            if qwen_free_fallback_reason
+            else ""
+        )
         + _query_instructions(run_id, ticket_id)
     )
     create_argv = [
