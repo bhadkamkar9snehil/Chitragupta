@@ -9,120 +9,127 @@ The design goal is simple: keep reasoning probabilistic, keep workflow mechanics
 ```text
 XStudio_Helpdesk.dbo.Complaint_Mst_Tbl
         |
-        | ticket_scout.py every 2 minutes
+        | ticket_scout.py: reconcile first, then claim only at WIP=0
         v
-reconcile all existing work
+atomic SQL claim
         |
-        +-- active SQL run exists --> WIP_LIMIT; claim nothing new
+        v
+Jev triage + governed KB retrieval
         |
-        `-- no active run --> atomically claim one ticket
-                               |
-                               v
-                     investigator [priority 10]
-                               |
-                               v
-                     normalize completion
-                               |
-                               v
-                 reviewer [priority 30]
-                 frozen proposal_json
-                      /             \
-                 approve           reject
-                    |                |
-                    v                v
-          deterministic publish   rework investigator [20]
-                                     |
-                                     v
-                              normalize completion
-                                     |
-                                     v
-                              fresh reviewer [30]
+        v
+deterministic real SQL candidates
+        |
+        v
+Jev evidence plan
+        |
+        v
+identifier-bounded probe_table reads
+        |
+        v
+Jev investigation assessment
+        |
+        v
+l2-jev-investigator [priority 10]
+compose-only / focused reasoning + very few live reads
+        |
+        v
+frozen proposal
+        |
+        v
+Jev PRIMARY REVIEW
+   /          |             |              \
+APPROVE     REWORK      L3_ESCALATION   LOCAL_REVIEW
+  |           |              |               |
+  v           v              v               v
+publish     rework[20]    L3 path       qwen reviewer[30]
+                                             |
+                                      approve / reject
+                                         |       |
+                                         v       v
+                                      publish  rework
 ```
 
-There is one Kanban board. Reviewer cards are **not** pre-created and are not parent-gated. A reviewer is created only after an investigator or rework completion has been normalized into the required metadata contract. The proposal is frozen into the reviewer card as `proposal_json`, so the reviewer and publisher operate on the same payload.
+There is one Kanban board and one deterministic lifecycle authority. A local reviewer card is **not** part of the normal happy path anymore; it is created only when Jev primary review cannot safely route the frozen proposal directly.
 
 ## Lifecycle invariants
 
-- **Global pipeline WIP = 1 SQL run.** Finish review/rework/publication before claiming another ticket.
-- **Priorities:** review `30`, rework `20`, new investigation `10`.
+- **Global pipeline WIP = 1 SQL run.** Finish Jev review/rework/local deep review/publication before claiming another ticket.
+- **Priorities:** local deep review `30`, rework `20`, new investigation `10`.
 - **Review loop:** `review_cycle`, independent of SQL `AttemptNo`; `MAX_REVIEW_CYCLES = 3`.
-- **Central authority:** `Model_Bench/l2_pipeline_runtime.py` owns normalization, reviewer creation, rejection/rework, approval publication, and orphan recovery.
-- **Event hook = acceleration only.** `xstudio-l2-orchestrator` triggers the same reconciler after `kanban_complete` / `kanban_block`.
+- **Central authority:** `Model_Bench/l2_pipeline_runtime.py` owns claim coordination, proposal normalization, Jev review routing, local-review fallback creation, rework/escalation, publication, and orphan recovery.
+- **Jev owns semantic judgments, not mechanics.** SQL safety, workflow binding, WIP, mutations, and publication remain deterministic.
+- **Event hook = acceleration only.** `xstudio-l2-orchestrator` triggers the same reconciler after Kanban completion/block.
 - **2-minute scout = correctness backstop.** It reconciles before every claim.
-- **Resolution binding fails closed.** An approved `RESOLUTION` is not published unless the live resolved Helpdesk status is bound.
-- **No model-controlled ticket status.** Model-supplied `new_ticket_status` is ignored unless an operator explicitly enables overrides.
-- **No automatic Solution article per ticket.** KB promotion is a separate governed lifecycle.
+- **Resolution binding fails closed.** A `RESOLUTION` cannot publish unless the live Helpdesk resolved status is bound.
+- **No model/Jev-controlled raw Helpdesk status.** Workflow values come from the deployment binding.
+- **No automatic Solution article per ticket.** KB promotion remains a separate governed lifecycle.
 
 The normative lifecycle specification is `Knowledge/L2_PIPELINE_STATE_MACHINE.md`.
 
 ## Agent-facing investigation surface
 
-L2 workers do not build SQL transport themselves. They use one typed plugin tool: `xstudio_l2`.
+Chitragupta exposes two bounded typed toolsets:
 
-| Need | Operation |
+| Need | Tool / operation |
 |---|---|
-| Read a known table/view with validated identifiers | `select` |
-| Run composed read-only SQL | `query` |
-| Narrow likely tables from ticket text | `suggest_tables` |
-| Discover real SQL objects | `find_objects` |
-| Read one object definition | `get_definition` |
-| Validate table/column identifiers | `validate_identifiers` |
-| Execute an explicitly allowlisted read procedure | `read_procedure` |
-| Refresh the live ticket row | `get_ticket_context` |
-| Inspect the run's SQL audit trail | `get_run_actions` |
-| Persist ticket-specific findings | `save_ledger` |
+| Jev classification/planning/review | `xstudio_jev` reviewed workflow |
+| Read a known table/view with validated identifiers | `xstudio_l2.select` |
+| Deterministically probe a Jev-selected real candidate by strong ticket identifier | `xstudio_l2.probe_table` |
+| Run composed read-only SQL | `xstudio_l2.query` |
+| Narrow likely tables from ticket text | `xstudio_l2.suggest_tables` |
+| Discover real SQL objects | `xstudio_l2.find_objects` |
+| Read one object definition | `xstudio_l2.get_definition` |
+| Validate table/column identifiers | `xstudio_l2.validate_identifiers` |
+| Execute an explicitly allowlisted read procedure | `xstudio_l2.read_procedure` |
+| Refresh the live ticket row | `xstudio_l2.get_ticket_context` |
+| Inspect the run SQL/action audit | `xstudio_l2.get_run_actions` |
+| Persist ticket-specific findings | `xstudio_l2.save_ledger` |
 
-`Model_Bench/xstudio_l2_tools_plugin/` registers and guards the tool. `Model_Bench/xstudio_l2_tool_bridge.py` owns the Windows-side interpreter/driver transport and returns bounded JSON.
+`xstudio_jev` is intentionally **not** a generic prompt tool. It exposes only reviewed workflows such as ticket triage, evidence planning, investigation assessment, primary review, KB applicability/curation, trace assessment, security screening, and profile/L1 routing.
 
-The worker-facing safety contract is structural:
+The worker-facing safety contract remains structural:
 
-- raw SQL is read-only;
-- write/DDL/EXEC statements are rejected;
-- arbitrary stored procedures cannot be executed;
-- databases are explicitly allowlisted;
+- arbitrary SQL is read-only;
+- write/DDL/EXEC is rejected;
+- stored procedures require an explicit allowlist;
+- databases and schema identifiers are validated;
+- automatic `probe_table` refuses broad reads without a strong identifier-to-column mapping;
 - output is bounded;
-- repeated identical failures are circuit-broken;
-- model terminal attempts to recreate the database transport are blocked.
+- repeated failures and semantically wasteful reads are circuit-broken;
+- terminal attempts to recreate database transport are blocked.
 
-Ticket publication is not an agent tool. The deterministic publisher uses the audited Hermes SQL path only after reviewer approval.
+Ticket publication is never an agent/Jev tool.
 
 ## Worker roles
 
-### Investigator
+### Jev-first investigator
 
-Profile: `l2-investigator-primary` (with `l2-investigator` retained as the dispatcher/operational profile).
+Default profile: `l2-jev-investigator`.
 
-The investigator:
+Most of the old context-understanding burden is completed before this profile sees the card. It receives:
 
-1. reads the dispatch bundle and live evidence;
-2. uses `xstudio_l2` for database/schema/ticket/ledger work;
-3. treats KB/history/mem0 as leads rather than ticket-specific proof;
-4. records meaningful ticket-specific findings in the run ledger;
-5. completes its own Kanban card with structured metadata.
+- Jev ticket characterization;
+- canonical route/route skill;
+- deterministic real schema candidates;
+- Jev candidate/evidence plan;
+- bounded live probe results;
+- Jev investigation assessment;
+- governed KB hits with applicability/negative-indicator judgments;
+- prior run ledger/history where relevant.
 
-Required completion metadata:
+If the package is already sufficient, its scope is `COMPOSE_ONLY`; normally it should turn evidence into a concise structured proposal, not rediscover the schema. If evidence remains incomplete, it gets a small focused-read budget.
 
-```text
-run_id
-ticket_id
-response_type
-reply_text
-```
+`l2-investigator-primary` remains available as a compatibility/fallback profile.
 
-Useful optional fields include `problem_summary`, `findings`, `root_cause`, and `resolution`.
+### Jev primary reviewer
 
-### Reviewer
+Jev is the default semantic reviewer of the frozen proposal. Deterministic thresholds decide whether its typed result can route directly to publish/rework/escalation.
 
-Profile: `l2-reviewer-primary` (with `l2-reviewer-fallback` available as a configured fallback role).
+### Local deep reviewer
 
-The reviewer receives a fresh review card containing the frozen proposal and independently checks the core claim against live evidence. Its only lifecycle decisions are:
+Profiles: `l2-reviewer-primary` and `l2-reviewer-fallback`.
 
-```text
-kanban_complete  -> approve
-kanban_block     -> reject with a specific actionable objection
-```
-
-The reviewer never publishes the ticket and never creates its own rework card.
+They are invoked only for `LOCAL_REVIEW`, Jev unavailability/low-confidence safety-gate failure, contradictory evidence, or genuinely deep reasoning. They verify the smallest disputed live fact rather than replaying the whole investigation.
 
 ## Response types
 
