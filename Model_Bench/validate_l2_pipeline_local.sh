@@ -50,6 +50,7 @@ PY_FILES=(
   Model_Bench/xstudio_l2_jev_plugin/__init__.py
   Model_Bench/xstudio_l2_tool_bridge.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
+  Model_Bench/test_xstudio_l2_jev_plugin.py
 )
 
 echo "== TypeSafe dev credential wiring =="
@@ -64,6 +65,9 @@ python3 Model_Bench/test_l2_pipeline_runtime.py
 
 echo "== Typed investigation-tool contract tests =="
 python3 Model_Bench/test_xstudio_l2_tools_plugin.py
+
+echo "== Bounded Hermes Jev plugin contract tests =="
+python3 Model_Bench/test_xstudio_l2_jev_plugin.py
 
 echo "== TypeSafe Jev routing contract tests =="
 python3 Model_Bench/test_typesafe_jev.py
