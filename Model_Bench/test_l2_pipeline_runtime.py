@@ -1099,6 +1099,49 @@ class PipelineContractTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 mod.safe_query_active_run("r-fail", args)
 
+    def test_priority_aware_queue_admission(self):
+        args = mod.default_args()
+        args.max_qwen_waiting = 4
+        # Demonstrates priority-aware queue admission:
+        # When 4 priority-10 investigations are already queued in database:
+        # 1. Another priority-10 investigation sees blocking_queued = 4 >= 4 => BACKPRESSURE
+        # 2. But a priority-30 review task checks equal/higher priority (0 >= 4 is False) => QUEUED
+        # Therefore, total LocalModelState='QUEUED' runs legitimately exceeds 4.
+        def fake_sql_queue(a, argv, **kw):
+            priority = int(argv[argv.index("--local-model-priority") + 1])
+            max_waiting = int(argv[argv.index("--local-model-max-waiting") + 1])
+            # 4 priority-10 tasks currently queued in DB
+            queued_db = [{"Priority": 10}, {"Priority": 10}, {"Priority": 10}, {"Priority": 10}]
+            if priority <= 10:
+                blocking = len(queued_db)
+            else:
+                blocking = sum(1 for item in queued_db if item["Priority"] >= priority)
+            if blocking >= max_waiting:
+                return {"QueueStatus": "BACKPRESSURE", "BlockingQueued": blocking, "MaxWaiting": max_waiting}
+            return {"QueueStatus": "QUEUED", "RunID": "r-admitted"}
+
+        spec_inv = {
+            "title": "inv", "assignee": mod.INVESTIGATOR_PROFILE,
+            "body": "b", "priority": 10, "idempotency_key": "k-inv", "max_runtime": "10m"
+        }
+        spec_rev = {
+            "title": "rev", "assignee": mod.REVIEWER_PROFILE,
+            "body": "b", "priority": 30, "idempotency_key": "k-rev", "max_runtime": "15m"
+        }
+
+        with patch.object(mod, "run_orchestrator", side_effect=fake_sql_queue):
+            res_inv = mod._queue_local_model_task(
+                args, run_id="r-inv", purpose="INVESTIGATION",
+                execution_mode="COMPOSE_ONLY", priority=10, work_key="k-inv", spec=spec_inv
+            )
+            res_rev = mod._queue_local_model_task(
+                args, run_id="r-rev", purpose="REVIEW",
+                execution_mode="FOCUSED_REASONING", priority=30, work_key="k-rev", spec=spec_rev
+            )
+
+        self.assertEqual(res_inv["QueueStatus"], "BACKPRESSURE")
+        self.assertEqual(res_rev["QueueStatus"], "QUEUED")
+
     def test_l3_exists_propagates_database_failure(self):
         args = mod.default_args()
         with patch.object(mod, "run_orchestrator", side_effect=RuntimeError("SQL Server connection timeout")):

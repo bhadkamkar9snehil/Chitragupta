@@ -1374,7 +1374,7 @@ def main() -> None:
     parser.add_argument("--local-model-purpose", default=None)
     parser.add_argument("--local-model-priority", type=int, default=None)
     parser.add_argument("--local-model-max-waiting", type=int, default=None,
-                         help="Enforce atomic queue waiting capacity; returns BACKPRESSURE if exceeded.")
+                         help="Enforce priority-aware queue waiting capacity; returns BACKPRESSURE if exceeded.")
     parser.add_argument("--local-model-work-key", default=None)
     parser.add_argument("--local-model-execution-mode", default=None)
     parser.add_argument("--local-model-work-json", default=None)

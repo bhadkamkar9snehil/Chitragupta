@@ -2,8 +2,7 @@
 """Compatibility entrypoint for reviewer-rejection reconciliation.
 
 Lifecycle logic is centralized in l2_pipeline_runtime.py. Routing through
-reconcile ensures atomic ordering across completions, reviews, rejections,
-approvals, and admission.
+reconcile ensures execution through the single lifecycle reconciliation authority.
 """
 import sys
 from l2_pipeline_runtime import cli

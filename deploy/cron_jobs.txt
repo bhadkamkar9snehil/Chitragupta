@@ -19,13 +19,13 @@
     Name:      L2 Kanban Completion Audit (no-LLM)
     Schedule:  every 10m
     Repeat:    ∞
-    Next run:  2026-09-21T14:10:33.868967+00:00
+    Next run:  2026-09-21T14:23:29.763171+00:00
     Deliver:   local
     Script:    audit_kanban_completions.py
     Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-21T13:50:11.328615+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-21T14:00:11.328615+00:00)
-    Execution: running  b328dbdbeb024446a0d6c6fb8afe82b1
+    Last run:  2026-09-21T14:13:29.763171+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-21T14:12:04.658772+00:00)
+    Execution: completed  bb59ce794d56480796d3dce6ad43b7b2
 
   ba0827aece96 [active]
     Name:      Reapply mem0 LM Studio patch (no-LLM)
@@ -43,11 +43,11 @@
     Name:      L2 Ticket Scout (Kanban bridge)
     Schedule:  every 2m
     Repeat:    ∞
-    Next run:  2026-09-21T14:01:41.346496+00:00
+    Next run:  2026-09-21T14:18:29.653613+00:00
     Deliver:   local
     Script:    ticket_scout.py
     Mode:      no-agent (script stdout delivered directly)
-    Last run:  2026-09-21T13:59:41.346496+00:00  ok
-    Dispatch:  on time (scheduled 2026-09-21T13:58:32.666456+00:00)
-    Execution: completed  62d02464b01e4fe68f641364b85ae4e7
+    Last run:  2026-09-21T14:16:29.653613+00:00  ok
+    Dispatch:  on time (scheduled 2026-09-21T14:15:21.243466+00:00)
+    Execution: completed  90b9d7703ef041cca73536d9a007c18f
 

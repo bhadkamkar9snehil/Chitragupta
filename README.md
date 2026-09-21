@@ -19,7 +19,7 @@ atomic SQL pipeline admission (default max 8 active runs)
         |
         +---- ticket C: Jev + deterministic probes -> QUEUED FOCUSED_REASONING
         |
-        +---- ... until pipeline cap or bounded Qwen backlog
+        +---- ... until pipeline cap or priority-aware Qwen backlog
                                              |
                                              v
                               SQL-serialized local-model slot
@@ -46,7 +46,7 @@ There is one Kanban board and one deterministic lifecycle authority. A local rev
 ## Lifecycle invariants
 
 - **Separate capacity domains.** Pipeline WIP defaults to 8 active SQL runs; all local-Qwen work shares one hard SQL-serialized RUNNING slot.
-- **Bounded backpressure.** The local-Qwen waiting backlog defaults to 4. Scout stops claiming when that queue is full even if pipeline capacity remains.
+- **Priority-aware waiting backpressure.** `L2_MAX_QWEN_WAITING` defaults to 4. Scout stops claiming new investigations when total queued $\ge$ 4. Rework (priority 20) and reviews (priority 30) are admitted unless equal/higher-priority work fills the threshold, so total queued work in SQL may legitimately exceed 4 to avoid starving ongoing runs.
 - **Priorities:** local deep review `30`, rework `20`, new investigation `10`; these priorities govern the one Qwen slot.
 - **Frozen local work.** The exact worker card specification is stored on the run before admission. A QUEUED run with no Kanban card is valid state, not an orphan.
 - **Review loop:** `review_cycle`, independent of SQL `AttemptNo`; `MAX_REVIEW_CYCLES = 3`.
@@ -300,7 +300,7 @@ CHITRAGUPTA_JEV_FIRST_INVESTIGATION_ENABLED   default 1
 CHITRAGUPTA_JEV_DIRECT_APPROVAL_CONFIDENCE    default 0.82
 CHITRAGUPTA_JEV_DIRECT_REWORK_CONFIDENCE      default 0.88
 L2_MAX_PIPELINE_WIP                           default 8
-L2_MAX_QWEN_WAITING                          default 4
+L2_MAX_QWEN_WAITING                           default 4 (priority-aware queue admission threshold)
 ~~~
 
 There is no repository credential fallback. Never commit `.env` secrets or put TypeSafe credentials into prompts, Kanban cards, ticket text, trace payloads, or model-visible configuration.

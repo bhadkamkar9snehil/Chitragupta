@@ -27,7 +27,7 @@ Chitragupta does not replace the Helpdesk workflow. It claims an existing ticket
 
 `Model_Bench/l2_pipeline_runtime.py` is the single lifecycle authority.
 
-The current LM Studio deployment still has **one** safe local inference slot, but Jev/deterministic work is no longer serialized behind it. The default SQL pipeline capacity is **8 active runs** (`L2_MAX_PIPELINE_WIP`), while the shared local-model capacity is hard-limited to **one RUNNING Qwen task** with a default bounded waiting backlog of **4** (`L2_MAX_QWEN_WAITING`). SQL owns both admission invariants.
+The current LM Studio deployment still has **one** safe local inference slot, but Jev/deterministic work is no longer serialized behind it. The default SQL pipeline capacity is **8 active runs** (`L2_MAX_PIPELINE_WIP`), while the shared local-model capacity is hard-limited to **one RUNNING Qwen task** with a default priority-aware waiting threshold of **4** (`L2_MAX_QWEN_WAITING`). New investigations pause claiming when total queued $\ge$ 4, while rework (priority 20) and reviews (priority 30) are admitted unless equal/higher-priority backlog fills the threshold; total queued work in SQL may therefore legitimately exceed 4 to prevent starving ongoing runs. SQL owns both admission invariants.
 
 ```text
 Complaint_Mst_Tbl Status='Enter'
@@ -43,7 +43,7 @@ Ticket Scout / reconcile
         |
         +---- claim C -> Jev + bounded probes -> queue FOCUSED_REASONING
         |
-        +---- ... until pipeline cap or bounded Qwen backlog
+        +---- ... until pipeline cap or priority-aware Qwen backlog
                                       |
                                       v
                          SQL LOCAL-MODEL ADMISSION

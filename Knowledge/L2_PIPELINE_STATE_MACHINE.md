@@ -14,8 +14,10 @@ Default runtime capacities:
 ```text
 active Hermes runs       8   (L2_MAX_PIPELINE_WIP)
 RUNNING local-Qwen work  1   (hard SQL-serialized invariant)
-QUEUED local-Qwen work   4   (L2_MAX_QWEN_WAITING backpressure)
+QUEUED local-Qwen work   4*  (priority-aware L2_MAX_QWEN_WAITING threshold)
 ```
+
+*Note on priority-aware queue backpressure: `L2_MAX_QWEN_WAITING` (default 4) limits new investigations (priority 10) when total queued $\ge$ 4. Higher-priority rework (priority 20) and reviews (priority 30) are admitted unless equal/higher-priority work fills the threshold. Total queued runs in SQL may therefore legitimately exceed 4 so active runs are not starved by pending new investigations.
 
 Jev, deterministic candidate generation, bounded probes, context compilation, and QWEN_FREE review/publication may progress for several tickets while the one local Qwen slot is busy. Any COMPOSE_ONLY, FOCUSED_REASONING, rework, or local-review fallback task must acquire that same shared slot.
 
@@ -25,7 +27,7 @@ rework investigation           20
 new investigation              10
 ```
 
-A fresh Helpdesk claim is allowed while active-run count is below the configured pipeline cap and the bounded local-model waiting backlog is not full. `Hermes_L2_Claim_Ticket_Usp` enforces capacity atomically under `sp_getapplock('HermesL2:PipelineCapacity')`, so overlapping scouts cannot over-claim.
+A fresh Helpdesk claim is allowed while active-run count is below the configured pipeline cap and total queued local-model work is below `L2_MAX_QWEN_WAITING` (default 4). `Hermes_L2_Claim_Ticket_Usp` enforces capacity atomically under `sp_getapplock('HermesL2:PipelineCapacity')`, so overlapping scouts cannot over-claim.
 
 ## 2. Normal lifecycle
 
@@ -237,7 +239,12 @@ LocalModelStartedOn
 LocalModelCompletedOn
 ```
 
-The exact Kanban task specification is persisted in `PendingLocalModelJson` before any task is created. `Hermes_L2_Try_Acquire_Local_Model_Usp` uses `sp_getapplock('HermesL2:LocalModelSlot')` plus the run table to guarantee at most one active local-model lease.
+The exact Kanban task specification is persisted in `PendingLocalModelJson` before any task is created. `Hermes_L2_Queue_Local_Model_Usp` enforces priority-aware queue admission under `sp_getapplock` using `@MaxWaiting`:
+- `@Priority <= 10` (new investigations): rejected with `QueueStatus = 'BACKPRESSURE'` if total currently queued runs $\ge$ `@MaxWaiting`.
+- `@Priority > 10` (rework 20, reviews 30): rejected only if currently queued work with `LocalModelPriority >= @Priority` $\ge$ `@MaxWaiting`.
+This guarantees ongoing rework and reviews cannot be starved by pending investigations, and means total queued runs in SQL may legitimately exceed `@MaxWaiting`.
+
+`Hermes_L2_Try_Acquire_Local_Model_Usp` uses `sp_getapplock('HermesL2:LocalModelSlot')` plus the run table to guarantee at most one active local-model lease.
 
 Admission order is:
 
@@ -424,7 +431,7 @@ Do not restore separate publisher/reject/reviewer schedulers.
 
 Event delivery is the fast path.
 
-The 2-minute `ticket_scout.py` run remains the durable reconcile-first backstop. It can fill multiple Jev/deterministic pipeline slots in one pass, stops at the SQL pipeline cap or bounded Qwen backlog, and never creates a local-model card outside the shared admission controller.
+The 2-minute `ticket_scout.py` run remains the durable reconcile-first backstop. It can fill multiple Jev/deterministic pipeline slots in one pass, stops at the SQL pipeline cap or priority-aware Qwen backlog, and never creates a local-model card outside the shared admission controller.
 
 ## 15. Stale/orphan recovery
 
