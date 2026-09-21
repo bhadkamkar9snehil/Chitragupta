@@ -278,6 +278,7 @@ _SCHEMA = {
             "top": {"type": "integer", "minimum": 1, "maximum": 100},
             "sql": {"type": "string"},
             "search": {"type": "string"},
+            "semantic_context": {"type": "string", "description": "Short current ticket/evidence goal used only for advisory semantic tool assessment."},
             "object_type": {"type": "string", "enum": ["TABLE", "VIEW", "PROCEDURE", "TRIGGER"]},
             "schema": {"type": "string"},
             "object_name": {"type": "string"},
