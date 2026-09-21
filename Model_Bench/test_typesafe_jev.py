@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import typesafe_jev as jev  # noqa: E402
+from jev import client as jev_client  # noqa: E402
 
 
 MANIFEST = {
@@ -33,8 +34,9 @@ MANIFEST = {
 
 
 class JevRouteTests(unittest.TestCase):
-    def test_missing_key_is_cleanly_disabled(self):
-        with patch.dict(os.environ, {}, clear=True):
+    def test_missing_key_is_cleanly_disabled_when_env_and_dev_fallback_are_absent(self):
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(jev_client, "_dev_api_key", return_value=""):
             result = jev.choose_route("SAP posting failed", MANIFEST)
         self.assertFalse(result["enabled"])
         self.assertFalse(result["accepted"])
