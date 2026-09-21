@@ -13,12 +13,19 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$HOME/.hermes/profiles/l2-investigator/scripts"
-ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
-INVESTIGATOR_PROFILES=(l2-investigator l2-investigator-primary)
+ACTIVE_PROFILES=(l2-jev-investigator l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
+INVESTIGATOR_PROFILES=(l2-jev-investigator l2-investigator l2-investigator-primary)
 REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
 RETIRED_DEPLOYED_SCRIPTS=(dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py)
 
 mkdir -p "$SCRIPTS_DIR"
+
+# Seed the new Jev-first Hermes profile from the repo on first deployment.
+JEV_PROFILE_DIR="$HOME/.hermes/profiles/l2-jev-investigator"
+mkdir -p "$JEV_PROFILE_DIR"
+if [[ ! -f "$JEV_PROFILE_DIR/config.yaml" ]]; then
+  cp "$ROOT/deploy/profiles/l2-jev-investigator/config.yaml" "$JEV_PROFILE_DIR/config.yaml"
+fi
 
 # Repo deletion is not deployment deletion. Earlier cleanup removed these files
 # from Git but left old copies under ~/.hermes/profiles/.../scripts, which made
@@ -81,13 +88,15 @@ cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow
 # depends on an event hook because ticket_scout reconciles before every claim.
 deploy_plugins() {
   local profile="$1" plugin src dir
-  for plugin in xstudio-l2-orchestrator xstudio-l2-tools xstudio-l2-trace; do
+  for plugin in xstudio-l2-orchestrator xstudio-l2-tools xstudio-l2-trace xstudio-l2-jev; do
     if [[ "$plugin" == "xstudio-l2-orchestrator" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_orchestrator_plugin"
     elif [[ "$plugin" == "xstudio-l2-tools" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_tools_plugin"
-    else
+    elif [[ "$plugin" == "xstudio-l2-trace" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_trace_plugin"
+    else
+      src="$ROOT/Model_Bench/xstudio_l2_jev_plugin"
     fi
     dir="$HOME/.hermes/profiles/$profile/plugins/$plugin"
     mkdir -p "$dir"
@@ -149,7 +158,8 @@ done
 # never rewrites dispatch settings, API ports, model choice, or credentials.
 echo "== Shared plugin install (required for toolset discovery) =="
 install_shared_plugin_for_discovery xstudio-l2-tools "$ROOT/Model_Bench/xstudio_l2_tools_plugin"
-echo "installed xstudio-l2-tools into $HOME/.hermes/plugins for toolset discovery"
+install_shared_plugin_for_discovery xstudio-l2-jev "$ROOT/Model_Bench/xstudio_l2_jev_plugin"
+echo "installed xstudio-l2-tools and xstudio-l2-jev into $HOME/.hermes/plugins for toolset discovery"
 
 echo "== Profile config (idempotent, additive) =="
 for profile in "${ACTIVE_PROFILES[@]}"; do
@@ -179,7 +189,7 @@ fi
 
 echo
 echo "Deployed deterministic L2 lifecycle + typed XStudio harness + trace observer + Jev System-One fabric."
-echo "Typed tool: xstudio_l2. Retired terminal transports (Hermes_Orchestrator.py,"
+echo "Typed tools: xstudio_l2 + xstudio_jev. Jev is primary semantic review and bounded planning. Retired terminal transports (Hermes_Orchestrator.py,"
 echo "Windows Python, sqlcmd, pyodbc, pip) are blocked by plugin hook + approvals.deny."
 echo "Known retired deployed lifecycle scripts are removed on every deploy."
 echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"
