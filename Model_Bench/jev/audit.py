@@ -163,15 +163,102 @@ def _review_summary(answers: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
     return decision, confidence, risk, local_required
 
 
+def _update_run_stage(
+    cur,
+    *,
+    first: dict[str, Any],
+    stage: str,
+    column: str,
+    answers: dict[str, Any],
+    payload: dict[str, Any],
+) -> bool:
+    run_id = first.get("RunID")
+    cur.execute(
+        f"SELECT {column} FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE ID = ? AND IsDeleted = 0",
+        run_id,
+    )
+    found = cur.fetchone()
+    if found is None:
+        return True
+    if _same_stage_input(found[0], stage, first):
+        return False
+
+    merged = _merge_stage_json(found[0], stage, payload)
+    if stage == "PRIMARY_REVIEW":
+        decision, confidence, risk, local_required = _review_summary(answers)
+        cur.execute(
+            f"""
+            UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+            SET {column} = ?,
+                ReviewMode = 'JEV_PRIMARY',
+                JevReviewDecision = ?,
+                JevReviewConfidence = ?,
+                JevRiskScore = ?,
+                LocalReviewRequired = ?,
+                JevModel = ?,
+                JevReviewedOn = GETDATE(),
+                ModifiedOn = GETDATE()
+            WHERE ID = ? AND IsDeleted = 0;
+            """,
+            merged,
+            decision,
+            confidence,
+            risk,
+            local_required,
+            first.get("Model"),
+            run_id,
+        )
+    else:
+        cur.execute(
+            f"UPDATE dbo.Hermes_L2_Response_Trn_Tbl "
+            f"SET {column} = ?, JevModel = COALESCE(?, JevModel), ModifiedOn = GETDATE() "
+            f"WHERE ID = ? AND IsDeleted = 0",
+            merged,
+            first.get("Model"),
+            run_id,
+        )
+    return True
+
+
+def _insert_trace_event(
+    cur,
+    *,
+    first: dict[str, Any],
+    stage: str,
+    payload: dict[str, Any],
+) -> None:
+    cur.execute(
+        """
+        INSERT INTO dbo.Hermes_Agent_Trace_Trn_Tbl
+        (EventType, EventOn, ToolName, Status, DurationMs, ArgsJson, ResultJson,
+         Model, Provider, RunID, TicketID, Source)
+        VALUES ('jev_system_one', GETDATE(), ?, 'ok', ?, ?, ?, ?, 'typesafe', ?, ?, 'Jev');
+        """,
+        stage,
+        int(float(first.get("LatencyMs") or 0)),
+        json.dumps(
+            {
+                "stage": stage,
+                "question_version": first.get("QuestionVersion"),
+                "policy_version": first.get("PolicyVersion"),
+                "input_hash": first.get("InputHash"),
+            },
+            separators=(",", ":"),
+        ),
+        json.dumps(payload, separators=(",", ":"), default=str),
+        first.get("Model"),
+        first.get("RunID"),
+        first.get("TicketID"),
+    )
+
+
 def _persist_group(conn, rows: list[dict[str, Any]]) -> int:
     if not rows:
         return 0
     first = rows[0]
     stage = str(first.get("Stage") or "")
     column = _STAGE_COLUMNS.get(stage)
-    run_id = first.get("RunID")
-    ticket_id = first.get("TicketID")
-    answers = {str(r["JudgmentName"]): _row_to_answer(r) for r in rows}
+    answers = {str(row["JudgmentName"]): _row_to_answer(row) for row in rows}
     payload = {
         "stage": stage,
         "question_version": first.get("QuestionVersion"),
@@ -184,58 +271,17 @@ def _persist_group(conn, rows: list[dict[str, Any]]) -> int:
     }
 
     cur = conn.cursor()
-    if run_id and column:
-        cur.execute(f"SELECT {column} FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE ID = ? AND IsDeleted = 0", run_id)
-        found = cur.fetchone()
-        if found is not None:
-            if _same_stage_input(found[0], stage, first):
-                return 0
-            merged = _merge_stage_json(found[0], stage, payload)
-            if stage == "PRIMARY_REVIEW":
-                decision, confidence, risk, local_required = _review_summary(answers)
-                cur.execute(
-                    f"""
-                    UPDATE dbo.Hermes_L2_Response_Trn_Tbl
-                    SET {column} = ?,
-                        ReviewMode = 'JEV_PRIMARY',
-                        JevReviewDecision = ?,
-                        JevReviewConfidence = ?,
-                        JevRiskScore = ?,
-                        LocalReviewRequired = ?,
-                        JevModel = ?,
-                        JevReviewedOn = GETDATE(),
-                        ModifiedOn = GETDATE()
-                    WHERE ID = ? AND IsDeleted = 0;
-                    """,
-                    merged, decision, confidence, risk, local_required, first.get("Model"), run_id,
-                )
-            else:
-                cur.execute(
-                    f"UPDATE dbo.Hermes_L2_Response_Trn_Tbl SET {column} = ?, JevModel = COALESCE(?, JevModel), ModifiedOn = GETDATE() WHERE ID = ? AND IsDeleted = 0",
-                    merged, first.get("Model"), run_id,
-                )
-
-    # Reuse the existing trace stream for per-call detail/calibration.
-    cur.execute(
-        """
-        INSERT INTO dbo.Hermes_Agent_Trace_Trn_Tbl
-        (EventType, EventOn, ToolName, Status, DurationMs, ArgsJson, ResultJson,
-         Model, Provider, RunID, TicketID, Source)
-        VALUES ('jev_system_one', GETDATE(), ?, 'ok', ?, ?, ?, ?, 'typesafe', ?, ?, 'Jev');
-        """,
-        stage,
-        int(float(first.get("LatencyMs") or 0)),
-        json.dumps({
-            "stage": stage,
-            "question_version": first.get("QuestionVersion"),
-            "policy_version": first.get("PolicyVersion"),
-            "input_hash": first.get("InputHash"),
-        }, separators=(",", ":")),
-        json.dumps(payload, separators=(",", ":"), default=str),
-        first.get("Model"),
-        run_id,
-        ticket_id,
-    )
+    if first.get("RunID") and column:
+        if not _update_run_stage(
+            cur,
+            first=first,
+            stage=stage,
+            column=column,
+            answers=answers,
+            payload=payload,
+        ):
+            return 0
+    _insert_trace_event(cur, first=first, stage=stage, payload=payload)
     return 1
 
 
