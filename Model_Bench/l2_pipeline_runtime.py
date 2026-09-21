@@ -1601,7 +1601,12 @@ def _publish_frozen_proposal(
 
 def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
     """Publish only local-review approvals; Jev approvals use the same helper earlier."""
-    counts = {"published": 0, "blocked_configuration": 0, "rework_created": 0}
+    counts = {
+        "published": 0,
+        "already_published": 0,
+        "blocked_configuration": 0,
+        "rework_created": 0,
+    }
 
     for task in list_tasks("done"):
         if (task.get("assignee") or "") not in REVIEWER_PROFILES:
@@ -1630,8 +1635,10 @@ def process_approvals(args: argparse.Namespace, *, dry_run: bool = False) -> dic
             source=f"local reviewer {task['id']}",
             dry_run=dry_run,
         )
-        if outcome in {"published", "already_published"}:
+        if outcome == "published":
             counts["published"] += 1
+        elif outcome == "already_published":
+            counts["already_published"] += 1
         elif outcome == "blocked_configuration":
             counts["blocked_configuration"] += 1
 
