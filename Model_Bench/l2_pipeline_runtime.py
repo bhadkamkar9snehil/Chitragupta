@@ -790,77 +790,99 @@ def _jev_primary_review(
     }
 
 
+def _pending_primary_review(
+    task: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    args: argparse.Namespace,
+) -> tuple[str, str, dict[str, Any]] | None:
+    if task.get("status") != "done" or (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
+        return None
+    run_id, ticket_id = task_run_id(task), task_ticket_id(task)
+    if not run_id or not ticket_id or not safe_query_active_run(run_id, args):
+        return None
+    if _source_has_reviewer(tasks, task["id"]) or _source_has_rework(tasks, task["id"]):
+        return None
+    proposal = _completion_metadata(task)
+    if not _proposal_complete(proposal):
+        return None
+    return run_id, ticket_id, dict(proposal or {})
+
+
+def _apply_primary_review(
+    args: argparse.Namespace,
+    *,
+    task: dict[str, Any],
+    run_id: str,
+    ticket_id: str,
+    proposal: dict[str, Any],
+    review: dict[str, Any],
+    counts: dict[str, int],
+    dry_run: bool,
+) -> None:
+    proposal["jev_primary_review"] = review
+    action = str(review.get("action") or "LOCAL_REVIEW")
+
+    if action == "APPROVE":
+        outcome = _publish_frozen_proposal(
+            args,
+            proposal,
+            source=f"Jev primary review for {task['id']}",
+            dry_run=dry_run,
+        )
+        counts["approved" if outcome == "published" else "unavailable"] += 1
+        return
+
+    if action == "REWORK":
+        created = create_rework_card(
+            args,
+            source_task=task,
+            reason=str(review.get("reason") or "Jev primary review requested focused rework."),
+            investigation_task_id=task["id"],
+            dry_run=dry_run,
+        )
+        counts["reworked"] += int(bool(created))
+        return
+
+    if action == "L3_ESCALATION":
+        escalated = _escalate_run(
+            args,
+            run_id=run_id,
+            ticket_id=ticket_id,
+            reason="Jev primary review selected L3 escalation with high confidence.",
+            cycle=task_review_cycle(task),
+            dry_run=dry_run,
+        )
+        counts["escalated"] += int(bool(escalated))
+        return
+
+    created = create_reviewer_card(source_task=task, proposal=proposal, dry_run=dry_run)
+    counts["local_review"] += int(bool(created))
+    counts["unavailable"] += int(not review.get("ok"))
+
+
 def process_jev_primary_reviews(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, int]:
-    """Use Jev as the default reviewer; invoke local reviewer only for uncertainty."""
+    """Run one Jev review per reviewable completion and apply its bounded result."""
     counts = {"approved": 0, "reworked": 0, "local_review": 0, "escalated": 0, "unavailable": 0}
     tasks = list_tasks()
     for task in tasks:
-        if task.get("status") != "done" or (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
+        pending = _pending_primary_review(task, tasks, args)
+        if pending is None:
             continue
-        run_id, ticket_id = task_run_id(task), task_ticket_id(task)
-        if not run_id or not ticket_id or not safe_query_active_run(run_id, args):
-            continue
-        if _source_has_reviewer(tasks, task["id"]) or _source_has_rework(tasks, task["id"]):
-            continue
-        proposal = _completion_metadata(task)
-        if not _proposal_complete(proposal):
-            continue
-
+        run_id, ticket_id, proposal = pending
         review = (
             {"action": "LOCAL_REVIEW", "ok": False, "reason": "dry-run"}
-            if dry_run else _jev_primary_review(args, proposal or {})
+            if dry_run else _jev_primary_review(args, proposal)
         )
-        proposal = dict(proposal or {})
-        proposal["jev_primary_review"] = review
-
-        action = review.get("action") or "LOCAL_REVIEW"
-        if action == "APPROVE":
-            outcome = _publish_frozen_proposal(
-                args,
-                proposal,
-                source=f"Jev primary review for {task['id']}",
-                dry_run=dry_run,
-            )
-            if outcome == "published":
-                counts["approved"] += 1
-            elif outcome == "blocked_configuration":
-                counts["unavailable"] += 1
-            else:
-                # A deterministic publication failure should remain visible and
-                # retry on the next reconcile rather than falling through to a
-                # second semantic reviewer.
-                counts["unavailable"] += 1
-            continue
-
-        if action == "REWORK":
-            if create_rework_card(
-                args,
-                source_task=task,
-                reason=str(review.get("reason") or "Jev primary review requested focused rework."),
-                investigation_task_id=task["id"],
-                dry_run=dry_run,
-            ):
-                counts["reworked"] += 1
-            continue
-
-        if action == "L3_ESCALATION":
-            if _escalate_run(
-                args,
-                run_id=run_id,
-                ticket_id=ticket_id,
-                reason="Jev primary review selected L3 escalation with high confidence.",
-                cycle=task_review_cycle(task),
-                dry_run=dry_run,
-            ):
-                counts["escalated"] += 1
-            continue
-
-        # Uncertain/conflicting/high-deep-reasoning cases alone consume the local reviewer.
-        if create_reviewer_card(source_task=task, proposal=proposal, dry_run=dry_run):
-            counts["local_review"] += 1
-        if not review.get("ok"):
-            counts["unavailable"] += 1
-
+        _apply_primary_review(
+            args,
+            task=task,
+            run_id=run_id,
+            ticket_id=ticket_id,
+            proposal=proposal,
+            review=review,
+            counts=counts,
+            dry_run=dry_run,
+        )
     return counts
 
 
