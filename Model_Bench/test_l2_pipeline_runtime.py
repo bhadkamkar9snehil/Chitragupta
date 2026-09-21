@@ -707,6 +707,46 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(result["task_ids"], ["legacy-qwen"])
         orchestrator.assert_not_called()
 
+    def test_stale_local_model_lease_requeues_only_without_live_owner(self):
+        active = [{
+            "ID": "r1",
+            "AgeMinutes": 60,
+            "LocalModelState": "RUNNING",
+            "LocalModelTaskID": "t_missing",
+        }]
+        with patch.object(mod, "_finish_local_model_work", return_value={}) as finish:
+            requeued = mod._recover_stale_local_model_leases(
+                mod.default_args(),
+                [],
+                active,
+                stale_after_minutes=45,
+            )
+
+        self.assertEqual(requeued, {"r1"})
+        finish.assert_called_once_with(
+            mod.default_args(),
+            run_id="r1",
+            task_id="t_missing",
+            outcome="REQUEUE",
+        )
+
+        live_task = [{
+            "id": "t_live",
+            "status": "running",
+            "assignee": mod.INVESTIGATOR_PROFILE,
+            "body": "run_id: r1\nticket_id: t1",
+        }]
+        with patch.object(mod, "_finish_local_model_work") as protected_finish:
+            protected = mod._recover_stale_local_model_leases(
+                mod.default_args(),
+                live_task,
+                active,
+                stale_after_minutes=45,
+            )
+
+        self.assertEqual(protected, set())
+        protected_finish.assert_not_called()
+
     def test_pending_primary_review_waits_for_existing_qwen_work(self):
         task = {
             "id": "t_inv",
