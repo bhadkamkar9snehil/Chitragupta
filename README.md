@@ -165,42 +165,87 @@ Start routing with:
 - `Knowledge/task-router.md` — human-readable mirror;
 - `Knowledge/mental-model.md` and `Knowledge/execution-model.md` — always-loaded current operating model.
 
-## TypeSafe Jev semantic routing
+## TypeSafe Jev System-One control fabric
 
-Pre-investigation routing can use TypeSafe Jev as a small typed semantic judgment. The integration is intentionally advisory and sits inside the existing KB-routing path:
+Jev is a semantic judgment layer inside Chitragupta, **not another agent and not another lifecycle authority**. TypeSafe System One supplies narrow typed judgments (Choice, Noul, Score); deterministic code retains workflow, authorization, SQL safety, publication, and all mutations.
 
-\`\`\`text
-ticket text
-  -> explicit identifier routing
-       -> one canonical route: use it directly
-       -> multiple possible routes: Jev Choice only among those routes
-  -> otherwise Jev Choice across canonical manifest routes
-       -> confidence >= threshold: promote the chosen route
-       -> unavailable/error/low confidence: keep deterministic route ordering
-  -> solution retrieval still requires independent textual relevance
-  -> investigator still verifies current-ticket claims with live evidence
-\`\`\`
+~~~text
+incoming ticket
+   -> deterministic identifiers + Jev parallel triage (shadow by default)
+   -> deterministic lifecycle
+   -> Hermes investigator
+        -> xstudio_l2 deterministic candidates
+        -> Jev candidate rerank / query semantics
+   -> frozen proposal
+        -> Jev semantic preflight
+        -> independent reviewer
+   -> deterministic publish
 
-Implementation:
+xstudio-l2-trace (local/cheap observer only)
+   -> SQL trace drain
+   -> Jev trace quality assessment
+   -> semantic scorecards / human-attention signals
 
-- \`Model_Bench/typesafe_jev.py\` — dependency-free System One HTTP client.
-- \`Model_Bench/kb_retrieval.py::resolve_route_candidates\` — deterministic/Jev fusion and fallback.
-- \`.agents/skills/typesafe-ai/SKILL.md\` — project-local TypeSafe agent skill.
+approved/verified KB candidates
+   -> deterministic relevance gate
+   -> Jev applicability + negative-indicator judgments
+   -> live verification still required
 
-The default TypeSafe model alias is \`jev-latest\`. Runtime configuration is environment-only:
+verified RESOLUTION
+   -> Jev near-duplicate rerank + REUSE/UPDATE/CREATE_CANDIDATE/NONE suggestion
+   -> separate KB governance; no automatic article mutation
+~~~
 
-\`\`\`text
-TYPESAFE_API_KEY                    required to enable live Jev calls
-CHITRAGUPTA_JEV_ENABLED             optional; default 1
-CHITRAGUPTA_JEV_MIN_CONFIDENCE      optional; default 0.70
-CHITRAGUPTA_JEV_TIMEOUT_SECONDS     optional; default 10
-TYPESAFE_DEFAULT_MODEL              optional model override
-TYPESAFE_BASE_URL                   optional API base override
-\`\`\`
+The shared implementation is **Model_Bench/jev/**:
 
-No TypeSafe credential is committed. If the key is absent, Jev is disabled and retrieval follows the existing deterministic route logic. Jev does not claim tickets, choose Helpdesk workflow states, execute SQL, determine the final response type, publish, or bypass independent review.
+- client.py — one dependency-free System One HTTP adapter.
+- ticket_triage.py — route, ambiguity, complexity, cross-domain, live-state/schema/known-issue judgments in one request.
+- candidate_rerank.py — reranks only deterministic supplied candidates; it cannot invent a table/view/article.
+- proposal_preflight.py — evidence support, overclaim/action-claim checks, response-type second opinion, review risk.
+- trace_assessment.py — completion, silent failure, false success, efficiency/repetition, policy/transport failure, human-attention and failure-class judgments.
+- kb_applicability.py / kb_curation.py — applicability, negative indicators, near-duplicate/curation decisions.
+- security.py — marks untrusted ticket/KB text for prompt-injection/policy-override/action-text risk without silently deleting it.
+- tool_semantics.py — advisory relevance/breadth/duplicate judgments for structurally-safe reads.
+- review_risk.py / model_routing.py — calibrated future System-2 allocation controls.
+- l1_action.py — bounded System-One action selection ready for a future Hermes L1 runtime.
+- audit.py — persists each named judgment separately to Hermes_Jev_Judgment_Trn_Tbl.
 
-The integration uses the current System One HTTP contract directly rather than adding a Python package to the production harness. This preserves the existing deployment rule that dependency and transport mechanics are harness-owned.
+Compatibility entrypoint **Model_Bench/typesafe_jev.py** still exposes choose_route() while delegating transport to the shared fabric. The project-local upstream TypeSafe skill is **.agents/skills/typesafe-ai/SKILL.md**.
+
+### Authority and shadow-mode rules
+
+Strong deterministic identifiers remain authoritative. A single unambiguous identifier route skips semantic promotion; an ambiguous identifier constrains Jev to the manifest-defined routes. Route or KB semantic similarity is never proof, and current ticket claims still require live evidence.
+
+New semantic controls default to **shadow/advisory mode**. They are observed and audited without replacing deterministic ordering, blocking reads, skipping independent review, changing workflow state, or publishing. Phase-3 controls exist behind explicit switches so they can be calibrated on Chitragupta's own ticket outcomes before activation.
+
+xstudio-l2-trace never calls TypeSafe. It remains a cheap fail-open local observer; Jev trace assessment runs only after drain_l2_trace_log.py has persisted the trace.
+
+No generic Jev tool is exposed to the Hermes reasoning model. The harness decides when a semantic judgment is useful.
+
+Runtime configuration is environment-only:
+
+~~~text
+TYPESAFE_API_KEY                               required for live Jev calls
+TYPESAFE_DEFAULT_MODEL                         optional; default jev-latest
+TYPESAFE_BASE_URL                              optional API base override
+CHITRAGUPTA_JEV_ENABLED                        default 1
+CHITRAGUPTA_JEV_SHADOW_MODE                    default 1
+CHITRAGUPTA_JEV_MIN_CONFIDENCE                 default 0.70
+CHITRAGUPTA_JEV_TIMEOUT_SECONDS                default 10
+CHITRAGUPTA_JEV_AUDIT_ENABLED                  default 1
+CHITRAGUPTA_JEV_TOOL_RERANK_ENABLED            default 1
+CHITRAGUPTA_JEV_KB_ENABLED                     default 1
+CHITRAGUPTA_JEV_PREFLIGHT_ENABLED              default 1
+CHITRAGUPTA_JEV_TRACE_ENABLED                  default 1
+CHITRAGUPTA_JEV_SECURITY_ENABLED               default 1
+CHITRAGUPTA_JEV_ADAPTIVE_REVIEW_ENABLED        default 0
+CHITRAGUPTA_JEV_SEMANTIC_TOOL_BLOCKING_ENABLED default 0
+CHITRAGUPTA_JEV_PROFILE_CANDIDATES_JSON        optional allowed profile map
+~~~
+
+Do not enable adaptive review or semantic query blocking merely because the code exists. First collect Jev judgment distributions, reviewer outcomes, publish outcomes, reopen/reuse results, and false-positive/false-negative examples from the real deployment, then set thresholds deliberately.
+
+The API key is never placed in ticket text, Kanban cards, Knowledge files, or model prompts.
 
 ## SQL runtime and deployment
 
@@ -245,10 +290,19 @@ Model_Bench/xstudio_l2_tools_plugin/
 Model_Bench/xstudio_l2_tool_bridge.py
     Harness-owned Windows/SQL transport behind the typed tool.
 
-Model_Bench/kb_retrieval.py
+Model_Bench/jev/
 Model_Bench/typesafe_jev.py
-    Pre-investigation deterministic retrieval plus optional confidence-gated
-    TypeSafe Jev semantic route selection.
+Model_Bench/jev_workflow_bridge.py
+    Shared System-One judgment fabric, compatibility facade, and harness-owned
+    Windows bridge for semantic workflows/audit persistence.
+
+Model_Bench/jev_trace_assessor.py
+Model_Bench/jev_post_resolution_curation.py
+    Out-of-band trace-quality assessment and advisory KB curation.
+
+Model_Bench/kb_retrieval.py
+    Deterministic relevance gate plus shadow-mode Jev triage, applicability,
+    negative-indicator, and untrusted-context judgments.
 
 Model_Bench/kanban_approval_publisher.py
 Model_Bench/kanban_reject_bridge.py
