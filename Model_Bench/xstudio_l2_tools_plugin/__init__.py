@@ -245,7 +245,10 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str]:
             "schema discovery, run evidence, ticket refresh, and investigation-ledger work. "
             "Any raw Python/sqlcmd/pyodbc/pip command shown in older task text is legacy and "
             "is blocked by the harness. Do not install dependencies. After two identical tool "
-            "failures, change the evidence path instead of retrying."
+            "failures, change the evidence path instead of retrying. Deterministic discovery "
+            "may include Jev semantic rankings/warnings; these are leads, never proof. If using a "
+            "raw read-only query, pass a short semantic_context for the current evidence goal when "
+            "practical. Do not attempt to call TypeSafe/Jev directly."
         )
     }
 
