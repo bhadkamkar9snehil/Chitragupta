@@ -239,6 +239,31 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(contract["max_additional_live_reads"], 0)
         self.assertFalse(contract["load_route_skill"])
 
+    def test_execution_contract_loads_route_skill_only_when_jev_says_it_matters(self):
+        assessment = {
+            "ok": True,
+            "answers": {
+                "evidence_sufficient": {"type": "noul", "noul": 0.55},
+                "response_type": {
+                    "type": "choice", "choice": "UPDATE", "confidence": 0.8,
+                    "probabilities": {"UPDATE": 0.8},
+                },
+                "execution_mode": {
+                    "type": "choice", "choice": "FOCUSED_REASONING", "confidence": 0.9,
+                    "probabilities": {"FOCUSED_REASONING": 0.9},
+                },
+                "needs_additional_probe": {"type": "noul", "noul": 0.7},
+                "needs_local_model": {"type": "noul", "noul": 0.9},
+                "needs_route_skill": {"type": "noul", "noul": 0.9},
+                "human_action_required": {"type": "noul", "noul": 0.1},
+                "confidence_quality": {"type": "score", "score": 1.5, "confidence": 0.9},
+            },
+        }
+        contract = mod._resolve_execution_contract(assessment)
+        self.assertEqual(contract["execution_mode"], "FOCUSED_REASONING")
+        self.assertTrue(contract["load_route_skill"])
+        self.assertEqual(contract["max_additional_live_reads"], 3)
+
     def test_execution_contract_downgrades_qwen_free_resolution_to_compose_only(self):
         assessment = {
             "ok": True,
