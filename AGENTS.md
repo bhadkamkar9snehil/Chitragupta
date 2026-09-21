@@ -286,6 +286,23 @@ Qdrant                   != source of truth
 solution history         != automatically trusted knowledge
 ```
 
+## 9a. TypeSafe Jev routing
+
+The project-local TypeSafe skill lives at \`.agents/skills/typesafe-ai/SKILL.md\`. Agents changing the Jev integration should read that skill and verify the current TypeSafe API/SDK contract before changing version-dependent behavior.
+
+Jev is a bounded semantic judgment inside pre-investigation routing, not another lifecycle authority:
+
+- \`Model_Bench/typesafe_jev.py\` owns the TypeSafe System One request/response boundary.
+- \`Model_Bench/kb_retrieval.py::resolve_route_candidates\` composes Jev with the existing deterministic router.
+- A single explicit identifier route is authoritative and skips Jev.
+- When an identifier maps to multiple canonical routes, Jev may choose only among those routes.
+- Without a strong identifier, Jev may choose only among routes already present in \`Knowledge/manifest.json\`.
+- Missing credentials, disabled configuration, request failure, malformed response, or confidence below the configured threshold must fall back to deterministic routing.
+- A Jev-selected route is only a routing lead. Route selection alone still cannot retrieve a Solution article, and it never substitutes for live ticket evidence.
+- Jev has no authority to claim tickets, change Helpdesk status, execute SQL, select a final response type, publish, approve/reject review, or alter WIP/rework lifecycle state.
+
+The API key is read only from \`TYPESAFE_API_KEY\`; never commit it or place it in Kanban/card text, logs, Knowledge files, or model prompts. The current defaults are \`jev-latest\`, 0.70 minimum confidence, and a 10-second request timeout, all overridable by environment configuration.
+
 ## 10. SQL write discipline
 
 Never write directly to `Complaint_Mst_Tbl` from an investigation.
