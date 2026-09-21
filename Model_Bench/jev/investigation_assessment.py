@@ -1,4 +1,4 @@
-"""Jev assessment of deterministic evidence gathered for one ticket."""
+"""Jev assessment and meta-attention over deterministic ticket evidence."""
 from __future__ import annotations
 
 from typing import Any
@@ -61,6 +61,13 @@ _STATIC_QUESTIONS = {
     },
 }
 
+_CONTEXT_LEVELS = [
+    "Omit from the next local-model context: this chunk is irrelevant, redundant, stale, or lower-value than other supplied evidence.",
+    "Show only a terse provenance/identity summary so the local model knows this source exists without spending context on its details.",
+    "Show a compact structured representation containing the fields needed for the next synthesis/reasoning step.",
+    "Show the full bounded chunk because its details materially matter to the next synthesis/reasoning step.",
+]
+
 
 def _known_solution_question(state: dict[str, Any]) -> dict[str, Any]:
     criteria: dict[str, Any] = {
@@ -80,6 +87,43 @@ def _known_solution_question(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _context_attention_questions(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Score how much of each explicit state chunk the next System-2 step needs.
+
+    The chunk metadata points at state already present in this same request, so
+    we do not duplicate evidence just to ask the relevance question.
+    """
+    questions: dict[str, dict[str, Any]] = {}
+    chunks = state.get("context_chunks") or []
+    if not isinstance(chunks, list):
+        return questions
+
+    for chunk in chunks[:20]:
+        if not isinstance(chunk, dict):
+            continue
+        question_id = str(chunk.get("attention_question") or "")
+        state_path = str(chunk.get("state_path") or "")
+        if not question_id.startswith("context_c") or not state_path:
+            continue
+        questions[question_id] = {
+            "type": "score",
+            "instructions": {
+                "task": (
+                    "For the next local System-2 investigation/synthesis step, how much of "
+                    "this explicit context chunk should be shown? Judge relevance and needed "
+                    "detail only; do not change its authority or treat historical/KB material "
+                    "as proof of the current incident."
+                ),
+                "chunk_path": state_path,
+                "chunk_kind": chunk.get("kind"),
+                "authority": chunk.get("authority"),
+                "source": chunk.get("source"),
+            },
+            "criteria": _CONTEXT_LEVELS,
+        }
+    return questions
+
+
 def assess_investigation(
     state: dict[str, Any],
     *,
@@ -88,4 +132,5 @@ def assess_investigation(
 ) -> dict[str, Any]:
     questions = dict(_STATIC_QUESTIONS)
     questions["known_solution"] = _known_solution_question(state)
+    questions.update(_context_attention_questions(state))
     return system_one(state, questions, api_key=api_key, sender=sender)
