@@ -374,6 +374,13 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(expected, "REAL_RESOLVED")
         self.assertEqual(argv, ["--new-ticket-status", "REAL_RESOLVED"])
 
+    def test_hermes_executable_resolution(self):
+        with patch.object(mod.shutil, "which", return_value="/custom/bin/hermes"):
+            self.assertEqual(mod._hermes_executable(), "/custom/bin/hermes")
+        with patch.object(mod.shutil, "which", return_value=None), \
+             patch.object(mod.Path, "exists", return_value=False):
+            self.assertEqual(mod._hermes_executable(), "hermes")
+
 
 if __name__ == "__main__":
     unittest.main()

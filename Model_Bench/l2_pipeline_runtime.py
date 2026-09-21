@@ -35,6 +35,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -135,11 +136,24 @@ def run_orchestrator(args: argparse.Namespace, extra: Iterable[str], *, timeout:
         return text
 
 
+def _hermes_executable() -> str:
+    hermes_bin = shutil.which("hermes")
+    if hermes_bin:
+        return hermes_bin
+    for fallback in (
+        Path.home() / ".local" / "bin" / "hermes",
+        Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "hermes",
+    ):
+        if fallback.exists() and os.access(fallback, os.X_OK):
+            return str(fallback)
+    return "hermes"
+
+
 def run_hermes(argv: list[str], *, timeout: int = 30) -> subprocess.CompletedProcess[str]:
     if _is_windows():
         cmd = ["wsl", "-d", "Ubuntu", "--", "bash", "-lc", "hermes " + shlex.join(argv)]
     else:
-        cmd = ["hermes", *argv]
+        cmd = [_hermes_executable(), *argv]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
