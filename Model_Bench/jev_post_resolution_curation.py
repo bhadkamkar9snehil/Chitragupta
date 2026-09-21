@@ -61,11 +61,7 @@ def pending_resolutions(cur, top: int = 20) -> list[dict[str, Any]]:
           AND r.ResponseType = 'RESOLUTION'
           AND r.CompletedOn IS NOT NULL
           AND NULLIF(LTRIM(RTRIM(r.RootCause)), '') IS NOT NULL
-          AND NOT EXISTS (
-              SELECT 1 FROM dbo.Hermes_Jev_Judgment_Trn_Tbl j
-              WHERE j.RunID = r.ID AND j.Stage = 'POST_RESOLUTION_KB'
-                AND j.IsDeleted = 0
-          )
+          AND JSON_VALUE(r.JevKBCurationJson, '$.POST_RESOLUTION_KB.stage') IS NULL
         ORDER BY r.CompletedOn ASC;
         """,
         top,
