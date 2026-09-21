@@ -249,6 +249,14 @@ def _kb_retriever_path() -> str:
     return KB_RETRIEVER_WIN if _is_windows() else str(REPO_ROOT_WSL / "Model_Bench" / "kb_retrieval.py")
 
 
+def _jev_bridge_path() -> str:
+    return JEV_WORKFLOW_BRIDGE_WIN if _is_windows() else str(REPO_ROOT_WSL / "Model_Bench" / "jev_workflow_bridge.py")
+
+
+def _xstudio_bridge_path() -> str:
+    return XSTUDIO_TOOL_BRIDGE_WIN if _is_windows() else str(REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py")
+
+
 def _base_orchestrator_args(args: argparse.Namespace) -> list[str]:
     cmd = [
         _orch_python(), _orch_path(),
@@ -576,7 +584,7 @@ def _run_jev_workflow(
     }
     try:
         proc = subprocess.run(
-            [_orch_python(), JEV_WORKFLOW_BRIDGE_WIN],
+            [_orch_python(), _jev_bridge_path()],
             input=json.dumps(req, separators=(",", ":"), default=str),
             capture_output=True,
             text=True,
@@ -600,7 +608,7 @@ def _run_xstudio_bridge(request: dict[str, Any], *, timeout: int = 45) -> dict[s
     """Invoke the guarded Windows typed-tool bridge directly from lifecycle code."""
     try:
         proc = subprocess.run(
-            [_orch_python(), XSTUDIO_TOOL_BRIDGE_WIN],
+            [_orch_python(), _xstudio_bridge_path()],
             input=json.dumps(request, separators=(",", ":"), default=str),
             capture_output=True,
             text=True,

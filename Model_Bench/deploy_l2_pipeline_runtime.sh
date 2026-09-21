@@ -212,7 +212,7 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
     # worker searched, found the tool, said it would use it, then completed with
     # "database access unavailable" without ever calling it.
     python3 "$ROOT/Model_Bench/patch_tool_search_off.py" "$config"
-    if [[ "$profile" == "l2-investigator-primary" || "$profile" == "l2-reviewer-primary" ]]; then
+    if [[ "$profile" == "l2-investigator-primary" || "$profile" == "l2-reviewer-primary" || "$profile" == "l2-jev-investigator" ]]; then
       python3 "$ROOT/Model_Bench/patch_l2_worker_budget.py" "$config"
     fi
   else
