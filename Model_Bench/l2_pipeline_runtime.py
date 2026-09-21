@@ -1866,6 +1866,7 @@ def process_approvals(
     """Publish local-review approvals that still belong to active SQL runs."""
     counts = {
         "published": 0,
+        "already_published": 0,
         "inactive_skipped": 0,
         "blocked_configuration": 0,
         "rework_created": 0,
@@ -1905,8 +1906,10 @@ def process_approvals(
             source=f"local reviewer {task['id']}",
             dry_run=dry_run,
         )
-        if outcome in {"published", "already_published"}:
+        if outcome == "published":
             counts["published"] += 1
+        elif outcome == "already_published":
+            counts["already_published"] += 1
         elif outcome == "blocked_configuration":
             counts["blocked_configuration"] += 1
 
@@ -2002,6 +2005,7 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
             "local_reviewer_rejections": 0,
             "local_reviewer_approvals": {
                 "published": 0,
+                "already_published": 0,
                 "inactive_skipped": 0,
                 "blocked_configuration": 0,
                 "rework_created": 0,
