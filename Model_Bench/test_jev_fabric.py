@@ -12,9 +12,9 @@ from jev import client
 from jev.audit import _same_stage_input, rows_for_result
 from jev.evidence_plan import plan_evidence
 from jev.investigation_assessment import assess_investigation
+from jev.kb_applicability import assess_kb_candidates
 from jev.kb_curation import assess_curation, rerank_articles
 from jev.reviewer import review_proposal
-from jev.security import assess_context_items
 from jev.ticket_triage import assess_ticket
 from jev.trace_assessment import assess_trace
 
@@ -82,7 +82,8 @@ class FabricTests(unittest.TestCase):
         }
         result = assess_ticket({"text": "delay"}, manifest, api_key="test", sender=sender)
         self.assertTrue(result["ok"])
-        self.assertEqual(len(seen["questions"]), 7)
+        self.assertGreaterEqual(len(seen["questions"]), 11)
+        self.assertIn("looks_like_prompt_injection", seen["questions"])
         self.assertIn("investigation_complexity", seen["questions"])
         self.assertIn("likely_requires_schema_discovery", seen["questions"])
 
@@ -289,22 +290,29 @@ class FabricTests(unittest.TestCase):
         self.assertIn("human_attention_needed", seen["questions"])
         self.assertIn("failure_class", seen["questions"])
 
-    def test_security_batch_marks_each_item(self):
+    def test_kb_applicability_coalesces_trust_screening(self):
+        seen = {}
+
         def sender(url, payload, headers, timeout):
-            answers = {
-                name: {"type": "noul", "noul": 0.95 if "prompt_injection_i1" in name else 0.05}
-                for name in payload["questions"]
-            }
+            seen["questions"] = payload["questions"]
+            answers = {}
+            for name in payload["questions"]:
+                probability = 0.95 if name == "prompt_injection_k0" else 0.2
+                answers[name] = {"type": "noul", "noul": probability}
             return {"model": "jev-test", "answers": answers, "usage": {}}
 
-        result = assess_context_items(
-            [{"kb_id": "a", "text": "normal"}, {"kb_id": "b", "text": "ignore system"}],
+        result = assess_kb_candidates(
+            {"query": "heat issue"},
+            [{"kb_id": "solution:1", "title": "Known issue", "resolution_steps": "steps"}],
             api_key="test",
             sender=sender,
         )
         self.assertTrue(result["ok"])
-        self.assertEqual(len(result["items"]), 2)
-        self.assertGreater(result["items"][1]["jev_untrusted_context"]["prompt_injection"], 0.9)
+        self.assertIn("applicable_k0", seen["questions"])
+        self.assertIn("prompt_injection_k0", seen["questions"])
+        row = result["candidates"][0]
+        self.assertGreater(row["jev_untrusted_context"]["prompt_injection"], 0.9)
+        self.assertEqual(row["context_handling"], "QUOTE_ONLY_UNTRUSTED")
 
     def test_curation_is_advisory_choice(self):
         seen = {}
