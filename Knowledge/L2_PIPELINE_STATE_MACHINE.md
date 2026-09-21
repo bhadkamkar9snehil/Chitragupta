@@ -399,11 +399,20 @@ Both are part of the generated full-install bundle.
 From the repo under WSL:
 
 ```bash
-bash Model_Bench/deploy_l2_pipeline_runtime.sh
+# Inner edit/test loop.
 bash Model_Bench/validate_l2_pipeline_local.sh
-python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
+
+# Full live pre-deployment validation.
+bash Model_Bench/validate_l2_pipeline_local.sh --full
+
+# Deploy without restarting, then re-run live-only validation if desired.
+bash Model_Bench/deploy_l2_pipeline_runtime.sh --no-restart
+bash Model_Bench/validate_l2_pipeline_local.sh --live-only
+
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 ```
+
+Normal reconciliation is active-run scoped. It snapshots Kanban tasks and active SQL runs once, then examines only cards belonging to those active run IDs. Historical completed cards are not re-queried on every scout/validation tick; the separate audit owns historical reviewer/SQL divergence checks.
 
 Jev is harness-owned. `TYPESAFE_API_KEY` must come from the Windows Python/service environment; there is no repository credential fallback.
 
