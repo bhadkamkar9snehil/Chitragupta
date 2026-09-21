@@ -1075,13 +1075,33 @@ def _run_kb_retrieval(
     return data if isinstance(data, dict) else {"solutions": [], "abstained": True, "abstention_reason": "KB retriever returned a non-object."}
 
 
+def _route_skill(route: str | None) -> str | None:
+    if not route:
+        return None
+    manifest_path = REPO_ROOT_WSL / "Knowledge" / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    allowed_skills = {
+        str(s.get("name") or "")
+        for s in manifest.get("skills", [])
+        if s.get("name")
+    }
+    for row in manifest.get("routes", []):
+        if str(row.get("route") or "") == route:
+            skill = str(row.get("skill") or "") or None
+            return skill if skill in allowed_skills else None
+    return None
+
+
 def _investigation_bundle(
     args: argparse.Namespace,
     ticket_id: str,
     fallback_ticket: dict[str, Any],
     *,
     run_id: str | None = None,
-) -> str:
+) -> tuple[str, str | None]:
     try:
         bundle = run_orchestrator(args, ["--investigate-bundle", ticket_id], timeout=90)
     except RuntimeError as exc:
@@ -1098,6 +1118,13 @@ def _investigation_bundle(
     bundle["kb_retrieval"] = _run_kb_retrieval(
         args, fallback_ticket, ticket_id=ticket_id, run_id=run_id
     )
+    route_candidates = (bundle.get("kb_retrieval") or {}).get("route_candidates") or []
+    selected_route = (
+        str(route_candidates[0].get("route") or "")
+        if route_candidates and isinstance(route_candidates[0], dict)
+        else ""
+    )
+    bundle["preloaded_route_skill"] = _route_skill(selected_route)
 
     # Ticket/request text is untrusted model input. Jev marks possible prompt
     # injection/policy-override/action text; it never silently deletes content.
@@ -1168,9 +1195,13 @@ def _investigation_bundle(
     if len(rendered) > 14000:
         rendered = rendered[:14000] + "\n... [bundle truncated at 14,000 chars]"
     return (
-        "\n--- Investigation bundle (single dispatch-time package) ---\n"
-        "KB hits, prior findings, and suggested tables are leads, not proof. Final claims require current live SQL or verified Knowledge/ evidence.\n"
-        f"{rendered}\n"
+        (
+            "\n--- Investigation bundle (single dispatch-time package) ---\n"
+            "KB hits, prior findings, Jev judgments, and suggested tables are leads, not proof. "
+            "Final claims require current live SQL or verified Knowledge/ evidence.\n"
+            f"{rendered}\n"
+        ),
+        bundle.get("preloaded_route_skill"),
     )
 
 
@@ -1278,26 +1309,34 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
     ticket_no = str(ticket.get("TicketNo") or ticket_id)
     _archive_stale_cards_for_ticket(ticket_id, run_id)
 
+    investigation_bundle, route_skill = _investigation_bundle(
+        args, ticket_id, ticket, run_id=run_id
+    )
     body = (
         f"run_id: {run_id}\n"
         f"ticket_id: {ticket_id}\n"
         f"ticket_no: {ticket_no}\n"
         "review_cycle: 0\n"
         "pipeline_stage: investigation\n"
-        + _investigation_bundle(args, ticket_id, ticket, run_id=run_id)
+        + investigation_bundle
         + _query_instructions(run_id, ticket_id)
     )
-    create = run_hermes([
+    create_argv = [
         "kanban", "create", f"L2 {ticket_no}",
         "--assignee", INVESTIGATOR_PROFILE,
         "--body", body,
         "--skill", "xstudio-l2-ticket-workflow",
         "--skill", "xstudio-sql-write-discipline",
+    ]
+    if route_skill and route_skill not in {"xstudio-l2-ticket-workflow", "xstudio-sql-write-discipline"}:
+        create_argv += ["--skill", route_skill]
+    create_argv += [
         "--priority", str(NEW_INVESTIGATION_PRIORITY),
         "--idempotency-key", f"l2-ticket-{run_id}",
         "--max-runtime", "20m",
         "--json",
-    ])
+    ]
+    create = run_hermes(create_argv)
     if create.returncode != 0:
         try:
             run_orchestrator(args, [
