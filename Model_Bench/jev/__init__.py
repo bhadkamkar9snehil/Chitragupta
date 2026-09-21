@@ -13,6 +13,8 @@ from .kb_applicability import assess_kb_candidates
 from .kb_curation import assess_curation
 from .review_risk import assess_review_risk
 from .security import assess_untrusted_context
+from .model_routing import assess_model_route
+from .l1_action import assess_l1_action
 
 __all__ = [
     "system_one",
@@ -25,4 +27,6 @@ __all__ = [
     "assess_curation",
     "assess_review_risk",
     "assess_untrusted_context",
+    "assess_model_route",
+    "assess_l1_action",
 ]
