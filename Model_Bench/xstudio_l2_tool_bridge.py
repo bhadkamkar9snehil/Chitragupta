@@ -33,11 +33,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from Model_Bench.jev.candidate_rerank import rerank_candidates
-from Model_Bench.jev.tool_semantics import assess_tool_call
-from Model_Bench.jev.audit import persist_rows, rows_for_result
-from Model_Bench.jev import policy as jev_policy
-
 
 def _orchestrator():
     """Import the guarded orchestrator primitives lazily.
@@ -182,89 +177,6 @@ def _escape_sql_string(value: Any) -> str:
     return str(value).replace("'", "''")
 
 
-def _semantic_context_for_run(req: dict[str, Any], client: Any) -> tuple[Any, str | None]:
-    explicit = req.get("semantic_context")
-    if explicit:
-        return explicit, str(req.get("ticket_id") or "") or None
-    run_id = str(req.get("run_id") or "")
-    if not run_id:
-        return "", str(req.get("ticket_id") or "") or None
-    try:
-        run = client.get_run(run_id) or {}
-        ticket_id = str(run.get("TicketID") or "") or None
-        if not ticket_id:
-            return {"run": run}, None
-        ctx = client.get_ticket_context(ticket_id) or {}
-        ticket = ctx.get("ticket") if isinstance(ctx, dict) else ctx
-        return {
-            "ticket": ticket,
-            "run": {
-                "ID": run.get("ID"),
-                "Route": run.get("Route"),
-                "ResponseType": run.get("ResponseType"),
-                "ProcessStatus": run.get("ProcessStatus"),
-            },
-        }, ticket_id
-    except Exception:
-        return "", str(req.get("ticket_id") or "") or None
-
-
-def _jev_row_focus(
-    rows: Any,
-    *,
-    semantic_context: Any,
-    sql: str,
-    req: dict[str, Any],
-) -> tuple[list[Any], dict[str, Any], dict[str, Any]]:
-    """Return semantic row suggestions without ever deleting/replacing raw SQL evidence."""
-    if not jev_policy.ROW_RERANK_ENABLED or not isinstance(rows, list) or len(rows) < 2:
-        return [], {"ok": False, "reason": "row rerank disabled or insufficient rows"}, {"ok": True, "persisted": 0}
-    candidates = [r for r in rows[:32] if isinstance(r, dict)]
-    if len(candidates) < 2:
-        return [], {"ok": False, "reason": "rows are not structured candidates"}, {"ok": True, "persisted": 0}
-    query = json.dumps(
-        {"investigation_context": semantic_context, "sql": sql},
-        default=str,
-        separators=(",", ":"),
-    )[:5000]
-    result = rerank_candidates(
-        query,
-        candidates,
-        top=min(8, len(candidates)),
-        candidate_kind="live SQL result row",
-    )
-    audit = _audit_jev(
-        result,
-        stage="TOOL_ROW_RERANK",
-        state={"query": query, "candidate_count": len(candidates)},
-        req=req,
-    )
-    return list(result.get("ranked") or []), result, audit
-
-
-def _audit_jev(
-    result: dict[str, Any],
-    *,
-    stage: str,
-    state: dict[str, Any],
-    req: dict[str, Any],
-) -> dict[str, Any]:
-    if not result.get("ok"):
-        return {"ok": False, "persisted": 0, "reason": "no successful Jev result"}
-    try:
-        return persist_rows(rows_for_result(
-            result=result,
-            stage=stage,
-            state=state,
-            ticket_id=str(req.get("ticket_id") or "") or None,
-            run_id=str(req.get("run_id") or "") or None,
-        ))
-    except Exception as exc:
-        return {"ok": False, "persisted": 0, "reason": f"{type(exc).__name__}: {exc}"}
-
-
-
-
 _IDENTIFIER_PRIORITY = [
     "transactionid", "heatno", "batchno", "workorderno", "workorder",
     "productionorder", "orderno", "materialdocument", "recipeid", "recipeno",
@@ -293,58 +205,79 @@ def _flatten_scalars(value: Any, prefix: str = "") -> list[tuple[str, str]]:
     return out
 
 
-def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
-    """Deterministically probe one real candidate using ticket identifiers.
+def _allowed_table(database: str, table: str) -> tuple[str, list[str]] | None:
+    tables = _load_allowlist().get(database) or {}
+    table_key = table.split(".")[-1].strip("[]").lower()
+    for qualified, columns in tables.items():
+        if qualified.split(".")[-1].strip("[]").lower() == table_key:
+            return qualified, [str(column) for column in columns]
+    return None
 
-    No model writes SQL. If no strong ticket identifier maps to a real column,
-    refuse the automatic probe rather than issuing a broad fishing query.
-    """
-    database = _database(req)
+
+def _ticket_scalar_map(ticket: dict[str, Any]) -> dict[str, str]:
+    scalars: dict[str, str] = {}
+    for key, value in _flatten_scalars(ticket):
+        normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+        if normalized and normalized not in scalars:
+            scalars[normalized] = value
+    return scalars
+
+
+def _probe_filter(ticket: dict[str, Any], columns: list[str]) -> tuple[str, str] | None:
+    lookup = {column.replace("_", "").lower(): column for column in columns}
+    scalars = _ticket_scalar_map(ticket)
+    for identifier in _IDENTIFIER_PRIORITY:
+        if identifier in lookup and identifier in scalars:
+            return lookup[identifier], scalars[identifier]
+
+    raw = json.dumps(ticket, default=str)
+    for identifier in _IDENTIFIER_PRIORITY:
+        column = lookup.get(identifier)
+        if not column:
+            continue
+        match = re.search(
+            rf"(?i)\b{re.escape(identifier)}\b\s*[\"'=: -]+\s*[\"']?([A-Za-z0-9_.:/-]{{2,100}})",
+            raw,
+        )
+        if match:
+            return column, match.group(1)
+    return None
+
+
+def _probe_columns(filter_column: str, real_columns: list[str], requested: list[Any]) -> list[str]:
+    lookup = {re.sub(r"[^a-z0-9]", "", column.lower()): column for column in real_columns}
+    columns = [filter_column]
+    for candidate in requested:
+        real = lookup.get(re.sub(r"[^a-z0-9]", "", str(candidate).lower()))
+        if real and real not in columns:
+            columns.append(real)
+    for column in real_columns:
+        lower = column.lower()
+        if any(word in lower for word in _PROBE_COLUMN_WORDS) and column not in columns:
+            columns.append(column)
+        if len(columns) >= 12:
+            break
+    return columns[:12]
+
+
+def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    """Probe one allowlisted table by one strong ticket identifier."""
+    database = str(_database(req))
     table = str(_require(req, "table")).strip()
     ticket = req.get("ticket") or {}
     if not isinstance(ticket, dict):
         raise ValueError("ticket must be an object")
 
-    tables = _load_allowlist().get(database) or {}
-    table_key = table.split(".")[-1].strip("[]").lower()
-    matches = [(qualified, cols) for qualified, cols in tables.items()
-               if qualified.split(".")[-1].strip("[]").lower() == table_key]
-    if not matches:
+    resolved = _allowed_table(database, table)
+    if resolved is None:
         return {
-            "ok": False, "operation": "probe_table",
+            "ok": False,
+            "operation": "probe_table",
             "error": f"table/view {table!r} is not present in the schema allowlist",
             "retry_same_call": False,
         }
-    qualified, real_columns = matches[0]
-    lookup = {str(col).replace("_", "").lower(): str(col) for col in real_columns}
-
-    scalar_map: dict[str, str] = {}
-    for key, value in _flatten_scalars(ticket):
-        normalized = re.sub(r"[^a-z0-9]", "", key.lower())
-        if normalized and normalized not in scalar_map:
-            scalar_map[normalized] = value
-
-    selected_filter: tuple[str, str] | None = None
-    for wanted in _IDENTIFIER_PRIORITY:
-        if wanted in lookup and wanted in scalar_map:
-            selected_filter = (lookup[wanted], scalar_map[wanted])
-            break
-
-    if selected_filter is None:
-        # Some upstream ticket fields carry identifier names in ExtractedEntitiesJson.
-        raw = json.dumps(ticket, default=str)
-        for wanted in _IDENTIFIER_PRIORITY:
-            col = lookup.get(wanted)
-            if not col:
-                continue
-            m = re.search(
-                rf"(?i)\b{re.escape(wanted)}\b\s*[\"'=: -]+\s*[\"']?([A-Za-z0-9_.:/-]{{2,100}})",
-                raw,
-            )
-            if m:
-                selected_filter = (col, m.group(1))
-                break
-
+    qualified, real_columns = resolved
+    selected_filter = _probe_filter(ticket, real_columns)
     if selected_filter is None:
         return {
             "ok": True,
@@ -356,33 +289,19 @@ def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
             "rows": [],
         }
 
-    filter_col, filter_value = selected_filter
-    requested = [str(x) for x in (req.get("matched_columns") or []) if str(x)]
-    columns: list[str] = [filter_col]
-    for col in requested:
-        real = lookup.get(re.sub(r"[^a-z0-9]", "", col.lower()))
-        if real and real not in columns:
-            columns.append(real)
-    for col in real_columns:
-        lower = str(col).lower()
-        if any(word in lower for word in _PROBE_COLUMN_WORDS) and col not in columns:
-            columns.append(str(col))
-        if len(columns) >= 12:
-            break
-    columns = columns[:12]
-
-    escaped = _escape_sql_string(filter_value)
-    where = f"[{filter_col}] = N'{escaped}'"
+    filter_column, filter_value = selected_filter
+    columns = _probe_columns(filter_column, real_columns, req.get("matched_columns") or [])
     built = _orchestrator().build_query_mechanically(
         table=qualified,
         columns=columns,
-        where=where,
+        where=f"[{filter_column}] = N'{_escape_sql_string(filter_value)}'",
         order_by=None,
         top=_top(req, 20),
         database=database,
     )
     if not built.get("ok"):
         return {"operation": "probe_table", **built, "retry_same_call": False}
+
     rows = _orchestrator().run_readonly_query(
         client, built["sql"], database=database, run_id=req.get("run_id")
     )
@@ -392,7 +311,7 @@ def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
         "database": database,
         "table": qualified,
         "probe_possible": True,
-        "identifier": {"column": filter_col, "value": filter_value},
+        "identifier": {"column": filter_column, "value": filter_value},
         "columns": columns,
         "sql": built.get("sql"),
         "rows": rows,
@@ -453,224 +372,133 @@ def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
             "procedure": procedure, "result": result}
 
 
+def _select(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    database = str(_database(req))
+    built = _orchestrator().build_query_mechanically(
+        table=str(_require(req, "table")),
+        columns=[str(x) for x in _require(req, "columns")],
+        where=req.get("where"),
+        order_by=req.get("order_by"),
+        top=_top(req, 20),
+        database=database,
+    )
+    if not built.get("ok"):
+        return {"operation": "select", **built, "retry_same_call": False}
+    rows = _orchestrator().run_readonly_query(
+        client, built["sql"], database=database, run_id=req.get("run_id")
+    )
+    return {
+        "ok": True,
+        "operation": "select",
+        "database": database,
+        "table": built.get("table"),
+        "sql": built.get("sql"),
+        "warning": built.get("warning") or built.get("ambiguity_warning"),
+        "rows": rows,
+    }
+
+
+def _query(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    database = str(_database(req))
+    sql = str(_require(req, "sql")).strip()
+    if not is_read_only_sql(sql):
+        return {
+            "ok": False,
+            "operation": "query",
+            "error": (
+                "query is read-only and cannot contain write/DDL/EXEC keywords; "
+                "use read_procedure only for explicitly allowlisted diagnostics"
+            ),
+            "retry_same_call": False,
+        }
+    rows = _orchestrator().run_readonly_query(
+        client, sql, database=database, run_id=req.get("run_id")
+    )
+    return {"ok": True, "operation": "query", "database": database, "rows": rows}
+
+
+def _find_objects(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    database = str(_database(req))
+    rows = client.find_sql_objects(
+        database_name=database,
+        search_text=str(_require(req, "search")),
+        object_type=req.get("object_type"),
+        top_n=_top(req, 20),
+    )
+    return {"ok": True, "operation": "find_objects", "database": database, "objects": rows}
+
+
+def _get_definition(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    database = str(_database(req))
+    result = client.get_sql_object_definition(
+        database_name=database,
+        schema_name=str(req.get("schema") or "dbo"),
+        object_name=str(_require(req, "object_name")),
+    )
+    return {"ok": True, "operation": "get_definition", "database": database, "definition": result}
+
+
+def _get_ticket_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "operation": "get_ticket_context",
+        "ticket": client.get_ticket_context(str(_require(req, "ticket_id"))),
+    }
+
+
+def _get_run_actions(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "operation": "get_run_actions",
+        "actions": client.get_run_actions(str(_require(req, "run_id"))),
+    }
+
+
+def _save_ledger(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    run_id = str(_require(req, "run_id"))
+    ledger = _require(req, "ledger")
+    if not isinstance(ledger, dict):
+        raise ValueError("ledger must be an object")
+    client.save_investigation_ledger(run_id, ledger)
+    return {"ok": True, "operation": "save_ledger", "run_id": run_id, "saved": True}
+
+
+_CONNECTED_OPERATIONS = {
+    "probe_table": _probe_table,
+    "select": _select,
+    "query": _query,
+    "find_objects": _find_objects,
+    "get_definition": _get_definition,
+    "get_ticket_context": _get_ticket_context,
+    "get_run_actions": _get_run_actions,
+    "save_ledger": _save_ledger,
+    "read_procedure": _read_procedure,
+}
+
+
 def dispatch(req: dict[str, Any]) -> dict[str, Any]:
     operation = str(_require(req, "operation"))
-
-    # Operations that need no live connection are handled before opening one.
     if operation == "validate_identifiers":
         return _validate_identifiers(req)
     if operation == "suggest_tables":
-        database = _database(req)
-        search = str(_require(req, "search"))
+        database = str(_database(req))
         result = _orchestrator().suggest_tables_mechanically(
-            search, top=_top(req, 8), database=database)
-        candidates = list(result.get("candidates") or []) if isinstance(result, dict) else []
-        jev = {"ok": False, "reason": "tool reranking disabled"}
-        if jev_policy.TOOL_RERANK_ENABLED and candidates:
-            jev = rerank_candidates(
-                search, candidates, top=len(candidates), candidate_kind="real SQL table/view candidate"
-            )
-        response = {"operation": operation, **result, "jev_rerank": jev}
-        response["jev_audit"] = _audit_jev(
-            jev,
-            stage="TOOL_CANDIDATE_RERANK",
-            state={"query": search, "candidate_kind": "table_or_view", "candidates": candidates},
-            req=req,
+            str(_require(req, "search")), top=_top(req, 8), database=database
         )
-        if jev.get("ok") and jev.get("ranked"):
-            response["deterministic_candidates"] = candidates
-            response["jev_suggested_candidates"] = jev["ranked"]
-            response["candidates"] = jev["ranked"]
-        return response
+        return {"operation": operation, **result}
 
-    client: Any = None
-    try:
-        client = _client()
-
-        if operation == "probe_table":
-            return _probe_table(req, client)
-
-        if operation == "select":
-            database = _database(req)
-            built = _orchestrator().build_query_mechanically(
-                table=str(_require(req, "table")),
-                columns=[str(x) for x in _require(req, "columns")],
-                where=req.get("where"), order_by=req.get("order_by"),
-                top=_top(req, 20), database=database,
-            )
-            if not built.get("ok"):
-                return {"operation": operation, **built, "retry_same_call": False}
-            rows = _orchestrator().run_readonly_query(
-                client, built["sql"], database=database, run_id=req.get("run_id"))
-            semantic_context, inferred_ticket_id = _semantic_context_for_run(req, client)
-            audit_req = dict(req)
-            if inferred_ticket_id and not audit_req.get("ticket_id"):
-                audit_req["ticket_id"] = inferred_ticket_id
-            suggested_rows, row_jev, row_audit = _jev_row_focus(
-                rows,
-                semantic_context=semantic_context,
-                sql=str(built.get("sql") or ""),
-                req=audit_req,
-            )
-            focus_applied = bool(row_jev.get("ok") and suggested_rows and len(rows) > 8)
-            model_rows = suggested_rows if focus_applied else rows
-            return {"ok": True, "operation": operation, "database": database,
-                    "table": built.get("table"), "sql": built.get("sql"),
-                    "warning": built.get("warning") or built.get("ambiguity_warning"),
-                    "rows": model_rows,
-                    "raw_row_count": len(rows) if isinstance(rows, list) else None,
-                    "row_focus_applied": focus_applied,
-                    "jev_suggested_rows": suggested_rows,
-                    "jev_row_rerank": row_jev, "jev_row_audit": row_audit}
-
-        if operation == "query":
-            database = _database(req)
-            sql = str(_require(req, "sql")).strip()
-            if not is_read_only_sql(sql):
-                return {"ok": False, "operation": operation,
-                        "error": ("query is read-only and cannot contain write/DDL/EXEC keywords; "
-                                  "use read_procedure only for explicitly allowlisted diagnostics"),
-                        "retry_same_call": False}
-
-            previous_reads: list[dict[str, Any]] = []
-            if req.get("run_id"):
-                try:
-                    prior = client.get_run_actions(str(req["run_id"])) or []
-                    previous_reads = [
-                        {"action_type": x.get("ActionType"), "object": x.get("ObjectName"),
-                         "purpose": x.get("Purpose"), "sql": x.get("SqlText")}
-                        for x in prior[-8:] if isinstance(x, dict)
-                    ]
-                except Exception:
-                    previous_reads = []
-
-            semantic_context, inferred_ticket_id = _semantic_context_for_run(req, client)
-            semantics_state = {
-                "investigation_context": semantic_context,
-                "proposed_call": {"operation": "query", "database": database, "sql": sql},
-                "previous_reads": previous_reads,
-            }
-            jev_semantics = assess_tool_call(semantics_state)
-            audit_req = dict(req)
-            if inferred_ticket_id and not audit_req.get("ticket_id"):
-                audit_req["ticket_id"] = inferred_ticket_id
-            jev_audit = _audit_jev(
-                jev_semantics, stage="TOOL_QUERY_SEMANTICS", state=semantics_state, req=audit_req
-            )
-
-            if jev_policy.SEMANTIC_TOOL_BLOCKING_ENABLED and jev_semantics.get("ok"):
-                answers = jev_semantics.get("answers") or {}
-                def _n(name: str, default: float = 0.0) -> float:
-                    try:
-                        a = answers.get(name) or {}
-                        return float(a.get("noul")) if a.get("type") == "noul" else default
-                    except (TypeError, ValueError):
-                        return default
-                try:
-                    risk_a = answers.get("semantic_risk") or {}
-                    risk = float(risk_a.get("score")) if risk_a.get("type") == "score" else 0.0
-                except (TypeError, ValueError):
-                    risk = 0.0
-                semantic_block = (
-                    risk >= 2.5
-                    and (
-                        _n("relevant_to_investigation", 1.0) <= 0.10
-                        or _n("excessively_broad") >= 0.95
-                        or _n("likely_duplicate_of_previous_read") >= 0.95
-                    )
-                )
-                if semantic_block:
-                    return {
-                        "ok": True,
-                        "operation": operation,
-                        "database": database,
-                        "executed": False,
-                        "semantic_blocked": True,
-                        "retry_same_call": False,
-                        "message": (
-                            "Jev semantic circuit breaker blocked this structurally-safe read as "
-                            "high-confidence waste/irrelevance. Narrow the evidence goal or choose "
-                            "a different typed read. This gate is deployment-configurable."
-                        ),
-                        "jev_semantics": jev_semantics,
-                        "jev_audit": jev_audit,
-                        "rows": [],
-                    }
-
-            rows = _orchestrator().run_readonly_query(
-                client, sql, database=database, run_id=req.get("run_id"))
-            suggested_rows, row_jev, row_audit = _jev_row_focus(
-                rows,
-                semantic_context=semantic_context,
-                sql=sql,
-                req=audit_req,
-            )
-            focus_applied = bool(row_jev.get("ok") and suggested_rows and len(rows) > 8)
-            model_rows = suggested_rows if focus_applied else rows
-            return {"ok": True, "operation": operation, "database": database,
-                    "rows": model_rows,
-                    "raw_row_count": len(rows) if isinstance(rows, list) else None,
-                    "row_focus_applied": focus_applied,
-                    "jev_semantics": jev_semantics, "jev_audit": jev_audit,
-                    "jev_suggested_rows": suggested_rows,
-                    "jev_row_rerank": row_jev, "jev_row_audit": row_audit}
-
-        if operation == "find_objects":
-            database = _database(req)
-            search = str(_require(req, "search"))
-            rows = client.find_sql_objects(database_name=database,
-                search_text=search, object_type=req.get("object_type"), top_n=_top(req, 20))
-            jev = {"ok": False, "reason": "tool reranking disabled"}
-            if jev_policy.TOOL_RERANK_ENABLED and rows:
-                jev = rerank_candidates(
-                    search, rows, top=len(rows), candidate_kind="real SQL object candidate"
-                )
-            response = {"ok": True, "operation": operation, "database": database,
-                        "objects": rows, "jev_rerank": jev}
-            response["jev_audit"] = _audit_jev(
-                jev,
-                stage="TOOL_CANDIDATE_RERANK",
-                state={"query": search, "candidate_kind": "sql_object", "candidates": rows},
-                req=req,
-            )
-            if jev.get("ok") and jev.get("ranked"):
-                response["deterministic_objects"] = rows
-                response["jev_suggested_objects"] = jev["ranked"]
-                response["objects"] = jev["ranked"]
-            return response
-
-        if operation == "get_definition":
-            database = _database(req)
-            result = client.get_sql_object_definition(database_name=database,
-                schema_name=str(req.get("schema") or "dbo"), object_name=str(_require(req, "object_name")))
-            return {"ok": True, "operation": operation, "database": database, "definition": result}
-
-        if operation == "get_ticket_context":
-            return {"ok": True, "operation": operation,
-                    "ticket": client.get_ticket_context(str(_require(req, "ticket_id")))}
-
-        if operation == "get_run_actions":
-            return {"ok": True, "operation": operation,
-                    "actions": client.get_run_actions(str(_require(req, "run_id")))}
-
-        if operation == "save_ledger":
-            run_id = str(_require(req, "run_id"))
-            ledger = _require(req, "ledger")
-            if not isinstance(ledger, dict):
-                raise ValueError("ledger must be an object")
-            client.save_investigation_ledger(run_id, ledger)
-            return {"ok": True, "operation": operation, "run_id": run_id, "saved": True}
-
-        if operation == "read_procedure":
-            return _read_procedure(req, client)
-
+    handler = _CONNECTED_OPERATIONS.get(operation)
+    if handler is None:
         raise ValueError(f"unsupported operation: {operation}")
+
+    client = _client()
+    try:
+        return handler(req, client)
     finally:
-        if client is not None:
-            try:
-                client.close()
-            except Exception:
-                pass
+        try:
+            client.close()
+        except Exception:
+            pass
 
 
 def _compact(value: Any, depth: int = 0) -> Any:
