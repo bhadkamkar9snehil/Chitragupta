@@ -50,9 +50,6 @@ cp "$SRC_HERMES/l2-investigator/plugins/xstudio-l2-trace/plugin.yaml" \
   "$DST/plugins/xstudio-l2-trace.plugin.yaml" 2>/dev/null || true
 cp "$SRC_HERMES/l2-investigator/plugins/xstudio-l2-tools/plugin.yaml" \
   "$DST/plugins/xstudio-l2-tools.plugin.yaml" 2>/dev/null || true
-cp "$SRC_HERMES/l2-jev-investigator/plugins/xstudio-l2-jev/plugin.yaml" \
-  "$DST/plugins/xstudio-l2-jev.plugin.yaml" 2>/dev/null || true
-
 # Hermes cron list has no JSON output in the deployed version. Keep one truthful text mirror.
 rm -f "$DST/cron_jobs.json"
 hermes -p l2-investigator cron list > "$DST/cron_jobs.txt" 2>&1
