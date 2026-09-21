@@ -35,6 +35,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -140,11 +141,24 @@ def run_orchestrator(args: argparse.Namespace, extra: Iterable[str], *, timeout:
         return text
 
 
+def _hermes_executable() -> str:
+    hermes_bin = shutil.which("hermes")
+    if hermes_bin:
+        return hermes_bin
+    for fallback in (
+        Path.home() / ".local" / "bin" / "hermes",
+        Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "hermes",
+    ):
+        if fallback.exists() and os.access(fallback, os.X_OK):
+            return str(fallback)
+    return "hermes"
+
+
 def run_hermes(argv: list[str], *, timeout: int = 30) -> subprocess.CompletedProcess[str]:
     if _is_windows():
         cmd = ["wsl", "-d", "Ubuntu", "--", "bash", "-lc", "hermes " + shlex.join(argv)]
     else:
-        cmd = ["hermes", *argv]
+        cmd = [_hermes_executable(), *argv]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
@@ -1718,17 +1732,52 @@ def process_unreviewable_completions(
             processed += 1
     return processed
 
+def is_reviewer_rejection(task: dict[str, Any]) -> bool:
+    if str(task.get("status") or "").lower() == "blocked":
+        return True
+    result_val = str(task.get("result") or "").strip().upper()
+    if result_val in ("REJECT", "REJECTED", "BLOCK", "BLOCKED"):
+        return True
+    profile = task.get("assignee") or ""
+    task_id = task.get("id")
+    if not task_id:
+        return False
+    runs = get_runs(task_id)
+    for r in runs:
+        if profile and r.get("profile") != profile:
+            continue
+        if r.get("outcome") == "blocked":
+            return True
+        summary = str(r.get("summary") or "").strip().lower()
+        if summary.startswith("reject") or "rejected frozen proposal" in summary:
+            return True
+    return False
+
+
 def reviewer_block_reason(task: dict[str, Any]) -> str:
     profile = task.get("assignee") or ""
-    runs = get_runs(task["id"])
-    blocks = [
+    task_id = task.get("id") or ""
+    runs = get_runs(task_id) if task_id else []
+    candidates = [
         r for r in runs
-        if r.get("outcome") == "blocked" and (not profile or r.get("profile") == profile)
+        if (not profile or r.get("profile") == profile)
+        and (
+            r.get("outcome") == "blocked"
+            or str(r.get("summary") or "").strip().lower().startswith("reject")
+            or "rejected frozen proposal" in str(r.get("summary") or "").lower()
+        )
     ]
-    if not blocks:
-        blocks = [r for r in runs if r.get("outcome") == "blocked"]
-    return ((blocks[-1].get("summary") if blocks else None) or "Reviewer rejected without a recorded reason.").strip()
-
+    if not candidates:
+        candidates = [
+            r for r in runs
+            if r.get("outcome") == "blocked"
+            or str(r.get("summary") or "").strip().lower().startswith("reject")
+            or "rejected frozen proposal" in str(r.get("summary") or "").lower()
+        ]
+    summary = candidates[-1].get("summary") if candidates else None
+    if not summary and runs:
+        summary = runs[-1].get("summary")
+    return (summary or "Reviewer rejected without a recorded reason.").strip()
 
 
 def process_rejections(
@@ -1744,10 +1793,12 @@ def process_rejections(
     if active_ids is None:
         active_ids = {str(row.get("ID")) for row in query_active_runs(args) if row.get("ID")}
     for task in source_tasks:
-        if task.get("status") != "blocked" or (task.get("assignee") or "") not in REVIEWER_PROFILES:
+        if (task.get("assignee") or "") not in REVIEWER_PROFILES:
             continue
         run_id = task_run_id(task)
         if not run_id or run_id not in active_ids:
+            continue
+        if not is_reviewer_rejection(task):
             continue
         if _source_has_rework(source_tasks, task["id"]):
             continue
@@ -1885,6 +1936,8 @@ def process_approvals(
         if run_id not in active_ids:
             counts["inactive_skipped"] += 1
             continue
+        if is_reviewer_rejection(task):
+            continue
 
         proposal = task_proposal(task)
         if not _proposal_complete(proposal):
@@ -1963,6 +2016,8 @@ def audit_done_reviewers(args: argparse.Namespace, *, dry_run: bool = False) -> 
     false_positives = 0
     for task in list_tasks("done"):
         if (task.get("assignee") or "") not in REVIEWER_PROFILES:
+            continue
+        if is_reviewer_rejection(task):
             continue
         run_id = task_run_id(task)
         if not run_id:

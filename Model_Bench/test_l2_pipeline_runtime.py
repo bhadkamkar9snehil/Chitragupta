@@ -578,6 +578,66 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(expected, "REAL_RESOLVED")
         self.assertEqual(argv, ["--new-ticket-status", "REAL_RESOLVED"])
 
+    def test_hermes_executable_resolution(self):
+        with patch.object(mod.shutil, "which", return_value="/custom/bin/hermes"):
+            self.assertEqual(mod._hermes_executable(), "/custom/bin/hermes")
+        with patch.object(mod.shutil, "which", return_value=None), \
+             patch.object(mod.Path, "exists", return_value=False):
+            self.assertEqual(mod._hermes_executable(), "hermes")
+
+    def test_is_reviewer_rejection_detection(self):
+        task_blocked = {"id": "t1", "status": "blocked", "assignee": mod.REVIEWER_PROFILE}
+        self.assertTrue(mod.is_reviewer_rejection(task_blocked))
+
+        task_reject_result = {"id": "t2", "status": "done", "result": "REJECT", "assignee": mod.REVIEWER_PROFILE}
+        self.assertTrue(mod.is_reviewer_rejection(task_reject_result))
+
+        task_reject_run = {"id": "t3", "status": "done", "result": "", "assignee": mod.REVIEWER_PROFILE}
+        with patch.object(mod, "get_runs", return_value=[{"profile": mod.REVIEWER_PROFILE, "summary": "Rejected frozen proposal for Ticket_123: unsupported"}]):
+            self.assertTrue(mod.is_reviewer_rejection(task_reject_run))
+
+        task_approved = {"id": "t4", "status": "done", "result": "SUCCESS", "assignee": mod.REVIEWER_PROFILE}
+        with patch.object(mod, "get_runs", return_value=[{"profile": mod.REVIEWER_PROFILE, "summary": "Approved frozen proposal"}]):
+            self.assertFalse(mod.is_reviewer_rejection(task_approved))
+
+    def test_process_approvals_skips_rejected_done_tasks(self):
+        tasks = [
+            {
+                "id": "review-rejected",
+                "assignee": mod.REVIEWER_PROFILE,
+                "status": "done",
+                "result": "REJECT",
+                "body": (
+                    "run_id: r-rej\n"
+                    "ticket_id: t-rej\n"
+                    'proposal_json: {"run_id":"r-rej","ticket_id":"t-rej","response_type":"UPDATE","reply_text":"bad"}'
+                ),
+            },
+        ]
+        with patch.object(mod, "list_tasks", return_value=tasks), \
+             patch.object(mod, "query_active_runs", return_value=[{"ID": "r-rej"}]), \
+             patch.object(mod, "_publish_frozen_proposal") as publish:
+            counts = mod.process_approvals(mod.default_args(), dry_run=True)
+        publish.assert_not_called()
+        self.assertEqual(counts["published"], 0)
+
+    def test_process_rejections_handles_done_tasks_with_rejection(self):
+        task = {
+            "id": "t-done-rej",
+            "assignee": mod.REVIEWER_PROFILE,
+            "status": "done",
+            "result": "REJECT",
+            "body": "run_id: r1\nticket_id: t1\ninvestigation_task_id: t-inv\nreview_cycle: 0\n",
+        }
+        with patch.object(mod, "list_tasks", return_value=[task]), \
+             patch.object(mod, "query_active_runs", return_value=[{"ID": "r1"}]), \
+             patch.object(mod, "_source_has_rework", return_value=False), \
+             patch.object(mod, "get_runs", return_value=[{"summary": "Rejected: bad claims"}]), \
+             patch.object(mod, "create_rework_card", return_value="created") as rework:
+            count = mod.process_rejections(mod.default_args(), dry_run=True)
+        self.assertEqual(count, 1)
+        rework.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

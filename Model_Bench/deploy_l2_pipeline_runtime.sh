@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export PATH="$HOME/.local/bin:$PATH"
+
 # Deploy the repo's deterministic L2 pipeline runtime AND the typed XStudio
 # investigation harness into the Hermes profile script/plugin/skill locations.
 # Run from the Chitragupta repo under WSL. Safe to run repeatedly.
@@ -162,6 +164,7 @@ for profile in "${INVESTIGATOR_PROFILES[@]}"; do
 done
 
 for profile in "${REVIEWER_PROFILES[@]}"; do
+  rm -rf "$HOME/.hermes/profiles/$profile/skills/xstudio/xstudio-l2-ticket-workflow"
   for skill in xstudio-l2-draft-verifier xstudio-sql-write-discipline; do
     copy_skill "$profile" "$skill"
   done
