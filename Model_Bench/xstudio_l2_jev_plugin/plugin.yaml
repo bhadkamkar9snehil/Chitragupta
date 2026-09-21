@@ -1,0 +1,4 @@
+name: xstudio-l2-jev
+version: 1.0.0
+description: Bounded TypeSafe Jev/System-One workflows for Chitragupta
+entrypoint: __init__.py
