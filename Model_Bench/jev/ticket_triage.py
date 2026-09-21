@@ -2,7 +2,6 @@
 from __future__ import annotations
 from typing import Any
 
-from . import policy
 from .client import system_one
 
 
@@ -94,6 +93,24 @@ def assess_ticket(
             "instructions": "Does the ticket look like a recurring or known support pattern that could plausibly match reusable knowledge?",
         },
     }
-    if policy.SECURITY_SCREEN_ENABLED:
-        questions.update(_SECURITY_QUESTIONS)
     return system_one({"ticket": ticket_state}, questions, api_key=api_key, sender=sender)
+
+
+def assess_ticket_security(
+    ticket_state: dict[str, Any],
+    *,
+    api_key: str | None = None,
+    sender=None,
+) -> dict[str, Any]:
+    """Screen the broader untrusted ticket separately from requester-grounded routing.
+
+    Routing deliberately excludes model/L1 suspected-cause text to avoid confirmation
+    bias. Security must still inspect that broader ticket content, so these judgments
+    must not be coalesced into the narrower routing request.
+    """
+    return system_one(
+        {"ticket": ticket_state},
+        _SECURITY_QUESTIONS,
+        api_key=api_key,
+        sender=sender,
+    )
