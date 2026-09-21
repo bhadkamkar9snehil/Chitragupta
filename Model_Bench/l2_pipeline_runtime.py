@@ -41,6 +41,15 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+
+def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
 WINDOWS_PYTHON = "/mnt/c/Python314/python.exe"
 ORCHESTRATOR_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Hermes_Orchestrator.py"
 KB_RETRIEVER_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\kb_retrieval.py"
@@ -64,8 +73,8 @@ REVIEW_PRIORITY = 30
 
 # Jev/deterministic work may occupy several active run slots. Any task that
 # invokes the one shared local LM Studio model is separately serialized.
-MAX_PIPELINE_WIP = max(1, min(64, int(os.environ.get("L2_MAX_PIPELINE_WIP", "8"))))
-MAX_QWEN_WAITING = max(1, min(32, int(os.environ.get("L2_MAX_QWEN_WAITING", "4"))))
+MAX_PIPELINE_WIP = _int_env("L2_MAX_PIPELINE_WIP", 8, minimum=1, maximum=64)
+MAX_QWEN_WAITING = _int_env("L2_MAX_QWEN_WAITING", 4, minimum=1, maximum=32)
 
 # Review cycles are deliberately distinct from SQL AttemptNo. SQL AttemptNo increments
 # only when a ticket is claimed into a genuinely new Hermes run; a reject/rework stays
@@ -2835,28 +2844,48 @@ def pipeline_status(args: argparse.Namespace) -> dict[str, Any]:
             "assignee": task.get("assignee"),
             "pipeline_stage": body_field(task.get("body"), "pipeline_stage"),
             "review_cycle": task_review_cycle(task),
-            "source": body_field(task.get("body"), "investigation_task_id") or body_field(task.get("body"), "rework_source_id"),
+            "source": body_field(task.get("body"), "investigation_task_id")
+                      or body_field(task.get("body"), "rework_source_id"),
         })
 
     anomalies: list[dict[str, Any]] = []
     for row in active:
         rid = str(row.get("ID"))
         owned = by_run.get(rid, [])
+        local_state = str(row.get("LocalModelState") or "")
+        local_task_id = str(row.get("LocalModelTaskID") or "")
+
         if not owned:
-            anomalies.append({"run_id": rid, "type": "ACTIVE_SQL_WITH_NO_KANBAN"})
+            if local_state == "QUEUED":
+                continue
+            if local_state == "RUNNING" and local_task_id:
+                anomalies.append({
+                    "run_id": rid,
+                    "type": "RUNNING_LOCAL_MODEL_TASK_NOT_VISIBLE_IN_KANBAN",
+                    "task_id": local_task_id,
+                })
+            else:
+                anomalies.append({"run_id": rid, "type": "ACTIVE_SQL_WITH_NO_KANBAN_OR_QUEUE"})
             continue
 
         investigators = [t for t in owned if t.get("assignee") in INVESTIGATOR_PROFILES]
         reviewers = [t for t in owned if t.get("assignee") in REVIEWER_PROFILES]
-        if not investigators:
+        if (
+            not investigators
+            and row.get("LocalModelPurpose") not in {"REVIEW"}
+            and local_state not in {"QUEUED", "RUNNING"}
+        ):
             anomalies.append({"run_id": rid, "type": "ACTIVE_RUN_WITHOUT_INVESTIGATOR_CARD"})
-        if investigators and not reviewers and all(t.get("status") == "done" for t in investigators):
-            # Could be a transient between completion and next reconcile, but it should never
-            # persist across a scout tick.
+        if (
+            investigators
+            and not reviewers
+            and all(t.get("status") == "done" for t in investigators)
+            and local_state not in {"QUEUED", "RUNNING"}
+        ):
             anomalies.append({"run_id": rid, "type": "DONE_INVESTIGATION_WITHOUT_REVIEWER_OR_REWORK"})
         if any(t.get("status") == "done" for t in reviewers):
             anomalies.append({"run_id": rid, "type": "REVIEW_APPROVED_PUBLISH_PENDING_OR_BLOCKED"})
-        if any(t.get("status") == "blocked" for t in reviewers):
+        if any(is_reviewer_rejection(t) for t in reviewers):
             anomalies.append({"run_id": rid, "type": "REVIEW_REJECTED_REWORK_PENDING_OR_ACTIVE"})
 
     binding = load_workflow_binding()
@@ -2865,11 +2894,14 @@ def pipeline_status(args: argparse.Namespace) -> dict[str, Any]:
         "active_runs": active,
         "tasks_by_run": by_run,
         "anomalies": anomalies,
+        "local_model": _local_model_counts(active),
         "binding": binding,
         "binding_ready_for_new_claims": binding_ready,
         "binding_block_reason": binding_reason,
         "contract": {
-            "max_pipeline_wip": 1,
+            "max_pipeline_wip": args.max_pipeline_wip,
+            "max_qwen_running": 1,
+            "max_qwen_waiting": args.max_qwen_waiting,
             "priorities": {
                 "review": REVIEW_PRIORITY,
                 "rework": REWORK_PRIORITY,
@@ -2881,14 +2913,11 @@ def pipeline_status(args: argparse.Namespace) -> dict[str, Any]:
             "qwen_free_scope": ["L3_ESCALATION", "NEEDS_HUMAN_ACTION"],
             "context_compiler": CONTEXT_COMPILER_VERSION,
             "local_reviewer_creation": "only_on_local_review_fallback",
+            "local_model_admission": "sql_serialized_single_slot",
             "frozen_review_proposal": True,
         },
     }
 
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
