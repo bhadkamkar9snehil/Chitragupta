@@ -569,3 +569,87 @@ BEGIN
 END;
 GO
 
+
+
+/* ============================================================================
+   TypeSafe Jev / System-One semantic judgment audit
+   One row per narrow typed judgment. Do not collapse these into a single
+   opaque AIConfidence value: route confidence, overclaim probability,
+   evidence support, KB applicability, trace failure class, etc. are distinct.
+   ============================================================================ */
+IF OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Hermes_Jev_Judgment_Trn_Tbl
+    (
+        ID                  varchar(36)    NOT NULL
+            CONSTRAINT DF_Hermes_Jev_Judgment_ID DEFAULT (NEWID()),
+        TicketID            varchar(36)    NULL,
+        RunID               varchar(36)    NULL,
+        Stage               varchar(50)    NOT NULL,
+        JudgmentName        varchar(120)   NOT NULL,
+        QuestionVersion     varchar(30)    NOT NULL
+            CONSTRAINT DF_Hermes_Jev_QuestionVersion DEFAULT ('v1'),
+        Model               varchar(120)   NULL,
+        AnswerType          varchar(20)    NOT NULL,
+        ChoiceValue         nvarchar(500)  NULL,
+        NoulProbability     decimal(9,6)   NULL,
+        ScoreValue          decimal(9,6)   NULL,
+        Confidence          decimal(9,6)   NULL,
+        ProbabilitiesJson   nvarchar(max)  NULL,
+        InputHash           varchar(64)    NOT NULL,
+        PolicyVersion       varchar(100)   NOT NULL,
+        Accepted            bit            NULL,
+        LatencyMs           decimal(12,2)  NULL,
+        CreatedOn           datetime       NOT NULL
+            CONSTRAINT DF_Hermes_Jev_Judgment_CreatedOn DEFAULT (GETDATE()),
+        IsDeleted           bit            NOT NULL
+            CONSTRAINT DF_Hermes_Jev_Judgment_IsDeleted DEFAULT (0),
+        Source              varchar(20)    NULL
+            CONSTRAINT DF_Hermes_Jev_Judgment_Source DEFAULT ('Jev'),
+
+        CONSTRAINT PK_Hermes_Jev_Judgment PRIMARY KEY CLUSTERED (ID),
+        CONSTRAINT CK_Hermes_Jev_Judgment_AnswerType
+            CHECK (AnswerType IN ('choice', 'noul', 'score'))
+    );
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl')
+      AND name = 'IX_Hermes_Jev_Judgment_RunStage'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Jev_Judgment_RunStage
+        ON dbo.Hermes_Jev_Judgment_Trn_Tbl(RunID, Stage, CreatedOn DESC)
+        INCLUDE (JudgmentName, AnswerType, ChoiceValue, NoulProbability, ScoreValue, Confidence)
+        WHERE IsDeleted = 0;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl')
+      AND name = 'IX_Hermes_Jev_Judgment_Ticket'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Jev_Judgment_Ticket
+        ON dbo.Hermes_Jev_Judgment_Trn_Tbl(TicketID, CreatedOn DESC)
+        WHERE IsDeleted = 0;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl')
+      AND name = 'UX_Hermes_Jev_Judgment_Idempotency'
+)
+BEGIN
+    CREATE UNIQUE NONCLUSTERED INDEX UX_Hermes_Jev_Judgment_Idempotency
+        ON dbo.Hermes_Jev_Judgment_Trn_Tbl(RunID, Stage, JudgmentName, InputHash, PolicyVersion)
+        WHERE RunID IS NOT NULL AND IsDeleted = 0;
+END;
+GO
