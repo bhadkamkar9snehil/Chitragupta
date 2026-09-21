@@ -400,6 +400,181 @@ def _local_model_counts(active_runs: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+_LOCAL_MODEL_TERMINAL_TASK_STATES = {"done", "blocked", "failed", "cancelled"}
+
+
+def _validate_local_task_spec(spec: dict[str, Any]) -> None:
+    required = {"title", "assignee", "body", "priority", "idempotency_key", "max_runtime"}
+    missing = [key for key in required if not spec.get(key)]
+    if missing:
+        raise ValueError(f"local-model task spec missing: {', '.join(sorted(missing))}")
+    if spec["assignee"] not in (INVESTIGATOR_PROFILES | REVIEWER_PROFILES):
+        raise ValueError(f"unapproved local-model assignee: {spec['assignee']}")
+    if not isinstance(spec.get("skills", []), list):
+        raise ValueError("local-model task spec skills must be a list")
+
+
+def _local_task_argv(spec: dict[str, Any]) -> list[str]:
+    _validate_local_task_spec(spec)
+    argv = [
+        "kanban", "create", str(spec["title"]),
+        "--assignee", str(spec["assignee"]),
+        "--body", str(spec["body"]),
+        "--priority", str(int(spec["priority"])),
+    ]
+    for skill in spec.get("skills", []):
+        argv += ["--skill", str(skill)]
+    argv += [
+        "--idempotency-key", str(spec["idempotency_key"]),
+        "--max-runtime", str(spec["max_runtime"]),
+        "--json",
+    ]
+    return argv
+
+
+def _queue_local_model_task(
+    args: argparse.Namespace,
+    *,
+    run_id: str,
+    purpose: str,
+    execution_mode: str,
+    priority: int,
+    work_key: str,
+    spec: dict[str, Any],
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Persist one exact Qwen work package; SQL owns idempotency/admission state."""
+    _validate_local_task_spec(spec)
+    if dry_run:
+        print(f"[DRY RUN] queue local model {purpose} run={run_id} key={work_key}")
+        return {"QueueStatus": "DRY_RUN", "RunID": run_id}
+
+    result = run_orchestrator(
+        args,
+        [
+            "--local-model-action", "queue",
+            "--run-id", run_id,
+            "--local-model-purpose", purpose,
+            "--local-model-priority", str(priority),
+            "--local-model-work-key", work_key,
+            "--local-model-execution-mode", execution_mode,
+            "--local-model-work-stdin",
+        ],
+        input_text=json.dumps(spec, separators=(",", ":"), default=str),
+    )
+    return result if isinstance(result, dict) else {"QueueStatus": "ERROR"}
+
+
+def _finish_local_model_work(
+    args: argparse.Namespace,
+    *,
+    run_id: str,
+    task_id: str | None,
+    outcome: str,
+) -> dict[str, Any]:
+    argv = [
+        "--local-model-action", "finish",
+        "--run-id", run_id,
+        "--local-model-outcome", outcome,
+    ]
+    if task_id:
+        argv += ["--local-model-task-id", task_id]
+    result = run_orchestrator(args, argv)
+    return result if isinstance(result, dict) else {}
+
+
+def _dispatch_next_local_model_task(
+    args: argparse.Namespace,
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Start at most one queued Qwen task. SQL guarantees the single shared slot."""
+    if dry_run:
+        return {"status": "DRY_RUN"}
+
+    acquired = run_orchestrator(args, ["--local-model-action", "acquire"])
+    if not isinstance(acquired, dict):
+        return {"status": "EMPTY"}
+    if acquired.get("AcquireStatus") != "ACQUIRED":
+        return {"status": str(acquired.get("AcquireStatus") or "EMPTY")}
+
+    run_id = str(acquired.get("RunID") or "")
+    work_key = str(acquired.get("LocalModelWorkKey") or "")
+    try:
+        spec = json.loads(str(acquired.get("PendingLocalModelJson") or ""))
+        if not isinstance(spec, dict):
+            raise ValueError("work package is not an object")
+        argv = _local_task_argv(spec)
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        _finish_local_model_work(args, run_id=run_id, task_id=None, outcome="DONE")
+        try:
+            run_orchestrator(args, [
+                "--fail-run", "--run-id", run_id,
+                "--error-message", f"Invalid persisted local-model work package: {exc}",
+                "--retry-after-minutes", "5",
+            ])
+        except RuntimeError:
+            pass
+        return {"status": "INVALID_WORK_PACKAGE", "run_id": run_id, "error": str(exc)}
+
+    created = run_hermes(argv)
+    if created.returncode != 0:
+        _finish_local_model_work(args, run_id=run_id, task_id=None, outcome="REQUEUE")
+        return {
+            "status": "CREATE_FAILED_REQUEUED",
+            "run_id": run_id,
+            "error": created.stderr.strip()[:500],
+        }
+    try:
+        task_id = str((json.loads(created.stdout) or {}).get("id") or "")
+    except json.JSONDecodeError:
+        task_id = ""
+    if not task_id:
+        _finish_local_model_work(args, run_id=run_id, task_id=None, outcome="REQUEUE")
+        return {"status": "CREATE_UNPARSEABLE_REQUEUED", "run_id": run_id}
+
+    bound = run_orchestrator(args, [
+        "--local-model-action", "bind",
+        "--run-id", run_id,
+        "--local-model-work-key", work_key,
+        "--local-model-task-id", task_id,
+    ])
+    return {
+        "status": "DISPATCHED",
+        "run_id": run_id,
+        "ticket_id": acquired.get("TicketID"),
+        "purpose": acquired.get("LocalModelPurpose"),
+        "task_id": task_id,
+        "bound": bool(bound),
+    }
+
+
+def _sync_local_model_completions(
+    args: argparse.Namespace,
+    tasks: list[dict[str, Any]],
+    active_runs: list[dict[str, Any]],
+    *,
+    dry_run: bool = False,
+) -> set[str]:
+    """Release the SQL Qwen slot when its bound Kanban task reaches a terminal state."""
+    by_id = {str(task.get("id")): task for task in tasks if task.get("id")}
+    released: set[str] = set()
+    for row in active_runs:
+        if row.get("LocalModelState") != "RUNNING":
+            continue
+        run_id = str(row.get("ID") or "")
+        task_id = str(row.get("LocalModelTaskID") or "")
+        task = by_id.get(task_id)
+        if not run_id or not task or task.get("status") not in _LOCAL_MODEL_TERMINAL_TASK_STATES:
+            continue
+        if dry_run:
+            print(f"[DRY RUN] release local-model slot run={run_id} task={task_id}")
+        else:
+            _finish_local_model_work(args, run_id=run_id, task_id=task_id, outcome="DONE")
+        released.add(run_id)
+    return released
+
+
 def _query_published_state(args: argparse.Namespace, run_id: str) -> list[dict[str, Any]]:
     safe = run_id.replace("'", "''")
     sql = (
