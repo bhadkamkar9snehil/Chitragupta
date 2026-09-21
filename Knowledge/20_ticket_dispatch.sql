@@ -130,6 +130,18 @@ BEGIN
             WHEN 'standard' THEN 3
             ELSE 4
         END,
+        /* Within the same operational priority, fresh/user-changed work must
+           not be starved by an old UPDATE continuation that became eligible
+           again. */
+        CASE
+            WHEN latest.ID IS NULL THEN 0
+            WHEN ISNULL(c.ModifiedOn, c.CreatedOn)
+                 > ISNULL(latest.TicketModifiedOnSeen, CONVERT(datetime, '19000101', 112))
+                THEN 1
+            WHEN latest.ProcessStatus = 'FAILED' THEN 2
+            WHEN latest.ResponseType = 'UPDATE' THEN 3
+            ELSE 4
+        END,
         c.CreatedOn ASC,
         c.ID ASC;
 END;
@@ -142,6 +154,7 @@ CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Claim_Ticket_Usp
     @WorkerID          varchar(200),
     @HermesUserID      varchar(36) = NULL,
     @HostAddress       varchar(100) = NULL,
+    @MaxPipelineWip    int = 8,
     @RunID             varchar(36) OUTPUT
 )
 AS
@@ -162,17 +175,47 @@ BEGIN
     END;
 
     DECLARE
+        @CapacityLockResult int,
         @LockResult int,
         @AttemptNo int,
         @TicketModifiedOn datetime,
         @TicketStatus varchar(50),
         @LockResource varchar(255);
 
-    SET @RunID = CONVERT(varchar(36), NEWID());
+    IF @MaxPipelineWip IS NULL OR @MaxPipelineWip < 1 SET @MaxPipelineWip = 1;
+    IF @MaxPipelineWip > 64 SET @MaxPipelineWip = 64;
+
+    SET @RunID = NULL;
     SET @LockResource = 'HermesL2:Ticket:' + @TicketID;
 
     BEGIN TRY
         BEGIN TRANSACTION;
+
+        /* Capacity is SQL-owned so overlapping scout processes cannot both
+           observe one remaining slot and over-claim it. */
+        EXEC @CapacityLockResult = sys.sp_getapplock
+            @Resource = 'HermesL2:PipelineCapacity',
+            @LockMode = 'Exclusive',
+            @LockOwner = 'Transaction',
+            @LockTimeout = 0;
+
+        IF @CapacityLockResult < 0
+        BEGIN
+            ROLLBACK TRANSACTION;
+            RETURN;
+        END;
+
+        IF
+        (
+            SELECT COUNT(*)
+            FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+            WHERE IsActive = 1
+              AND IsDeleted = 0
+        ) >= @MaxPipelineWip
+        BEGIN
+            ROLLBACK TRANSACTION;
+            RETURN;
+        END;
 
         EXEC @LockResult = sys.sp_getapplock
             @Resource = @LockResource,
@@ -218,6 +261,8 @@ BEGIN
         BEGIN
             RAISERROR('Ticket already has an active Hermes run.', 16, 1);
         END;
+
+        SET @RunID = CONVERT(varchar(36), NEWID());
 
         SELECT @AttemptNo = ISNULL(MAX(AttemptNo), 0) + 1
         FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
