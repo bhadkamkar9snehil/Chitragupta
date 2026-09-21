@@ -2855,6 +2855,7 @@ def scout(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
                 "--eligible-status", eligible,
                 "--bot-label", INVESTIGATOR_PROFILE,
                 "--max-pipeline-wip", str(args.max_pipeline_wip),
+                "--no-local-claim-state",
             ],
             timeout=90,
         )
