@@ -215,4 +215,4 @@ echo "Deployed deterministic L2 lifecycle + typed XStudio harness + trace observ
 echo "Typed worker tool: xstudio_l2. Jev planning/review remains harness-owned. Retired terminal transports (Hermes_Orchestrator.py,"
 echo "Windows Python, sqlcmd, pyodbc, pip) are blocked by plugin hook + approvals.deny."
 echo "Known retired deployed lifecycle scripts are removed on every deploy."
-echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"
+echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh --full"
