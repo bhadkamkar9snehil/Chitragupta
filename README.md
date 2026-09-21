@@ -9,52 +9,46 @@ The design goal is simple: keep reasoning probabilistic, keep workflow mechanics
 ```text
 XStudio_Helpdesk.dbo.Complaint_Mst_Tbl
         |
-        | ticket_scout.py: reconcile first, then claim only at WIP=0
+        | ticket_scout.py: reconcile, then fill available pipeline slots
         v
-atomic SQL claim
+atomic SQL pipeline admission (default max 8 active runs)
         |
-        v
-Jev triage + governed KB retrieval
+        +---- ticket A: Jev + deterministic probes -> QWEN_FREE -> review/publish
         |
-        v
-deterministic real SQL candidates
+        +---- ticket B: Jev + deterministic probes -> QUEUED COMPOSE_ONLY
         |
-        v
-Jev evidence plan
+        +---- ticket C: Jev + deterministic probes -> QUEUED FOCUSED_REASONING
         |
-        v
-identifier-bounded probe_table reads
-        |
-        v
-Jev investigation assessment
-        |
-        v
-l2-jev-investigator [priority 10]
-compose-only / focused reasoning + very few live reads
-        |
-        v
-frozen proposal
-        |
-        v
-Jev PRIMARY REVIEW
-   /          |             |              \
-APPROVE     REWORK      L3_ESCALATION   LOCAL_REVIEW
-  |           |              |               |
-  v           v              v               v
-publish     rework[20]    L3 path       qwen reviewer[30]
+        +---- ... until pipeline cap or bounded Qwen backlog
                                              |
-                                      approve / reject
-                                         |       |
-                                         v       v
-                                      publish  rework
+                                             v
+                              SQL-serialized local-model slot
+                                 exactly one RUNNING Qwen task
+                              review[30] > rework[20] > new[10]
+                                             |
+                                             v
+                              investigator / rework / local reviewer
+                                             |
+                                             v
+                                      frozen proposal
+                                             |
+                                             v
+                                     Jev PRIMARY REVIEW
+                               /          |          |          \
+                          APPROVE      REWORK    L3_ESCALATION  LOCAL_REVIEW
+                             |            |            |            |
+                             v            v            v            v
+                          publish      queue rework   L3 path   queue reviewer
 ```
 
 There is one Kanban board and one deterministic lifecycle authority. A local reviewer card is **not** part of the normal happy path anymore; it is created only when Jev primary review cannot safely route the frozen proposal directly.
 
 ## Lifecycle invariants
 
-- **Global pipeline WIP = 1 SQL run.** Finish Jev review/rework/local deep review/publication before claiming another ticket.
-- **Priorities:** local deep review `30`, rework `20`, new investigation `10`.
+- **Separate capacity domains.** Pipeline WIP defaults to 8 active SQL runs; all local-Qwen work shares one hard SQL-serialized RUNNING slot.
+- **Bounded backpressure.** The local-Qwen waiting backlog defaults to 4. Scout stops claiming when that queue is full even if pipeline capacity remains.
+- **Priorities:** local deep review `30`, rework `20`, new investigation `10`; these priorities govern the one Qwen slot.
+- **Frozen local work.** The exact worker card specification is stored on the run before admission. A QUEUED run with no Kanban card is valid state, not an orphan.
 - **Review loop:** `review_cycle`, independent of SQL `AttemptNo`; `MAX_REVIEW_CYCLES = 3`.
 - **Central authority:** `Model_Bench/l2_pipeline_runtime.py` owns claim coordination, proposal normalization, Jev review routing, local-review fallback creation, rework/escalation, publication, and orphan recovery.
 - **Jev owns semantic judgments, not mechanics.** SQL safety, workflow binding, WIP, mutations, and publication remain deterministic.
@@ -194,7 +188,10 @@ SQL claim
        route skill loaded only when semantically useful
   -> either:
        QWEN_FREE deterministic L3/human handoff candidate
-       OR l2-jev-investigator COMPOSE_ONLY / FOCUSED_REASONING
+       OR persist frozen COMPOSE_ONLY / FOCUSED_REASONING work package
+  -> SQL-serialized one-Qwen admission
+       review > rework > new investigation
+  -> local worker only when admitted
   -> frozen proposal
   -> Jev PRIMARY REVIEW
        APPROVE       -> deterministic publish
@@ -302,6 +299,8 @@ CHITRAGUPTA_JEV_SECURITY_ENABLED              default 1
 CHITRAGUPTA_JEV_FIRST_INVESTIGATION_ENABLED   default 1
 CHITRAGUPTA_JEV_DIRECT_APPROVAL_CONFIDENCE    default 0.82
 CHITRAGUPTA_JEV_DIRECT_REWORK_CONFIDENCE      default 0.88
+L2_MAX_PIPELINE_WIP                           default 8
+L2_MAX_QWEN_WAITING                          default 4
 ~~~
 
 There is no repository credential fallback. Never commit `.env` secrets or put TypeSafe credentials into prompts, Kanban cards, ticket text, trace payloads, or model-visible configuration.
@@ -311,6 +310,8 @@ There is no repository credential fallback. Never commit `.env` secrets or put T
 `Knowledge/00_Hermes_L2_FULL_INSTALL.sql` is the generated complete SQL bundle. The numbered source files are authoritative inputs; hardening sources `25_ticket_dispatch_hardening.sql` and `55_update_retry_hardening.sql` are already included in the generated full-install bundle.
 
 Do not apply those two files again merely because their source files exist. Edit the numbered source, regenerate the bundle, then deploy the generated bundle.
+
+For the multi-WIP migration, **SQL goes first**: apply the current generated bundle and run `Knowledge/98_pipeline_postflight.sql` before deploying/restarting the Python runtime. The new runtime reads `ExecutionMode` / `LocalModel*` columns and calls the SQL admission procedures; running new Python against old SQL is an invalid partial deployment.
 
 Deployment sequence is documented in `Knowledge/deploy-hermes-sql.md`.
 
@@ -409,7 +410,7 @@ Before changing lifecycle behavior:
 2. read `Knowledge/L2_PIPELINE_STATE_MACHINE.md`;
 3. trace current callers into `l2_pipeline_runtime.py`;
 4. prefer removing dead duplicate paths over adding another coordinator;
-5. preserve WIP, frozen-proposal, workflow-binding, publication, and audit safety unless a concrete defect requires changing them;
+5. preserve SQL pipeline-capacity, single-Qwen admission, frozen-proposal, workflow-binding, publication, and audit safety unless a concrete defect requires changing them;
 6. run the local validation suite and inspect live pipeline state before deployment.
 
 The repository should have one current explanation for each mechanism and one implementation authority for each lifecycle transition.
