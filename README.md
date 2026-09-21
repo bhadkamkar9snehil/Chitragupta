@@ -182,9 +182,13 @@ SQL claim
        real tables/views/SPs/KB only
   -> Jev evidence plan + candidate rerank
   -> deterministic identifier-bounded live probes
-  -> Jev investigation assessment
+  -> Jev investigation assessment + meta-attention
        evidence sufficiency / response type / known-solution fit /
-       root-cause family / human-action need / local-reasoning need
+       root-cause family / human-action need / local-reasoning need /
+       per-context-chunk presentation Score
+  -> deterministic context compiler
+       whole-chunk FULL / COMPACT / SUMMARY / OMIT
+       current ticket + live SQL evidence pinned
   -> l2-jev-investigator
        normally synthesis + at most a few missing live reads
   -> frozen proposal
@@ -219,9 +223,13 @@ Before the profile starts, the runtime already:
 2. narrows real SQL candidates deterministically;
 3. has Jev choose/rate the useful candidates;
 4. runs probe_table only where a strong ticket identifier maps to a real allowlisted column;
-5. sends those bounded live rows plus approved KB candidates back through Jev investigation assessment.
+5. sends those bounded live rows plus approved KB candidates back through Jev investigation assessment;
+6. asks independent per-chunk meta-attention Scores in that **same** System One request;
+7. deterministically builds a model-facing context view by whole chunks rather than dumping/truncating the raw bundle.
 
-The local model receives this compact evidence package. If Jev judges the evidence sufficient and deeper reasoning unnecessary, the profile is told to **compose only** and is budgeted one additional live read. Otherwise it gets a small focused-reasoning budget rather than the old open-ended discovery problem.
+The current ticket and gathered live-SQL evidence cannot be attention-omitted; a Jev-selected known solution is likewise pinned to at least a compact representation. Lower-value history, KB alternatives and discovery backlog can be summarized or omitted, with recovery hints retained.
+
+The local model receives this compiled evidence view. If Jev judges the evidence sufficient and deeper reasoning unnecessary, the profile is told to **compose only** and is budgeted one additional live read. Otherwise it gets a small focused-reasoning budget rather than the old open-ended discovery problem.
 
 probe_table never issues a broad automatic query when no strong identifier maps to the candidate schema. In that case the package explicitly says automatic probing was not possible and the bounded coordinator decides whether one focused live read is justified.
 
@@ -258,7 +266,7 @@ Every System One call is also written to the existing Hermes_Agent_Trace_Trn_Tbl
 Model_Bench/jev/client.py                    one System One transport adapter
 Model_Bench/jev/ticket_triage.py            ticket characterization/routing
 Model_Bench/jev/evidence_plan.py            bounded evidence selection
-Model_Bench/jev/investigation_assessment.py structured evidence interpretation
+Model_Bench/jev/investigation_assessment.py structured evidence interpretation + meta-attention
 Model_Bench/jev/reviewer.py                 primary semantic reviewer
 Model_Bench/jev/kb_applicability.py         KB applicability
 Model_Bench/jev/kb_curation.py              KB curation
