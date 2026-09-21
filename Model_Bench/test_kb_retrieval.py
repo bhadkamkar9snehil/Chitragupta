@@ -10,7 +10,7 @@ import kb_retrieval as kb  # noqa: E402
 
 
 MANIFEST = {
-    "always_load": ["mental-model.md"],
+    "always_load": ["L2_PIPELINE_STATE_MACHINE.md"],
     "identifier_routing": {
         "HeatNo": ["heat_execution"],
         "HeatID": ["heat_execution"],
@@ -53,7 +53,7 @@ class RouteTests(unittest.TestCase):
         routes = [{"route": "performance", "score": 10.0, "reasons": []}]
         docs = kb.knowledge_docs_for_routes(MANIFEST, routes)
         paths = [d["path"] for d in docs]
-        self.assertIn("Knowledge/mental-model.md", paths)
+        self.assertIn("Knowledge/L2_PIPELINE_STATE_MACHINE.md", paths)
         self.assertIn("Knowledge/xbatch-investigation-surfaces.md#delay--oee", paths)
 
     def test_legacy_string_identifier_mapping_still_parses(self):

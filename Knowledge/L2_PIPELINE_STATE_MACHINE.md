@@ -1,9 +1,86 @@
-# Chitragupta L2 Pipeline State Machine
+# Chitragupta L2 — Definitive Architecture and Pipeline State Machine
 
-Status: **runtime contract**
+Status: **sole normative architecture and lifecycle contract**
 
-This document defines the lifecycle implemented by `Model_Bench/l2_pipeline_runtime.py`.
-If this document and the runtime disagree, fix the drift immediately.
+This is the sole normative architecture and lifecycle specification for Chitragupta L2.
+If another document, historical plan, comment, deployment snapshot or implementation note disagrees with this document and the current runtime, it is stale and must not be treated as architecture.
+
+Authority hierarchy:
+1. `AGENTS.md` — stable engineering/runtime invariants and Scope Guard
+2. `Knowledge/L2_PIPELINE_STATE_MACHINE.md` — sole normative architecture + lifecycle
+3. runtime code (`Model_Bench/l2_pipeline_runtime.py`) / SQL implementation
+`README.md` is only a human-facing overview.
+
+## Architecture — Five Responsibilities
+
+Chitragupta is organized around exactly five architectural responsibilities:
+
+```text
+                         ┌──────────────────────┐
+                         │ 1. XSTUDIO HELPDESK  │
+                         │                      │
+                         │ Complaint_Mst_Tbl    │
+                         │ user-visible state   │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                     ┌───────────────────────────┐
+                     │ 2. CHITRAGUPTA CONTROL    │
+                     │                           │
+                     │ deterministic lifecycle   │
+                     │ claim / WIP / queue       │
+                     │ retry / recovery          │
+                     │ review routing            │
+                     │ workflow / publication    │
+                     └────────────┬──────────────┘
+                                  │
+                                  ▼
+                     ┌───────────────────────────┐
+                     │ 3. JEV — SYSTEM ONE       │
+                     │                           │
+                     │ triage                    │
+                     │ evidence planning         │
+                     │ semantic judgments        │
+                     │ execution-depth choice    │
+                     │ primary semantic review   │
+                     └────────────┬──────────────┘
+                                  │
+                         when Qwen is required
+                                  │
+                                  ▼
+                     ┌───────────────────────────┐
+                     │ 4. HERMES / QWEN          │
+                     │    SYSTEM TWO             │
+                     │                           │
+                     │ compose                   │
+                     │ focused investigation     │
+                     │ bounded rework            │
+                     │ exceptional deep review   │
+                     └────────────┬──────────────┘
+                                  │
+                                  ▼
+                     ┌───────────────────────────┐
+                     │ 5. EVIDENCE / KNOWLEDGE   │
+                     │                           │
+                     │ xstudio_l2 typed reads    │
+                     │ live SQL                  │
+                     │ governed KB               │
+                     │ ticket/run ledger         │
+                     │ canonical Knowledge docs  │
+                     └───────────────────────────┘
+```
+
+The surrounding implementation mechanisms are not additional architecture:
+- **SQL locks / leases / runtime tables** = persistence and coordination
+- **Kanban** = execution transport for Hermes workers
+- **Trace pipeline** = observability
+- **Cron / event hook** = lifecycle triggering and liveness
+- **Tests / postflight** = verification
+- **Deployment scripts** = deployment
+- **Qdrant** = retrieval index, never authority
+- **mem0** = bounded operational heuristics, never ticket truth
+
+No sixth architectural box exists.
 
 ## 1. Core invariant
 
@@ -379,7 +456,40 @@ NONE
 
 That suggestion does not directly promote or mutate an article.
 
-## 12. Helpdesk workflow binding
+### Knowledge authority hierarchy
+
+| Source | Role | Authority |
+|---|---|---|
+| Live SQL for this ticket | Current incident authority | Factual proof |
+| Git-tracked `Knowledge/` | Canonical domain/runtime reference | Authoritative reference |
+| Approved SQL Solution article | Reusable known-issue guidance | Governing hypothesis (requires live verification) |
+| Problem/ticket history | Episodic and recurring-root-cause evidence | Historical lead |
+| mem0 | Compact durable operational heuristics | Operational hints only |
+| Qdrant | Fast semantic retrieval index | Index only (never authority) |
+
+A KB hit, previous ticket, snapshot, or memory item is a lead. A current-ticket factual claim must be verified against live evidence whenever live verification is possible.
+
+## 12. Response semantics and mutation boundary
+
+### Response types
+
+| Type | Meaning | Workflow Behavior |
+|---|---|---|
+| `UPDATE` | Verified progress exists, but incident is not finally resolved | Posts activity note; ticket remains `Enter`; bounded continuation window via `NextEligibleOn` (+15m) |
+| `QUESTION` | Specific requester fact is genuinely required | Applies configured `waiting_user_ask_status` (`Ask`) |
+| `RESOLUTION` | Outcome/fix is verified and complete | Moves ticket to `resolved_ticket_status` (`Closed`); fails closed if unbound |
+| `L3_ESCALATION` | Root cause unresolved or genuinely beyond L2 capability | Enters `Hermes_L3_Escalation_Trn_Tbl`; remains `Enter` (unbound L3 status) |
+| `NEEDS_HUMAN_ACTION` | Cause/fix known but action is unauthorized for L2 worker | Documents necessary operational action; routed to human action workflow |
+
+### Mutation boundary
+
+The worker-facing `xstudio_l2` surface is read-only. Production or configuration writes are not an implicit next step after diagnosis.
+- `known cause + unauthorized corrective action -> NEEDS_HUMAN_ACTION`
+- `unknown/unresolved cause -> L3_ESCALATION`
+
+Ticket publication is an audited deterministic runtime action performed only after Jev primary review approval or approved local-review fallback through `Hermes_Orchestrator.py --publish-response`.
+
+## 13. Helpdesk workflow binding
 
 Workflow status names remain deterministic configuration.
 
@@ -401,7 +511,7 @@ needs_human_action_ticket_status  null
 
 When strict resolution binding is enabled, `RESOLUTION` fails closed if the resolved ticket status is not configured.
 
-## 13. Reconciliation ordering
+## 14. Reconciliation ordering
 
 One reconciler owns lifecycle mutation.
 
@@ -425,7 +535,7 @@ Current synchronous order:
 
 Do not restore separate publisher/reject/reviewer schedulers.
 
-## 14. Event delivery and backstop
+## 15. Event delivery and backstop
 
 `xstudio-l2-orchestrator` triggers reconciliation after successful Kanban completion/block events.
 
@@ -433,7 +543,7 @@ Event delivery is the fast path.
 
 The 2-minute `ticket_scout.py` run remains the durable reconcile-first backstop. It can fill multiple Jev/deterministic pipeline slots in one pass, stops at the SQL pipeline cap or priority-aware Qwen backlog, and never creates a local-model card outside the shared admission controller.
 
-## 15. Stale/orphan recovery
+## 16. Stale/orphan recovery
 
 Age alone never makes a run stale.
 
@@ -445,7 +555,7 @@ A run is protected from orphan recovery if:
 
 A run is auto-failed for clean retry only when it is active in SQL, has neither active Kanban representation nor QUEUED local-model state, and exceeds the orphan grace period (45 minutes).
 
-## 16. Candidate filtering / UPDATE continuation
+## 17. Candidate filtering / UPDATE continuation
 
 `Knowledge/25_ticket_dispatch_hardening.sql` performs non-L2 customization filtering before `TOP (@BatchSize)`.
 
@@ -453,7 +563,7 @@ A run is auto-failed for clean retry only when it is active in SQL, has neither 
 
 Both are part of the generated full-install bundle. Within the same operational priority, fresh never-run/user-changed tickets are ordered ahead of failed retries and old UPDATE continuations, preventing continuation loops from starving new incidents.
 
-## 17. Deployment and validation
+## 18. Deployment and validation
 
 From the repo under WSL:
 
@@ -479,7 +589,7 @@ Run `Knowledge/98_pipeline_postflight.sql` and `Knowledge/99_postflight.sql` aft
 
 Correctness still requires validation on the real Hermes/Kanban/SQL/WSL/LM Studio host.
 
-## 18. Historical designs that are not current
+## 19. Historical designs that are not current
 
 Do not restore:
 

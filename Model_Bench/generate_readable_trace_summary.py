@@ -12,7 +12,7 @@ Helpdesk does NOT want to read. Deterministic, no extra LLM call: this
 just formats what already happened into plain sentences. It runs whether
 or not the investigation ever reached --publish-response, which is the
 whole point -- Hermes_Ticket_Activity_Trn_Tbl today only gets written to
-on a real publish (kanban_approval_publisher.py's post_publish_data_entry)
+on a real publish (deterministic publication via l2_pipeline_runtime.py)
 or when the model remembers to call --log-activity mid-investigation;
 neither happens for the ~83% of runs that don't complete cleanly.
 

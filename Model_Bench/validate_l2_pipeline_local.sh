@@ -50,11 +50,7 @@ PY_FILES=(
   Model_Bench/l2_pipeline_runtime.py
   Model_Bench/ticket_scout.py
   Model_Bench/reconcile_l2_pipeline.py
-  Model_Bench/kanban_approval_publisher.py
-  Model_Bench/kanban_reject_bridge.py
-  Model_Bench/repair_incomplete_completions.py
   Model_Bench/audit_kanban_completions.py
-  Model_Bench/enforce_publish_safety_net.py
   Model_Bench/configure_helpdesk_workflow.py
   Model_Bench/kb_retrieval.py
   Model_Bench/jev_workflow_bridge.py

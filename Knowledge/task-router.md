@@ -20,11 +20,10 @@ Machine-readable mirror: `Knowledge/manifest.json`.
 ## Always load
 
 ```text
-mental-model.md
-execution-model.md
+L2_PIPELINE_STATE_MACHINE.md
 ```
 
-These define the current lifecycle and the read-only worker boundary. Then choose the narrowest route below.
+This defines the normative architecture, lifecycle, and read-only worker boundary. Then choose the narrowest route below.
 
 ## System-One routing and evidence planning
 

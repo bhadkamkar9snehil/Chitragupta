@@ -1,10 +1,22 @@
 # AI Helpdesk / Hermes L2 — Agent Operating Contract
 
-This file is the stable operating contract for agents working on Chitragupta.
-For the exact lifecycle state machine, read `Knowledge/L2_PIPELINE_STATE_MACHINE.md`.
-For human-facing architecture and deployment, read `README.md`.
-For KB design, read `Knowledge/KB_IMPLEMENTATION_PLAN.md`.
+This file is the stable operating contract and engineering discipline for agents working on Chitragupta.
 
+### Authority Hierarchy
+
+```text
+AGENTS.md
+    stable engineering/runtime invariants & Scope Guard
+              │
+              ▼
+Knowledge/L2_PIPELINE_STATE_MACHINE.md
+    sole normative architecture and lifecycle specification
+              │
+              ▼
+runtime code (Model_Bench/l2_pipeline_runtime.py) / SQL implementation
+```
+
+`README.md` is only a human-facing overview; it must not become an independent specification.
 Do not treat `Plans/`, `Agent_Comms/`, old commit messages, or dated incident notes as current runtime instructions. They are historical evidence only.
 
 ## 1. What this project is
@@ -22,6 +34,41 @@ Ticket:     dbo.Complaint_Mst_Tbl
 Production/plant evidence primarily lives in `XStudio_Xbatch`.
 
 Chitragupta does not replace the Helpdesk workflow. It claims an existing ticket, investigates it, gets an independent review, and publishes through the audited Hermes SQL path.
+
+### The Five Architectural Responsibilities
+
+Chitragupta has exactly five architectural responsibilities:
+1. **XStudio Helpdesk** (`dbo.Complaint_Mst_Tbl`) — User-visible incident store and operational state.
+2. **Chitragupta Control** (`Model_Bench/l2_pipeline_runtime.py`) — Deterministic lifecycle, claim/WIP/queue management, retry/recovery, review routing, and audited publication.
+3. **Jev — System One** (`Model_Bench/jev/`, `jev_workflow_bridge.py`) — Fast semantic layer: triage, evidence planning, candidate rating, execution-depth choice, and primary semantic review.
+4. **Hermes / Qwen — System Two** — Local model reasoning for composition, focused investigation, bounded rework, and exceptional deep review.
+5. **Evidence / Knowledge** (`xstudio_l2` tool, `Knowledge/`, SQL KB) — Typed read-only SQL, canonical Git documents, governed Solution articles, ticket/run ledgers.
+
+The surrounding implementation mechanisms are not additional architecture:
+- SQL locks / leases / runtime tables = persistence and coordination
+- Kanban = execution transport for Hermes workers
+- Trace pipeline = observability
+- Cron / event hook = lifecycle triggering and liveness
+- Tests / postflight = verification
+- Deployment scripts = deployment
+- Qdrant = retrieval index, never authority
+- mem0 = bounded operational heuristics, never ticket truth
+
+No sixth architectural box exists.
+
+## 1a. Scope Guard — Permanent Project Engineering Rule
+
+All agents and developers must adhere to the Scope Guard:
+
+1. **Smallest Sufficient Change:** Solve the specific task with the minimal code and documentation change necessary.
+2. **Inspect Existing Implementation First:** Read current code and invariants before designing or proposing changes.
+3. **Reuse Existing Patterns & Dependencies:** Do not introduce new libraries, frameworks, or execution modes when existing mechanisms suffice.
+4. **No Speculative Abstractions:** Do not create wrapper classes, generalized architectures, or speculative hooks for future requirements.
+5. **Delete Replaced Implementations:** When replacing an obsolete script, configuration, or model, cleanly delete the old path rather than keeping parallel dead code.
+6. **Do Not Widen Scope:** Do not touch nearby files, refactor unrelated modules, or add unsolicited features.
+7. **Test Requested Behavior:** Verify the exact behavior requested. Do not perform repeated unnecessary test cycles.
+8. **Re-anchor on Growing Scope:** If an implementation or investigation begins ballooning in complexity, stop immediately and return to the minimal requested requirement.
+9. **Architectural Guard:** Any proposed new runtime component must map to one of the five existing architectural responsibilities. If it does not, the change is an architecture change and requires explicit approval before implementation.
 
 ## 2. Current live L2 lifecycle
 
@@ -116,7 +163,7 @@ Current L2 cron policy:
 
 - `L2 Ticket Scout` — mutating lifecycle backstop, every 2 minutes.
 - `L2 Kanban Completion Audit` — read-only reviewer/SQL divergence audit, every 10 minutes.
-- Do **not** independently schedule `enforce_publish_safety_net.py` or `repair_incomplete_completions.py`; they are compatibility entrypoints into the central runtime and separate schedules reintroduce mutation races.
+- Legacy compatibility scripts (`repair_incomplete_completions.py`, `kanban_approval_publisher.py`, `kanban_reject_bridge.py`, `enforce_publish_safety_net.py`) have been retired and deleted. All lifecycle triggering runs strictly through `ticket_scout.py` or event-driven `reconcile_l2_pipeline.py`.
 
 See `deploy/cron_jobs.txt`.
 

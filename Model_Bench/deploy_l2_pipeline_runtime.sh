@@ -59,15 +59,27 @@ for retired_plugin in "${RETIRED_PLUGIN_DIRS[@]}"; do
   fi
 done
 
+RETIRED_SCRIPTS=(
+  kanban_approval_publisher.py
+  kanban_reject_bridge.py
+  repair_incomplete_completions.py
+  enforce_publish_safety_net.py
+)
+for retired_script in "${RETIRED_SCRIPTS[@]}"; do
+  for profile in "${ACTIVE_PROFILES[@]}"; do
+    stale="$HOME/.hermes/profiles/$profile/scripts/$retired_script"
+    if [[ -f "$stale" ]]; then
+      rm -f "$stale"
+      echo "removed retired script: $stale"
+    fi
+  done
+done
+
 for f in \
   l2_pipeline_runtime.py \
   ticket_scout.py \
   reconcile_l2_pipeline.py \
-  kanban_approval_publisher.py \
-  kanban_reject_bridge.py \
-  repair_incomplete_completions.py \
   audit_kanban_completions.py \
-  enforce_publish_safety_net.py \
   run_coalesced.py \
   drain_and_summarize.py
  do

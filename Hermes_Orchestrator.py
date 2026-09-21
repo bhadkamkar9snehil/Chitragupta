@@ -1474,7 +1474,7 @@ def main() -> None:
                               "the caller uses) to this run's InvestigationJson column, "
                               "independent of whether/how the run terminates. Requires --ledger. "
                               "Exists so a REJECTED investigation's findings aren't lost -- "
-                              "kanban_reject_bridge.py carries this forward verbatim into the "
+                              "l2_pipeline_runtime.py carries this forward verbatim into the "
                               "rework card instead of the next attempt starting cold.")
     parser.add_argument("--ledger", default=None,
                          help="JSON string. Required with --save-ledger; optional with "

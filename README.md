@@ -1,10 +1,73 @@
 # Chitragupta — XStudio / Hermes L2 Helpdesk
 
-Chitragupta is the deterministic L2 support pipeline around the existing XStudio Helpdesk and Hermes Agent. XStudio remains the ticket system. Hermes investigates live evidence, an independent reviewer verifies the proposed response, and deterministic code owns all lifecycle transitions and ticket publication.
+Chitragupta is the autonomous L2 support pipeline built around the existing XStudio Helpdesk and Hermes Agent. XStudio remains the authoritative ticket system. Hermes investigates live evidence through a typed read-only tool surface, TypeSafe Jev provides fast System-One semantic guidance and primary review, and deterministic control code owns all lifecycle transitions, concurrency admission, and ticket publication.
 
-The design goal is simple: keep reasoning probabilistic, keep workflow mechanics deterministic.
+The sole normative architecture and lifecycle specification is **`Knowledge/L2_PIPELINE_STATE_MACHINE.md`**.
 
-## Current production architecture
+## The Five Architectural Responsibilities
+
+```text
+                         ┌──────────────────────┐
+                         │ 1. XSTUDIO HELPDESK  │
+                         │                      │
+                         │ Complaint_Mst_Tbl    │
+                         │ user-visible state   │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                     ┌───────────────────────────┐
+                     │ 2. CHITRAGUPTA CONTROL    │
+                     │                           │
+                     │ deterministic lifecycle   │
+                     │ claim / WIP / queue       │
+                     │ retry / recovery          │
+                     │ review routing            │
+                     │ workflow / publication    │
+                     └────────────┬──────────────┘
+                                  │
+                                  ▼
+                     ┌───────────────────────────┐
+                     │ 3. JEV — SYSTEM ONE       │
+                     │                           │
+                     │ triage                    │
+                     │ evidence planning         │
+                     │ semantic judgments        │
+                     │ execution-depth choice    │
+                     │ primary semantic review   │
+                     └────────────┬──────────────┘
+                                  │
+                         when Qwen is required
+                                  │
+                                  ▼
+                     ┌───────────────────────────┐
+                     │ 4. HERMES / QWEN          │
+                     │    SYSTEM TWO             │
+                     │                           │
+                     │ compose                   │
+                     │ focused investigation     │
+                     │ bounded rework            │
+                     │ exceptional deep review   │
+                     └────────────┬──────────────┘
+                                  │
+                                  ▼
+                     ┌───────────────────────────┐
+                     │ 5. EVIDENCE / KNOWLEDGE   │
+                     │                           │
+                     │ xstudio_l2 typed reads    │
+                     │ live SQL                  │
+                     │ governed KB               │
+                     │ ticket/run ledger         │
+                     │ canonical Knowledge docs  │
+                     └───────────────────────────┘
+```
+
+Chitragupta maps entirely to these five responsibilities:
+- **What happens to a Helpdesk ticket?** It is atomically claimed from `Complaint_Mst_Tbl` by `ticket_scout.py`, assessed by Jev System One with deterministic schema probes, assigned an execution depth (`QWEN_FREE`, `COMPOSE_ONLY`, or `FOCUSED_REASONING`), executed (via Qwen when needed), normalized into a frozen proposal, reviewed semantically by Jev, and deterministically published back to Helpdesk.
+- **What does Jev do?** System One semantic judgments: ticket triage, evidence planning, candidate ranking, execution-depth choice, meta-attention context budgeting, and primary semantic review of frozen proposals.
+- **What does Qwen do?** System Two local model reasoning: proposal synthesis (`COMPOSE_ONLY`), focused investigation with bounded live reads (`FOCUSED_REASONING`), rework on rejected proposals, and exceptional deep review fallback when Jev indicates uncertainty or conflict.
+- **What does SQL own?** Persistent run state (`Hermes_L2_Response_Trn_Tbl`), pipeline capacity enforcement (default 8 active runs), serialized single-slot local-model queue admission, and the authoritative incident store (`Complaint_Mst_Tbl`).
+
+## Current production lifecycle
 
 ```text
 XStudio_Helpdesk.dbo.Complaint_Mst_Tbl
@@ -162,7 +225,7 @@ Start routing with:
 
 - `Knowledge/manifest.json` — machine-readable route map;
 - `Knowledge/task-router.md` — human-readable mirror;
-- `Knowledge/mental-model.md` and `Knowledge/execution-model.md` — always-loaded current operating model.
+- `Knowledge/L2_PIPELINE_STATE_MACHINE.md` — normative architecture and lifecycle specification.
 
 ## TypeSafe Jev System-One control fabric
 
@@ -368,13 +431,6 @@ Model_Bench/jev_post_resolution_curation.py
 Model_Bench/kb_retrieval.py
     Deterministic relevance gate plus Jev triage, applicability,
     negative-indicator, and untrusted-context judgments.
-
-Model_Bench/kanban_approval_publisher.py
-Model_Bench/kanban_reject_bridge.py
-Model_Bench/repair_incomplete_completions.py
-Model_Bench/enforce_publish_safety_net.py
-    Compatibility entrypoints that delegate to l2_pipeline_runtime.py.
-    They are not independent workflow engines.
 
 deploy/profiles/
     Current deployable Hermes profile artifacts.
