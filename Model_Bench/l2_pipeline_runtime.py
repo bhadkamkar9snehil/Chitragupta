@@ -1042,13 +1042,18 @@ def _jev_first_investigation(
             evidence_plan={"ok": False, "reason": "Jev-first investigation disabled"},
             probes=[],
         )
+        execution_contract = _resolve_execution_contract(assessment)
         return {
             "enabled": False,
             "reason": "Jev-first investigation disabled",
             "assessment": assessment,
             "context_chunks": chunks,
-            "local_model_scope": "FOCUSED_REASONING",
-            "max_additional_live_reads": 3,
+            "execution_contract": execution_contract,
+            "execution_mode": execution_contract["execution_mode"],
+            "local_model_scope": execution_contract["local_model_scope"],
+            "max_additional_live_reads": execution_contract["max_additional_live_reads"],
+            "load_route_skill": execution_contract["load_route_skill"],
+            "qwen_free_proposal": None,
         }
 
     plan_state = {
@@ -1137,11 +1142,15 @@ def _jev_first_investigation(
         "ok": False, "reason": assessment_call.get("error") or "investigation assessment unavailable"
     }
 
-    compose_only = (
-        isinstance(assessment, dict)
-        and assessment.get("ok")
-        and _noul_answer(assessment, "evidence_sufficient", 0.0) >= 0.80
-        and _noul_answer(assessment, "needs_local_model", 1.0) <= 0.20
+    execution_contract = _resolve_execution_contract(
+        assessment if isinstance(assessment, dict) else {}
+    )
+    qwen_free_proposal = _qwen_free_proposal(
+        run_id=run_id,
+        ticket_id=ticket_id,
+        ticket_context=ticket_context,
+        probes=probes,
+        execution_contract=execution_contract,
     )
     return {
         "enabled": True,
@@ -1150,8 +1159,12 @@ def _jev_first_investigation(
         "live_probes": probes,
         "assessment": assessment,
         "context_chunks": chunks,
-        "local_model_scope": "COMPOSE_ONLY" if compose_only else "FOCUSED_REASONING",
-        "max_additional_live_reads": 1 if compose_only else 3,
+        "execution_contract": execution_contract,
+        "execution_mode": execution_contract["execution_mode"],
+        "local_model_scope": execution_contract["local_model_scope"],
+        "max_additional_live_reads": execution_contract["max_additional_live_reads"],
+        "load_route_skill": execution_contract["load_route_skill"],
+        "qwen_free_proposal": qwen_free_proposal,
     }
 
 
