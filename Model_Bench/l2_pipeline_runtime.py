@@ -1529,7 +1529,9 @@ def normalize_investigator_completions(
             print(f"WARNING: normalize failed for {task['id']}: {r.stderr.strip()[:300]}")
     return repaired
 
+
 def create_reviewer_card(
+    args: argparse.Namespace,
     *,
     source_task: dict[str, Any],
     proposal: dict[str, Any],
@@ -1540,10 +1542,8 @@ def create_reviewer_card(
     ticket_no = body_field(source_task.get("body"), "ticket_no") or ticket_id
     cycle = task_review_cycle(source_task)
     proposal_json = json.dumps(proposal, separators=(",", ":"), default=str)
+    work_key = f"review-{run_id}-{cycle}-{source_task['id']}"
 
-    # Proposal is frozen into the reviewer card. The reviewer and publisher therefore
-    # judge/publish the exact same payload; neither has to reconstruct it from prose or
-    # from mutable parent state later.
     body = (
         f"run_id: {run_id}\n"
         f"ticket_id: {ticket_id}\n"
@@ -1559,29 +1559,31 @@ def create_reviewer_card(
         "Approve with kanban_complete; reject with kanban_block. The deterministic reconciler owns "
         "publication/rework."
     )
-    argv = [
-        "kanban", "create", f"REVIEW[{cycle}]: L2 {ticket_no}",
-        "--assignee", REVIEWER_PROFILE,
-        "--body", body,
-        "--priority", str(REVIEW_PRIORITY),
-        "--skill", "xstudio-l2-draft-verifier",
-        "--skill", "xstudio-sql-write-discipline",
-        "--idempotency-key", f"review-{run_id}-{cycle}-{source_task['id']}",
-        "--max-runtime", "15m",
-        "--json",
-    ]
-    if dry_run:
-        print(f"[DRY RUN] create reviewer for {source_task['id']} cycle={cycle}")
-        return "dry-run"
-    r = run_hermes(argv)
-    if r.returncode != 0:
-        print(f"WARNING: reviewer create failed for {source_task['id']}: {r.stderr.strip()[:300]}")
-        return None
-    try:
-        return (json.loads(r.stdout) or {}).get("id")
-    except json.JSONDecodeError:
-        return None
-
+    spec = {
+        "title": f"REVIEW[{cycle}]: L2 {ticket_no}",
+        "assignee": REVIEWER_PROFILE,
+        "body": body,
+        "priority": REVIEW_PRIORITY,
+        "skills": ["xstudio-l2-draft-verifier", "xstudio-sql-write-discipline"],
+        "idempotency_key": work_key,
+        "max_runtime": "15m",
+    }
+    queued = _queue_local_model_task(
+        args,
+        run_id=run_id,
+        purpose="REVIEW",
+        execution_mode="FOCUSED_REASONING",
+        priority=REVIEW_PRIORITY,
+        work_key=work_key,
+        spec=spec,
+        dry_run=dry_run,
+    )
+    status = str(queued.get("QueueStatus") or "")
+    if status == "QUEUED":
+        return "queued"
+    if status in {"ALREADY_QUEUED", "DRY_RUN"}:
+        return status.lower()
+    return None
 
 def _jev_primary_review(
     args: argparse.Namespace,
@@ -1735,7 +1737,7 @@ def _apply_primary_review(
         counts["escalated"] += int(bool(escalated))
         return
 
-    created = create_reviewer_card(source_task=task, proposal=proposal, dry_run=dry_run)
+    created = create_reviewer_card(args, source_task=task, proposal=proposal, dry_run=dry_run)
     counts["local_review"] += int(bool(created))
     counts["unavailable"] += int(not review.get("ok"))
 
@@ -1827,6 +1829,7 @@ def _escalate_run(
     return True
 
 
+
 def create_rework_card(
     args: argparse.Namespace,
     *,
@@ -1848,11 +1851,6 @@ def create_rework_card(
 
     tasks = list_tasks()
     if _source_has_rework(tasks, source_task["id"]):
-        # Idempotency, not a new action: callers count any truthy return as
-        # "created", so returning a truthy sentinel here inflated
-        # rework_created/processed counters on every reconcile tick that
-        # touched an already-covered source (confirmed live: counter kept
-        # incrementing with zero new Kanban cards created).
         return None
 
     prior = "" if dry_run else _persist_rejected_ledger(args, investigation_task_id, run_id)
@@ -1873,30 +1871,32 @@ def create_rework_card(
     if prior:
         body += f"\nPRIOR FINDINGS (verbatim):\n{prior}\n"
 
-    argv = [
-        "kanban", "create", f"REWORK[{next_cycle}]: L2 {ticket_no}",
-        "--body", body,
-        "--assignee", INVESTIGATOR_PROFILE,
-        "--priority", str(REWORK_PRIORITY),
-        "--skill", "xstudio-l2-ticket-workflow",
-        "--skill", "xstudio-sql-write-discipline",
-        "--idempotency-key", f"rework-{source_task['id']}",
-        "--max-runtime", "20m",
-        "--json",
-    ]
-    if dry_run:
-        print(f"[DRY RUN] create rework from {source_task['id']} cycle={next_cycle}: {reason[:120]}")
-        return "dry-run"
-    r = run_hermes(argv)
-    if r.returncode != 0:
-        print(f"WARNING: rework create failed for {source_task['id']}: {r.stderr.strip()[:300]}")
-        return None
-    try:
-        return (json.loads(r.stdout) or {}).get("id") or "created"
-    except json.JSONDecodeError:
-        return "created"
-
-
+    work_key = f"rework-{source_task['id']}"
+    spec = {
+        "title": f"REWORK[{next_cycle}]: L2 {ticket_no}",
+        "assignee": INVESTIGATOR_PROFILE,
+        "body": body,
+        "priority": REWORK_PRIORITY,
+        "skills": ["xstudio-l2-ticket-workflow", "xstudio-sql-write-discipline"],
+        "idempotency_key": work_key,
+        "max_runtime": "20m",
+    }
+    queued = _queue_local_model_task(
+        args,
+        run_id=run_id,
+        purpose="REWORK",
+        execution_mode="FOCUSED_REASONING",
+        priority=REWORK_PRIORITY,
+        work_key=work_key,
+        spec=spec,
+        dry_run=dry_run,
+    )
+    status = str(queued.get("QueueStatus") or "")
+    if status == "QUEUED":
+        return "queued"
+    if status in {"ALREADY_QUEUED", "DRY_RUN"}:
+        return status.lower()
+    return None
 
 def process_unreviewable_completions(
     args: argparse.Namespace,
