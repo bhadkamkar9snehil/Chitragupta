@@ -15,7 +15,6 @@ PY_FILES=(
   Model_Bench/enforce_publish_safety_net.py
   Model_Bench/configure_helpdesk_workflow.py
   Model_Bench/kb_retrieval.py
-  Model_Bench/typesafe_jev.py
   Model_Bench/jev_workflow_bridge.py
   Model_Bench/jev_trace_assessor.py
   Model_Bench/jev_post_resolution_curation.py
@@ -26,36 +25,31 @@ PY_FILES=(
   Model_Bench/jev/client.py
   Model_Bench/jev/ticket_triage.py
   Model_Bench/jev/candidate_rerank.py
-  Model_Bench/jev/proposal_preflight.py
   Model_Bench/jev/trace_assessment.py
   Model_Bench/jev/kb_applicability.py
   Model_Bench/jev/kb_curation.py
-  Model_Bench/jev/review_risk.py
   Model_Bench/jev/security.py
-  Model_Bench/jev/tool_semantics.py
-  Model_Bench/jev/model_routing.py
-  Model_Bench/jev/l1_action.py
   Model_Bench/jev/evidence_plan.py
   Model_Bench/jev/investigation_assessment.py
   Model_Bench/jev/reviewer.py
   Model_Bench/jev/audit.py
   Model_Bench/model_scorecard.py
-  Model_Bench/test_typesafe_jev.py
   Model_Bench/test_jev_fabric.py
   Model_Bench/test_kb_retrieval.py
   Model_Bench/patch_profile_config.py
   Model_Bench/patch_tool_search_off.py
   Model_Bench/xstudio_l2_orchestrator_plugin/__init__.py
   Model_Bench/xstudio_l2_tools_plugin/__init__.py
-  Model_Bench/xstudio_l2_jev_plugin/__init__.py
   Model_Bench/xstudio_l2_tool_bridge.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
-  Model_Bench/test_xstudio_l2_jev_plugin.py
 )
 
-echo "== TypeSafe dev credential wiring =="
-test -s deploy/dev/typesafe.env || { echo "FAIL: deploy/dev/typesafe.env is missing/empty" >&2; exit 1; }
-grep -q '^TYPESAFE_API_KEY=' deploy/dev/typesafe.env || { echo "FAIL: TYPESAFE_API_KEY is not wired in deploy/dev/typesafe.env" >&2; exit 1; }
+echo "== Secret hygiene =="
+if git ls-files | grep -E '(^|/)[^/]*\.env$' >/dev/null; then
+  echo "FAIL: tracked .env credential file found; credentials must come from process/service environment" >&2
+  git ls-files | grep -E '(^|/)[^/]*\.env$' >&2
+  exit 1
+fi
 
 echo "== Python syntax =="
 python3 -m py_compile "${PY_FILES[@]}"
@@ -65,12 +59,6 @@ python3 Model_Bench/test_l2_pipeline_runtime.py
 
 echo "== Typed investigation-tool contract tests =="
 python3 Model_Bench/test_xstudio_l2_tools_plugin.py
-
-echo "== Bounded Hermes Jev plugin contract tests =="
-python3 Model_Bench/test_xstudio_l2_jev_plugin.py
-
-echo "== TypeSafe Jev routing contract tests =="
-python3 Model_Bench/test_typesafe_jev.py
 
 echo "== TypeSafe Jev fabric contract tests =="
 python3 Model_Bench/test_jev_fabric.py
@@ -114,10 +102,10 @@ SQL deployment note:
   the numbered source files exist.
 
 Jev deployment note:
-  Jev is active, not shadowed. The explicitly approved dev credential is read
-  from deploy/dev/typesafe.env when TYPESAFE_API_KEY is absent. Jev-first
-  investigation, semantic tool controls, and Jev primary review are enabled.
-  Local qwen review is now the uncertainty/deep-reasoning fallback.
+  Jev is harness-owned. Set TYPESAFE_API_KEY in the Windows Python/service
+  environment; no repository credential fallback exists. Jev-first investigation
+  and Jev primary review are enabled. The local reviewer is the uncertainty/
+  deep-reasoning fallback.
 
 After deploying/regenerating the SQL bundle, run:
   Knowledge/98_pipeline_postflight.sql
