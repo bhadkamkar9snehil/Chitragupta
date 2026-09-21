@@ -1677,11 +1677,14 @@ def _pending_primary_review(
     task: dict[str, Any],
     tasks: list[dict[str, Any]],
     active_run_ids: set[str],
+    local_model_pending_run_ids: set[str] | None = None,
 ) -> tuple[str, str, dict[str, Any]] | None:
     if task.get("status") != "done" or (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
         return None
     run_id, ticket_id = task_run_id(task), task_ticket_id(task)
     if not run_id or not ticket_id or run_id not in active_run_ids:
+        return None
+    if local_model_pending_run_ids and run_id in local_model_pending_run_ids:
         return None
     if _source_has_reviewer(tasks, task["id"]) or _source_has_rework(tasks, task["id"]):
         return None
@@ -1749,6 +1752,7 @@ def process_jev_primary_reviews(
     dry_run: bool = False,
     tasks: list[dict[str, Any]] | None = None,
     active_run_ids: set[str] | None = None,
+    local_model_pending_run_ids: set[str] | None = None,
 ) -> dict[str, int]:
     """Run one Jev review per reviewable active completion."""
     counts = {"approved": 0, "reworked": 0, "local_review": 0, "escalated": 0, "unavailable": 0}
@@ -1757,7 +1761,9 @@ def process_jev_primary_reviews(
     if active_ids is None:
         active_ids = {str(row.get("ID")) for row in query_active_runs(args) if row.get("ID")}
     for task in source_tasks:
-        pending = _pending_primary_review(task, source_tasks, active_ids)
+        pending = _pending_primary_review(
+            task, source_tasks, active_ids, local_model_pending_run_ids
+        )
         if pending is None:
             continue
         run_id, ticket_id, proposal = pending
@@ -1904,6 +1910,7 @@ def process_unreviewable_completions(
     dry_run: bool = False,
     tasks: list[dict[str, Any]] | None = None,
     active_run_ids: set[str] | None = None,
+    local_model_pending_run_ids: set[str] | None = None,
 ) -> int:
     """Turn terminal active-run packaging failures into bounded rework."""
     source_tasks = tasks if tasks is not None else list_tasks()
@@ -1918,6 +1925,8 @@ def process_unreviewable_completions(
             if run_id not in active_run_ids:
                 continue
         elif not safe_query_active_run(run_id, args):
+            continue
+        if local_model_pending_run_ids and run_id in local_model_pending_run_ids:
             continue
         if _source_has_reviewer(source_tasks, task["id"]) or _source_has_rework(source_tasks, task["id"]):
             continue
@@ -1990,6 +1999,7 @@ def process_rejections(
     dry_run: bool = False,
     tasks: list[dict[str, Any]] | None = None,
     active_run_ids: set[str] | None = None,
+    local_model_pending_run_ids: set[str] | None = None,
 ) -> int:
     processed = 0
     source_tasks = tasks if tasks is not None else list_tasks()
@@ -2001,6 +2011,8 @@ def process_rejections(
             continue
         run_id = task_run_id(task)
         if not run_id or run_id not in active_ids:
+            continue
+        if local_model_pending_run_ids and run_id in local_model_pending_run_ids:
             continue
         if not is_reviewer_rejection(task):
             continue
