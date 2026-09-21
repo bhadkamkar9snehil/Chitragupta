@@ -662,29 +662,28 @@ def _context_chunk_metadata(chunks: list[dict[str, Any]]) -> list[dict[str, Any]
     return [{key: chunk.get(key) for key in exposed} for chunk in chunks]
 
 
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _context_level_for_score(score: float | None, fallback: int) -> int:
+    if score is None:
+        return fallback
+    for threshold, level in ((2.5, 3), (1.5, 2), (0.5, 1)):
+        if score >= threshold:
+            return level
+    return 0
+
+
 def _attention_level(assessment: dict[str, Any], chunk: dict[str, Any]) -> tuple[int, float | None, float | None]:
     answer = (assessment.get("answers") or {}).get(str(chunk.get("attention_question") or "")) or {}
-    score: float | None = None
-    confidence: float | None = None
-    if answer.get("type") == "score":
-        try:
-            score = float(answer.get("score"))
-        except (TypeError, ValueError):
-            score = None
-        try:
-            confidence = float(answer.get("confidence"))
-        except (TypeError, ValueError):
-            confidence = None
-    if score is None:
-        level = int(chunk.get("fallback_level") or 0)
-    elif score >= 2.5:
-        level = 3
-    elif score >= 1.5:
-        level = 2
-    elif score >= 0.5:
-        level = 1
-    else:
-        level = 0
+    is_score = answer.get("type") == "score"
+    score = _optional_float(answer.get("score")) if is_score else None
+    confidence = _optional_float(answer.get("confidence")) if is_score else None
+    level = _context_level_for_score(score, int(chunk.get("fallback_level") or 0))
     level = max(level, int(chunk.get("minimum_level") or 0))
     return min(level, 3), score, confidence
 
