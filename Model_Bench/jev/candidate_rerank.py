@@ -17,7 +17,7 @@ def rerank_candidates(
     if not candidates:
         return {"ok": True, "ranked": [], "answers": {}}
 
-    labels = {f"c{i}": c for i, c in enumerate(candidates[:100])}
+    labels = {f"c{i}": c for i, c in enumerate(candidates[:32])}
     questions: dict[str, Any] = {}
     for label in labels:
         questions[f"rel_{label}"] = {
