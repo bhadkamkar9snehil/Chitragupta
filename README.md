@@ -165,6 +165,43 @@ Start routing with:
 - `Knowledge/task-router.md` — human-readable mirror;
 - `Knowledge/mental-model.md` and `Knowledge/execution-model.md` — always-loaded current operating model.
 
+## TypeSafe Jev semantic routing
+
+Pre-investigation routing can use TypeSafe Jev as a small typed semantic judgment. The integration is intentionally advisory and sits inside the existing KB-routing path:
+
+\`\`\`text
+ticket text
+  -> explicit identifier routing
+       -> one canonical route: use it directly
+       -> multiple possible routes: Jev Choice only among those routes
+  -> otherwise Jev Choice across canonical manifest routes
+       -> confidence >= threshold: promote the chosen route
+       -> unavailable/error/low confidence: keep deterministic route ordering
+  -> solution retrieval still requires independent textual relevance
+  -> investigator still verifies current-ticket claims with live evidence
+\`\`\`
+
+Implementation:
+
+- \`Model_Bench/typesafe_jev.py\` — dependency-free System One HTTP client.
+- \`Model_Bench/kb_retrieval.py::resolve_route_candidates\` — deterministic/Jev fusion and fallback.
+- \`.agents/skills/typesafe-ai/SKILL.md\` — project-local TypeSafe agent skill.
+
+The default TypeSafe model alias is \`jev-latest\`. Runtime configuration is environment-only:
+
+\`\`\`text
+TYPESAFE_API_KEY                    required to enable live Jev calls
+CHITRAGUPTA_JEV_ENABLED             optional; default 1
+CHITRAGUPTA_JEV_MIN_CONFIDENCE      optional; default 0.70
+CHITRAGUPTA_JEV_TIMEOUT_SECONDS     optional; default 10
+TYPESAFE_DEFAULT_MODEL              optional model override
+TYPESAFE_BASE_URL                   optional API base override
+\`\`\`
+
+No TypeSafe credential is committed. If the key is absent, Jev is disabled and retrieval follows the existing deterministic route logic. Jev does not claim tickets, choose Helpdesk workflow states, execute SQL, determine the final response type, publish, or bypass independent review.
+
+The integration uses the current System One HTTP contract directly rather than adding a Python package to the production harness. This preserves the existing deployment rule that dependency and transport mechanics are harness-owned.
+
 ## SQL runtime and deployment
 
 `Knowledge/00_Hermes_L2_FULL_INSTALL.sql` is the generated complete SQL bundle. The numbered source files are authoritative inputs; hardening sources `25_ticket_dispatch_hardening.sql` and `55_update_retry_hardening.sql` are already included in the generated full-install bundle.
@@ -207,6 +244,11 @@ Model_Bench/xstudio_l2_tools_plugin/
 
 Model_Bench/xstudio_l2_tool_bridge.py
     Harness-owned Windows/SQL transport behind the typed tool.
+
+Model_Bench/kb_retrieval.py
+Model_Bench/typesafe_jev.py
+    Pre-investigation deterministic retrieval plus optional confidence-gated
+    TypeSafe Jev semantic route selection.
 
 Model_Bench/kanban_approval_publisher.py
 Model_Bench/kanban_reject_bridge.py
