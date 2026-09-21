@@ -15,6 +15,8 @@ metadata:
 
 Use this skill only for an investigator/rework card that already belongs to one claimed L2 SQL run. Claiming, local-review fallback creation, rework scheduling, publication, and workflow transitions are deterministic runtime responsibilities.
 
+Several other Hermes runs may now be active concurrently in Jev/deterministic stages. Your card exists only because this run acquired the **single shared local-Qwen slot**. Work only on the exact `run_id` / `ticket_id` in this card; do not poll, claim, delegate another local model, or inspect unrelated active tickets. Completing/blocking this card promptly releases the shared slot through deterministic reconciliation.
+
 ## Current lifecycle
 
 ```text
