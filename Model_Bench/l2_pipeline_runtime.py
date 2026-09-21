@@ -492,14 +492,36 @@ def _finish_local_model_work(
     return result if isinstance(result, dict) else {}
 
 
+def _live_local_model_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        task
+        for task in tasks
+        if (task.get("assignee") or "") in (INVESTIGATOR_PROFILES | REVIEWER_PROFILES)
+        and str(task.get("status") or "").lower() in LIVE_KANBAN_STATUSES
+    ]
+
+
 def _dispatch_next_local_model_task(
     args: argparse.Namespace,
     *,
     dry_run: bool = False,
+    tasks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Start at most one queued Qwen task. SQL guarantees the single shared slot."""
+    """Start at most one queued Qwen task.
+
+    SQL is the durable slot authority. The Kanban precheck protects a rolling
+    migration where an older live task predates the SQL lease columns.
+    """
     if dry_run:
         return {"status": "DRY_RUN"}
+
+    source_tasks = tasks if tasks is not None else list_tasks()
+    live_local = _live_local_model_tasks(source_tasks)
+    if live_local:
+        return {
+            "status": "KANBAN_LOCAL_MODEL_BUSY",
+            "task_ids": [str(task.get("id") or "") for task in live_local],
+        }
 
     acquired = run_orchestrator(args, ["--local-model-action", "acquire"])
     if not isinstance(acquired, dict):
@@ -2352,7 +2374,7 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
         tasks=tasks,
         active_runs=active_runs,
     )
-    dispatch = _dispatch_next_local_model_task(args, dry_run=dry_run)
+    dispatch = _dispatch_next_local_model_task(args, dry_run=dry_run, tasks=tasks)
     return {
         "normalized": normalized,
         "unreviewable_reworked": unreviewable,
