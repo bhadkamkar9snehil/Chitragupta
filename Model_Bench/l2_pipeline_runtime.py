@@ -1,25 +1,32 @@
 #!/usr/bin/env python3
 """Deterministic state machine for the Chitragupta L2 Helpdesk pipeline.
 
-The pipeline has one safe LM Studio inference slot. Correct throughput therefore means
-finishing the active ticket before claiming another one, not accumulating a queue of
-higher-priority investigations that starves review/rework.
+The pipeline has one safe local LM Studio inference slot. Jev/System One now
+absorbs bounded semantic work before and after that slot so the local model is
+used mainly for concise synthesis and genuinely deep/ambiguous reasoning.
 
-Lifecycle owned here (no LLM choreography):
+Lifecycle owned here:
 
     SQL claim
-      -> investigator
-      -> reviewer
-         -> approve -> publish
-         -> reject  -> rework investigator -> reviewer -> ... (bounded)
+      -> Jev triage + deterministic real candidate generation
+      -> Jev evidence planning
+      -> deterministic identifier-bounded live probes
+      -> Jev investigation assessment
+      -> l2-jev-investigator synthesis / a few focused reads
+      -> frozen proposal
+      -> Jev primary review
+         -> APPROVE       -> deterministic publish
+         -> REWORK        -> bounded rework
+         -> L3_ESCALATION -> deterministic escalation
+         -> LOCAL_REVIEW  -> local qwen deep-review fallback
+                                -> approve -> deterministic publish
+                                -> reject  -> bounded rework
 
-Important design choice: reviewer cards are created only *after* an investigator/rework
-completion has been normalized into the required metadata contract. We do not pre-create
-a parent-gated reviewer anymore. That removes the race where Hermes could promote/start
-the reviewer before the deterministic metadata-repair step had finished.
+Jev never owns WIP, SQL safety, mutations, workflow status binding, publication,
+or retry/rework caps. Those remain deterministic lifecycle responsibilities.
 
-Every operation is idempotent and may be triggered both by the observer hook and by the
-2-minute ticket-scout backstop.
+Every operation is idempotent and may be triggered both by the observer hook and
+by the 2-minute ticket-scout backstop.
 """
 from __future__ import annotations
 
