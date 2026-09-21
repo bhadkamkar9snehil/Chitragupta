@@ -665,12 +665,12 @@ def create_reviewer_card(
         f"review_cycle: {cycle}\n"
         "pipeline_stage: review\n"
         f"proposal_json: {proposal_json}\n\n"
-        f"review_depth: {proposal.get('review_depth') or 'FULL'}\n"
-        f"jev_review_depth_candidate: {proposal.get('jev_review_depth_candidate') or 'UNKNOWN'}\n\n"
-        "Jev preflight is advisory semantic evidence, never proof. Verify the frozen proposal "
-        "against live evidence. If review_depth is FOCUSED, concentrate on the core claim and any "
-        "Jev-flagged risk rather than repeating the whole investigation. Approve with "
-        "kanban_complete; reject with kanban_block. The deterministic reconciler owns publication/rework."
+        "This local review exists because Jev primary review selected LOCAL_REVIEW, was unavailable, "
+        "or failed deterministic confidence/safety gates. Do not repeat the whole investigation. "
+        "Inspect the Jev primary-review result embedded in proposal_json, identify the exact disputed "
+        "or underdetermined claim, and verify only the smallest sufficient live evidence set. "
+        "Approve with kanban_complete; reject with kanban_block. The deterministic reconciler owns "
+        "publication/rework."
     )
     argv = [
         "kanban", "create", f"REVIEW[{cycle}]: L2 {ticket_no}",
