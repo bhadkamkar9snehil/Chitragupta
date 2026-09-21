@@ -17,9 +17,13 @@ from jev.kb_curation import assess_curation, rerank_articles
 from jev.reviewer import review_proposal
 from jev.ticket_triage import assess_ticket, assess_ticket_security
 from jev.trace_assessment import assess_trace
+from jev_workflow_bridge import _QUESTION_VERSIONS
 
 
 class FabricTests(unittest.TestCase):
+    def test_investigation_assessment_audit_contract_is_versioned(self):
+        self.assertEqual(_QUESTION_VERSIONS["investigation_assessment"], "v2")
+
     def test_system_one_sends_multiple_questions_in_one_request(self):
         seen = {}
 
