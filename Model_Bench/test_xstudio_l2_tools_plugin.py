@@ -406,6 +406,17 @@ def test_config_patch_adds_plugin_toolset_and_deny_rules() -> None:
     assert "'*pip install*'" in patched
 
 
+def test_config_patch_adds_all_profile_hook_plugins_on_fresh_config() -> None:
+    fresh = _SAMPLE_CONFIG.replace(
+        "    - xstudio-l2-trace\\n    - xstudio-l2-orchestrator\\n",
+        "",
+    )
+    patched = _patch_sample(fresh)
+    assert "    - xstudio-l2-orchestrator\\n" in patched
+    assert "    - xstudio-l2-tools\\n" in patched
+    assert "    - xstudio-l2-trace\\n" in patched
+
+
 def test_config_patch_is_idempotent() -> None:
     once = _patch_sample(_SAMPLE_CONFIG)
     twice = _patch_sample(once)
