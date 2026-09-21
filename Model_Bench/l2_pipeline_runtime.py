@@ -62,6 +62,11 @@ NEW_INVESTIGATION_PRIORITY = 10
 REWORK_PRIORITY = 20
 REVIEW_PRIORITY = 30
 
+# Jev/deterministic work may occupy several active run slots. Any task that
+# invokes the one shared local LM Studio model is separately serialized.
+MAX_PIPELINE_WIP = max(1, min(64, int(os.environ.get("L2_MAX_PIPELINE_WIP", "8"))))
+MAX_QWEN_WAITING = max(1, min(32, int(os.environ.get("L2_MAX_QWEN_WAITING", "4"))))
+
 # Review cycles are deliberately distinct from SQL AttemptNo. SQL AttemptNo increments
 # only when a ticket is claimed into a genuinely new Hermes run; a reject/rework stays
 # inside the same run.
@@ -124,10 +129,22 @@ def _base_orchestrator_args(args: argparse.Namespace) -> list[str]:
     return cmd
 
 
-def run_orchestrator(args: argparse.Namespace, extra: Iterable[str], *, timeout: int = 60) -> Any:
+def run_orchestrator(
+    args: argparse.Namespace,
+    extra: Iterable[str],
+    *,
+    timeout: int = 60,
+    input_text: str | None = None,
+) -> Any:
     cmd = _base_orchestrator_args(args) + list(extra)
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(
+            cmd,
+            input=input_text,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(f"orchestrator invocation failed: {type(exc).__name__}: {exc}") from exc
     if result.returncode != 0:
@@ -341,6 +358,8 @@ def default_args() -> argparse.Namespace:
         password=os.environ.get("MSSQL_MCP_PASSWORD"),
         eligible_status=DEFAULT_ELIGIBLE_STATUS,
         stale_after_minutes=ORPHAN_GRACE_MINUTES,
+        max_pipeline_wip=MAX_PIPELINE_WIP,
+        max_qwen_waiting=MAX_QWEN_WAITING,
         dry_run=False,
     )
 
@@ -363,12 +382,22 @@ def safe_query_active_run(run_id: str, args: Optional[argparse.Namespace] = None
 def query_active_runs(args: argparse.Namespace) -> list[dict[str, Any]]:
     sql = (
         "SELECT ID, TicketID, ProcessStatus, ClaimedOn, HeartbeatOn, "
+        "ExecutionMode, LocalModelState, LocalModelPurpose, LocalModelPriority, "
+        "LocalModelWorkKey, LocalModelTaskID, LocalModelQueuedOn, "
+        "LocalModelStartedOn, LocalModelCompletedOn, "
         "DATEDIFF(MINUTE, ISNULL(HeartbeatOn, ClaimedOn), GETDATE()) AS AgeMinutes "
         "FROM dbo.Hermes_L2_Response_Trn_Tbl "
         "WHERE IsActive = 1 AND IsDeleted = 0 ORDER BY ClaimedOn"
     )
     rows = run_orchestrator(args, ["--query", sql])
     return rows if isinstance(rows, list) else []
+
+
+def _local_model_counts(active_runs: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "running": sum(1 for row in active_runs if row.get("LocalModelState") == "RUNNING"),
+        "queued": sum(1 for row in active_runs if row.get("LocalModelState") == "QUEUED"),
+    }
 
 
 def _query_published_state(args: argparse.Namespace, run_id: str) -> list[dict[str, Any]]:
@@ -2586,6 +2615,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))
     p.add_argument("--eligible-status", default=DEFAULT_ELIGIBLE_STATUS)
     p.add_argument("--stale-after-minutes", type=int, default=ORPHAN_GRACE_MINUTES)
+    p.add_argument("--max-pipeline-wip", type=int, default=MAX_PIPELINE_WIP)
+    p.add_argument("--max-qwen-waiting", type=int, default=MAX_QWEN_WAITING)
     p.add_argument("--dry-run", action="store_true")
     return p
 
