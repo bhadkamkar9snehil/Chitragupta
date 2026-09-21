@@ -323,10 +323,17 @@ bash Model_Bench/deploy_l2_pipeline_runtime.sh
 Local validation:
 
 ```bash
+# Fast default for the code-edit loop.
 bash Model_Bench/validate_l2_pipeline_local.sh
+
+# Full live gate before deployment / after lifecycle changes.
+bash Model_Bench/validate_l2_pipeline_local.sh --full
+
+# Live checks only when the fast gate already passed.
+bash Model_Bench/validate_l2_pipeline_local.sh --live-only
 ```
 
-Validation is intentionally local against the real Windows/WSL/Hermes environment. This project does not rely on GitHub Actions as the authority for production validation.
+The fast gate avoids SQL/Hermes round-trips. Full validation still uses the real Windows/WSL/Hermes environment, but reconciliation now starts from one active-run/Kanban snapshot and does not re-query historical completed runs. This project does not rely on GitHub Actions as the authority for production validation.
 
 ## Important runtime files
 
