@@ -264,6 +264,141 @@ def _audit_jev(
 
 
 
+
+_IDENTIFIER_PRIORITY = [
+    "transactionid", "heatno", "batchno", "workorderno", "workorder",
+    "productionorder", "orderno", "materialdocument", "recipeid", "recipeno",
+    "equipmentid", "equipment", "heatid", "batchid",
+]
+
+_PROBE_COLUMN_WORDS = (
+    "status", "state", "reason", "error", "message", "date", "time",
+    "actual", "set", "value", "code", "type", "name", "result", "document",
+)
+
+
+def _flatten_scalars(value: Any, prefix: str = "") -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            name = f"{prefix}.{key}" if prefix else str(key)
+            out.extend(_flatten_scalars(child, name))
+    elif isinstance(value, list):
+        for i, child in enumerate(value[:20]):
+            out.extend(_flatten_scalars(child, f"{prefix}[{i}]"))
+    elif value is not None and not isinstance(value, (dict, list)):
+        text = str(value).strip()
+        if text and len(text) <= 300:
+            out.append((prefix.split(".")[-1].split("[")[0], text))
+    return out
+
+
+def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    """Deterministically probe one real candidate using ticket identifiers.
+
+    No model writes SQL. If no strong ticket identifier maps to a real column,
+    refuse the automatic probe rather than issuing a broad fishing query.
+    """
+    database = _database(req)
+    table = str(_require(req, "table")).strip()
+    ticket = req.get("ticket") or {}
+    if not isinstance(ticket, dict):
+        raise ValueError("ticket must be an object")
+
+    tables = _load_allowlist().get(database) or {}
+    table_key = table.split(".")[-1].strip("[]").lower()
+    matches = [(qualified, cols) for qualified, cols in tables.items()
+               if qualified.split(".")[-1].strip("[]").lower() == table_key]
+    if not matches:
+        return {
+            "ok": False, "operation": "probe_table",
+            "error": f"table/view {table!r} is not present in the schema allowlist",
+            "retry_same_call": False,
+        }
+    qualified, real_columns = matches[0]
+    lookup = {str(col).replace("_", "").lower(): str(col) for col in real_columns}
+
+    scalar_map: dict[str, str] = {}
+    for key, value in _flatten_scalars(ticket):
+        normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+        if normalized and normalized not in scalar_map:
+            scalar_map[normalized] = value
+
+    selected_filter: tuple[str, str] | None = None
+    for wanted in _IDENTIFIER_PRIORITY:
+        if wanted in lookup and wanted in scalar_map:
+            selected_filter = (lookup[wanted], scalar_map[wanted])
+            break
+
+    if selected_filter is None:
+        # Some upstream ticket fields carry identifier names in ExtractedEntitiesJson.
+        raw = json.dumps(ticket, default=str)
+        for wanted in _IDENTIFIER_PRIORITY:
+            col = lookup.get(wanted)
+            if not col:
+                continue
+            m = re.search(
+                rf'(?i)\b{re.escape(wanted)}\b\s*["''=: -]+\s*["'']?([A-Za-z0-9_.:/-]{{2,100}})',
+                raw,
+            )
+            if m:
+                selected_filter = (col, m.group(1))
+                break
+
+    if selected_filter is None:
+        return {
+            "ok": True,
+            "operation": "probe_table",
+            "database": database,
+            "table": qualified,
+            "probe_possible": False,
+            "reason": "No strong ticket identifier maps to a real column; automatic broad reads are intentionally avoided.",
+            "rows": [],
+        }
+
+    filter_col, filter_value = selected_filter
+    requested = [str(x) for x in (req.get("matched_columns") or []) if str(x)]
+    columns: list[str] = [filter_col]
+    for col in requested:
+        real = lookup.get(re.sub(r"[^a-z0-9]", "", col.lower()))
+        if real and real not in columns:
+            columns.append(real)
+    for col in real_columns:
+        lower = str(col).lower()
+        if any(word in lower for word in _PROBE_COLUMN_WORDS) and col not in columns:
+            columns.append(str(col))
+        if len(columns) >= 12:
+            break
+    columns = columns[:12]
+
+    escaped = _escape_sql_string(filter_value)
+    where = f"[{filter_col}] = N'{escaped}'"
+    built = _orchestrator().build_query_mechanically(
+        table=qualified,
+        columns=columns,
+        where=where,
+        order_by=None,
+        top=_top(req, 20),
+        database=database,
+    )
+    if not built.get("ok"):
+        return {"operation": "probe_table", **built, "retry_same_call": False}
+    rows = _orchestrator().run_readonly_query(
+        client, built["sql"], database=database, run_id=req.get("run_id")
+    )
+    return {
+        "ok": True,
+        "operation": "probe_table",
+        "database": database,
+        "table": qualified,
+        "probe_possible": True,
+        "identifier": {"column": filter_col, "value": filter_value},
+        "columns": columns,
+        "sql": built.get("sql"),
+        "rows": rows,
+    }
+
+
 def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
     database = _database(req)
     run_id = str(_require(req, "run_id"))
@@ -352,6 +487,9 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
     client: Any = None
     try:
         client = _client()
+
+        if operation == "probe_table":
+            return _probe_table(req, client)
 
         if operation == "select":
             database = _database(req)
