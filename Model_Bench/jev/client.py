@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -24,16 +25,39 @@ JsonSender = Callable[[str, dict[str, Any], dict[str, str], float], dict[str, An
 
 
 def _float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
     try:
-        value = float(os.environ.get(name, default))
+        value = float(raw)
     except (TypeError, ValueError):
         return default
     return value if value > 0 else default
 
 
 def resolved_api_key(api_key: str | None = None) -> str:
-    """Resolve TypeSafe credentials from explicit input or process environment only."""
-    return (api_key or os.environ.get("TYPESAFE_API_KEY", "")).strip()
+    """Resolve TypeSafe credentials from explicit input or process/service environment."""
+    key = (api_key or os.environ.get("TYPESAFE_API_KEY", "")).strip()
+    if not key and sys.platform == "win32":
+        try:
+            import winreg
+
+            for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+                sub = (
+                    r"Environment"
+                    if root == winreg.HKEY_CURRENT_USER
+                    else r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+                )
+                try:
+                    with winreg.OpenKey(root, sub) as reg_key:
+                        val, _ = winreg.QueryValueEx(reg_key, "TYPESAFE_API_KEY")
+                        if val and str(val).strip():
+                            return str(val).strip()
+                except OSError:
+                    continue
+        except Exception:
+            pass
+    return key
 
 
 def typesafe_available(api_key: str | None = None) -> bool:

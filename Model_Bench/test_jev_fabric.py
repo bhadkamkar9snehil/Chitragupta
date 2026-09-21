@@ -21,6 +21,27 @@ from jev_workflow_bridge import _QUESTION_VERSIONS
 
 
 class FabricTests(unittest.TestCase):
+    def test_resolved_api_key_and_float_env(self):
+        import os
+        from unittest.mock import patch
+
+        self.assertEqual(client._float_env("NON_EXISTENT_TIMEOUT_VAR_123", 5.0), 5.0)
+        with patch.dict(os.environ, {"TEST_FLOAT": "12.5"}):
+            self.assertEqual(client._float_env("TEST_FLOAT", 5.0), 12.5)
+        with patch.dict(os.environ, {"TEST_FLOAT": "invalid"}):
+            self.assertEqual(client._float_env("TEST_FLOAT", 5.0), 5.0)
+
+        self.assertEqual(client.resolved_api_key("explicit-key"), "explicit-key")
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "env-key"}):
+            self.assertEqual(client.resolved_api_key(), "env-key")
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}):
+            with patch("sys.platform", "linux"):
+                self.assertEqual(client.resolved_api_key(), "")
+            if sys.platform == "win32":
+                import winreg
+                with patch("winreg.OpenKey"), patch("winreg.QueryValueEx", return_value=("winreg-key", 1)):
+                    self.assertEqual(client.resolved_api_key(), "winreg-key")
+
     def test_investigation_assessment_audit_contract_is_versioned(self):
         self.assertEqual(_QUESTION_VERSIONS["investigation_assessment"], "v2")
 
