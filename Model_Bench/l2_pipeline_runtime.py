@@ -2257,7 +2257,7 @@ def audit_done_reviewers(args: argparse.Namespace, *, dry_run: bool = False) -> 
 
 
 def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
-    """Reconcile one live snapshot instead of rescanning historical cards per stage."""
+    """Reconcile one live snapshot and admit at most one shared local-Qwen task."""
     tasks = list_tasks()
     active_runs = query_active_runs(args)
     active_run_ids = {str(row.get("ID")) for row in active_runs if row.get("ID")}
@@ -2282,23 +2282,49 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
                 "rework_created": 0,
             },
             "orphans_recovered": 0,
+            "local_model_released": 0,
+            "local_model_dispatch": {"status": "EMPTY"},
             "snapshot": {
                 "active_run_count": 0,
                 "kanban_task_count": len(tasks),
+                "local_model": {"running": 0, "queued": 0},
             },
         }
+
+    released = _sync_local_model_completions(
+        args, tasks, active_runs, dry_run=dry_run
+    )
+    pending_local = {
+        str(row.get("ID"))
+        for row in active_runs
+        if row.get("ID")
+        and row.get("LocalModelState") in {"QUEUED", "RUNNING"}
+        and str(row.get("ID")) not in released
+    }
 
     normalized = normalize_investigator_completions(
         dry_run=dry_run, tasks=tasks, active_run_ids=active_run_ids
     )
     unreviewable = process_unreviewable_completions(
-        args, dry_run=dry_run, tasks=tasks, active_run_ids=active_run_ids
+        args,
+        dry_run=dry_run,
+        tasks=tasks,
+        active_run_ids=active_run_ids,
+        local_model_pending_run_ids=pending_local,
     )
     jev_reviews = process_jev_primary_reviews(
-        args, dry_run=dry_run, tasks=tasks, active_run_ids=active_run_ids
+        args,
+        dry_run=dry_run,
+        tasks=tasks,
+        active_run_ids=active_run_ids,
+        local_model_pending_run_ids=pending_local,
     )
     rejections = process_rejections(
-        args, dry_run=dry_run, tasks=tasks, active_run_ids=active_run_ids
+        args,
+        dry_run=dry_run,
+        tasks=tasks,
+        active_run_ids=active_run_ids,
+        local_model_pending_run_ids=pending_local,
     )
     local_approvals = process_approvals(
         args, dry_run=dry_run, tasks=tasks, active_run_ids=active_run_ids
@@ -2310,6 +2336,7 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
         tasks=tasks,
         active_runs=active_runs,
     )
+    dispatch = _dispatch_next_local_model_task(args, dry_run=dry_run)
     return {
         "normalized": normalized,
         "unreviewable_reworked": unreviewable,
@@ -2317,11 +2344,15 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
         "local_reviewer_rejections": rejections,
         "local_reviewer_approvals": local_approvals,
         "orphans_recovered": orphans,
+        "local_model_released": len(released),
+        "local_model_dispatch": dispatch,
         "snapshot": {
             "active_run_count": len(active_run_ids),
             "kanban_task_count": len(tasks),
+            "local_model": _local_model_counts(active_runs),
         },
     }
+
 
 def _run_kb_retrieval(
     args: argparse.Namespace,
