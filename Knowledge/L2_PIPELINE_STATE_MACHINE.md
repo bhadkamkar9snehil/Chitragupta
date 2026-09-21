@@ -44,6 +44,11 @@ identifier-bounded probe_table reads
           |
           v
 JEV INVESTIGATION ASSESSMENT
+ + per-chunk meta-attention Scores
+          |
+          v
+DETERMINISTIC CONTEXT COMPILER
+ whole chunks; pinned ticket/live evidence
           |
           v
 l2-jev-investigator card [priority 10]
@@ -80,8 +85,9 @@ The order is:
 3. deterministic schema candidate generation;
 4. Jev candidate selection/rating;
 5. deterministic `probe_table` reads for the highest-value candidates;
-6. Jev assessment of the resulting evidence package;
-7. local coordinator receives the compact package.
+6. Jev assessment of the resulting evidence package **and**, in the same System One request, a 0-3 Score for how much of each explicit context chunk the next local reasoning step needs;
+7. deterministic code compiles the model-facing context by whole chunks;
+8. local coordinator receives only that compiled view plus recovery hints for omitted chunks.
 
 `probe_table` is deliberately conservative:
 
@@ -90,6 +96,30 @@ The order is:
 - the query is built mechanically through the existing guarded query builder;
 - output is bounded;
 - if no identifier maps, automatic probing returns `probe_possible=false` rather than issuing a broad read.
+
+### Meta-attention/context compiler
+
+The investigation state is represented as explicit chunks such as current ticket, route/triage, prior ledger, prior attempts, evidence plan, deterministic candidate backlog, approved KB candidates, and each live probe. Each chunk carries source and authority metadata.
+
+The same `JEV_INVESTIGATION` request that judges evidence sufficiency also gives each chunk a four-level Score:
+
+```text
+0  OMIT
+1  SUMMARY
+2  COMPACT
+3  FULL
+```
+
+Deterministic policy then applies safety floors:
+
+- current ticket context: minimum `COMPACT`;
+- each gathered live-SQL probe: minimum `COMPACT`;
+- a known solution explicitly selected by Jev: minimum `COMPACT`;
+- routing/prior-ledger provenance remains at least a summary when present.
+
+The context budget is applied to **whole chunks**. Optional material degrades `FULL -> COMPACT -> SUMMARY -> OMIT` according to meta-attention and budget. The assembled JSON is never globally sliced at an arbitrary character offset. Omitted chunks remain listed with source/recovery hints, so `FOCUSED_REASONING` can fetch one deliberately rather than rediscovering everything.
+
+This compiler changes only what is shown to the local model. It does not mutate raw evidence, change evidence authority, or make historical/KB material proof of the current incident.
 
 When Jev returns high evidence sufficiency and low need for deeper reasoning, the local profile is `COMPOSE_ONLY` and gets at most one additional live read. Otherwise it is `FOCUSED_REASONING` with a small additional-read budget.
 
