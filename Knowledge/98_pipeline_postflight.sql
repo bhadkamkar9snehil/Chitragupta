@@ -11,6 +11,9 @@ ELSE IF OBJECT_DEFINITION(OBJECT_ID('dbo.Hermes_L2_Get_Candidate_Tickets_Usp')) 
 IF OBJECT_ID('dbo.Hermes_L2_Default_Update_Continuation_Trg', 'TR') IS NULL
     INSERT INTO @Failures VALUES ('update_continuation_hardening', 'Apply Knowledge/55_update_retry_hardening.sql; UPDATE responses can otherwise become permanently ineligible.');
 
+IF OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl', 'U') IS NULL
+    INSERT INTO @Failures VALUES ('agent_trace_table', 'Hermes_Agent_Trace_Trn_Tbl is missing; trace observability and Jev trace assessment cannot operate.');
+
 IF OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl', 'U') IS NULL
     INSERT INTO @Failures VALUES ('jev_judgment_table', 'Hermes_Jev_Judgment_Trn_Tbl is missing; deploy the regenerated full install before enabling Jev audit.');
 
