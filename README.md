@@ -182,15 +182,19 @@ SQL claim
        real tables/views/SPs/KB only
   -> Jev evidence plan + candidate rerank
   -> deterministic identifier-bounded live probes
-  -> Jev investigation assessment + meta-attention
+  -> Jev investigation assessment + meta-attention + execution depth
        evidence sufficiency / response type / known-solution fit /
        root-cause family / human-action need / local-reasoning need /
-       per-context-chunk presentation Score
-  -> deterministic context compiler
+       QWEN_FREE vs COMPOSE_ONLY vs FOCUSED_REASONING /
+       route-skill need / per-context-chunk presentation Score
+  -> deterministic execution/context compiler
+       mode-specific context budgets
        whole-chunk FULL / COMPACT / SUMMARY / OMIT
        current ticket + live SQL evidence pinned
-  -> l2-jev-investigator
-       normally synthesis + at most a few missing live reads
+       route skill loaded only when semantically useful
+  -> either:
+       QWEN_FREE deterministic L3/human handoff candidate
+       OR l2-jev-investigator COMPOSE_ONLY / FOCUSED_REASONING
   -> frozen proposal
   -> Jev PRIMARY REVIEW
        APPROVE       -> deterministic publish
@@ -229,7 +233,9 @@ Before the profile starts, the runtime already:
 
 The current ticket and gathered live-SQL evidence cannot be attention-omitted; a Jev-selected known solution is likewise pinned to at least a compact representation. Lower-value history, KB alternatives and discovery backlog can be summarized or omitted, with recovery hints retained.
 
-The local model receives this compiled evidence view. If Jev judges the evidence sufficient and deeper reasoning unnecessary, the profile is told to **compose only** and is budgeted one additional live read. Otherwise it gets a small focused-reasoning budget rather than the old open-ended discovery problem.
+The same assessment now also recommends the next execution depth. Deterministic policy can accept **QWEN_FREE** only for a deliberately narrow handoff class (L3 escalation or authorized-human-action), at high confidence, with strong current evidence, low need for more probing/System-2 reasoning, low full-ticket trust risk, an exact bound workflow status, and a second Jev primary-review approval of the frozen deterministic proposal. Resolution and ordinary support prose do not become Qwen-free merely because Jev is confident.
+
+If Qwen is still useful, **COMPOSE_ONLY** gets a smaller context budget and normally zero additional live reads; **FOCUSED_REASONING** gets the larger bounded recovery budget. The route-specific domain skill is attached only when the same Jev assessment says it materially helps the next System-2 step. This follows the TypeSafe-founder design idea that explicit dynamic context/skills should replace loading every possible tool/schema/skill up front.
 
 probe_table never issues a broad automatic query when no strong identifier maps to the candidate schema. In that case the package explicitly says automatic probing was not possible and the bounded coordinator decides whether one focused live read is justified.
 
