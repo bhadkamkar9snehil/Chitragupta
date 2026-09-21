@@ -1339,18 +1339,18 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
     # has finished for their source completion.
     normalized = normalize_investigator_completions(dry_run=dry_run)
     unreviewable = process_unreviewable_completions(args, dry_run=dry_run)
-    reviewers = ensure_missing_reviewers(args, dry_run=dry_run)
+    jev_reviews = process_jev_primary_reviews(args, dry_run=dry_run)
     rejections = process_rejections(args, dry_run=dry_run)
-    approvals = process_approvals(args, dry_run=dry_run)
+    local_approvals = process_approvals(args, dry_run=dry_run)
     orphans = recover_orphan_runs(
         args, dry_run=dry_run, stale_after_minutes=args.stale_after_minutes,
     )
     return {
         "normalized": normalized,
         "unreviewable_reworked": unreviewable,
-        "reviewers_created": reviewers,
-        "rejections_processed": rejections,
-        "approvals": approvals,
+        "jev_primary_reviews": jev_reviews,
+        "local_reviewer_rejections": rejections,
+        "local_reviewer_approvals": local_approvals,
         "orphans_recovered": orphans,
     }
 
