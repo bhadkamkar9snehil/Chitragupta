@@ -53,6 +53,15 @@ _WORKFLOWS: dict[str, WorkflowHandler] = {
     "primary_review": _primary_review,
 }
 
+_QUESTION_VERSIONS = {
+    "ticket_security": "v1",
+    "evidence_plan": "v1",
+    # v2 adds execution-depth + route-skill judgments to the existing
+    # evidence/meta-attention request. Keep audit dedupe aware of that change.
+    "investigation_assessment": "v2",
+    "primary_review": "v1",
+}
+
 
 def dispatch(req: dict[str, Any]) -> dict[str, Any]:
     workflow = str(req.get("workflow") or "")
@@ -73,7 +82,9 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
             state=state,
             ticket_id=req.get("ticket_id"),
             run_id=req.get("run_id"),
-            question_version=str(req.get("question_version") or "v1"),
+            question_version=str(
+                req.get("question_version") or _QUESTION_VERSIONS.get(workflow, "v1")
+            ),
             accepted=req.get("accepted"),
         )
         audit = persist_rows(rows)
