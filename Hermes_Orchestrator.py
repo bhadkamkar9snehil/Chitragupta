@@ -1374,6 +1374,8 @@ def main() -> None:
     parser.add_argument("--local-model-work-key", default=None)
     parser.add_argument("--local-model-execution-mode", default=None)
     parser.add_argument("--local-model-work-json", default=None)
+    parser.add_argument("--local-model-work-stdin", action="store_true",
+                         help="With local-model queue, read WorkJson from stdin to avoid command-line length limits.")
     parser.add_argument("--local-model-task-id", default=None)
     parser.add_argument("--local-model-outcome", choices=["DONE", "REQUEUE"], default="DONE")
     parser.add_argument("--bot-label", default=None,
@@ -1625,16 +1627,19 @@ def main() -> None:
                 if not (
                     args.run_id and args.local_model_purpose
                     and args.local_model_priority is not None
-                    and args.local_model_work_key and args.local_model_work_json
+                    and args.local_model_work_key
+                    and (args.local_model_work_json or args.local_model_work_stdin)
                 ):
                     parser.error(
                         "--local-model-action queue requires --run-id, --local-model-purpose, "
-                        "--local-model-priority, --local-model-work-key and --local-model-work-json"
+                        "--local-model-priority, --local-model-work-key and WorkJson via "
+                        "--local-model-work-json or --local-model-work-stdin"
                     )
+                raw_work_json = sys.stdin.read() if args.local_model_work_stdin else args.local_model_work_json
                 try:
-                    work_json = json.loads(args.local_model_work_json)
+                    work_json = json.loads(raw_work_json or "")
                 except json.JSONDecodeError as exc:
-                    parser.error(f"--local-model-work-json is invalid JSON: {exc}")
+                    parser.error(f"local-model WorkJson is invalid JSON: {exc}")
                 result = client.queue_local_model_work(
                     args.run_id,
                     args.local_model_purpose,
