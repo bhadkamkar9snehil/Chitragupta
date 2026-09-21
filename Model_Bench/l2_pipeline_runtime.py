@@ -1098,6 +1098,50 @@ def _investigation_bundle(
     bundle["kb_retrieval"] = _run_kb_retrieval(
         args, fallback_ticket, ticket_id=ticket_id, run_id=run_id
     )
+
+    # Ticket/request text is untrusted model input. Jev marks possible prompt
+    # injection/policy-override/action text; it never silently deletes content.
+    ticket_security = _run_jev_workflow(
+        "security",
+        {"ticket": fallback_ticket},
+        ticket_id=ticket_id,
+        run_id=run_id,
+        audit_stage="TICKET_SECURITY",
+    )
+    bundle["jev_ticket_security"] = (
+        ticket_security.get("result") if ticket_security.get("ok")
+        else {"ok": False, "reason": ticket_security.get("error") or "unavailable"}
+    )
+
+    # Future multi-profile routing is collected in shadow mode when operators
+    # provide explicit allowed candidates. It cannot invent or activate a
+    # profile outside this configuration.
+    profile_json = os.environ.get("CHITRAGUPTA_JEV_PROFILE_CANDIDATES_JSON")
+    if profile_json:
+        try:
+            profile_candidates = json.loads(profile_json)
+        except json.JSONDecodeError:
+            profile_candidates = {}
+        if isinstance(profile_candidates, dict) and len(profile_candidates) > 1:
+            profile_state = {
+                "ticket": fallback_ticket,
+                "ticket_characterization": (
+                    bundle.get("kb_retrieval") or {}
+                ).get("ticket_characterization") or {},
+                "profiles": profile_candidates,
+            }
+            model_route = _run_jev_workflow(
+                "model_routing",
+                profile_state,
+                ticket_id=ticket_id,
+                run_id=run_id,
+                audit_stage="MODEL_ROUTING",
+            )
+            bundle["jev_model_routing"] = (
+                model_route.get("result") if model_route.get("ok")
+                else {"ok": False, "reason": model_route.get("error") or "unavailable"}
+            )
+
     rendered = json.dumps(bundle, indent=2, default=str)
     if len(rendered) > 14000:
         rendered = rendered[:14000] + "\n... [bundle truncated at 14,000 chars]"
