@@ -309,7 +309,7 @@ claim
 Rules:
 
 - Read .agents/skills/typesafe-ai/SKILL.md before changing TypeSafe-specific API/question behavior.
-- xstudio_jev is bounded. Do not add a generic arbitrary-question operation.
+- Jev is harness-owned. Do not expose a worker-facing generic or bounded Jev tool; deterministic runtime code invokes the reviewed workflows.
 - Jev may choose/rate only candidates supplied by deterministic code; it never invents SQL identifiers or grants authority.
 - probe_table may automatically read only when a strong ticket identifier maps to a real allowlisted column. No identifier means no broad automatic probe.
 - Structural SQL safety, procedure allowlists, workflow binding, WIP, publication, and mutations remain deterministic.
@@ -325,7 +325,7 @@ Active Jev state on the run row is stored in JevTriageJson, JevInvestigationJson
 
 The default investigator profile is l2-jev-investigator. l2-investigator-primary remains available as a compatibility/fallback profile. l2-reviewer-primary and l2-reviewer-fallback are deep-review exception paths rather than mandatory steps.
 
-The dev TypeSafe credential explicitly approved for this project is loaded from deploy/dev/typesafe.env when TYPESAFE_API_KEY is not already present. Never echo that credential, copy it into prompts/cards, or include it in trace/result JSON.
+TYPESAFE_API_KEY must come from the process/service environment visible to Windows Python. Never commit an API key or add a repository credential fallback. Never echo credentials or copy them into prompts/cards/trace JSON.
 ## 10. SQL write discipline
 
 Never write directly to `Complaint_Mst_Tbl` from an investigation.
@@ -423,10 +423,53 @@ a ticket — that bypasses the scout's WIP/lifecycle gate.
 
 `deploy/` is the reproducible mirror of artifacts that otherwise live under `~/.hermes/profiles/...`.
 
-After changing profile SOUL/config/skills/plugins or the cron schedule, refresh the mirror with `Model_Bench/mirror_wsl_artifacts.sh` and inspect the diff before committing. The mirror covers the L2 plugins — `xstudio-l2-orchestrator`, `xstudio-l2-tools`, `xstudio-l2-trace`, and `xstudio-l2-jev` — so a fresh install cannot come up without the typed investigation and trace boundaries. Jev network assessment remains out-of-band from the trace hook.
+After changing profile SOUL/config/skills/plugins or the cron schedule, refresh the mirror with `Model_Bench/mirror_wsl_artifacts.sh` and inspect the diff before committing. The mirror covers the L2 plugins — `xstudio-l2-orchestrator`, `xstudio-l2-tools`, and `xstudio-l2-trace` — so a fresh install cannot come up without the typed investigation and trace boundaries. Jev network work is harness-owned and remains out-of-band from the trace hook.
 
 `Model_Bench/deploy_l2_pipeline_runtime.sh` installs the lifecycle scripts, three plugins, SOULs, skills, the workflow-binding fallback, and the profile-config entries, then restarts the four active gateways unless `--no-restart` is passed. It is idempotent. Config edits are applied by `Model_Bench/patch_profile_config.py`, which is deliberately a targeted text editor rather than a YAML round-trip: the live configs carry explanatory comments (Security/Tirith, fallback-model providers) that a load-and-dump silently destroys.
 
+## 16a. Ponytail audit standard
+
+Run a Ponytail audit before merging any substantial runtime/tooling/architecture branch.
+
+The order is strict:
+
+1. **Do not build it.** Ask whether the code/concept is needed now. Delete speculative future surfaces, compatibility facades with no live caller, duplicate abstractions, dead flags, and pre-built extension points.
+2. **Reuse existing ownership.** Prefer the existing lifecycle/tool/SQL/trace/KB owner over creating a parallel path or side table.
+3. **Prefer stdlib/native behavior.** Use the platform/runtime primitive before adding a dependency.
+4. **Prefer an already-installed dependency.** Reuse what the project already carries before adding another package.
+5. **Choose the shortest correct implementation.** Fewer state transitions, fewer files, fewer branches, fewer config switches.
+6. **Only then write new machinery.**
+
+Deletion/consolidation comes before extraction. Do not split a bad abstraction into five neat files; first ask whether the abstraction should exist.
+
+Audit every change for:
+
+- one authoritative owner per state/rule/transport;
+- duplicate business logic or duplicate semantic judgments;
+- compatibility code whose original caller is gone;
+- model-facing tools that duplicate harness-owned work;
+- hidden network calls inside deterministic evidence/safety surfaces;
+- generated/derived state replacing the raw evidence it came from;
+- speculative feature flags or future-only modules;
+- broad exception swallowing that hides correctness failures;
+- hard-coded machine paths/config where an existing canonical source exists;
+- credentials, tokens, passwords, or secret fallback files in Git;
+- deployment scripts that add new artifacts but fail to remove retired live copies;
+- tests/docs that preserve deleted concepts after the code is gone.
+
+Complexity is a hotspot detector, not a score to game:
+
+- investigate functions around **>45 lines** or approximate cyclomatic complexity **>12**;
+- **>20** is a strong refactor signal;
+- split by real responsibility/owner, not arbitrary line count;
+- prefer dispatch tables, early returns, and small pure helpers when they make ownership clearer;
+- do not increase indirection merely to lower a metric.
+
+For every Ponytail cleanup, update tests, deploy mirrors, documentation, and AGENTS.md contracts in the same branch. A Git deletion is incomplete if deployment can leave the retired artifact live.
+
+### Secret hygiene
+
+.env files, API keys, tokens, passwords, and credential fallbacks must never be tracked. Credentials come from process/service environment or an external secret store. If a secret ever enters Git history, remove the tracked file immediately and rotate the credential; deleting the latest file does not erase history.
 ## 17. Security / credentials
 
 Do not commit or print credentials.
