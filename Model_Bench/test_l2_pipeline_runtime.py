@@ -199,6 +199,45 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(package["local_model_scope"], "COMPOSE_ONLY")
         self.assertEqual(package["max_additional_live_reads"], 1)
 
+    def test_jev_disabled_still_builds_deterministic_context_chunks(self):
+        with patch.dict(
+            mod.os.environ,
+            {"CHITRAGUPTA_JEV_FIRST_INVESTIGATION_ENABLED": "0"},
+            clear=False,
+        ), patch.object(mod, "_run_jev_workflow") as jev, patch.object(
+            mod, "_run_xstudio_bridge"
+        ) as probe:
+            package = mod._jev_first_investigation(
+                ticket={"HeatNo": "H1"},
+                ticket_context={"TicketNo": "T1", "HeatNo": "H1", "BriefDetails": "heat issue"},
+                run_id="r1",
+                ticket_id="t1",
+                suggested_tables=[
+                    {"database": "XStudio_Xbatch", "table": "dbo.Heat_A", "matched_columns": ["HeatNo"]},
+                ],
+                kb_retrieval={
+                    "solutions": [{"kb_id": "solution:1", "title": "Known issue"}],
+                    "ticket_characterization": {},
+                    "route_candidates": [{"route": "heat_execution"}],
+                },
+                prior_ledger={"summary": "prior verified fact"},
+                prior_attempts=[{"ProcessStatus": "FAILED"}],
+            )
+        jev.assert_not_called()
+        probe.assert_not_called()
+        self.assertFalse(package["enabled"])
+        self.assertEqual(package["local_model_scope"], "FOCUSED_REASONING")
+        self.assertEqual(package["max_additional_live_reads"], 3)
+        chunk_ids = {chunk["id"] for chunk in package["context_chunks"]}
+        self.assertIn("ticket", chunk_ids)
+        self.assertIn("routing", chunk_ids)
+        self.assertIn("prior_ledger", chunk_ids)
+        self.assertIn("candidate_backlog", chunk_ids)
+        view = mod._compile_model_context(
+            package["context_chunks"], package["assessment"], budget_chars=5000
+        )
+        self.assertIn("ticket", {row["id"] for row in view["chunks"]})
+
     def test_context_compiler_pins_ticket_and_live_evidence_even_when_jev_scores_low(self):
         chunks = [
             {
