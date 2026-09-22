@@ -39,6 +39,7 @@ import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -602,6 +603,104 @@ def query_active_runs(args: argparse.Namespace) -> list[dict[str, Any]]:
     )
     rows = run_orchestrator(args, ["--query", sql])
     return rows if isinstance(rows, list) else []
+
+
+STALL_ALERT_MARKER = REPO_ROOT_WSL / "Agent_Comms" / ".stall_alert_last_written"
+STALL_AFTER_MINUTES = 15
+STALL_ALERT_COOLDOWN_MINUTES = 60
+
+
+def check_pipeline_stall(args: argparse.Namespace) -> dict[str, Any]:
+    """Detect the exact silent-stall pattern that cost ~1hr of real
+    throughput on 2026-09-22: WIP empty, real eligible tickets waiting,
+    nothing claimed in a while -- and the only signal was a cron output
+    file nobody was looking at. Runs inside the existing 10-minute audit
+    cron (audit_kanban_completions.py); no new schedule needed.
+    """
+    active = query_active_runs(args)
+    binding = load_workflow_binding()
+    eligible = str(binding.get("eligible_ticket_status") or args.eligible_status or DEFAULT_ELIGIBLE_STATUS)
+    safe_eligible = eligible.replace("'", "''")
+    sql = (
+        "SELECT "
+        "(SELECT COUNT(*) FROM dbo.Complaint_Mst_Tbl c "
+        " LEFT JOIN dbo.Hermes_L2_Response_Trn_Tbl r ON r.TicketID = c.ID AND r.IsDeleted = 0 AND r.IsActive = 1 "
+        f" WHERE ISNULL(c.IsDeleted,0) = 0 AND c.Status = '{safe_eligible}' AND r.ID IS NULL) AS WaitingCount, "
+        "(SELECT MAX(ClaimedOn) FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE IsDeleted = 0) AS LastClaimOn, "
+        "GETDATE() AS ServerNow"
+    )
+    rows = run_orchestrator(args, ["--query", sql])
+    row = rows[0] if rows else {}
+    waiting_count = int(row.get("WaitingCount") or 0)
+    last_claim = row.get("LastClaimOn")
+    server_now = row.get("ServerNow")
+
+    minutes_since_claim = None
+    if last_claim and server_now:
+        last_claim_dt = last_claim if isinstance(last_claim, datetime) else datetime.fromisoformat(str(last_claim))
+        server_now_dt = server_now if isinstance(server_now, datetime) else datetime.fromisoformat(str(server_now))
+        minutes_since_claim = (server_now_dt - last_claim_dt).total_seconds() / 60.0
+
+    stalled = bool(
+        not active
+        and waiting_count > 0
+        and minutes_since_claim is not None
+        and minutes_since_claim >= STALL_AFTER_MINUTES
+    )
+
+    result = {
+        "stalled": stalled,
+        "active_run_count": len(active),
+        "eligible_waiting_count": waiting_count,
+        "minutes_since_last_claim": round(minutes_since_claim, 1) if minutes_since_claim is not None else None,
+    }
+    if stalled:
+        result["alert_written"] = _write_stall_alert(result)
+    return result
+
+
+def _write_stall_alert(details: dict[str, Any]) -> bool:
+    """Write one Agent_Comms finding per stall episode, not one per 10-minute
+    tick -- a marker file with a timestamp is the cooldown, so a multi-hour
+    stall doesn't spam a new numbered file every audit cycle.
+    """
+    try:
+        if STALL_ALERT_MARKER.exists():
+            last_written = datetime.fromisoformat(STALL_ALERT_MARKER.read_text(encoding="utf-8").strip())
+            if (datetime.utcnow() - last_written).total_seconds() < STALL_ALERT_COOLDOWN_MINUTES * 60:
+                return False
+
+        comms_dir = REPO_ROOT_WSL / "Agent_Comms"
+        existing = sorted(comms_dir.glob("[0-9][0-9][0-9][0-9]-*.md"))
+        next_id = (max(int(p.name[:4]) for p in existing) + 1) if existing else 1
+        slug = f"{next_id:04d}-pipeline-stall-detected.md"
+        timestamp = datetime.utcnow().isoformat()
+        (comms_dir / slug).write_text(
+            "---\n"
+            f"id: {next_id}\n"
+            "type: finding\n"
+            "from: claude\n"
+            "to: claude\n"
+            f"created: {timestamp}\n"
+            "---\n\n"
+            "## Finding\n\n"
+            "Automated stall detector (check_pipeline_stall(), runs inside the "
+            "existing 10-minute audit cron) found the pipeline has stopped "
+            "claiming new work despite real eligible tickets waiting:\n\n"
+            f"- Active runs: {details['active_run_count']}\n"
+            f"- Eligible unclaimed tickets: {details['eligible_waiting_count']}\n"
+            f"- Minutes since last claim: {details['minutes_since_last_claim']}\n\n"
+            "This means scout() is either erroring before it can claim (check "
+            "recent ticket_scout cron output for WORKER_DEPENDENCY_UNAVAILABLE "
+            "or an unhandled exception) or something else is blocking claims. "
+            "Investigate and fix before assuming this is a hard/slow ticket -- "
+            "a stall this long with tickets waiting is never normal.\n",
+            encoding="utf-8",
+        )
+        STALL_ALERT_MARKER.write_text(timestamp, encoding="utf-8")
+        return True
+    except OSError:
+        return False
 
 
 def _local_model_counts(active_runs: list[dict[str, Any]]) -> dict[str, int]:
@@ -4054,7 +4153,10 @@ def _cli_owned(argv: Optional[list[str]] = None) -> int:
                 args, dry_run=args.dry_run, stale_after_minutes=args.stale_after_minutes,
             )}
         elif args.mode == "audit":
-            result = {"review_sql_divergences": audit_done_reviewers(args, dry_run=args.dry_run)}
+            result = {
+                "review_sql_divergences": audit_done_reviewers(args, dry_run=args.dry_run),
+                "pipeline_stall_check": check_pipeline_stall(args),
+            }
         else:
             result = pipeline_status(args)
     except Exception as exc:

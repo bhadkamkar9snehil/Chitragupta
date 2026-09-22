@@ -1,7 +1,10 @@
 import importlib.util
 import json
 import sys
+import tempfile
 import unittest
+from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location("l2_pipeline_runtime", "Model_Bench/l2_pipeline_runtime.py")
@@ -1938,6 +1941,84 @@ class PipelineContractTests(unittest.TestCase):
         self.assertIn("Reviewer evidence matrix", verification)
         self.assertIn('"status": "REFERENCED"', verification)
         self.assertIn('"evidence_categories": ["heat_process_state"]', verification)
+
+
+class PipelineStallDetectionTests(unittest.TestCase):
+    def _row(self, waiting, last_claim, server_now):
+        return [{"WaitingCount": waiting, "LastClaimOn": last_claim, "ServerNow": server_now}]
+
+    def test_empty_wip_with_waiting_work_and_long_gap_is_a_stall(self):
+        now = datetime(2026, 9, 22, 23, 0, 0)
+        last_claim = now - timedelta(minutes=42)
+        with patch.object(mod, "query_active_runs", return_value=[]), \
+             patch.object(mod, "load_workflow_binding", return_value={"eligible_ticket_status": "Enter"}), \
+             patch.object(mod, "run_orchestrator", return_value=self._row(12, last_claim, now)), \
+             patch.object(mod, "_write_stall_alert", return_value=True) as write_alert:
+            result = mod.check_pipeline_stall(mod.default_args())
+        self.assertTrue(result["stalled"])
+        self.assertEqual(result["eligible_waiting_count"], 12)
+        self.assertEqual(result["minutes_since_last_claim"], 42.0)
+        write_alert.assert_called_once()
+
+    def test_empty_wip_but_no_waiting_work_is_not_a_stall(self):
+        now = datetime(2026, 9, 22, 23, 0, 0)
+        with patch.object(mod, "query_active_runs", return_value=[]), \
+             patch.object(mod, "load_workflow_binding", return_value={"eligible_ticket_status": "Enter"}), \
+             patch.object(mod, "run_orchestrator", return_value=self._row(0, now - timedelta(minutes=42), now)), \
+             patch.object(mod, "_write_stall_alert") as write_alert:
+            result = mod.check_pipeline_stall(mod.default_args())
+        self.assertFalse(result["stalled"])
+        write_alert.assert_not_called()
+
+    def test_short_gap_is_not_yet_a_stall(self):
+        now = datetime(2026, 9, 22, 23, 0, 0)
+        with patch.object(mod, "query_active_runs", return_value=[]), \
+             patch.object(mod, "load_workflow_binding", return_value={"eligible_ticket_status": "Enter"}), \
+             patch.object(mod, "run_orchestrator", return_value=self._row(5, now - timedelta(minutes=3), now)), \
+             patch.object(mod, "_write_stall_alert") as write_alert:
+            result = mod.check_pipeline_stall(mod.default_args())
+        self.assertFalse(result["stalled"])
+        write_alert.assert_not_called()
+
+    def test_active_runs_present_is_never_a_stall_regardless_of_waiting_count(self):
+        now = datetime(2026, 9, 22, 23, 0, 0)
+        with patch.object(mod, "query_active_runs", return_value=[{"ID": "run-1"}]), \
+             patch.object(mod, "load_workflow_binding", return_value={"eligible_ticket_status": "Enter"}), \
+             patch.object(mod, "run_orchestrator", return_value=self._row(20, now - timedelta(hours=2), now)), \
+             patch.object(mod, "_write_stall_alert") as write_alert:
+            result = mod.check_pipeline_stall(mod.default_args())
+        self.assertFalse(result["stalled"])
+        write_alert.assert_not_called()
+
+    def test_write_stall_alert_respects_cooldown_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            comms_dir = Path(tmp) / "Agent_Comms"
+            comms_dir.mkdir()
+            marker = comms_dir / ".stall_alert_last_written"
+            marker.write_text(datetime.utcnow().isoformat(), encoding="utf-8")
+            with patch.object(mod, "STALL_ALERT_MARKER", marker), \
+                 patch.object(mod, "REPO_ROOT_WSL", Path(tmp)):
+                written = mod._write_stall_alert(
+                    {"active_run_count": 0, "eligible_waiting_count": 5, "minutes_since_last_claim": 30.0}
+                )
+            self.assertFalse(written, "a recent marker should suppress a duplicate alert")
+            self.assertEqual(len(list(comms_dir.glob("*.md"))), 0)
+
+    def test_write_stall_alert_writes_a_new_finding_when_no_recent_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            comms_dir = Path(tmp) / "Agent_Comms"
+            comms_dir.mkdir()
+            marker = comms_dir / ".stall_alert_last_written"
+            with patch.object(mod, "STALL_ALERT_MARKER", marker), \
+                 patch.object(mod, "REPO_ROOT_WSL", Path(tmp)):
+                written = mod._write_stall_alert(
+                    {"active_run_count": 0, "eligible_waiting_count": 5, "minutes_since_last_claim": 30.0}
+                )
+            self.assertTrue(written)
+            findings = list(comms_dir.glob("0001-*.md"))
+            self.assertEqual(len(findings), 1)
+            self.assertIn("stall", findings[0].read_text(encoding="utf-8").lower())
+            self.assertTrue(marker.exists())
 
 
 if __name__ == "__main__":

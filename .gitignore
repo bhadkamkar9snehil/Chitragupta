@@ -20,6 +20,7 @@ kanban_bridged_forward.json
 kanban_bridged_reject.json
 kanban_published_runs.json
 .hermes_l2_last_claim.json
+Agent_Comms/.stall_alert_last_written
 nudged_runs.json
 Model_Bench/drafts/
 tmp_*
