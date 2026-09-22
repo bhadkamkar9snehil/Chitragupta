@@ -20,22 +20,51 @@ class GBrainAdapterTests(unittest.TestCase):
 
     def test_trust_scopes_are_structurally_separate(self):
         trusted = set(mod.sources_for_scope("trusted"))
-        self.assertEqual(trusted, {"l2-knowledge", "l2-facts", "l2-solutions"})
+        self.assertEqual(trusted, {mod.XSTUDIO_KNOWLEDGE_SOURCE, "l2-knowledge", "l2-facts", "l2-solutions"})
         self.assertTrue(trusted.isdisjoint(mod.sources_for_scope("sessions")))
         self.assertTrue(trusted.isdisjoint(mod.sources_for_scope("candidates")))
         self.assertTrue(trusted.isdisjoint(mod.sources_for_scope("approved_cases")))
 
     def test_search_always_names_explicit_sources(self):
-        with mock.patch.object(mod, "run", return_value=(0, '[{"slug":"x"}]', "")) as run:
+        # The installed gbrain CLI scopes one `search` call to exactly one
+        # --source-id (no combined multi-source syntax), so a scope with N
+        # sources makes N calls and merges. Every call must still name its
+        # source explicitly -- never an unscoped/federated read.
+        with mock.patch.object(mod, "run", return_value=(0, '[{"slug":"x","score":0.5}]', "")) as run:
             result = mod.search("posting stuck", scope="trusted", mode="hybrid", limit=5, automatic=True)
         self.assertTrue(result["ok"])
-        args = run.call_args.args[0]
-        self.assertEqual(args[0], "search")
-        source_arg = args[args.index("--source") + 1]
-        self.assertEqual(source_arg, "l2-knowledge,l2-facts,l2-solutions")
-        self.assertNotIn("l2-sessions", source_arg)
+        called_source_ids = []
+        for call in run.call_args_list:
+            args = call.args[0]
+            self.assertEqual(args[0], "search")
+            called_source_ids.append(args[args.index("--source-id") + 1])
+        self.assertEqual(set(called_source_ids), {"xstudio-knowledge", "l2-knowledge", "l2-facts", "l2-solutions"})
+        self.assertNotIn("l2-sessions", called_source_ids)
         self.assertTrue(result["deterministic_retrieval"])
         self.assertTrue(result["automatic"])
+
+    def test_search_skips_lanes_gbrain_reports_as_unknown_source(self):
+        """Only xstudio-knowledge is registered today; l2-facts/l2-solutions
+        are the future learning-cycle lanes. A missing lane must be skipped,
+        not treated as a hard failure, as long as something in scope answers."""
+        def fake_run(args, **kwargs):
+            source_id = args[args.index("--source-id") + 1]
+            if source_id == "xstudio-knowledge":
+                return (0, '[{"slug":"knowledge/x","score":0.9}]', "")
+            return (1, "", f"Error [unknown_source]: source {source_id!r} does not exist (removed or archived)")
+
+        with mock.patch.object(mod, "run", side_effect=fake_run):
+            result = mod.search("LRF_Per_Heat columns", scope="trusted", automatic=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source_ids"], ["xstudio-knowledge"])
+        self.assertEqual(set(result["missing_source_ids"]), {"l2-knowledge", "l2-facts", "l2-solutions"})
+        self.assertEqual(len(result["results"]), 1)
+
+    def test_search_fails_when_every_lane_in_scope_is_missing(self):
+        with mock.patch.object(mod, "run", return_value=(1, "", "Error [unknown_source]: does not exist")):
+            result = mod.search("x", scope="facts", automatic=False)
+        self.assertFalse(result["ok"])
+        self.assertIn("no requested source is populated yet", result["error"])
 
     def test_legacy_modes_never_invoke_gbrain_query(self):
         for requested in ("deep", "vector", "fts", "hybrid"):

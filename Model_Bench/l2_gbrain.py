@@ -22,7 +22,21 @@ DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
 DEFAULT_GBRAIN_HOME = Path.home() / ".hermes" / "l2-gbrain"
 DEFAULT_TIMEOUT = max(10, int(os.environ.get("L2_GBRAIN_TIMEOUT_SECONDS", "60")))
 
+# Real, already-populated source on this deployment: a full-repo Knowledge/
+# deploy/skills sync (SP catalog, runtime DB design, XBatch relationship
+# atlas, vendor per-heat docs) registered directly against the repo, not a
+# vault subdirectory -- so it is referenced in SCOPE_SOURCES but deliberately
+# left out of SOURCE_DIRS, which sync_l2_gbrain.py uses only to provision and
+# validate vault-relative learning lanes.
+XSTUDIO_KNOWLEDGE_SOURCE = "xstudio-knowledge"
+
 SOURCE_DIRS: dict[str, str] = {
+    # Vault-relative learning lanes that sync_l2_gbrain.py provisions and
+    # registers as non-federated sources. Not yet populated on this brain --
+    # the learning cycle that would mine real investigation/review outcomes
+    # into them doesn't exist yet. search() skips any source gbrain reports
+    # as unknown_source rather than failing, so referencing them in scope now
+    # is forward-compatible, not a hard dependency.
     "l2-knowledge": "knowledge",
     "l2-facts": "facts",
     "l2-solutions": "solutions/approved",
@@ -34,8 +48,8 @@ SOURCE_DIRS: dict[str, str] = {
 }
 
 SCOPE_SOURCES: dict[str, tuple[str, ...]] = {
-    "trusted": ("l2-knowledge", "l2-facts", "l2-solutions"),
-    "knowledge": ("l2-knowledge",),
+    "trusted": (XSTUDIO_KNOWLEDGE_SOURCE, "l2-knowledge", "l2-facts", "l2-solutions"),
+    "knowledge": (XSTUDIO_KNOWLEDGE_SOURCE, "l2-knowledge"),
     "facts": ("l2-facts",),
     "solutions": ("l2-solutions",),
     "cases": ("l2-approved-cases", "l2-rejected-cases", "l2-reopened-cases"),
@@ -150,43 +164,65 @@ def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
     sources = sources_for_scope(scope)
     requested = mode
     effective = "hybrid"
-    source_arg = ",".join(sources)
-    rc, out, err = run([
-        "search",
-        query,
-        "--source", source_arg,
-        "--limit", str(max(1, min(10, int(limit)))),
-        "--json",
-    ])
-    if rc != 0:
+    bounded_limit = max(1, min(10, int(limit)))
+
+    # The installed gbrain CLI scopes one `search` call to exactly one
+    # --source-id; there is no combined multi-source query syntax. Query each
+    # source in the scope separately and merge. A scope lane that has not
+    # been populated yet (e.g. l2-facts before the learning cycle exists) is
+    # reported by gbrain as unknown_source -- skip that lane rather than
+    # failing the whole call, but only if at least one lane in the scope
+    # actually exists and answered.
+    queried: list[str] = []
+    missing: list[str] = []
+    merged_rows: list[dict[str, Any]] = []
+    last_hard_error: str | None = None
+    for source_id in sources:
+        rc, out, err = run([
+            "search", query,
+            "--source-id", source_id,
+            "--limit", str(bounded_limit),
+            "--json",
+        ])
+        if rc != 0:
+            message = (err or out).strip()
+            if "unknown_source" in message or "does not exist" in message:
+                missing.append(source_id)
+                continue
+            last_hard_error = message[-1000:] or f"gbrain search exited {rc}"
+            continue
+        try:
+            payload = parse_json(out)
+        except Exception:
+            last_hard_error = "gbrain returned non-JSON output"
+            continue
+        queried.append(source_id)
+        rows = payload if isinstance(payload, list) else payload.get("results") or []
+        for row in rows:
+            if isinstance(row, dict):
+                merged_rows.append(row)
+
+    if not queried:
         return {
             "ok": False,
-            "error": (err or out).strip()[-1000:] or f"gbrain search exited {rc}",
+            "error": last_hard_error or "no requested source is populated yet",
             "retry_same_call": False,
             "backend": "gbrain",
             "scope": scope,
             "source_ids": list(sources),
+            "missing_source_ids": missing,
         }
-    try:
-        payload = parse_json(out)
-    except Exception:
-        return {
-            "ok": False,
-            "error": "gbrain returned non-JSON output",
-            "detail": out.strip()[:1000],
-            "retry_same_call": False,
-            "backend": "gbrain",
-            "scope": scope,
-            "source_ids": list(sources),
-        }
+
+    merged_rows.sort(key=lambda row: row.get("score") or 0, reverse=True)
     return {
         "ok": True,
         "backend": "gbrain",
         "scope": scope,
-        "source_ids": list(sources),
+        "source_ids": queried,
+        "missing_source_ids": missing,
         "requested_mode": requested,
         "effective_mode": effective,
         "automatic": automatic,
-        "results": payload,
+        "results": merged_rows[:bounded_limit],
         "deterministic_retrieval": True,
     }
