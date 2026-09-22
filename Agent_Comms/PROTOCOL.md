@@ -2,37 +2,36 @@
 
 This folder is a file-based message queue between AI agents working on the
 AIHelpdesk / Hermes L2 project, with no shared API or live bridge between
-them -- this folder is the only transport, full stop:
+them -- this folder is the only transport, full stop. **All three agents
+here run on Snehil's own laptop.** None of them poll this folder
+automatically; Snehil is the transport for every leg.
 
-- **Claude** (Claude Code) — runs on Snehil's laptop, no persistent
-  background process. Reads/writes this folder only when invoked in a
-  session.
-- **Codex** — runs on the teammate's laptop, invoked on a schedule via a
-  Hermes Agent Routine (Hermes's own cron, not Windows Task Scheduler or
-  anything ad hoc), synced to this laptop by Syncthing. This is the side
-  expected to poll regularly.
-- **Antigravity** — runs on the same laptop as Claude, in the XS_Builder
-  workspace, invoked manually by Snehil per task (no scheduler, no direct
-  filesystem/API access to this repo from inside Antigravity's own session).
-  Snehil is the transport for this leg: he copies a request's content into
-  Antigravity, and copies its finished output back out as a file Claude then
-  reads from this folder (or from wherever Antigravity saved it -- Claude
-  checks Downloads/ and the working tree if it isn't in Agent_Comms/ yet).
-  Do not assume Antigravity can read or write this folder itself.
+- **Claude** (Claude Code) — no persistent background process. Reads/writes
+  this folder only when invoked in a session.
+- **Codex** — a local terminal/IDE coding agent on this same laptop,
+  invoked manually by Snehil per task (no Hermes Agent Routine, no
+  scheduler, no direct autonomous access to this repo outside a session
+  Snehil starts). Snehil relays: he gives Codex a request's content, and
+  brings its output back for Claude to read.
+- **Antigravity** — same laptop, in the XS_Builder workspace, invoked
+  manually by Snehil per task, same relay pattern as Codex (no scheduler,
+  no direct filesystem/API access to this repo from inside its own
+  session). Snehil copies a request's content into Antigravity, and copies
+  its finished output back out as a file Claude then reads from this
+  folder (or from wherever Antigravity saved it -- Claude checks
+  Downloads/ and the working tree if it isn't in Agent_Comms/ yet).
 
-No agent has any other way to reach another directly. Treat file writes here
-as the message-passing mechanism between Claude and Codex; treat Snehil's
-manual copy-paste as the equivalent transport for Antigravity, with the same
-file format and numbering below applying to what he relays.
+No agent has any other way to reach another directly. Treat Snehil's manual
+copy-paste as the transport for all three legs -- the file format and
+numbering below is what makes that relay auditable, not a live channel.
 
 ## Scope: not just tickets
 
 This channel is general-purpose, not limited to Hermes L2 ticket status.
-Either agent can ask the other about anything relevant to the shared
-project(s) on these two laptops — XS_Builder work, XStudio/XKB findings,
-build/deploy state, errors hit, environment differences between the two
-machines, whatever comes up. Don't assume a request is ticket-related just
-because earlier threads were.
+Any agent can ask another about anything relevant to the shared project(s)
+on this laptop — XS_Builder work, XStudio/XKB findings, build/deploy state,
+errors hit, whatever comes up. Don't assume a request is ticket-related
+just because earlier threads were.
 
 ## File format
 
@@ -99,7 +98,7 @@ created: 2026-09-02T15:30:00+05:30
   with real content.
 - **Fill in `answered:`** with the ISO timestamp when a request is answered.
 - **Never delete or renumber existing files.** History here is the audit
-  trail across two machines that don't otherwise share state.
+  trail across sessions that don't otherwise share state.
 - **Be concrete, not aspirational.** A response/finding claiming something
   works or is true must be backed by an actual command's output, quoted —
   not a claim you didn't verify.
@@ -109,48 +108,35 @@ created: 2026-09-02T15:30:00+05:30
   actually stop and mention if you were pairing with someone — not routine
   "everything's fine" noise. If nothing's noteworthy, don't write one.
 
-## What Codex should do on each scheduled check
-
-1. List this folder, find every file with `status: pending` and
-   `to: codex` (any topic, not just tickets). For each: read `## Request`,
-   do the real work it asks for (terminal/DB tools — same
-   credentials/patterns as the l2-investigator SOUL.md when relevant), write
-   the actual result into `## Response`, set `status: answered` and
-   `answered: <timestamp>`.
-2. Separately, think back over what you did/learned since the last check —
-   during ticket investigations, this comms check itself, or anything else
-   you worked on. If something is genuinely worth telling Claude
-   unprompted, write a new `type: finding` thread (`to: claude`) for it.
-   Most checks will have nothing to report — that's fine, don't force one.
-3. If there's nothing pending and nothing worth sharing, do nothing.
-
 ## What Claude should do
 
-Claude has no automatic schedule (Snehil's Hermes gateway is currently off
-on this machine) — so Claude checks this folder for `to: claude` files
-(both answered requests and findings) whenever asked to, in a normal
+Claude has no automatic schedule -- it checks this folder for `to: claude`
+files (both answered requests and findings) whenever asked to, in a normal
 session, and should proactively mention any unread `finding` threads to the
-user even if they weren't specifically asked about. Claude creates new
-`to: codex` requests the same way, whenever the user asks for something
-that needs doing/verifying on the teammate's machine, on any topic.
+user even if they weren't specifically asked about.
 
-## Working with Antigravity specifically
+## Working with Codex or Antigravity (both relay-only, identical mechanics)
 
-Antigravity cannot poll this folder — Snehil is the transport. When Claude
-wants Antigravity to do something:
+Neither Codex nor Antigravity can poll this folder or edit its files
+themselves -- Snehil is the transport for both. When Claude wants either of
+them to do something:
 
-1. Write a normal `type: request`, `to: antigravity` file here (same format
-   as any other thread) — self-contained, assumes no other context.
+1. Write a normal `type: request` file here, `to: codex` or
+   `to: antigravity` as appropriate (same format as any other thread) --
+   self-contained, assumes no other context beyond this file and
+   `AGENTS.md`/`CLAUDE.md`.
 2. Tell Snehil the file exists and ask him to hand its `## Request` content
-   to Antigravity.
-3. When Snehil brings back Antigravity's output (as a file path, pasted
-   text, or a saved `.md`/`.docx`), Claude reads it, and is the one who
-   writes it into `## Response` in the original request file (Antigravity
-   does not edit this repo's files itself) -- filling in `status: answered`
-   and `answered:` the same as any other reply.
+   to the relevant agent.
+3. When Snehil brings back that agent's output (pasted text, a file path,
+   a saved `.md`/`.docx`, whatever form it takes), Claude reads it and is
+   the one who writes it into `## Response` in the original request file --
+   filling in `status: answered` and `answered:` the same as any other
+   reply. Claude checks Downloads/ and the working tree for a saved output
+   file if Snehil doesn't hand over the content directly.
 
-If Antigravity produces a finding unprompted (Snehil relays it without a
+If either agent produces a finding unprompted (Snehil relays it without a
 matching request file), Claude creates the `type: finding` file itself,
-`from: antigravity`, `to: claude`, once it has read and understood the
-content -- don't paraphrase away specifics; quote real output the same way
-any other agent's finding must be backed by real evidence, not a claim.
+`from: codex` or `from: antigravity`, `to: claude`, once it has read and
+understood the content -- don't paraphrase away specifics; quote real
+output the same way any other agent's finding must be backed by real
+evidence, not a claim.
