@@ -165,3 +165,60 @@ To eliminate the 198 tool errors and blocked calls exposed by this audit, the `x
 | **Missing Operation Fields** | `table`, `columns`, `search`, `object_name`, `run_id` omitted | Comprehensive operation-by-operation required fields documented in schema `operation` description and enforced by bridge `_require`. | 41 unit tests in `Model_Bench/test_xstudio_l2_tools_plugin.py` |
 | **LM Studio Tool Compatibility** | Risk of schema rejection with complex JSON schema keywords | Empirical testing confirmed LM Studio rejects `oneOf`/`anyOf` with HTTP 400. Schema preserved as standard flat JSON object with turn-level injection. | Verified in `test_tool_schema_describes_database_routing_and_operation_contracts` |
 
+---
+
+## 9. Post-Fix Live Canary Verification
+
+Following the deployment of the hardened `xstudio_l2` contract, bridge parameter validation, and turn-level database routing instructions (`cca83df`), live canary runs were monitored on the production helpdesk instance to verify behavior in real operational conditions.
+
+### Canary Target Runs
+
+| TicketNo | TicketID | RunID | Attempt | LocalModel TaskID | Role / Stage | Status | Effective Outcome |
+| :--- | :--- | :--- | :---: | :--- | :--- | :--- | :--- |
+| **Ticket_241** | `739D297C-C8D6-470D-BCAC-C18ED64A7312` | `F2DB9885-2943-4E89-ABC9-664FF2FACCA9` | 2 | `t_c28297e3` | `l2-jev-investigator` | `COMPLETED` | Direct live query on `XStudio_Xbatch.dbo.LRF_Per_Heat` for Heat 1604013. 2 tool calls, 0 errors. Completed with `kanban_complete`. |
+| **Ticket_241** | `739D297C-C8D6-470D-BCAC-C18ED64A7312` | `F2DB9885-2943-4E89-ABC9-664FF2FACCA9` | 2 | `t_1e014b2a` | `l2-reviewer-primary` | `COMPLETED` | Jev primary review requested local review fallback. Reviewer verified live values in `XStudio_Xbatch`, confirmed match, approved via `kanban_complete`. Deterministic publisher published `UPDATE` to SQL. |
+| **Ticket_242** | `E1835201-9F31-473D-9F59-E3CFF1654D28` | `7698DD3A-02E7-4417-B0F1-16136D5364E0` | 2 | `t_87dea97f` | `l2-jev-investigator` | `INVESTIGATING` | Investigator targeted `XStudio_Xbatch`, retrieved Heat 1604012 timings via `select`, completed cleanly with 0 missing-argument errors. |
+| **Ticket_242** | `E1835201-9F31-473D-9F59-E3CFF1654D28` | `7698DD3A-02E7-4417-B0F1-16136D5364E0` | 2 | `t_64e658c1` | `l2-reviewer-primary` | `INVESTIGATING` | Reviewer called `select` with `HeatNo`. Bridge returned fuzzy suggestion `HeatID`; model immediately corrected. Reviewer blocked with `kanban_block` citing missing run actions. |
+| **Ticket_242** | `E1835201-9F31-473D-9F59-E3CFF1654D28` | `7698DD3A-02E7-4417-B0F1-16136D5364E0` | 2 | `t_2e3cd3ae` / `t_e339de75` | `l2-jev-investigator` (Rework) | `INVESTIGATING` | Reconciler converted block to priority-20 rework. Missing `database` on 2 probe calls intercepted immediately by bridge before SQL. |
+
+### Quantitative Comparison: Pre-Fix (Tickets 232/233) vs. Post-Fix (Canary 241/242)
+
+Aggregated metrics from `dbo.Hermes_Agent_Trace_Trn_Tbl` across all attempts:
+
+| Metric | Pre-Fix Baseline (`Ticket_232` & `Ticket_233`) | Post-Fix Canary (`Ticket_241` & `Ticket_242` Att 2) | Impact / Assessment |
+| :--- | :---: | :---: | :--- |
+| **Total Trace Events** | 1,561 | 186 | **88.1% reduction** in noisy trace churn. |
+| **`xstudio_l2` Tool Invocations** | 758 | 68 | Efficient, bounded investigations replacing run-away loops. |
+| **Missing `database` Errors** | **73** (`ValueError: database is required`) | **2** (only during complex rework query synthesis; 0 in normal investigations) | **97.3% reduction**; intercepted by bridge before SQL. |
+| **Missing Required Argument Errors** | **42** (`table`: 15, `search`: 13, `object_name`: 8, `run_id`: 8, `columns`: 3) | **0** | **100% elimination** across all investigator and reviewer calls. |
+| **Tool Budget / Breaker Blocks** | **28** (26 budget exhausted, 2 repeated-failure breaker) | **1** (single rework budget cap hit; 0 breaker blocks) | Normal sessions use 2–6 calls (well under 14-call cap). |
+| **Plant Database Routing Accuracy** | Misdirected to `XStudio_Helpdesk` (reporting tables missing) | **100% `XStudio_Xbatch`** for plant/heat queries | Correct database selected on first turn. |
+| **Live Evidence Retrieval** | Failed or erroneously concluded tables missing | **100% Success** (`LRF_Per_Heat` retrieved for Heats 1604013 & 1604012) | Real plant records fetched in < 350 ms. |
+| **Full Lifecycle Completion** | Blocked on malformed payloads / loop exhaustion | **Full Success** (Investigator $\rightarrow$ Jev Review $\rightarrow$ Deep Review $\rightarrow$ Publication) | Ticket_241 published to SQL (`COMPLETED`, `UPDATE`). |
+
+### Key Observations from Canary Telemetry
+
+1. **Elimination of Database Misdirection:**
+   In Ticket_241 (`t_c28297e3`), the investigator immediately issued:
+   ```json
+   {"operation": "select", "database": "XStudio_Xbatch", "table": "dbo.LRF_Per_Heat", "columns": ["HeatID", "ArcingTime", "PowerONTime", "PowerOFFTime"]}
+   ```
+   The query executed in 320 ms and retrieved the exact operational metrics:
+   `ArcingTime = 22.0000`, `PowerONTime = 25.0000`, `PowerOFFTime = 28.0000`.
+   The model did not attempt to query `XStudio_Helpdesk` for plant records.
+
+2. **Self-Correcting Schema Guidance:**
+   In Ticket_242 (`t_64e658c1`), the reviewer attempted a `select` using `columns: ["HeatNo"]`. Instead of a generic crash or unhandled SQL exception, the bridge returned:
+   ```text
+   Column(s) ['HeatNo'] do not exist on dbo.LRF_Per_Heat. Suggestions: {'HeatNo': ['HeatID']}
+   ```
+   The model immediately self-corrected on the next turn, requesting `["HeatID", "ArcingTime", "PowerONTime", "PowerOFFTime"]`, which executed cleanly in 343 ms.
+
+3. **Autonomous End-to-End Lifecycle Execution:**
+   Ticket_241 demonstrated the full intended lifecycle:
+   - Investigator retrieved evidence and saved ledger in 2 tool calls.
+   - Jev primary review evaluated the proposal: raw choice `REWORK` (`ACTION_AUTHORITY`, confidence 0.75, risk 2.85). Deterministic safety gates vetoed direct approval and correctly dispatched a local reviewer card (`l2-reviewer-primary`, Priority 30).
+   - Local reviewer independently verified the evidence in `XStudio_Xbatch`, confirmed accuracy, and completed via `kanban_complete`.
+   - The deterministic reconciler and publisher successfully published the response to SQL Server (`Hermes_L2_Response_Trn_Tbl.ProcessStatus = 'COMPLETED'`, `ResponseType = 'UPDATE'`, `IsActive = 0`).
+
+
