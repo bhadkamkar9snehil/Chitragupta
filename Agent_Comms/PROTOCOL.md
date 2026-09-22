@@ -1,19 +1,29 @@
-# Agent_Comms — Claude <-> Codex async channel
+# Agent_Comms — Claude <-> Codex <-> Antigravity async channel
 
-This folder is a file-based message queue between two AI agents working on
-the AIHelpdesk / Hermes L2 project from two different laptops, synced by
-Syncthing:
+This folder is a file-based message queue between AI agents working on the
+AIHelpdesk / Hermes L2 project, with no shared API or live bridge between
+them -- this folder is the only transport, full stop:
 
 - **Claude** (Claude Code) — runs on Snehil's laptop, no persistent
   background process. Reads/writes this folder only when invoked in a
   session.
 - **Codex** — runs on the teammate's laptop, invoked on a schedule via a
   Hermes Agent Routine (Hermes's own cron, not Windows Task Scheduler or
-  anything ad hoc). This is the side expected to poll regularly.
+  anything ad hoc), synced to this laptop by Syncthing. This is the side
+  expected to poll regularly.
+- **Antigravity** — runs on the same laptop as Claude, in the XS_Builder
+  workspace, invoked manually by Snehil per task (no scheduler, no direct
+  filesystem/API access to this repo from inside Antigravity's own session).
+  Snehil is the transport for this leg: he copies a request's content into
+  Antigravity, and copies its finished output back out as a file Claude then
+  reads from this folder (or from wherever Antigravity saved it -- Claude
+  checks Downloads/ and the working tree if it isn't in Agent_Comms/ yet).
+  Do not assume Antigravity can read or write this folder itself.
 
-Neither agent has any other way to reach the other directly — this folder,
-synced by Syncthing, is the only channel. Treat file writes here as the
-message-passing mechanism; there is no other transport.
+No agent has any other way to reach another directly. Treat file writes here
+as the message-passing mechanism between Claude and Codex; treat Snehil's
+manual copy-paste as the equivalent transport for Antigravity, with the same
+file format and numbering below applying to what he relays.
 
 ## Scope: not just tickets
 
@@ -123,3 +133,24 @@ session, and should proactively mention any unread `finding` threads to the
 user even if they weren't specifically asked about. Claude creates new
 `to: codex` requests the same way, whenever the user asks for something
 that needs doing/verifying on the teammate's machine, on any topic.
+
+## Working with Antigravity specifically
+
+Antigravity cannot poll this folder — Snehil is the transport. When Claude
+wants Antigravity to do something:
+
+1. Write a normal `type: request`, `to: antigravity` file here (same format
+   as any other thread) — self-contained, assumes no other context.
+2. Tell Snehil the file exists and ask him to hand its `## Request` content
+   to Antigravity.
+3. When Snehil brings back Antigravity's output (as a file path, pasted
+   text, or a saved `.md`/`.docx`), Claude reads it, and is the one who
+   writes it into `## Response` in the original request file (Antigravity
+   does not edit this repo's files itself) -- filling in `status: answered`
+   and `answered:` the same as any other reply.
+
+If Antigravity produces a finding unprompted (Snehil relays it without a
+matching request file), Claude creates the `type: finding` file itself,
+`from: antigravity`, `to: claude`, once it has read and understood the
+content -- don't paraphrase away specifics; quote real output the same way
+any other agent's finding must be backed by real evidence, not a claim.
