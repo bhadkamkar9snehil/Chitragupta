@@ -1,0 +1,15 @@
+---
+type: note
+subtype: configured-relationship
+database: XStudio_Configuration_Xbatch
+authority: configuration-observed
+---
+# XBatch configured relationships: xmes-sms-grade-protocol-chemistry-mst-tbl part 1
+
+Configured joins and cardinality. They are routing knowledge; verify current ticket rows live.
+
+## XMES_SMS_Grade_Protocol_Chemistry_Mst_Tbl.ParentID -> XMES_SMS_Grade_Protocol_Mst_Tbl.ID
+Databases: XStudio_XBatch -> XStudio_XBatch
+Cardinality: One -> One
+Relation: ParentID-XMES_SMS_Grade_Protocol_Mst_Tbl
+Provenance: xstudio_configuration_relationship (1 source row(s))

@@ -1,0 +1,31 @@
+{
+  "batch": "harness-20260918",
+  "model": "qwen/qwen3.5-9b",
+  "cases": [
+    {
+      "id": "8BFE404B-C341-4819-85F8-74E54804ED81",
+      "brief": "Heat 1600244 billet total differs from strand counters",
+      "description": "While reconciling the casting report for heat 1600244, the total shows 37 billets. Strand 1 is blank and strands 2 to 6 show 8, 6, 8, 7 and 7. Please check the difference and tell us whether the total or the strand readings need correction. Do not change the production readings without confirming the cause.",
+      "area_id": "B88E9146-D9DC-46D1-A46D-FC30CB5312DF",
+      "entities": {"HeatNo": "1600244"},
+      "oracle": {"observed_total": 37, "populated_strand_sum": 36, "cause_verified": false, "resolution_requires_verified_outcome": true}
+    },
+    {
+      "id": "843B8618-4B6D-493C-A89D-5DFA55F45EE2",
+      "brief": "Confirm the casting records for heat 1600778",
+      "description": "We are reconciling an older casting report for heat 1600778. Please confirm whether MES has casting records and the recorded billet total. We need the recorded facts first; we have not confirmed a synchronization fault or a missing transaction.",
+      "area_id": "B88E9146-D9DC-46D1-A46D-FC30CB5312DF",
+      "entities": {"HeatNo": "1600778"},
+      "oracle": {"ccm_per_heat_exists": true, "recorded_total": 26, "forbidden_claim_phrases": ["ETL gap", "sync failure", "never populated"], "resolution_requires_verified_outcome": true}
+    },
+    {
+      "id": "5091C713-0B6A-4B03-A4E3-83A1CFA781A5",
+      "brief": "Manual SiMn entry is missing after saving the EAF logsheet",
+      "description": "The shift operator entered a SiMn addition in the EAF logsheet and saved it, but the value was not visible when the screen was reopened. The affected heat number, entry time and entered quantity were not included in the handover. Please help us identify what details are needed to investigate this occurrence.",
+      "area_id": "5FF54C4A-067F-49D8-80E9-5F4236B03947",
+      "entities": {},
+      "oracle": {"expected_response_type": "QUESTION", "requires_user_input": true, "must_not_sample_unrelated_heats": true}
+    }
+  ],
+  "provenance": "Live SQL MCP reads on 2026-09-18. Synthetic support requests; production records were read only. Oracle data is excluded from ticket payloads."
+}

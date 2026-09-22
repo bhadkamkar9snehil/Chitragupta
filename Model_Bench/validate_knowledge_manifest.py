@@ -57,6 +57,30 @@ def _check_forbidden(path: Path, label: str, forbidden: dict[str, str], errors: 
             errors.append(f"{label} contains {why}: {needle}")
 
 
+def _validate_gbrain_contract(manifest: dict, errors: list[str]) -> None:
+    cfg = manifest.get("gbrain")
+    if not isinstance(cfg, dict):
+        errors.append("manifest gbrain contract is missing")
+        return
+    required = {"source_id", "allowed_slug_prefixes", "excluded_slug_prefixes", "excluded_slugs",
+                "candidate_limit", "return_limit", "snippet_chars", "timeout_seconds",
+                "min_retrieval_score", "min_embedding_coverage_pct"}
+    missing = sorted(required - set(cfg))
+    if missing:
+        errors.append("manifest gbrain contract missing: " + ", ".join(missing))
+        return
+    if cfg["source_id"] != "xstudio-knowledge":
+        errors.append("gbrain source_id must be xstudio-knowledge")
+    if not 1 <= int(cfg["return_limit"]) <= 3:
+        errors.append("gbrain return_limit must be 1..3")
+    if int(cfg["candidate_limit"]) < int(cfg["return_limit"]):
+        errors.append("gbrain candidate_limit must cover return_limit")
+    if not 0 <= float(cfg["min_retrieval_score"]) <= 1:
+        errors.append("gbrain min_retrieval_score must be 0..1")
+    if float(cfg["min_embedding_coverage_pct"]) != 100.0:
+        errors.append("gbrain embedding gate must be 100 percent")
+
+
 def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
@@ -70,6 +94,8 @@ def main() -> int:
     except Exception as exc:
         print(f"FAIL: manifest is not valid JSON: {exc}")
         return 1
+
+    _validate_gbrain_contract(manifest, errors)
 
     route_defs = manifest.get("routes") or []
     route_names = [r.get("route") for r in route_defs if r.get("route")]

@@ -74,5 +74,23 @@ def on_post_tool_call(**kwargs) -> None:
         pass
 
 
+def on_kanban_task_completed(**kwargs) -> None:
+    """Flush lifecycle and trace state from the worker's native terminal event."""
+    try:
+        _fire()
+    except Exception:
+        pass
+
+
+def on_kanban_task_blocked(**kwargs) -> None:
+    """Flush lifecycle and trace state from the worker's native terminal event."""
+    try:
+        _fire()
+    except Exception:
+        pass
+
+
 def register(ctx) -> None:
     ctx.register_hook("post_tool_call", on_post_tool_call)
+    ctx.register_hook("kanban_task_completed", on_kanban_task_completed)
+    ctx.register_hook("kanban_task_blocked", on_kanban_task_blocked)

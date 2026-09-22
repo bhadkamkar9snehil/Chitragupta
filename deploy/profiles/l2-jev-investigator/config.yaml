@@ -9,6 +9,29 @@ agent:
   reasoning_effort: none
 memory:
   provider: mem0
+approvals:
+  deny:
+    - '*sqlcmd*-q*update*'
+    - '*sqlcmd*-q*insert*'
+    - '*sqlcmd*-q*delete*'
+    - '*sqlcmd*update *set*'
+    - '*sqlcmd*insert *into*'
+    - '*sqlcmd*delete *from*'
+    - '*.execute(*update *'
+    - '*.execute(*insert *'
+    - '*.execute(*delete *'
+    - '*cursor.execute*update*'
+    - '*cursor.execute*insert*'
+    - '*cursor.execute*delete*'
+    - '*sqlcmd*'
+    - '*Hermes_Orchestrator.py*'
+    - '*/mnt/c/Python314/python.exe*'
+    - '*python.exe*'
+    - '*pip install*'
+    - '*pip3 install*'
+    - '*python -m pip*'
+    - '*python3 -m pip*'
+    - '*uv pip*'
 plugins:
   enabled:
     - xstudio-l2-trace

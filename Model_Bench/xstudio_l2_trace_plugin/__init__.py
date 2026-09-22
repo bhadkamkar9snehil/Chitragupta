@@ -57,11 +57,15 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 _LOCK = threading.Lock()
 _MAX_CHARS = 4000  # per string field; keeps one JSONL line small and the drain cheap
+_IST = ZoneInfo("Asia/Kolkata")
 
 # Secret redaction -- 2026-09-04: confirmed live that this profile's
 # MSSQL_MCP_USER/PASSWORD env vars have, on at least two real past
@@ -98,6 +102,22 @@ def _redact(value: str) -> str:
 _DATA_DIR = Path.home() / ".hermes" / "plugin-data" / "xstudio-l2-trace"
 _EVENTS_PATH = _DATA_DIR / "events.jsonl"
 
+
+def _profile_name_from_process() -> Optional[str]:
+    """Return the Hermes profile selected for this worker process.
+
+    Hermes does not currently include the profile name in observer-hook kwargs,
+    but the worker command line always carries ``-p NAME`` or ``--profile NAME``.
+    Resolve it once so every event can be separated by investigator/reviewer.
+    """
+    for index, arg in enumerate(sys.argv[:-1]):
+        if arg in {"-p", "--profile"}:
+            return sys.argv[index + 1]
+    return os.getenv("HERMES_PROFILE") or os.getenv("HERMES_PROFILE_NAME")
+
+
+_PROFILE_NAME = _profile_name_from_process()
+
 # Import-time marker -- proves the module was actually imported by whatever
 # process loaded it, independent of whether any hook has fired yet. Debug
 # aid only; safe to leave in permanently (negligible cost, fires once).
@@ -126,7 +146,8 @@ def _write_event(event: Dict[str, Any]) -> None:
     """Append one JSON line. Fail-open: a broken trace write must never
     break the agent loop or lose the tool result it's observing."""
     try:
-        event["written_at"] = time.time()
+        event.setdefault("trace_event_id", str(uuid4()))
+        event.setdefault("event_on_ist", datetime.now(_IST).isoformat(timespec="milliseconds"))
         line = json.dumps(_truncate(event), default=str) + "\n"
         with _LOCK:
             _DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -144,6 +165,7 @@ def _write_event(event: Dict[str, Any]) -> None:
 _TASK_CACHE_LOCK = threading.Lock()
 _TASK_CACHE: Dict[str, Dict[str, Optional[str]]] = {}
 _RESOLVING: set = set()
+_CONTEXT_EMITTED: set = set()
 _TASK_CACHE_MAX = 500
 
 
@@ -206,6 +228,20 @@ def _resolve_task_ids_blocking(kanban_task_id: str) -> None:
     with _TASK_CACHE_LOCK:
         _TASK_CACHE[kanban_task_id] = {"run_id": run_id, "ticket_id": ticket_id}
         _RESOLVING.discard(kanban_task_id)
+        emit_context = kanban_task_id not in _CONTEXT_EMITTED
+        if emit_context:
+            _CONTEXT_EMITTED.add(kanban_task_id)
+
+    if emit_context:
+        resolved = bool(run_id and ticket_id)
+        _write_event({
+            "event_type": "trace_context",
+            "task_id": kanban_task_id,
+            "run_id": run_id if resolved else None,
+            "ticket_id": ticket_id if resolved else None,
+            "status": "resolved" if resolved else "failed",
+            "profile_name": _PROFILE_NAME,
+        })
 
     # Emit one explicit correlation record after the asynchronous resolver
     # finishes. The drain uses this to backfill the first hook events that may
@@ -246,6 +282,7 @@ def _identity_fields(kwargs: Dict[str, Any]) -> Dict[str, Any]:
         "api_request_id": kwargs.get("api_request_id"),
         "run_id": ids.get("run_id"),
         "ticket_id": ids.get("ticket_id"),
+        "profile_name": _PROFILE_NAME,
     }
 
 
@@ -272,12 +309,20 @@ def on_post_tool_call(**kwargs) -> None:
 
 
 def on_post_api_request(**kwargs) -> None:
+    started_at = kwargs.get("started_at")
+    first_chunk_at = kwargs.get("first_chunk_at")
+    api_duration = kwargs.get("api_duration")
+    ttft_ms = None
+    if isinstance(started_at, (int, float)) and isinstance(first_chunk_at, (int, float)):
+        ttft_ms = max(0, round((first_chunk_at - started_at) * 1000))
     _write_event({
         "event_type": "post_api_request",
         **_identity_fields(kwargs),
         "model": kwargs.get("model"),
         "provider": kwargs.get("provider"),
         "api_duration": kwargs.get("api_duration"),
+        "api_duration_ms": round(api_duration * 1000) if isinstance(api_duration, (int, float)) else None,
+        "ttft_ms": ttft_ms,
         "finish_reason": kwargs.get("finish_reason"),
         "usage": kwargs.get("usage"),
         "assistant_content_chars": kwargs.get("assistant_content_chars"),
@@ -312,7 +357,7 @@ def on_api_request_error(**kwargs) -> None:
 # ---------------------------------------------------------------------------
 _LMSTUDIO_MODELS_URL = "http://100.111.69.102:1235/v1/models"
 _POWERSHELL_EXE = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-_GPU_SCRIPT_WIN_PATH = "C:/Users/Admin/AppData/Local/hermes/profiles/infra-guardian/scripts/gpu_check.ps1"
+_COMPUTE_SCRIPT_WIN_PATH = "C:/Users/Admin/Documents/Office/AIHelpdesk/Model_Bench/remote_compute_snapshot.ps1"
 
 
 def _sample_lmstudio() -> Optional[Dict[str, Any]]:
@@ -326,29 +371,26 @@ def _sample_lmstudio() -> Optional[Dict[str, Any]]:
         return {"error": str(e)}
 
 
-def _sample_gpu() -> Optional[Dict[str, Any]]:
+def _parse_compute_snapshot(output: str) -> Dict[str, Any]:
+    for line in reversed(output.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            parsed = json.loads(line)
+            if isinstance(parsed, dict):
+                return parsed
+    raise ValueError("no JSON compute snapshot found")
+
+
+def _sample_compute() -> Optional[Dict[str, Any]]:
     try:
         t0 = time.time()
         out = subprocess.run(
-            [_POWERSHELL_EXE, "-File", _GPU_SCRIPT_WIN_PATH],
+            [_POWERSHELL_EXE, "-File", _COMPUTE_SCRIPT_WIN_PATH],
             capture_output=True, text=True, timeout=25,
         ).stdout
-        line = None
-        for l in out.splitlines():
-            if "MiB /" in l and "%" in l:
-                line = l.strip()
-                break
-        if not line:
-            return {"error": "no parseable nvidia-smi line", "raw": out[:500]}
-        util_m = re.search(r"(\d+)%\s*(?:Default|E\. Process)", line)
-        mem_m = re.search(r"(\d+)MiB\s*/\s*(\d+)MiB", line)
-        return {
-            "latency_s": round(time.time() - t0, 3),
-            "gpu_util_pct": int(util_m.group(1)) if util_m else None,
-            "mem_used_mb": int(mem_m.group(1)) if mem_m else None,
-            "mem_total_mb": int(mem_m.group(2)) if mem_m else None,
-            "raw": line,
-        }
+        result = _parse_compute_snapshot(out)
+        result["latency_s"] = round(time.time() - t0, 3)
+        return result
     except Exception as e:
         return {"error": str(e)}
 
@@ -360,16 +402,17 @@ def _sample_hardware_async(boundary: str, kwargs: Dict[str, Any]) -> None:
         # GPU sample alone takes several seconds, which gives the background
         # resolver thread time to finish before we read the cache again below.
         lm = _sample_lmstudio()
-        gpu = _sample_gpu()
+        compute = _sample_compute()
         ids2 = _TASK_CACHE.get(_MY_KANBAN_TASK_ID, {}) if _MY_KANBAN_TASK_ID else {}
         base = {
             "session_id": kwargs.get("session_id"),
             "task_id": _MY_KANBAN_TASK_ID or kwargs.get("task_id"),
             "run_id": ids2.get("run_id"),
             "ticket_id": ids2.get("ticket_id"),
+            "profile_name": _PROFILE_NAME,
         }
         _write_event({"event_type": "lmstudio_sample", "boundary": boundary, **base, "result": lm})
-        _write_event({"event_type": "gpu_sample", "boundary": boundary, **base, "result": gpu})
+        _write_event({"event_type": "compute_sample", "boundary": boundary, **base, "result": compute})
 
     threading.Thread(target=_run, daemon=True).start()
 

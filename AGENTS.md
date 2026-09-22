@@ -259,24 +259,27 @@ Evidence hierarchy:
 
 Never fabricate a table, view, column, SP, ticket status, or identifier.
 
-Preferred investigation path, all through the typed `xstudio_l2` tool (see §8a):
+Preferred investigation path, all through the named `xstudio_*` tools in the `xstudio_l2` toolset (see §8a):
 
 - use the dispatch-time investigation bundle first;
-- `select` when the table/entity is known (identifiers are schema-validated);
-- `suggest_tables` for deterministic narrowing;
-- `find_objects` / `get_definition` for live metadata when necessary;
-- `query` only for read-only SQL, with `database` specified explicitly;
-- `read_procedure` only for the explicitly allowlisted diagnostics;
-- persist meaningful per-ticket state with `save_ledger`.
+- `xstudio_select` when the table/entity is known (identifiers are schema-validated);
+- `xstudio_suggest_tables` for deterministic narrowing;
+- `xstudio_find_objects` / `xstudio_get_definition` for live metadata when necessary;
+- `xstudio_query` only for read-only SQL, with `database` specified explicitly;
+- `xstudio_read_procedure` only for the explicitly allowlisted diagnostics;
+- `xstudio_resolve_heat` for deterministic, read-only mapping of a ticket heat identifier
+  (for example `H99328`) across curated XStudio_Xbatch heat/genealogy surfaces;
+- persist meaningful per-ticket state with `xstudio_save_ledger`.
 
 Do not put per-ticket facts into shared mem0.
 
 ## 8a. Agent execution surface is typed and harness-owned
 
-L2 agents do not build database transport. They call one typed tool,
-`xstudio_l2`, registered by the `xstudio-l2-tools` plugin
-(`Model_Bench/xstudio_l2_tools_plugin/`), which invokes the Windows-side
-bridge (`Model_Bench/xstudio_l2_tool_bridge.py`) internally. The bridge reuses
+L2 agents do not build database transport. They call named typed tools in the
+`xstudio_l2` toolset, registered by the `xstudio-l2-tools` plugin
+(`Model_Bench/xstudio_l2_tools_plugin/`), which invokes the native WSL
+bridge (`Model_Bench/xstudio_l2_tool_bridge.py`) internally using the backend
+Hermes Python and Microsoft ODBC Driver 18. The bridge reuses
 the guarded primitives already in `Hermes_Orchestrator.py` rather than being a
 parallel SQL implementation.
 
@@ -307,7 +310,7 @@ Rules:
 - Ticket/Helpdesk mutation stays outside the agent interface entirely;
   publication remains the deterministic publisher's job (§5).
 - Usage is bounded so one bad idea cannot consume the context window: about 14
-  `xstudio_l2` calls per session, a third identical failing call is blocked, and
+  XStudio tool calls per session, a third identical failing call is blocked, and
   results are capped (~8 KB, ~25 list rows) with an instruction to narrow rather
   than repeat.
 - Fresh cards rendered by the runtime contain only this typed contract. They no
@@ -319,7 +322,15 @@ Rules:
 
 ## 9. KB and memory boundaries
 
-The current deterministic KB retriever is an interim conservative layer. It must obey:
+The deterministic knowledge harness has two complementary inputs:
+
+- `Knowledge/xstudio_semantic_atlas.json` plus
+  `Knowledge/xbatch_investigation_recipes.json` provide the fixed,
+  harness-selected object/relationship/recipe world context;
+- GBrain provides bounded semantic retrieval over the committed knowledge
+  corpus. It is a derived index, not authority.
+
+The retriever must obey:
 
 - route alone cannot retrieve a solution;
 - weak generic overlap must abstain;
@@ -484,7 +495,7 @@ The reconciler takes one Kanban/active-run snapshot and ignores inactive histori
 Do not use GitHub Actions as proof that the live pipeline is healthy.
 
 The typed-tool half of the harness is only fully proven by a naturally arriving
-ticket. For the next one, check the trace shows `xstudio_l2` calls and no
+ticket. For the next one, check the trace shows named `xstudio_*` calls and no
 terminal attempt at an interpreter, database driver, `sqlcmd`, or package
 install. Do not manufacture a production claim to test this, and do not raw-poll
 a ticket — that bypasses the scout's WIP/lifecycle gate.

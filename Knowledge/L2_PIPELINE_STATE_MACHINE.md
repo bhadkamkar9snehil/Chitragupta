@@ -86,6 +86,31 @@ No sixth architectural box exists.
 
 The current LM Studio deployment has one safe local inference slot. Chitragupta therefore separates **pipeline concurrency** from **local-model concurrency**.
 
+### Worker failure recovery (2026-09-07)
+
+All mutating CLI entrypoints take the same WSL process lock, including scout,
+completion hooks and operator reconciliation. SQL lookup failure aborts the pass;
+it is never evidence that a run is inactive. Windows mutation entrypoints refuse
+execution; invoke the configured WSL environment to share ownership.
+
+New cards allow one Hermes process attempt. A blocked card with an ended crashed,
+failed or timed-out attempt is recovered by central reconciliation into a fresh
+rework card under the same SQL run. Running attempts and explicit reviewer
+rejections do not enter this path. Rework uses the existing bounded cycle budget
+and exact-source idempotency key. The escalation handoff is persisted before
+failing/releasing the SQL run, so a failed handoff remains retryable.
+
+Before new claims or failed-worker rework, the runtime probes the typed SQL bridge
+and configured models' structured tool calling. A failed dependency probe pauses
+that tick; subsequent scout ticks retry the probe. This is a dependency gate,
+not proof that a model will solve an arbitrary ticket.
+
+Primary investigator and reviewer sessions currently have a 65,792-token context
+budget, 8,192-token output cap and 20-turn limit (verified in the deployed profiles
+on 2026-09-18). Their available tools are file, skills,
+Kanban and typed XStudio evidence. These bounds must be validated against actual
+worker traces whenever the model deployment changes.
+
 Default runtime capacities:
 
 ```text
@@ -178,6 +203,17 @@ JEV PRIMARY REVIEW
 ```
 
 The local reviewer is no longer mandatory. It is an exception path for Jev uncertainty, conflicting evidence, low confidence, service unavailability, or cases where Jev explicitly says deeper System-2 reasoning is useful.
+
+Missing requester-only information uses QUESTION with an explicit customer question,
+not recurring UPDATEs. The flat proposal adapter preserves investigative notes and
+uses the requester question as the frozen reply. RESOLUTION publication requires
+COMPLETE evidence, verified material claims with current-run references, and an
+explicit verified resolution outcome. An incomplete or diagnosis-only resolution
+returns to the existing bounded rework loop even if a reviewer approved it.
+An incomplete UPDATE must specify `next_investigation_step`; missing continuation
+is returned for bounded rework before publication. A requester-dependent step must
+instead be a QUESTION. Reviewer turn instructions are role-specific, and reviewers
+cannot use the investigator proposal-submission tool.
 
 ## 3. Jev-first investigation contract
 
@@ -602,4 +638,7 @@ Do not restore:
 - SQL `AttemptNo` as the rework counter;
 - `kanban_forward_bridge.py`;
 - independently scheduled publisher/reject/repair lifecycle authorities;
+- model-based profile names used as role identity;
 - agent-built Python/pyodbc/sqlcmd database transport.
+
+Do not use historical `Plans/` or `Agent_Comms/` material to override this state-machine contract.

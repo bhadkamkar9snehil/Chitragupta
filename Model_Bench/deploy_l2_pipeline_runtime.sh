@@ -11,9 +11,13 @@ export PATH="$HOME/.local/bin:$PATH"
 # the lifecycle was fine, but the investigator rebuilt SQL transport by hand
 # (`python3 /mnt/c/Python314/python.exe ...`, then `pip install pyodbc`) and
 # burned its whole context window. Transport is now harness-owned behind the
-# `xstudio_l2` tool, and the retired shell paths are blocked.
+# named `xstudio_*` tools in the `xstudio_l2` toolset, and the retired shell paths are blocked.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
+INVESTIGATOR_PROFILES=(l2-investigator l2-investigator-primary)
+REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
+HERMES_PYTHON="$HOME/.hermes/hermes-agent/venv/bin/python"
 SCRIPTS_DIR="$HOME/.hermes/profiles/l2-investigator/scripts"
 ACTIVE_PROFILES=(l2-jev-investigator l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
 INVESTIGATOR_PROFILES=(l2-jev-investigator l2-investigator l2-investigator-primary)
@@ -21,8 +25,16 @@ REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
 RETIRED_DEPLOYED_SCRIPTS=(dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py)
 RETIRED_PLUGIN_DIRS=(xstudio-l2-jev)
 
-mkdir -p "$SCRIPTS_DIR"
+test -x "$HERMES_PYTHON" \
+  || { echo "FATAL: Hermes Python not found at $HERMES_PYTHON" >&2; exit 1; }
+odbcinst -q -d -n "ODBC Driver 18 for SQL Server" >/dev/null 2>&1 \
+  || { echo "FATAL: ODBC Driver 18 for SQL Server is not installed in WSL" >&2; exit 1; }
+if ! "$HERMES_PYTHON" -c 'import pyodbc' >/dev/null 2>&1; then
+  "$HERMES_PYTHON" -m pip install pyodbc
+fi
 
+echo "== GBrain knowledge sync and readiness =="
+bash "$ROOT/Model_Bench/sync_gbrain_knowledge.sh"
 # Seed the new Jev-first Hermes profile from the repo on first deployment.
 JEV_PROFILE_DIR="$HOME/.hermes/profiles/l2-jev-investigator"
 mkdir -p "$JEV_PROFILE_DIR"
@@ -87,15 +99,45 @@ for f in \
   cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
  done
 
-chmod +x "$SCRIPTS_DIR"/*.py
+for profile in "${ACTIVE_PROFILES[@]}"; do
+  scripts_dir="$HOME/.hermes/profiles/$profile/scripts"
+  mkdir -p "$scripts_dir"
+  for f in \
+    l2_pipeline_runtime.py \
+    xbatch_world.py \
+    ticket_scout.py \
+    reconcile_l2_pipeline.py \
+    kanban_approval_publisher.py \
+    kanban_reject_bridge.py \
+    repair_incomplete_completions.py \
+    audit_kanban_completions.py \
+    enforce_publish_safety_net.py \
+    run_coalesced.py \
+    drain_and_summarize.py
+  do
+    cp "$ROOT/Model_Bench/$f" "$scripts_dir/$f"
+  done
+  chmod +x "$scripts_dir"/*.py
+  cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$scripts_dir/helpdesk_workflow_binding.json"
+  knowledge_dir="$scripts_dir/knowledge"
+  mkdir -p "$knowledge_dir"
+  cp "$ROOT/Knowledge/xstudio_semantic_atlas.json" "$knowledge_dir/xstudio_semantic_atlas.json"
+  cp "$ROOT/Knowledge/manifest.json" "$knowledge_dir/manifest.json"
+  cp "$ROOT/Knowledge/xbatch_investigation_recipes.json" "$knowledge_dir/xbatch_investigation_recipes.json"
+done
 
-# The typed-tool bridge is invoked by the plugin at its REPO path (it needs the
-# Windows interpreter and the repo's Hermes_Orchestrator module), so it is not
+# The typed-tool bridge is invoked by the plugin at its repo path using the
+# current Hermes WSL Python and its native ODBC driver, so it is not
 # copied into the profile. Fail loudly if it is missing rather than deploying a
 # plugin whose transport cannot start.
 test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
   || { echo "FATAL: Model_Bench/xstudio_l2_tool_bridge.py is missing" >&2; exit 1; }
 
+# Deploy both observer plugins to every active role. The orchestrator plugin
+# only triggers reconciliation; the tools plugin registers named `xstudio_*`
+# tools in the `xstudio_l2` toolset and
+# enforces the execution guard. Correctness never depends on the event hook,
+# because ticket_scout runs the same reconciler before every new claim.
 # KB retrieval executes directly from the repo path. Its TypeSafe Jev helper is
 # likewise repo-local: there is no runtime package installation or profile copy.
 test -f "$ROOT/Model_Bench/kb_retrieval.py" \
@@ -142,6 +184,9 @@ deploy_plugins() {
 # discovery scans the SHARED plugins directory using the ROOT config's
 # plugins.enabled list. A tools plugin installed only under a profile therefore
 # loads its hooks, registers its tool, and still has the toolset silently dropped
+# from every session -- which is exactly why the first typed-harness ticket saw
+# its terminal fallback blocked but never got a typed XStudio tool as an alternative.
+# xstudio-l2-trace was already installed in both places for this same reason.
 # from every session -- exactly what the first typed-harness live run exposed.
 install_shared_plugin_for_discovery() {
   local plugin="$1" src="$2" dir="$HOME/.hermes/plugins/$1"
@@ -190,6 +235,7 @@ done
 # never rewrites dispatch settings, API ports, model choice, or credentials.
 echo "== Shared plugin install (required for toolset discovery) =="
 install_shared_plugin_for_discovery xstudio-l2-tools "$ROOT/Model_Bench/xstudio_l2_tools_plugin"
+install_shared_plugin_for_discovery xstudio-l2-trace "$ROOT/Model_Bench/xstudio_l2_trace_plugin"
 echo "installed xstudio-l2-tools into $HOME/.hermes/plugins for toolset discovery"
 install_shared_plugin_for_discovery xstudio-l2-learning "$ROOT/Model_Bench/xstudio_l2_learning_plugin"
 echo "installed xstudio-l2-learning into $HOME/.hermes/plugins for toolset discovery"
@@ -210,12 +256,15 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
     # worker searched, found the tool, said it would use it, then completed with
     # "database access unavailable" without ever calling it.
     python3 "$ROOT/Model_Bench/patch_tool_search_off.py" "$config"
+    if [[ "$profile" == "l2-investigator-primary" || "$profile" == "l2-reviewer-primary" || "$profile" == "l2-jev-investigator" ]]; then
+      python3 "$ROOT/Model_Bench/patch_l2_worker_budget.py" "$config"
+    fi
   else
     echo "WARNING: $config not found; skipped"
   fi
 done
 
-# The root config drives plugin discovery, which is what makes `xstudio_l2` a
+# The root config drives plugin discovery, which is what makes the `xstudio_l2`
 # recognised toolset name instead of an unknown one that gets filtered out.
 echo "== Root config (plugin discovery) =="
 sed -i \
@@ -231,6 +280,10 @@ if [[ "${1:-}" != "--no-restart" ]]; then
 fi
 
 echo
+echo "Deployed deterministic L2 lifecycle + typed XStudio investigation harness."
+echo "Typed tools: named xstudio_* tools in xstudio_l2. SQL transport runs natively in WSL behind the harness."
+echo "Model-driven terminal transports (Hermes_Orchestrator.py, Windows Python,"
+echo "sqlcmd, pyodbc, pip) remain blocked by plugin hook + approvals.deny."
 echo "Deployed deterministic L2 lifecycle + typed XStudio harness + trace observer + Jev System-One fabric."
 echo "Typed worker tool: xstudio_l2. Jev planning/review remains harness-owned. Retired terminal transports (Hermes_Orchestrator.py,"
 echo "Windows Python, sqlcmd, pyodbc, pip) are blocked by plugin hook + approvals.deny."

@@ -22,7 +22,9 @@ import hashlib
 import json
 import math
 import os
+import posixpath
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +41,8 @@ except ImportError:  # pure routing/scoring tests do not need the live driver
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = ROOT / "Knowledge" / "manifest.json"
 MIN_MATCHED_TERMS = 2
+GBRAIN_BIN = os.environ.get("GBRAIN_BIN", "/home/snehil/.bun/bin/gbrain")
+GBRAIN_HOME = os.environ.get("GBRAIN_HOME", "/home/snehil/.hermes/xstudio-gbrain")
 
 STOPWORDS = {
     "the", "a", "an", "is", "was", "were", "are", "be", "been", "and", "or",
@@ -85,6 +89,109 @@ def load_manifest() -> dict[str, Any]:
     if not MANIFEST_PATH.exists():
         raise FileNotFoundError(f"Knowledge manifest not found: {MANIFEST_PATH}")
     return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+
+
+def _run_gbrain(argv: list[str], *, timeout: int, runner=None):
+    run = runner or subprocess.run
+    env = os.environ.copy()
+    env["GBRAIN_HOME"] = GBRAIN_HOME
+    env["PATH"] = f"{posixpath.dirname(GBRAIN_BIN)}:{env.get('PATH', '')}"
+    return run([GBRAIN_BIN, *argv], capture_output=True, text=True, timeout=timeout, env=env)
+
+
+def get_gbrain_status(config: dict, runner=None) -> dict:
+    try:
+        result = _run_gbrain(["sources", "status", "--json"], timeout=int(config["timeout_seconds"]), runner=runner)
+        if result.returncode:
+            raise RuntimeError(result.stderr.strip() or f"exit {result.returncode}")
+        payload = json.loads(result.stdout)
+        source = next(row for row in payload.get("sources", []) if row.get("source_id") == config["source_id"])
+        coverage = float(source.get("embed_coverage_pct") or 0)
+        ready = (coverage >= float(config["min_embedding_coverage_pct"])
+                 and int(source.get("failed_jobs_24h") or 0) == 0
+                 and int(source.get("queue_depth") or 0) == 0)
+        return {"status": "READY" if ready else "DEGRADED", "source_id": config["source_id"],
+                "pages": int(source.get("total_pages") or 0), "chunks": int(source.get("total_chunks") or 0),
+                "embedded_chunks": int(source.get("embedded_chunks") or 0), "embedding_coverage_pct": coverage,
+                "reason": None if ready else f"embedding coverage {coverage:g}% is below {config['min_embedding_coverage_pct']:g}% or GBrain jobs are not drained"}
+    except (OSError, subprocess.TimeoutExpired, RuntimeError, StopIteration, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return {"status": "UNAVAILABLE", "source_id": config.get("source_id"), "reason": f"{type(exc).__name__}: {exc}"}
+
+
+def _slug_allowed(slug: str, config: dict) -> bool:
+    value = slug.casefold()
+    return (any(value.startswith(p.casefold()) for p in config["allowed_slug_prefixes"])
+            and not any(value.startswith(p.casefold()) for p in config["excluded_slug_prefixes"])
+            and value not in {s.casefold() for s in config["excluded_slugs"]})
+
+
+def _reference_specificity(slug: str) -> int:
+    """Prefer actionable canonical references over already-injected route summaries."""
+    value = slug.casefold()
+    if (value.startswith("knowledge/view_docs/")
+            or value.startswith("deploy/skills/xstudio/")
+            or value in {
+                "knowledge/xbatch-investigation-surfaces",
+                "knowledge/sohar-sms-event-workflows",
+                "knowledge/hermes-runtime-database-design",
+                "knowledge/hermes-sp-catalog",
+            }):
+        return 3
+    if "-relationship-" in value:
+        return 2
+    if "-recipe-" in value:
+        return 1
+    return 0
+
+
+def retrieve_gbrain(query: str, config: dict, runner=None) -> dict:
+    query_tokens = tokenize(query)
+    domain_tokens = tokenize(" ".join(str(term) for term in config.get("query_domain_terms", [])))
+    if domain_tokens and not query_tokens.intersection(domain_tokens):
+        return {"status": "READY", "source_id": config["source_id"], "hits": [], "abstained": True,
+                "abstention_reason": "Query has no XStudio/Hermes domain signal."}
+    try:
+        result = _run_gbrain([
+            "search", query,
+            "--limit", str(int(config["candidate_limit"])),
+            "--source-id", config["source_id"],
+            "--snippet-chars", str(int(config["snippet_chars"])),
+            "--mode", "balanced",
+            "--salience", "off",
+            "--recency", "off",
+            "--json",
+        ], timeout=int(config["timeout_seconds"]), runner=runner)
+        if result.returncode:
+            raise RuntimeError(result.stderr.strip() or f"exit {result.returncode}")
+        rows = json.loads(result.stdout)
+        if not isinstance(rows, list):
+            raise ValueError("gbrain search returned a non-list")
+        candidates = []
+        for row in rows:
+            slug, score = str(row.get("slug") or ""), float(row.get("score") or 0)
+            literal_overlap = query_tokens & tokenize(f"{row.get('title') or ''} {row.get('chunk_text') or ''}")
+            structured_overlap = {term for term in literal_overlap if "_" in term or term.endswith("id")}
+            exact_identifier_match = len(literal_overlap) >= 4 and len(structured_overlap) >= 2
+            score_allowed = (score >= float(config["min_retrieval_score"])
+                             or (exact_identifier_match
+                                 and score >= float(config.get("min_exact_identifier_score", 0.45))))
+            if (row.get("source_id") != config["source_id"] or not _slug_allowed(slug, config)
+                    or not score_allowed
+                    or (row.get("evidence") == "weak_semantic" and len(literal_overlap) < 2)):
+                continue
+            candidates.append((_reference_specificity(slug), len(literal_overlap), score, slug, row))
+        candidates.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3]))
+        hits = [{"kb_id": f"gbrain:{config['source_id']}:{slug}", "source_type": "gbrain_page",
+                 "source_ref": f"{config['source_id']}:{slug}", "slug": slug, "title": row.get("title"),
+                 "excerpt": str(row.get("chunk_text") or "")[:int(config["snippet_chars"])],
+                 "retrieval_score": round(score, 6), "keyword_hit": bool(row.get("keyword_hit")),
+                 "evidence": row.get("evidence"), "verification_required": True}
+                for _, _, score, slug, row in candidates[:int(config["return_limit"])]]
+        return {"status": "READY", "source_id": config["source_id"], "hits": hits, "abstained": not hits,
+                "abstention_reason": None if hits else "GBrain returned no allowed knowledge hit."}
+    except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return {"status": "UNAVAILABLE", "source_id": config.get("source_id"), "hits": [], "abstained": True,
+                "abstention_reason": f"GBrain retrieval failed: {type(exc).__name__}: {exc}"}
 
 
 def _identifier_routes(manifest: dict[str, Any]) -> list[tuple[re.Pattern[str], tuple[str, ...], str]]:
@@ -302,7 +409,7 @@ def knowledge_docs_for_routes(manifest: dict[str, Any], routes: list[dict[str, A
 
 def connect(server: str, database: str, username: str, password: str | None):
     if pyodbc is None:
-        raise RuntimeError("pyodbc is required for live KB retrieval; use the Windows Python deployment interpreter")
+        raise RuntimeError("pyodbc is required for live KB retrieval; install it in the backend Hermes WSL Python environment")
     if not password:
         raise RuntimeError("MSSQL_MCP_PASSWORD is required for KB retrieval")
     conn_str = (
@@ -564,6 +671,7 @@ def retrieve(
         min_score=min_score,
         min_matched_terms=min_matched_terms,
     )
+    gbrain = retrieve_gbrain(query, manifest["gbrain"])
 
     kb_semantics = {"ok": False, "reason": "KB Jev judgments disabled", "candidates": ranked}
 
@@ -619,6 +727,7 @@ def retrieve(
         "ticket_characterization": triage.get("answers") if triage.get("ok") else {},
         "knowledge_documents": knowledge_docs_for_routes(manifest, routes),
         "solutions": ranked,
+        "gbrain": gbrain,
         "jev_kb_applicability": {
             "ok": bool(kb_semantics.get("ok")),
             "model": kb_semantics.get("model"),
@@ -632,8 +741,8 @@ def retrieve(
         },
         "jev_audit": audit_results,
         "retrieval_telemetry": retrieval_telemetry,
-        "abstained": not bool(ranked),
-        "abstention_reason": None if ranked else "No active solution article met the relevance threshold.",
+        "abstained": not ranked and gbrain.get("abstained", True),
+        "abstention_reason": None if ranked or not gbrain.get("abstained", True) else "No reusable knowledge met the relevance threshold.",
         "retrieval_policy": {
             "route_only_match_allowed": False,
             "semantic_route_is_active": True,
@@ -642,6 +751,7 @@ def retrieve(
             "min_score": min_score,
             "min_matched_terms": min_matched_terms,
             "top": top,
+            "gbrain_max_hits": int(manifest["gbrain"]["return_limit"]),
             "provenance_required": True,
             "live_verification_required": True,
         },
@@ -654,7 +764,9 @@ def main() -> int:
     ap.add_argument("--database", default="XStudio_Helpdesk")
     ap.add_argument("--username", default=os.environ.get("MSSQL_MCP_USER", "sa"))
     ap.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))
-    ap.add_argument("--query", required=True, help="Ticket text/problem description to retrieve against")
+    group = ap.add_mutually_exclusive_group(required=True)
+    group.add_argument("--query", help="Ticket text/problem description to retrieve against")
+    group.add_argument("--check-gbrain", action="store_true")
     ap.add_argument("--ticket-id")
     ap.add_argument("--run-id")
     ap.add_argument("--top", type=int, default=5)
@@ -663,6 +775,10 @@ def main() -> int:
     args = ap.parse_args()
 
     manifest = load_manifest()
+    if args.check_gbrain:
+        status = get_gbrain_status(manifest["gbrain"])
+        print(json.dumps(status, indent=2, default=str))
+        return 0 if status.get("status") == "READY" else 1
     conn = connect(args.server, args.database, args.username, args.password)
     try:
         result = retrieve(

@@ -4,14 +4,14 @@
 Why: Hermes defers part of the tool surface behind `tool_search` once the
 listing budget is exceeded, so the model must discover a tool before it can call
 it. That round trip is fine for a large model and fatal for the 9B local model
-running L2. Observed live on Ticket_360: the worker searched, found `xstudio_l2`,
+running L2. Observed live on Ticket_360: the worker searched, found the XStudio toolset,
 wrote a comment saying it would use it -- and then completed with
 "database access unavailable ... requires pyodbc installation" without ever
 calling the tool it had just located.
 
 The L2 profiles carry a deliberately small toolset (about a dozen entries), so
 listing all of them directly costs little and removes the discovery step
-entirely. `xstudio_l2` is the tool these workers must reach for; it should never
+entirely. The named `xstudio_*` tools are what these workers must reach for; they should never
 be something they have to go looking for.
 
 Targeted, idempotent, comment-preserving -- same discipline as

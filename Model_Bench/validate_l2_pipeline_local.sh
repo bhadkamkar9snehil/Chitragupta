@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.hermes/hermes-agent/venv/bin:$PATH"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
+if [[ -z "${MSSQL_MCP_SERVER:-}" && -f "$HOME/.hermes/profiles/l2-investigator-primary/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$HOME/.hermes/profiles/l2-investigator-primary/.env"
+  set +a
+fi
 
 MODE="fast"
 case "${1:-}" in
@@ -78,6 +85,8 @@ PY_FILES=(
   Model_Bench/xstudio_l2_tools_plugin/__init__.py
   Model_Bench/xstudio_l2_tool_bridge.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
+  Model_Bench/validate_gbrain_knowledge.py
+  Model_Bench/test_validate_gbrain_knowledge.py
   Model_Bench/l2_gbrain.py
   Model_Bench/sync_l2_gbrain.py
   Model_Bench/l2_context_envelope.py
@@ -120,6 +129,8 @@ run_fast_checks() {
   section "Knowledge/skill validation"
   timed "knowledge manifest" python3 Model_Bench/validate_knowledge_manifest.py
   timed "KB retrieval tests" python3 Model_Bench/test_kb_retrieval.py
+  timed "gbrain knowledge validation tests" python3 Model_Bench/test_validate_gbrain_knowledge.py
+  timed "gbrain knowledge validation" python3 Model_Bench/validate_gbrain_knowledge.py
 
   section "GBrain adapter / governed context-delivery contract tests"
   timed "gbrain/context tests" bash -c '
@@ -208,6 +219,11 @@ After deploying/regenerating the SQL bundle, run:
 
 Confirm deploy/helpdesk_workflow_binding.json still matches live workflow values.
 Do not guess replacement status names.
+
+Live deployment note:
+  deploy_l2_pipeline_runtime.sh removes known retired lifecycle scripts from
+  ~/.hermes/profiles/l2-investigator/scripts. Validation fails if those stale
+  copies reappear even when they are absent from Git.
 
 For the next naturally arriving fresh ticket, verify its trace uses xstudio_l2
 for database/schema/ticket evidence and does not recreate SQL transport through

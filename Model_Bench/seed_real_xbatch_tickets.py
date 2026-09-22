@@ -1,0 +1,317 @@
+#!/usr/bin/env python3
+"""Create real, well-formed test tickets in Complaint_Mst_Tbl backed by actual plant
+data from XStudio_Xbatch tables (EAF, LRF, CCM, Work Orders, SAP, Delays, Quality).
+
+No official stored procedure exists for ticket creation (checked live via sys.procedures)
+Complaint_Mst_Tbl is populated by external systems (real rows show Source='T-SQL').
+This is a documented no-SP exception per xstudio-sql-write-discipline.
+
+Usage:
+    python seed_real_xbatch_tickets.py --server 10.2.6.204 [--dry-run]
+"""
+import os
+import argparse
+import json
+import sys
+import uuid
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import pyodbc
+
+COMPLAINT_TYPE_BUG = "814B4EAF-547F-4FBE-8444-3A8DC96AE20D"
+COMPLAINT_TYPE_CLARIFICATION = "37CA8AAA-81F3-40D6-8380-F57147A75A5B"
+PRIORITY_CRITICAL = "CB077E82-9055-430B-AC00-F7C7F56F51DD"
+PRIORITY_HIGH = "65BE0464-2E42-4CBA-9ADF-F8E19E90B5B2"
+
+AREA_EAF = "5FF54C4A-067F-49D8-80E9-5F4236B03947"
+AREA_LRF = "27D51105-BEE2-48FD-8AB8-8ADAD48DE71C"
+AREA_CCM = "B88E9146-D9DC-46D1-A46D-FC30CB5312DF"
+AREA_COMMON = "5640FCDC-B42D-4F06-967A-706709A73231"
+AREA_ROLLING = "6AFF2AB8-59FC-4403-B685-7CC270C5A6E3"
+
+
+def build_connection(server, database, username, password):
+    return pyodbc.connect(
+        f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={server};DATABASE={database};"
+        f"UID={username};PWD={password};TrustServerCertificate=yes;"
+    )
+
+
+def load_real_entities(conn) -> dict:
+    """Load real plant entity rows directly from XStudio_Xbatch."""
+    cur = conn.cursor()
+    entities = {}
+
+    # 1. EAF Heats
+    cur.execute("SELECT TOP 10 HeatID, PowerOnTime, PowerOffTime, HeatTime FROM dbo.EAF_Per_Heat WHERE HeatID IS NOT NULL AND PowerOnTime IS NOT NULL ORDER BY StartTime DESC")
+    entities["eaf_heats"] = [{"HeatID": str(r[0]), "PowerOnTime": str(r[1]), "PowerOffTime": str(r[2]), "HeatTime": str(r[3])} for r in cur.fetchall()]
+
+    # 2. LRF Heats
+    cur.execute("SELECT TOP 10 HeatID, ArcingTime, PowerONTime, PowerOFFTime FROM dbo.LRF_Per_Heat WHERE HeatID IS NOT NULL AND ArcingTime IS NOT NULL ORDER BY StartTime DESC")
+    entities["lrf_heats"] = [{"HeatID": str(r[0]), "ArcingTime": str(r[1]), "PowerONTime": str(r[2]), "PowerOFFTime": str(r[3])} for r in cur.fetchall()]
+
+    # 3. CCM Billets
+    cur.execute("SELECT TOP 10 HeatNo, BilletNo, StrandNo, CutStartTime FROM dbo.XMES_CCM_Billet_Genealogy_Trn_Tbl WHERE BilletNo IS NOT NULL ORDER BY CutStartTime DESC")
+    entities["ccm_billets"] = [{"HeatNo": str(r[0]), "BilletNo": str(r[1]), "StrandNo": str(r[2]), "CutStartTime": str(r[3])} for r in cur.fetchall()]
+
+    # 4. Work Orders
+    cur.execute("SELECT TOP 10 WorkOrderNumber, Quantity, Status FROM dbo.XBatch_Work_Order_Mst_Tbl WHERE WorkOrderNumber IS NOT NULL ORDER BY CreatedOn DESC")
+    entities["work_orders"] = [{"WorkOrderNumber": str(r[0]), "Quantity": str(r[1]), "Status": str(r[2])} for r in cur.fetchall()]
+
+    # 5. SAP Postings
+    cur.execute("SELECT TOP 10 HeatNo, ManufacturingOrder, InspectionLot, MaterialDocument FROM dbo.MES_SAP_Production_Trn_Tbl WHERE MaterialDocument IS NOT NULL ORDER BY CreatedOn DESC")
+    entities["sap_postings"] = [{"HeatNo": str(r[0]), "WorkOrder": str(r[1]), "InspectionLot": str(r[2]) if r[2] else None, "MaterialDoc": str(r[3])} for r in cur.fetchall()]
+
+    # 6. Delays
+    cur.execute("SELECT TOP 10 HeatNo, Status, StartTime, EndTime FROM dbo.Delay_Trn_Tbl WHERE HeatNo IS NOT NULL AND Status IS NOT NULL ORDER BY StartTime DESC")
+    entities["delays"] = [{"HeatNo": str(r[0]), "Status": str(r[1]), "StartTime": str(r[2])} for r in cur.fetchall()]
+
+    # 7. Quality Chemistry
+    cur.execute("SELECT TOP 10 HeatNo, SampleType, Grade, C, Si, ReportedTime FROM dbo.Heat_Chemistry_Quality_Data WHERE HeatNo LIKE '160%' AND SampleType IS NOT NULL ORDER BY ReportedTime DESC")
+    entities["chemistry"] = [{"HeatNo": str(r[0]), "SampleType": str(r[1]), "Grade": str(r[2]), "C": str(r[3]), "Si": str(r[4]), "ReportedTime": str(r[5])} for r in cur.fetchall()]
+
+    return entities
+
+
+def generate_tickets(entities: dict) -> list[dict]:
+    tickets = []
+
+    # Category 1: EAF Production & Power Timing (8 tickets)
+    for idx, h in enumerate(entities.get("eaf_heats", [])[:8]):
+        heat_id = h["HeatID"]
+        tickets.append({
+            "AreaID": AREA_EAF,
+            "ComplaintTypeID": COMPLAINT_TYPE_BUG if idx % 2 == 0 else COMPLAINT_TYPE_CLARIFICATION,
+            "Priority": PRIORITY_CRITICAL,
+            "BriefDetails": f"EAF Power-On time discrepancy reported for Heat {heat_id}",
+            "Description": (
+                f"EAF shift log shows Heat {heat_id} completed melting with recorded PowerOnTime {h['PowerOnTime']} "
+                f"and PowerOffTime {h['PowerOffTime']}. The daily energy dashboard indicates higher than normal electrical "
+                f"consumption. Please verify the actual PowerOnTime, PowerOffTime, and HeatTime in EAF_Per_Heat for HeatID {heat_id}."
+            ),
+            "ProblemCategory": "PRODUCTION_STATE",
+            "SourceSystem": "Xbatch",
+            "ConversationSummary": f"User is questioning electrical consumption and power timing for Heat {heat_id}.",
+            "SuspectedCause": f"Check dbo.EAF_Per_Heat for HeatID = {heat_id} and compare PowerOnTime/PowerOffTime.",
+            "ExtractedEntitiesJson": {"HeatNo": heat_id, "Area": "EAF"},
+        })
+
+    # Category 2: LRF Refining & Arcing (8 tickets)
+    for idx, h in enumerate(entities.get("lrf_heats", [])[:8]):
+        heat_id = h["HeatID"]
+        tickets.append({
+            "AreaID": AREA_LRF,
+            "ComplaintTypeID": COMPLAINT_TYPE_CLARIFICATION if idx % 2 == 0 else COMPLAINT_TYPE_BUG,
+            "Priority": PRIORITY_CRITICAL,
+            "BriefDetails": f"LRF Arcing time inquiry for Heat {heat_id} in treatment log",
+            "Description": (
+                f"Operator logged ArcingTime of {h['ArcingTime']} min for Heat {heat_id} in the secondary metallurgy station. "
+                f"Quality team wants to confirm whether PowerONTime ({h['PowerONTime']}) and PowerOFFTime ({h['PowerOFFTime']}) "
+                f"match the recorded arcing duration in the LRF database. Please verify LRF_Per_Heat for HeatID {heat_id}."
+            ),
+            "ProblemCategory": "DATA_LOOKUP",
+            "SourceSystem": "Xbatch",
+            "ConversationSummary": f"User needs verification of LRF arcing and treatment duration for Heat {heat_id}.",
+            "SuspectedCause": f"Check dbo.LRF_Per_Heat for HeatID = {heat_id} (read ArcingTime, PowerONTime, PowerOFFTime).",
+            "ExtractedEntitiesJson": {"HeatNo": heat_id, "Area": "LRF"},
+        })
+
+    # Category 3: CCM Casting & Billet Genealogy (8 tickets)
+    for idx, b in enumerate(entities.get("ccm_billets", [])[:8]):
+        billet_no = b["BilletNo"]
+        heat_no = b["HeatNo"]
+        strand = b["StrandNo"]
+        tickets.append({
+            "AreaID": AREA_CCM,
+            "ComplaintTypeID": COMPLAINT_TYPE_BUG,
+            "Priority": PRIORITY_CRITICAL,
+            "BriefDetails": f"Billet genealogy confirmation for Billet {billet_no} on Strand {strand}",
+            "Description": (
+                f"Casting sequence for Heat {heat_no} shows Billet {billet_no} on Strand {strand} with CutStartTime "
+                f"{b['CutStartTime']}. Yard supervisor reported a mismatch between the cutting torch trigger time and "
+                f"the recorded genealogy record. Please confirm whether Billet {billet_no} exists with valid CutStartTime in XMES_CCM_Billet_Genealogy_Trn_Tbl."
+            ),
+            "ProblemCategory": "PRODUCTION_STATE",
+            "SourceSystem": "Xbatch",
+            "ConversationSummary": f"User is checking whether Billet {billet_no} genealogy is properly recorded on Strand {strand}.",
+            "SuspectedCause": f"Check dbo.XMES_CCM_Billet_Genealogy_Trn_Tbl for BilletNo = '{billet_no}' and HeatNo = '{heat_no}'.",
+            "ExtractedEntitiesJson": {"BilletNo": billet_no, "HeatNo": heat_no, "Area": "CCM"},
+        })
+
+    # Category 4: SAP Production Posting & Goods Movement (8 tickets)
+    for idx, s in enumerate(entities.get("sap_postings", [])[:8]):
+        heat_no = s["HeatNo"]
+        wo = s["WorkOrder"]
+        mat_doc = s["MaterialDoc"]
+        lot = s["InspectionLot"] or "N/A"
+        tickets.append({
+            "AreaID": AREA_COMMON,
+            "ComplaintTypeID": COMPLAINT_TYPE_BUG if idx % 2 == 0 else COMPLAINT_TYPE_CLARIFICATION,
+            "Priority": PRIORITY_CRITICAL,
+            "BriefDetails": f"Material Document {mat_doc} posting status for Heat {heat_no} / WO {wo}",
+            "Description": (
+                f"Production goods movement for Heat {heat_no} (Work Order {wo}) shows Material Document {mat_doc}. "
+                f"Finance reports that inventory balance does not reflect this material document in ERP. "
+                f"Please verify whether MaterialDocument {mat_doc} is recorded in MES_SAP_Production_Trn_Tbl for HeatNo {heat_no}."
+            ),
+            "ProblemCategory": "SAP_INTEGRATION",
+            "SourceSystem": "Xbatch",
+            "ConversationSummary": f"User needs confirmation of Material Document {mat_doc} for Heat {heat_no} and WO {wo}.",
+            "SuspectedCause": f"Check dbo.MES_SAP_Production_Trn_Tbl for MaterialDocument = '{mat_doc}' and HeatNo = '{heat_no}'.",
+            "ExtractedEntitiesJson": {"HeatNo": heat_no, "WorkOrder": wo, "MaterialDocument": mat_doc},
+        })
+
+    # Category 5: Work Order Lifecycle & Progress (8 tickets)
+    for idx, w in enumerate(entities.get("work_orders", [])[:8]):
+        wo_num = w["WorkOrderNumber"]
+        qty = w["Quantity"]
+        status = w["Status"]
+        tickets.append({
+            "AreaID": AREA_COMMON,
+            "ComplaintTypeID": COMPLAINT_TYPE_CLARIFICATION if idx % 2 == 0 else COMPLAINT_TYPE_BUG,
+            "Priority": PRIORITY_CRITICAL,
+            "BriefDetails": f"Work Order {wo_num} current status and target quantity query",
+            "Description": (
+                f"Production scheduling dashboard displays Work Order {wo_num} with target quantity {qty} tons and status '{status}'. "
+                f"Mill planner needs confirmation whether this work order is still active or completed in the MES master table. "
+                f"Please verify the recorded Status and Quantity in XBatch_Work_Order_Mst_Tbl for WorkOrderNumber {wo_num}."
+            ),
+            "ProblemCategory": "WORK_ORDER",
+            "SourceSystem": "Xbatch",
+            "ConversationSummary": f"User wants to confirm the status and quantity for Work Order {wo_num}.",
+            "SuspectedCause": f"Check dbo.XBatch_Work_Order_Mst_Tbl for WorkOrderNumber = '{wo_num}'.",
+            "ExtractedEntitiesJson": {"WorkOrder": wo_num},
+        })
+
+    # Category 6: Plant Stoppages & Delays (8 tickets)
+    for idx, d in enumerate(entities.get("delays", [])[:8]):
+        heat_no = d["HeatNo"]
+        reason = d["Status"]
+        start_time = d["StartTime"]
+        tickets.append({
+            "AreaID": AREA_ROLLING if idx % 2 == 0 else AREA_EAF,
+            "ComplaintTypeID": COMPLAINT_TYPE_CLARIFICATION,
+            "Priority": PRIORITY_CRITICAL,
+            "BriefDetails": f"Delay inquiry: {reason} recorded on Heat {heat_no}",
+            "Description": (
+                f"OEE tracking recorded a stoppage '{reason}' on Heat {heat_no} starting at {start_time}. "
+                f"Shift superintendent wants to verify if the delay record has been formally completed and if "
+                f"the StartTime and EndTime are properly stored in Delay_Trn_Tbl for HeatNo {heat_no}."
+            ),
+            "ProblemCategory": "PERFORMANCE",
+            "SourceSystem": "Xbatch",
+            "ConversationSummary": f"User requests verification of delay '{reason}' logged on Heat {heat_no}.",
+            "SuspectedCause": f"Check dbo.Delay_Trn_Tbl for HeatNo = '{heat_no}' and Status = '{reason}'.",
+            "ExtractedEntitiesJson": {"HeatNo": heat_no},
+        })
+
+    # Category 7: Quality Chemistry & Spectro Analysis (8 tickets)
+    for idx, c in enumerate(entities.get("chemistry", [])[:8]):
+        heat_no = c["HeatNo"]
+        sample_type = c["SampleType"]
+        grade = c["Grade"]
+        c_val = c["C"]
+        si_val = c["Si"]
+        tickets.append({
+            "AreaID": AREA_COMMON,
+            "ComplaintTypeID": COMPLAINT_TYPE_BUG if idx % 2 == 0 else COMPLAINT_TYPE_CLARIFICATION,
+            "Priority": PRIORITY_CRITICAL,
+            "BriefDetails": f"Chemical composition verification for Heat {heat_no} ({sample_type} sample)",
+            "Description": (
+                f"Quality assurance lab reported chemistry for Heat {heat_no} (Grade {grade}, SampleType {sample_type}) "
+                f"showing Carbon={c_val} and Silicon={si_val}. Meltshop metallurgical engineer wants to verify whether "
+                f"these values match the official recorded values in Heat_Chemistry_Quality_Data for HeatNo {heat_no}."
+            ),
+            "ProblemCategory": "QUALITY",
+            "SourceSystem": "Xbatch",
+            "ConversationSummary": f"User wants to verify Carbon and Silicon spectro results for Heat {heat_no}.",
+            "SuspectedCause": f"Check dbo.Heat_Chemistry_Quality_Data for HeatNo = '{heat_no}' and SampleType = '{sample_type}'.",
+            "ExtractedEntitiesJson": {"HeatNo": heat_no},
+        })
+
+    return tickets
+
+
+def next_ticket_no(cur) -> int:
+    cur.execute("SELECT MAX(CAST(REPLACE(TicketNo,'Ticket_','') AS INT)) FROM Complaint_Mst_Tbl WHERE TicketNo LIKE 'Ticket_%'")
+    return (cur.fetchone()[0] or 0) + 1
+
+
+def existing_brief_details(cur) -> set:
+    cur.execute("SELECT BriefDetails FROM Complaint_Mst_Tbl")
+    return {row[0] for row in cur.fetchall() if row[0]}
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--server", default="10.2.6.204")
+    ap.add_argument("--database", default="XStudio_Helpdesk")
+    ap.add_argument("--xbatch-db", default="XStudio_Xbatch")
+    ap.add_argument("--username", default="sa")
+    ap.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+
+    print(f"Connecting to {args.server} (DB: {args.xbatch_db} for entities, {args.database} for tickets)...")
+    conn_xbatch = build_connection(args.server, args.xbatch_db, args.username, args.password)
+    try:
+        entities = load_real_entities(conn_xbatch)
+    finally:
+        conn_xbatch.close()
+
+    tickets = generate_tickets(entities)
+    print(f"Generated {len(tickets)} tickets across 7 categories using real plant entities.")
+
+    conn_hd = build_connection(args.server, args.database, args.username, args.password)
+    try:
+        cur = conn_hd.cursor()
+        ticket_no = next_ticket_no(cur)
+        already_seeded = existing_brief_details(cur)
+
+        created = 0
+        for t in tickets:
+            if t["BriefDetails"] in already_seeded:
+                print(f"Skipping (already exists): {t['BriefDetails']}")
+                continue
+
+            new_id = str(uuid.uuid4()).upper()
+            new_ticket_no = f"Ticket_{ticket_no}"
+            entities_json = json.dumps(t["ExtractedEntitiesJson"])
+
+            print(f"{'[DRY RUN] ' if args.dry_run else ''}Creating {new_ticket_no} (Priority={t['Priority']}): {t['BriefDetails']}")
+            if not args.dry_run:
+                cur.execute(
+                    """
+                    INSERT INTO Complaint_Mst_Tbl (
+                        ID, AreaID, CreatedBy, CreatedOn, ModifiedOn, IsDeleted, IsSystem,
+                        Source, ComplaintTypeID, Description, BriefDetails, Status, TicketNo,
+                        Priority, FirstLastName, ContactNo, EmailID, messages, AskStatus,
+                        ProblemCategory, SourceSystem, ConversationSummary, SuspectedCause,
+                        ExtractedEntitiesJson
+                    ) VALUES (
+                        ?, ?, NULL, GETDATE(), GETDATE(), 0, 0,
+                        'T-SQL', ?, ?, ?, 'Enter', ?,
+                        ?, 'Real Plant Ticket Test', '90000010', 'planttest@example.com', 'Enter', 'Enter',
+                        ?, ?, ?, ?,
+                        ?
+                    )
+                    """,
+                    new_id, t["AreaID"], t["ComplaintTypeID"], t["Description"], t["BriefDetails"], new_ticket_no,
+                    t["Priority"], t["ProblemCategory"], t["SourceSystem"], t["ConversationSummary"],
+                    t["SuspectedCause"], entities_json,
+                )
+            ticket_no += 1
+            created += 1
+
+        if not args.dry_run:
+            conn_hd.commit()
+            print(f"\nSuccessfully created {created} real plant ticket(s) (skipped {len(tickets) - created} existing).")
+        else:
+            print(f"\n[DRY RUN] Would create {created} ticket(s) (would skip {len(tickets) - created} existing).")
+    finally:
+        conn_hd.close()
+
+
+if __name__ == "__main__":
+    main()

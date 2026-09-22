@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Windows-side bridge for the xstudio_l2 Hermes plugin.
+"""Guarded SQL bridge for the xstudio_l2 Hermes plugin.
 
 A JSON request arrives on stdin; a bounded JSON response leaves on stdout.
 
 This file is the only L2 worker-facing place that knows how to import the
-Windows pyodbc-backed Hermes_Orchestrator module. Keeping that knowledge here
+pyodbc-backed Hermes_Orchestrator module. Keeping that knowledge here
 is the whole point: the model never composes an interpreter path, a driver
 import, a credential, or a connection string, so it cannot repeat the
 Ticket_424 failure of trying to build that transport itself.
@@ -37,11 +37,10 @@ if str(REPO_ROOT) not in sys.path:
 def _orchestrator():
     """Import the guarded orchestrator primitives lazily.
 
-    Deliberately not a module-level import. This file runs under the Windows
-    interpreter (the only one with pyodbc), but its pure guard logic --
+    Deliberately not a module-level import. Its pure guard logic --
     read-only checking, the procedure allowlist, response bounding -- is also
-    exercised by the WSL-side contract tests, where pyodbc does not exist by
-    design. A lazy import keeps those testable and turns a missing driver into
+    exercised without a live database dependency. A lazy import keeps those
+    testable and turns a missing driver into
     a clean JSON error instead of an import traceback.
     """
     import Hermes_Orchestrator  # noqa: PLC0415
@@ -67,6 +66,21 @@ MAX_STRING_CHARS = 6000
 SAFE_READ_PROCEDURES: dict[str, set[str]] = {
     "XMES_Get_API_Transaction_Summary": {"APIType"},
 }
+
+# Curated, read-only heat surfaces used by the deterministic resolver. The
+# worker can ask for one resolver call instead of spending several turns
+# guessing whether a ticket's H-prefixed identifier maps to a numeric key.
+HEAT_RESOLUTION_SURFACES: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("dbo.XMES_CCM_Billet_Genealogy_Trn_Tbl", ("HeatNo", "StrandNo"), ("HeatNo",)),
+    ("dbo.XStudio_List_XMES_CCM_Billet_Genealogy_Trn_Tbl_Vw", ("HeatNo", "StrandNo"), ("HeatNo",)),
+    ("dbo.CCM_Per_Heat", ("HeatID", "Strand1BilletCounter", "Strand2BilletCounter",
+                           "Strand3BilletCounter", "Strand4BilletCounter",
+                           "Strand5BilletCounter", "Strand6BilletCounter"), ("HeatID",)),
+    ("dbo.XStudio_List_CCM_Per_Heat_Vw", ("HeatNo", "HeatID", "Strand1BilletCounter",
+                                            "Strand2BilletCounter", "Strand3BilletCounter",
+                                            "Strand4BilletCounter", "Strand5BilletCounter",
+                                            "Strand6BilletCounter"), ("HeatNo", "HeatID")),
+)
 
 _WRITE_OR_EXEC = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|EXEC|EXECUTE|MERGE|CREATE|GRANT|REVOKE|DENY)\b",
@@ -358,24 +372,239 @@ def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
 
     assignments = ", ".join(f"@{name} = N'{_escape_sql_string(parameters[name])}'" for name in sorted(allowed_params))
     sql = f"EXEC [dbo].[{procedure}] {assignments};"
-    raw = client.execute_sql(
-        run_id=run_id,
-        database_name=database,
-        action_type="READ",
-        sql=sql,
+    audit_operation = procedure
+    if req.get("evidence_role") == "reviewer":
+        audit_operation = f"review_{procedure}"
+    action_id, result = client.execute_readonly_sql_with_rows(
+        run_id=run_id, database_name=database, sql=sql,
         schema_name="dbo",
         object_name=procedure,
-        operation_name=procedure,
+        operation_name=audit_operation,
         purpose="Typed L2 allowlisted diagnostic procedure",
         parameters_json=parameters,
-        use_transaction=False,
     )
-    try:
-        result: Any = json.loads(raw) if isinstance(raw, str) else raw
-    except json.JSONDecodeError:
-        result = raw
+    result = result[:MAX_LIST_ITEMS]
+    if action_id:
+        client.update_sql_action_evidence(action_id, after_json=result)
     return {"ok": True, "operation": "read_procedure", "database": database,
-            "procedure": procedure, "result": result}
+            "procedure": procedure, "result": result,
+            "evidence_refs": [{"action_id": action_id, "operation": audit_operation}]}
+
+
+def _heat_id(value: Any) -> int:
+    raw = str(value).strip()
+    if raw[:1].upper() == "H":
+        raw = raw[1:]
+    if not raw.isdigit():
+        raise ValueError("heat must be a numeric heat identifier, optionally prefixed with H")
+    return int(raw)
+
+
+def _semantic_read(client: Any, *, run_id: str, sql: str, parameters: tuple[Any, ...],
+                   operation_name: str, object_name: str, purpose: str) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Execute a reviewed fixed query and preserve a stable audited reference.
+
+    The model supplies no SQL.  `sql` is a code-owned recipe and its live read
+    uses DB-API parameters; audit text contains only normalized numeric input.
+    """
+    audit_sql = sql.replace("?", str(parameters[0])) if parameters else sql
+    # The Helpdesk audit SP executes this fixed SELECT in XStudio_Xbatch and
+    # returns both its rows and action ID.  Do not repeat it on the bridge's
+    # Helpdesk connection: that was both a duplicate read and the source of
+    # false "invalid object" errors against the wrong database.
+    action_id, rows = client.execute_readonly_sql_with_rows(
+        run_id=run_id, database_name="XStudio_Xbatch", sql=audit_sql,
+        schema_name="dbo", object_name=object_name, operation_name=operation_name,
+        purpose=purpose, parameters_json={"heat": parameters[0]} if parameters else {},
+    )
+    if action_id:
+        client.update_sql_action_evidence(action_id, after_json=rows[:MAX_LIST_ITEMS])
+    return rows[:MAX_LIST_ITEMS], {"action_id": action_id, "operation": operation_name}
+
+
+def _semantic_text_read(client: Any, *, run_id: str, sql: str, value: str,
+                        parameter_name: str, operation_name: str,
+                        object_name: str, purpose: str) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Execute one fixed text-key recipe after strict identifier validation.
+
+    The audit stored procedure accepts SQL text rather than DB-API parameters,
+    so this boundary validates the tiny identifier alphabet and quotes it. The
+    model can choose an identifier, but cannot influence SQL structure.
+    """
+    normalized = str(value).strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", normalized):
+        raise ValueError(f"{parameter_name} must be 1-100 letters, digits, dot, dash, or underscore")
+    literal = "N'" + _escape_sql_string(normalized) + "'"
+    action_id, rows = client.execute_readonly_sql_with_rows(
+        run_id=run_id, database_name="XStudio_Xbatch", sql=sql.replace("?", literal),
+        schema_name="dbo", object_name=object_name, operation_name=operation_name,
+        purpose=purpose, parameters_json={parameter_name: normalized},
+    )
+    bounded = rows[:MAX_LIST_ITEMS]
+    if action_id:
+        client.update_sql_action_evidence(action_id, after_json=bounded)
+    return bounded, {"action_id": action_id, "operation": operation_name}
+
+
+def _heat_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    if _database(req) != "XStudio_Xbatch":
+        raise ValueError("heat_context is allowlisted only for database=XStudio_Xbatch")
+    run_id = str(_require(req, "run_id"))
+    heat = _heat_id(_require(req, "heat"))
+    recipes = (
+        ("eaf", "EAF_PER_HEAT", "l2_heat_eaf", "Canonical EAF state for heat",
+         "SELECT TOP 3 HeatID, Status, StartTime, EndTime, ModifiedOn FROM dbo.EAF_PER_HEAT WHERE HeatID = ? ORDER BY ModifiedOn DESC"),
+        ("lrf", "LRF_Per_Heat", "l2_heat_lrf", "Canonical LRF state for heat",
+         "SELECT TOP 3 HeatID, Status, StartTime, EndTime, WorkOrder, SAPWorkflowStatus, ModifiedOn FROM dbo.LRF_Per_Heat WHERE HeatID = ? ORDER BY ModifiedOn DESC"),
+        ("ccm", "CCM_Per_Heat", "l2_heat_ccm", "Canonical CCM and billet counters for heat",
+         "SELECT TOP 3 HeatID, Status, StartTime, EndTime, TotalBilletsCount, TotalPostedBilletCount, Strand1BilletCounter, Strand2BilletCounter, Strand3BilletCounter, Strand4BilletCounter, Strand5BilletCounter, Strand6BilletCounter, ModifiedOn FROM dbo.CCM_Per_Heat WHERE HeatID = ? ORDER BY ModifiedOn DESC"),
+        ("work_orders", "XBatch_Work_Order_Mst_Tbl", "l2_heat_work_orders", "Work orders containing heat in the CSV HeatNo allocation",
+         "SELECT TOP 10 w.ID, w.WorkOrderNumber, w.HeatNo, w.Status, w.ManufacturingOrderCategory, w.MfgOrderCreationDate, w.ModifiedOn FROM dbo.XBatch_Work_Order_Mst_Tbl w CROSS APPLY STRING_SPLIT(ISNULL(w.HeatNo, ''), ',') h WHERE TRY_CONVERT(int, LTRIM(RTRIM(h.value))) = ? ORDER BY w.ModifiedOn DESC"),
+        ("sap_posting", "SAP_Posting_Tbl", "l2_heat_sap_posting", "Outbound SAP posting records for heat",
+         "SELECT TOP 10 ID, WorkOrderNo, HeatNo, SAP_Status, SAP_DocumentNo, SAP_Message, IsProcessed, PostingDate, PostingType, MovementType, BatchNo, Quantity, ModifiedOn FROM dbo.SAP_Posting_Tbl WHERE TRY_CONVERT(int, HeatNo) = ? ORDER BY ModifiedOn DESC"),
+        ("production", "MES_SAP_Production_Trn_Tbl", "l2_heat_sap_production", "MES production transactions for heat",
+         "SELECT TOP 10 ID, HeatNo, ManufacturingOrder, Batch, InspectionLot, MaterialDocument, Saptransactionid, SAPPostingStatus, QuantityInCount, BilletNo, PostingDate, ModifiedOn FROM dbo.MES_SAP_Production_Trn_Tbl WHERE HeatNo = ? ORDER BY ModifiedOn DESC"),
+        ("billet_genealogy", "XStudio_List_XMES_CCM_Billet_Genealogy_Trn_Tbl_Vw", "l2_heat_billet_genealogy", "Billet and per-strand sequence evidence for heat",
+         "SELECT TOP 25 ID, HeatNo, BilletNo, StrandNo, BilletSequence, StrandSequence, ChargeType, Status, CreatedOn FROM dbo.XStudio_List_XMES_CCM_Billet_Genealogy_Trn_Tbl_Vw WHERE TRY_CONVERT(int, HeatNo) = ? ORDER BY StrandNo, StrandSequence, BilletSequence"),
+    )
+    entities: dict[str, Any] = {}
+    evidence_refs: list[dict[str, str]] = []
+    operation_prefix = "review_" if req.get("evidence_role") == "reviewer" else ""
+    for key, object_name, operation, purpose, sql in recipes:
+        rows, ref = _semantic_read(client, run_id=run_id, sql=sql, parameters=(heat,),
+                                   operation_name=operation_prefix + operation, object_name=object_name, purpose=purpose)
+        entities[key] = rows
+        evidence_refs.append(ref)
+    return {"ok": True, "operation": "heat_context", "database": "XStudio_Xbatch",
+            "normalized_identifiers": {"heat": str(heat)}, "entities": entities,
+            "evidence_refs": evidence_refs,
+            "claim_guidance": "Rows establish observed state only. Absence in these surfaces does not prove API or trigger causation."}
+
+
+def _sap_api_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    if _database(req) != "XStudio_Xbatch":
+        raise ValueError("sap_api_context is allowlisted only for database=XStudio_Xbatch")
+    api_type = str(_require(req, "api_type")).strip()
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9 _-]{0,99}", api_type):
+        raise ValueError("api_type must be a short API name")
+    result = _read_procedure({"database": "XStudio_Xbatch", "run_id": _require(req, "run_id"),
+                              "procedure": "XMES_Get_API_Transaction_Summary", "parameters": {"APIType": api_type},
+                              "evidence_role": req.get("evidence_role")}, client)
+    identifier = str(req.get("identifier") or "").strip()
+    if identifier and result.get("ok"):
+        rows = list(result.get("result") or [])
+        needle = identifier.casefold()
+        result["unfiltered_row_count"] = len(rows)
+        result["result"] = [
+            row for row in rows
+            if needle in json.dumps(row, default=str, separators=(",", ":")).casefold()
+        ]
+    result["operation"] = "sap_api_context"
+    result["normalized_identifiers"] = {"api_type": api_type, "identifier": identifier or None}
+    result["claim_guidance"] = (
+        "Returned rows are live API evidence. An empty identifier match within this bounded summary "
+        "does not by itself prove the API was never invoked and never proves why it was absent."
+    )
+    return result
+
+
+def _work_order_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    if _database(req) != "XStudio_Xbatch":
+        raise ValueError("work_order_context is allowlisted only for database=XStudio_Xbatch")
+    run_id = str(_require(req, "run_id"))
+    work_order = str(_require(req, "work_order")).strip()
+    campaign = str(req.get("campaign") or "").strip()
+    recipes = (
+        ("campaign_work_order", "XStudio_XMes_Campaign_Plan_work_order_Vw",
+         "l2_work_order_campaign", "Canonical campaign/work-order projection by SAP or MES work-order number",
+         "SELECT TOP 10 ID, WorkOrderNumber, MESWorkOrderNumber, CampaignNo, CampaignId, Campaign_Status, Status, Equipment, ItemName, TotalQuantity, CreatedDate FROM dbo.XStudio_XMes_Campaign_Plan_work_order_Vw WHERE WorkOrderNumber = ? OR MESWorkOrderNumber = ? ORDER BY CreatedDate DESC"),
+        ("work_order_master", "XBatch_Work_Order_Mst_Tbl",
+         "l2_work_order_master", "Work-order master including internal ID, external number, CSV heat allocation and SAP state",
+         "SELECT TOP 10 ID, WorkOrderNumber, HeatNo, Status, SalesOrder, ManufacturingOrderCategory, SAPTransactionID, CampaignId, CreatedOn, ModifiedOn FROM dbo.XBatch_Work_Order_Mst_Tbl WHERE WorkOrderNumber = ? ORDER BY COALESCE(ModifiedOn, CreatedOn) DESC"),
+    )
+    entities: dict[str, Any] = {}
+    evidence_refs: list[dict[str, str]] = []
+    operation_prefix = "review_" if req.get("evidence_role") == "reviewer" else ""
+    for key, object_name, operation, purpose, sql in recipes:
+        rows, ref = _semantic_text_read(
+            client, run_id=run_id, sql=sql, value=work_order,
+            parameter_name="work_order", operation_name=operation_prefix + operation,
+            object_name=object_name, purpose=purpose,
+        )
+        entities[key] = rows
+        evidence_refs.append(ref)
+    if campaign:
+        rows, ref = _semantic_text_read(
+            client, run_id=run_id,
+            sql="SELECT TOP 10 ID, WorkOrderNumber, MESWorkOrderNumber, CampaignNo, CampaignId, Campaign_Status, Status, Equipment, ItemName, TotalQuantity, CreatedDate FROM dbo.XStudio_XMes_Campaign_Plan_work_order_Vw WHERE CampaignNo = ? ORDER BY CreatedDate DESC",
+            value=campaign, parameter_name="campaign", operation_name=operation_prefix + "l2_campaign_work_orders",
+            object_name="XStudio_XMes_Campaign_Plan_work_order_Vw",
+            purpose="Canonical campaign membership by external campaign number",
+        )
+        entities["campaign_membership"] = rows
+        evidence_refs.append(ref)
+    return {
+        "ok": True, "operation": "work_order_context", "database": "XStudio_Xbatch",
+        "normalized_identifiers": {"work_order": work_order, "campaign": campaign or None},
+        "entities": entities, "evidence_refs": evidence_refs,
+        "identifier_guidance": (
+            "ID is the internal work-order key; WorkOrderNumber/MESWorkOrderNumber are external identifiers. "
+            "HeatNo in XBatch_Work_Order_Mst_Tbl is a comma-separated allocation, not a scalar foreign key."
+        ),
+        "claim_guidance": "No matching row proves only absence from the checked live surfaces; it does not prove deletion, orphaning, or cause.",
+    }
+
+
+def _heat_candidates(value: str) -> list[str]:
+    raw = str(value).strip()
+    candidates = [raw]
+    if raw[:1].upper() == "H" and raw[1:].isdigit():
+        candidates.append(raw[1:])
+    elif raw.isdigit():
+        candidates.append(f"H{raw}")
+    return list(dict.fromkeys(candidates))
+
+
+def _resolve_heat(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    database = _database(req)
+    if database != "XStudio_Xbatch":
+        raise ValueError("resolve_heat is allowlisted only for database=XStudio_Xbatch")
+    heat = str(_require(req, "heat")).strip()
+    candidates = _heat_candidates(heat)
+    escaped = ", ".join(f"N'{_escape_sql_string(value)}'" for value in candidates)
+    orchestrator = _orchestrator()
+    matches: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for table, columns, key_columns in HEAT_RESOLUTION_SURFACES:
+        select_list = ", ".join(f"[{column}]" for column in columns)
+        key_expr = " OR ".join(
+            f"CONVERT(NVARCHAR(100), [{column}]) IN ({escaped})"
+            for column in key_columns
+        )
+        sql = f"SELECT TOP 25 {select_list} FROM [{database}].{table} WHERE {key_expr}"
+        try:
+            rows = orchestrator.run_readonly_query(
+                client, sql, database=database, run_id=req.get("run_id"))
+        except Exception as exc:  # a missing optional view must not hide other surfaces
+            errors.append({"table": table, "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        if rows:
+            matches.append({
+                "object": table,
+                "key_columns": list(key_columns),
+                "rows": len(rows),
+                "sample": rows[:MAX_LIST_ITEMS],
+            })
+    return {
+        "ok": True,
+        "operation": "resolve_heat",
+        "database": database,
+        "input": heat,
+        "candidates": candidates,
+        "matches": matches,
+        "checked_surfaces": [surface[0] for surface in HEAT_RESOLUTION_SURFACES],
+        "errors": errors,
+    }
 
 
 def _select(req: dict[str, Any], client: Any) -> dict[str, Any]:
@@ -440,10 +669,19 @@ def _find_objects(req: dict[str, Any], client: Any) -> dict[str, Any]:
 
 def _get_definition(req: dict[str, Any], client: Any) -> dict[str, Any]:
     database = str(_database(req))
+    schema = str(req.get("schema") or "dbo").strip("[]")
+    name = str(_require(req, "object_name"))
+    if "." in name:
+        parts = [part.strip().strip("[]") for part in name.split(".")]
+        if len(parts) != 2 or not all(parts):
+            raise ValueError("object_name must be an object or schema.object; specify database separately")
+        if req.get("schema") and schema.casefold() != parts[0].casefold():
+            raise ValueError("schema conflicts with qualified object_name")
+        schema, name = parts
     result = client.get_sql_object_definition(
         database_name=database,
-        schema_name=str(req.get("schema") or "dbo"),
-        object_name=str(_require(req, "object_name")),
+        schema_name=schema,
+        object_name=name.strip("[]"),
     )
     return {"ok": True, "operation": "get_definition", "database": database, "definition": result}
 
@@ -483,6 +721,10 @@ _CONNECTED_OPERATIONS = {
     "get_run_actions": _get_run_actions,
     "save_ledger": _save_ledger,
     "read_procedure": _read_procedure,
+    "heat_context": _heat_context,
+    "sap_api_context": _sap_api_context,
+    "work_order_context": _work_order_context,
+    "resolve_heat": _resolve_heat,
 }
 
 

@@ -5,3 +5,5 @@ author: AI Helpdesk / Hermes L2 project
 requires_env: []
 provides_hooks:
   - post_tool_call
+  - kanban_task_completed
+  - kanban_task_blocked

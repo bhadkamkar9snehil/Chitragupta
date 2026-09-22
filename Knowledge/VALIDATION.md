@@ -121,3 +121,23 @@ python3 Model_Bench/test_kb_retrieval.py
 ```
 
 Ticket-specific conclusions still require live evidence; routing-test success does not prove a production diagnosis.
+
+## GBrain knowledge maintenance
+
+Synchronize committed source, backfill stale embeddings, and run the retrieval gate:
+
+```bash
+bash Model_Bench/sync_gbrain_knowledge.sh
+```
+
+Run the read-only readiness and golden-case evaluation separately with:
+
+```bash
+python3 Model_Bench/validate_gbrain_knowledge.py
+```
+
+Production requires `source_id=xstudio-knowledge`, 100% embedding coverage, and
+zero failed retrieval cases. The backfill also re-embeds legacy chunks without a
+recorded embedding signature into the configured current model space. Maintenance indexes committed files only. It does not
+use the working tree, upgrade GBrain, extract atoms, delete source data, or invoke
+an LLM query-expansion path.

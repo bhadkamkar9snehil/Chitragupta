@@ -403,7 +403,16 @@ except ImportError:
     print("ERROR: pyodbc is required. Install with: pip install pyodbc", file=sys.stderr)
     sys.exit(1)
 
-DEFAULT_DRIVER = "ODBC Driver 17 for SQL Server"
+def select_default_driver(available: Optional[List[str]] = None) -> str:
+    """Select an installed Microsoft SQL Server driver, preferring v18."""
+    installed = available if available is not None else pyodbc.drivers()
+    for candidate in ("ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server"):
+        if candidate in installed:
+            return candidate
+    return "ODBC Driver 18 for SQL Server"
+
+
+DEFAULT_DRIVER = select_default_driver()
 DEFAULT_DATABASE = "XStudio_Helpdesk"
 
 
@@ -815,11 +824,62 @@ class HermesL2Client:
             "EXEC dbo.Hermes_L2_Update_SQL_Action_Evidence_Usp "
             "@ActionID = ?, @BeforeJson = ?, @AfterJson = ?, @HermesUserID = ?;",
             (action_id,
-             json.dumps(before_json) if before_json is not None else None,
-             json.dumps(after_json) if after_json is not None else None,
+             json.dumps(before_json, default=str) if before_json is not None else None,
+             json.dumps(after_json, default=str) if after_json is not None else None,
              self.hermes_user_id),
         )
         self.conn.commit()
+
+    def execute_readonly_sql_with_rows(
+        self,
+        run_id: str,
+        database_name: str,
+        sql: str,
+        *,
+        schema_name: Optional[str] = None,
+        object_name: Optional[str] = None,
+        operation_name: Optional[str] = None,
+        purpose: Optional[str] = None,
+        parameters_json: Optional[Any] = None,
+    ) -> tuple[str, List[Dict[str, Any]]]:
+        """Execute one audited, code-owned read and return its result rows.
+
+        ``Hermes_L2_Execute_SQL_Usp`` is the authority that switches to the
+        requested evidence database and records SUCCESS/FAILED.  Calling the
+        same SELECT again through this Helpdesk-connected client is wrong: it
+        silently changes the database context and doubles the evidence read.
+        This method consumes the procedure's first data result set and final
+        audit result in one execution.
+        """
+        params_json = json.dumps(parameters_json) if parameters_json is not None else None
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            DECLARE @ActionIDOut varchar(36);
+            EXEC dbo.Hermes_L2_Execute_SQL_Usp
+                @RunID = ?, @DatabaseName = ?, @ActionType = 'READ', @SchemaName = ?,
+                @ObjectName = ?, @OperationName = ?, @Purpose = ?, @Sql = ?,
+                @ParametersJson = ?, @BeforeJson = NULL, @UseTransaction = 0,
+                @HermesUserID = ?, @ActionID = @ActionIDOut OUTPUT;
+            """,
+            (run_id, database_name, schema_name, object_name, operation_name,
+             purpose, sql, params_json, self.hermes_user_id),
+        )
+        rows: List[Dict[str, Any]] = []
+        action_id: Optional[str] = None
+        while True:
+            if cur.description:
+                current = _rows_as_dicts(cur)
+                if current and "HermesActionID" in current[0]:
+                    action_id = str(current[-1]["HermesActionID"])
+                elif current:
+                    rows = current
+            if not cur.nextset():
+                break
+        self.conn.commit()
+        if not action_id:
+            raise RuntimeError("Hermes_L2_Execute_SQL_Usp returned no action ID")
+        return action_id, rows
 
     # -- Response / workflow ----------------------------------------------
 
@@ -830,6 +890,7 @@ class HermesL2Client:
                           new_ticket_status: Optional[str] = None,
                           new_ask_status: Optional[str] = None,
                           next_eligible_on: Optional[datetime] = None,
+                          approval_status: Optional[str] = None,
                           mirror_reply_to_support_remarks: bool = False,
                           mirror_question_to_ask_remarks: bool = False) -> None:
         """EXEC dbo.Hermes_L2_Publish_Response_Usp -- generic structured reply; prefer
@@ -842,11 +903,12 @@ class HermesL2Client:
                 @RunID = ?, @ResponseType = ?, @ReplyText = ?, @ProblemSummary = ?,
                 @Findings = ?, @RootCause = ?, @Resolution = ?, @InvestigationJson = ?,
                 @NewTicketStatus = ?, @NewAskStatus = ?, @NextEligibleOn = ?,
+                @ApprovalStatus = ?,
                 @MirrorReplyToSupportRemarks = ?, @MirrorQuestionToAskRemarks = ?,
                 @HermesUserID = ?;
             """,
             (run_id, response_type, reply_text, problem_summary, findings, root_cause,
-             resolution, inv_json, new_ticket_status, new_ask_status, next_eligible_on,
+             resolution, inv_json, new_ticket_status, new_ask_status, next_eligible_on, approval_status,
              mirror_reply_to_support_remarks, mirror_question_to_ask_remarks,
              self.hermes_user_id),
         )
@@ -1261,6 +1323,7 @@ def poll_and_claim(
     bot_label: Optional[str] = None,
     max_pipeline_wip: int = 8,
     persist_claim_state: bool = True,
+    ticket_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Deterministic, safe half of a cycle: recover stale runs, find candidates,
@@ -1278,7 +1341,11 @@ def poll_and_claim(
     result: Dict[str, Any] = {"status": "STARTED"}
     result["stale_runs_recovered"] = client.recover_stale_runs()
 
-    candidates = client.get_candidate_tickets(eligible_status_csv, batch_size=20)
+    candidates = client.get_candidate_tickets(
+        eligible_status_csv, batch_size=500 if ticket_id else 20,
+    )
+    if ticket_id:
+        candidates = [c for c in candidates if str(c.get("TicketID")) == str(ticket_id)]
     if not candidates:
         result["status"] = "NO_TICKETS"
         return result
@@ -1502,6 +1569,8 @@ def main() -> None:
     parser.add_argument("--new-ticket-status", default=None,
                          help="Real live Status value to move the ticket to, or omit to leave unchanged.")
     parser.add_argument("--new-ask-status", default=None)
+    parser.add_argument("--approval-status", choices=["APPROVED"], default=None,
+                         help="Deterministic review decision persisted with publication.")
     parser.add_argument("--mirror-to-support-remarks", action="store_true",
                          help="Also write --reply-text into Complaint_Mst_Tbl.SupportExecutiveRemarks.")
     parser.add_argument("--mirror-to-ask-remarks", action="store_true",
@@ -1686,6 +1755,7 @@ def main() -> None:
                 bot_label=args.bot_label,
                 max_pipeline_wip=args.max_pipeline_wip,
                 persist_claim_state=not args.no_local_claim_state,
+                ticket_id=args.ticket_id,
             )
             print(json.dumps(result, indent=2, default=str))
             return
@@ -2016,6 +2086,7 @@ def main() -> None:
                 investigation_json=ledger_obj,
                 new_ticket_status=args.new_ticket_status,
                 new_ask_status=args.new_ask_status,
+                approval_status=args.approval_status,
                 mirror_reply_to_support_remarks=args.mirror_to_support_remarks,
                 mirror_question_to_ask_remarks=args.mirror_to_ask_remarks,
             )

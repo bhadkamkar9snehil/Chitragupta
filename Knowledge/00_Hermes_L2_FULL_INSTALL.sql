@@ -283,6 +283,87 @@ END;
 GO
 
 /*
+Hermes_Agent_Trace_Trn_Tbl
+Platform-level evidence for every L2 model request and tool call. The observer
+plugin writes JSONL off the hot path; drain_l2_trace_log.py persists it through
+Hermes_Log_Agent_Trace_Usp. This table is deliberately separate from SQL actions:
+one records agent/computation turns, the other records live database evidence.
+*/
+IF OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Hermes_Agent_Trace_Trn_Tbl
+    (
+        ID                varchar(36)  NOT NULL CONSTRAINT DF_Hermes_Agent_Trace_ID DEFAULT (NEWID()),
+        Name              varchar(100) NULL,
+        ParentID          varchar(36)  NULL,
+        CreatedBy         varchar(36)  NULL,
+        ModifiedBy        varchar(36)  NULL,
+        CreatedOn         datetime     NULL CONSTRAINT DF_Hermes_Agent_Trace_CreatedOn DEFAULT (GETDATE()),
+        ModifiedOn        datetime     NULL,
+        IsDeleted         bit          NULL CONSTRAINT DF_Hermes_Agent_Trace_IsDeleted DEFAULT (0),
+        IsSystem          bit          NULL CONSTRAINT DF_Hermes_Agent_Trace_IsSystem DEFAULT (0),
+        AssignedUserID    varchar(36)  NULL,
+        HostAddress       varchar(100) NULL,
+        DbSyncStatus      varchar(500) NULL,
+        MobileSyncStatus  varchar(100) NULL,
+        Source            varchar(20)  NULL,
+        EventType         varchar(100) NOT NULL,
+        EventOn           datetime     NOT NULL,
+        TraceEventID      varchar(36)  NULL,
+        EventOnIst        datetimeoffset(3) NULL,
+        IngestedOnIst     datetimeoffset(3) NULL,
+        SessionID         varchar(100) NULL,
+        TaskID            varchar(100) NULL,
+        TurnID            varchar(100) NULL,
+        ToolCallID        varchar(100) NULL,
+        ApiRequestID      varchar(100) NULL,
+        ToolName          varchar(100) NULL,
+        Status            varchar(100) NULL,
+        DurationMs        int          NULL,
+        ArgsJson          varchar(max) NULL,
+        ResultJson        varchar(max) NULL,
+        ErrorMessage      varchar(max) NULL,
+        Model             varchar(100) NULL,
+        Provider          varchar(100) NULL,
+        UsageJson         varchar(max) NULL,
+        RunID             varchar(36)  NULL,
+        TicketID          varchar(36)  NULL,
+        CONSTRAINT PK_Hermes_Agent_Trace_Trn PRIMARY KEY CLUSTERED (ID)
+    );
+END;
+GO
+
+IF COL_LENGTH('dbo.Hermes_Agent_Trace_Trn_Tbl', 'TraceEventID') IS NULL
+    ALTER TABLE dbo.Hermes_Agent_Trace_Trn_Tbl ADD TraceEventID varchar(36) NULL;
+IF COL_LENGTH('dbo.Hermes_Agent_Trace_Trn_Tbl', 'EventOnIst') IS NULL
+    ALTER TABLE dbo.Hermes_Agent_Trace_Trn_Tbl ADD EventOnIst datetimeoffset(3) NULL;
+IF COL_LENGTH('dbo.Hermes_Agent_Trace_Trn_Tbl', 'IngestedOnIst') IS NULL
+    ALTER TABLE dbo.Hermes_Agent_Trace_Trn_Tbl ADD IngestedOnIst datetimeoffset(3) NULL;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl') AND name = 'UX_Hermes_Agent_Trace_TraceEventID')
+    CREATE UNIQUE NONCLUSTERED INDEX UX_Hermes_Agent_Trace_TraceEventID
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(TraceEventID)
+        WHERE TraceEventID IS NOT NULL;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl') AND name = 'IX_Hermes_Agent_Trace_RunEvent')
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_RunEvent
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(RunID, EventOn)
+        INCLUDE (TicketID, EventType, SessionID, TaskID, ToolName, Status);
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl') AND name = 'IX_Hermes_Agent_Trace_TicketEvent')
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_TicketEvent
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(TicketID, EventOn)
+        WHERE TicketID IS NOT NULL;
+END;
+GO
+
+/*
 Hermes_L3_Escalation_Trn_Tbl
 Closes a real gap: Hermes_L2_Escalate_L3_Usp today only writes a text reply into
 Complaint_Mst_Tbl.SupportExecutiveRemarks / Hermes_L2_Response_Trn_Tbl -- there is no
@@ -2627,8 +2708,85 @@ BEGIN
     ORDER BY ActionNo;
 END;
 GO
+
+-- Operator correction is intentionally outside the worker tool allowlist.
+-- Historical proposals and replies remain unchanged; a Reopen activity records
+-- the invalidated resolution and makes the current ticket eligible again.
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Reopen_Invalid_Resolution_Usp
+(
+    @RunID varchar(36),
+    @Reason nvarchar(max),
+    @ExpectedClosedStatus varchar(50),
+    @EligibleStatus varchar(50),
+    @DryRun bit = 1
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    IF NULLIF(LTRIM(RTRIM(@Reason)), N'') IS NULL
+       OR NULLIF(@ExpectedClosedStatus, '') IS NULL OR NULLIF(@EligibleStatus, '') IS NULL
+       OR @ExpectedClosedStatus = @EligibleStatus
+        THROW 51000, 'Reason and distinct live-verified status bindings are required.', 1;
+    BEGIN TRY
+        BEGIN TRANSACTION;
+        DECLARE @TicketID varchar(36), @Status varchar(50), @Resolved bit, @Snapshot nvarchar(max);
+        SELECT @TicketID = TicketID, @Resolved = IsResolved
+        FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+        WHERE ID = @RunID AND IsDeleted = 0 AND IsActive = 0
+          AND ProcessStatus = 'COMPLETED' AND ResponseType = 'RESOLUTION';
+        IF @TicketID IS NULL THROW 51000, 'Completed inactive resolution run not found.', 1;
+        IF EXISTS (SELECT 1 FROM dbo.Hermes_Ticket_Activity_Trn_Tbl
+                   WHERE RunID = @RunID AND ActivityType = 'Reopen'
+                     AND ActorName = 'Hermes resolution audit' AND IsDeleted = 0)
+        BEGIN
+            SELECT @RunID AS RunID, 'ALREADY_CORRECTED' AS Outcome;
+            COMMIT;
+            RETURN;
+        END;
+        SELECT @Status = Status FROM dbo.Complaint_Mst_Tbl WITH (UPDLOCK, HOLDLOCK)
+        WHERE ID = @TicketID AND ISNULL(IsDeleted, 0) = 0;
+        IF @Status IS NULL OR @Status <> @ExpectedClosedStatus OR ISNULL(@Resolved, 0) <> 1
+            THROW 51000, 'Ticket/run no longer matches the inspected closed resolution.', 1;
+        IF EXISTS (SELECT 1 FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+                   WHERE TicketID = @TicketID AND IsDeleted = 0 AND IsActive = 1)
+            THROW 51000, 'An active run protects this ticket.', 1;
+        IF @RunID <> (SELECT TOP (1) ID FROM dbo.Hermes_L2_Response_Trn_Tbl
+                      WHERE TicketID = @TicketID AND IsDeleted = 0 ORDER BY CreatedOn DESC, AttemptNo DESC)
+            THROW 51000, 'A newer run exists; inspect it before correction.', 1;
+        SELECT @Snapshot = (SELECT @Reason AS reason, r.ReplyText, r.InvestigationJson,
+                                   c.Solution, c.SupportExecutiveRemarks
+                            FROM dbo.Hermes_L2_Response_Trn_Tbl r
+                            JOIN dbo.Complaint_Mst_Tbl c ON c.ID = r.TicketID
+                            WHERE r.ID = @RunID FOR JSON PATH, WITHOUT_ARRAY_WRAPPER);
+        IF @DryRun = 0
+        BEGIN
+            INSERT dbo.Hermes_Ticket_Activity_Trn_Tbl
+                (TicketID, RunID, ActivityType, ActorType, ActorName, NoteText, OldValue, NewValue, IsCustomerVisible, Source)
+            VALUES (@TicketID, @RunID, 'Reopen', 'System', 'Hermes resolution audit',
+                    @Snapshot, @ExpectedClosedStatus, @EligibleStatus, 0, 'T-SQL');
+            UPDATE dbo.Complaint_Mst_Tbl
+            SET Status = @EligibleStatus, Solution = NULL,
+                SupportExecutiveRemarks = CONVERT(varchar(max), N'Reopened after resolution audit: ' + @Reason),
+                ModifiedOn = GETDATE(), Source = 'T-SQL'
+            WHERE ID = @TicketID;
+            UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+            SET IsResolved = 0, ModifiedOn = GETDATE()
+            WHERE ID = @RunID;
+        END;
+        SELECT @RunID AS RunID, @TicketID AS TicketID, @Status AS OldStatus,
+               @EligibleStatus AS NewStatus, @DryRun AS DryRun;
+        COMMIT;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK;
+        THROW;
+    END CATCH;
+END;
 GO
 
 CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Publish_Response_Usp
@@ -2644,6 +2802,7 @@ CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Publish_Response_Usp
     @NewTicketStatus              varchar(50) = NULL,
     @NewAskStatus                 varchar(50) = NULL,
     @NextEligibleOn               datetime = NULL,
+    @ApprovalStatus               varchar(50) = NULL,
     @MirrorReplyToSupportRemarks  bit = 0,
     @MirrorQuestionToAskRemarks   bit = 0,
     @HermesUserID                 varchar(36) = NULL
@@ -2676,6 +2835,12 @@ BEGIN
     IF NULLIF(LTRIM(RTRIM(@ReplyText)), N'') IS NULL
     BEGIN
         RAISERROR('ReplyText is required.', 16, 1);
+        RETURN;
+    END;
+
+    IF @ApprovalStatus IS NOT NULL AND @ApprovalStatus <> 'APPROVED'
+    BEGIN
+        RAISERROR('ApprovalStatus must be APPROVED when supplied.', 16, 1);
         RETURN;
     END;
 
@@ -2778,6 +2943,7 @@ BEGIN
             RootCause = COALESCE(@RootCause, RootCause),
             Resolution = COALESCE(@Resolution, Resolution),
             ReplyText = @ReplyText,
+            ApprovalStatus = COALESCE(@ApprovalStatus, ApprovalStatus),
             InvestigationJson = COALESCE(@InvestigationJson, InvestigationJson),
             ActionsTakenJson = @AutoActionsJson,
             RequiresUserInput = CASE WHEN @ResponseType = 'QUESTION' THEN 1 ELSE 0 END,
@@ -2976,19 +3142,12 @@ END;
 GO
 
 /*
-  2026-09-04: pure-visibility escalation for a run that hit a genuine
-  kanban_block (capability gap -- ambiguous schema, missing data, etc.)
-  while a live kanban task still tracks it. Deliberately does NOT touch
-  Hermes_L2_Response_Trn_Tbl or the ticket's own Status/AskStatus -- unlike
-  Hermes_L2_Escalate_L3_Usp / Hermes_L2_Publish_Response_Usp, this does not
-  complete or fail the run; Kanban is still free to retry it. Its only job
-  is making sure a human sees the block reason and what was actually
-  checked, instead of the task sitting silently 'blocked' forever with
-  zero visibility -- confirmed live 2026-09-04: a ticket sat blocked 3+
-  hours on a real, unresolved schema ambiguity with no escalation of any
-  kind. Guarded by the same NOT EXISTS pattern as the other L3 insert so a
-  run already escalated (by this path or the ResponseType='L3_ESCALATION'
-  path) is never double-inserted.
+  Compatibility repair entrypoint only.  A normal kanban_block is a review
+  or rework signal, never an L3 decision.  The deterministic publisher owns
+  new escalation creation after the bounded review cycle; this procedure can
+  only repair a missing queue row for an already-published terminal L3
+  outcome.  That prevents a direct/legacy caller from reintroducing phantom
+  Open L3 rows for ordinary reviewer blocks.
 */
 CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Log_Blocked_Escalation_Usp
 (
@@ -3001,6 +3160,21 @@ CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Log_Blocked_Escalation_Usp
 AS
 BEGIN
     SET NOCOUNT ON;
+
+    IF NOT EXISTS
+    (
+        SELECT 1
+        FROM dbo.Hermes_L2_Response_Trn_Tbl
+        WHERE ID = @RunID
+          AND TicketID = @TicketID
+          AND IsDeleted = 0
+          AND ProcessStatus = 'COMPLETED'
+          AND ResponseType IN ('L3_ESCALATION', 'NEEDS_HUMAN_ACTION')
+    )
+    BEGIN
+        RAISERROR('Refusing blocked escalation without a deterministic terminal L3 outcome.', 16, 1);
+        RETURN;
+    END;
 
     IF EXISTS (SELECT 1 FROM dbo.Hermes_L3_Escalation_Trn_Tbl WHERE RunID = @RunID AND IsDeleted = 0)
         RETURN;
@@ -3017,7 +3191,11 @@ BEGIN
         'Automated investigation blocked on a genuine capability gap -- needs human review.',
         'UNRESOLVED', @HermesUserID, 'T-SQL'
     FROM dbo.Complaint_Mst_Tbl c
-    LEFT JOIN dbo.Hermes_L2_Response_Trn_Tbl r ON r.ID = @RunID
+    INNER JOIN dbo.Hermes_L2_Response_Trn_Tbl r ON r.ID = @RunID
+        AND r.TicketID = @TicketID
+        AND r.IsDeleted = 0
+        AND r.ProcessStatus = 'COMPLETED'
+        AND r.ResponseType IN ('L3_ESCALATION', 'NEEDS_HUMAN_ACTION')
     WHERE c.ID = @TicketID;
 
     /*
@@ -3329,6 +3507,8 @@ transaction, and the source is a trusted local process, not user input.
 */
 CREATE OR ALTER PROCEDURE dbo.Hermes_Log_Agent_Trace_Usp
 (
+    @TraceEventID       varchar(36) = NULL,
+    @EventOnIst         datetimeoffset(3) = NULL,
     @EventType          varchar(50),
     @EventOn            datetime,
     @SessionID          varchar(100) = NULL,
@@ -3357,12 +3537,18 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    IF @TraceEventID IS NULL OR NOT EXISTS
+    (
+        SELECT 1
+        FROM dbo.Hermes_Agent_Trace_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+        WHERE TraceEventID = @TraceEventID
+    )
     INSERT INTO dbo.Hermes_Agent_Trace_Trn_Tbl
-        (EventType, EventOn, SessionID, TaskID, TurnID, ToolCallID, ApiRequestID,
+        (TraceEventID, EventOnIst, IngestedOnIst, EventType, EventOn, SessionID, TaskID, TurnID, ToolCallID, ApiRequestID,
          ToolName, Status, DurationMs, ArgsJson, ResultJson, ErrorMessage,
          Model, Provider, UsageJson, RunID, TicketID, Source)
     VALUES
-        (@EventType, @EventOn, @SessionID, @TaskID, @TurnID, @ToolCallID, @ApiRequestID,
+        (@TraceEventID, @EventOnIst, SYSDATETIMEOFFSET() AT TIME ZONE 'India Standard Time', @EventType, @EventOn, @SessionID, @TaskID, @TurnID, @ToolCallID, @ApiRequestID,
          @ToolName, @Status, @DurationMs, @ArgsJson, @ResultJson, @ErrorMessage,
          @Model, @Provider, @UsageJson, @RunID, @TicketID, 'T-SQL');
 END;
@@ -3843,12 +4029,33 @@ GO
 
 CREATE VIEW dbo.Hermes_L2_Compute_Per_Ticket_Vw
 AS
+WITH ResolvedTaskContext AS (
+    SELECT TaskID, MAX(RunID) AS RunID, MAX(TicketID) AS TicketID
+    FROM dbo.Hermes_Agent_Trace_Trn_Tbl
+    WHERE IsDeleted = 0
+      AND EventType = 'trace_context'
+      AND Status = 'resolved'
+      AND RunID IS NOT NULL
+      AND TicketID IS NOT NULL
+    GROUP BY TaskID
+),
+NormalizedTrace AS (
+    SELECT t.*,
+           COALESCE(t.RunID, c.RunID) AS EffectiveRunID,
+           COALESCE(t.TicketID, c.TicketID) AS EffectiveTicketID
+    FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+    LEFT JOIN ResolvedTaskContext c ON c.TaskID = t.TaskID
+    WHERE t.IsDeleted = 0
+)
 SELECT
-    t.TicketID,
-    t.RunID,
+    t.EffectiveTicketID AS TicketID,
+    t.EffectiveRunID AS RunID,
     COUNT(DISTINCT t.SessionID)                                   AS SessionCount,
     COUNT(*)                                                      AS TotalTraceEvents,
     SUM(CASE WHEN t.EventType = 'pre_tool_call' THEN 1 ELSE 0 END)  AS ToolCallCount,
+    SUM(CASE WHEN t.EventType = 'post_tool_call' AND t.Status = 'ok' THEN 1 ELSE 0 END) AS ToolSuccessCount,
+    SUM(CASE WHEN t.EventType = 'post_tool_call' AND t.Status = 'error' THEN 1 ELSE 0 END) AS ToolErrorCount,
+    SUM(CASE WHEN t.EventType = 'post_tool_call' AND t.Status = 'blocked' THEN 1 ELSE 0 END) AS BlockedToolCallCount,
     SUM(CASE WHEN t.EventType = 'post_api_request' THEN 1 ELSE 0 END) AS ApiRequestCount,
     SUM(CASE WHEN t.EventType = 'api_request_error' THEN 1 ELSE 0 END) AS ApiRequestErrorCount,
     SUM(CASE WHEN u.[key] = 'total_tokens' THEN TRY_CAST(u.[value] AS int) ELSE 0 END) AS TotalTokens,
@@ -3857,15 +4064,113 @@ SELECT
     SUM(CASE WHEN t.EventType = 'post_tool_call' THEN t.DurationMs ELSE 0 END) AS ToolCallDurationMsTotal,
     MIN(t.EventOn)                                                AS FirstEventOn,
     MAX(t.EventOn)                                                AS LastEventOn,
-    DATEDIFF(SECOND, MIN(t.EventOn), MAX(t.EventOn))              AS WallClockSeconds
-FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+    DATEDIFF(SECOND, MIN(t.EventOn), MAX(t.EventOn))              AS WallClockSeconds,
+    MIN(t.EventOnIst)                                             AS FirstEventOnIst,
+    MAX(t.EventOnIst)                                             AS LastEventOnIst,
+    MIN(t.IngestedOnIst)                                          AS IngestedFirstOnIst,
+    MAX(t.IngestedOnIst)                                          AS IngestedLastOnIst,
+    DATEDIFF(SECOND, MIN(t.EventOnIst), MAX(t.EventOnIst))        AS IstWallClockSeconds
+FROM NormalizedTrace t
 OUTER APPLY (
     SELECT [key], [value]
     FROM OPENJSON(t.UsageJson)
     WHERE ISJSON(t.UsageJson) = 1 AND [key] IN ('prompt_tokens', 'completion_tokens', 'total_tokens')
 ) u
-WHERE t.IsDeleted = 0 AND t.TicketID IS NOT NULL
-GROUP BY t.TicketID, t.RunID;
+WHERE t.EventType <> 'trace_context' AND t.EffectiveTicketID IS NOT NULL
+GROUP BY t.EffectiveTicketID, t.EffectiveRunID;
+GO
+
+IF OBJECT_ID('dbo.Hermes_L2_Compute_Per_Profile_Vw', 'V') IS NOT NULL
+    DROP VIEW dbo.Hermes_L2_Compute_Per_Profile_Vw;
+GO
+
+CREATE VIEW dbo.Hermes_L2_Compute_Per_Profile_Vw
+AS
+WITH ResolvedTaskContext AS (
+    SELECT TaskID, MAX(RunID) AS RunID, MAX(TicketID) AS TicketID
+    FROM dbo.Hermes_Agent_Trace_Trn_Tbl
+    WHERE IsDeleted = 0
+      AND EventType = 'trace_context'
+      AND Status = 'resolved'
+      AND RunID IS NOT NULL
+      AND TicketID IS NOT NULL
+    GROUP BY TaskID
+),
+NormalizedTrace AS (
+    SELECT t.*,
+           COALESCE(t.RunID, c.RunID) AS EffectiveRunID,
+           COALESCE(t.TicketID, c.TicketID) AS EffectiveTicketID
+    FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+    LEFT JOIN ResolvedTaskContext c ON c.TaskID = t.TaskID
+    WHERE t.IsDeleted = 0
+)
+SELECT
+    t.EffectiveTicketID AS TicketID,
+    t.EffectiveRunID AS RunID,
+    COALESCE(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.profile_name'), 'unknown') AS ProfileName,
+    COUNT(DISTINCT t.SessionID) AS SessionCount,
+    SUM(CASE WHEN t.EventType = 'pre_tool_call' THEN 1 ELSE 0 END) AS ToolCallCount,
+    SUM(CASE WHEN t.EventType = 'post_tool_call' AND t.Status = 'ok' THEN 1 ELSE 0 END) AS ToolSuccessCount,
+    SUM(CASE WHEN t.EventType = 'post_tool_call' AND t.Status = 'error' THEN 1 ELSE 0 END) AS ToolErrorCount,
+    SUM(CASE WHEN t.EventType = 'post_tool_call' AND t.Status = 'blocked' THEN 1 ELSE 0 END) AS BlockedToolCallCount,
+    SUM(CASE WHEN t.EventType = 'post_api_request' THEN 1 ELSE 0 END) AS ModelTurnCount,
+    SUM(CASE WHEN t.EventType = 'api_request_error' THEN 1 ELSE 0 END) AS ModelErrorCount,
+    SUM(CASE WHEN u.[key] = 'total_tokens' THEN TRY_CAST(u.[value] AS bigint) ELSE 0 END) AS TotalTokens,
+    SUM(CASE WHEN u.[key] = 'prompt_tokens' THEN TRY_CAST(u.[value] AS bigint) ELSE 0 END) AS PromptTokens,
+    SUM(CASE WHEN u.[key] IN ('completion_tokens', 'output_tokens') THEN TRY_CAST(u.[value] AS bigint) ELSE 0 END) AS OutputTokens,
+    AVG(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.ttft_ms') AS float)) AS AvgTtftMs,
+    SUM(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.api_duration_ms') AS bigint)) AS ApiDurationMsTotal,
+    MAX(TRY_CAST(COALESCE(
+        JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.gpu_mem_used_mb'),
+        JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.mem_used_mb')) AS int)) AS PeakGpuVramMb,
+    MAX(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.gpu_util_pct') AS int)) AS PeakGpuUtilPct,
+    MAX(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.cpu_util_pct') AS int)) AS PeakCpuUtilPct,
+    MAX(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.system_mem_used_mb') AS int)) AS PeakSystemMemoryMb,
+    MAX(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.lmstudio_working_set_mb') AS int)) AS PeakLmStudioWorkingSetMb,
+    MIN(t.EventOn) AS FirstEventOn,
+    MAX(t.EventOn) AS LastEventOn,
+    DATEDIFF(SECOND, MIN(t.EventOn), MAX(t.EventOn)) AS WallClockSeconds,
+    MIN(t.EventOnIst) AS FirstEventOnIst,
+    MAX(t.EventOnIst) AS LastEventOnIst,
+    MIN(t.IngestedOnIst) AS IngestedFirstOnIst,
+    MAX(t.IngestedOnIst) AS IngestedLastOnIst,
+    DATEDIFF(SECOND, MIN(t.EventOnIst), MAX(t.EventOnIst)) AS IstWallClockSeconds
+FROM NormalizedTrace t
+OUTER APPLY (
+    SELECT [key], [value]
+    FROM OPENJSON(t.UsageJson)
+    WHERE ISJSON(t.UsageJson) = 1
+      AND [key] IN ('prompt_tokens', 'completion_tokens', 'output_tokens', 'total_tokens')
+) u
+WHERE t.EventType <> 'trace_context' AND t.EffectiveRunID IS NOT NULL
+GROUP BY t.EffectiveTicketID, t.EffectiveRunID,
+    COALESCE(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.profile_name'), 'unknown');
+GO
+
+IF OBJECT_ID('dbo.Hermes_L2_Run_Observability_Vw', 'V') IS NOT NULL
+    DROP VIEW dbo.Hermes_L2_Run_Observability_Vw;
+GO
+
+CREATE VIEW dbo.Hermes_L2_Run_Observability_Vw
+AS
+SELECT
+    r.ID AS RunID,
+    r.TicketID,
+    r.ProcessStatus,
+    r.IsActive,
+    c.TotalTraceEvents,
+    c.ToolErrorCount,
+    c.BlockedToolCallCount,
+    c.FirstEventOnIst,
+    c.LastEventOnIst,
+    CASE
+        WHEN c.RunID IS NOT NULL THEN 'OBSERVED'
+        WHEN r.IsActive = 1 THEN 'PENDING'
+        ELSE 'GAP'
+    END AS ObservabilityStatus
+FROM dbo.Hermes_L2_Response_Trn_Tbl r
+LEFT JOIN dbo.Hermes_L2_Compute_Per_Ticket_Vw c ON c.RunID = r.ID
+WHERE r.IsDeleted = 0;
 GO
 
 

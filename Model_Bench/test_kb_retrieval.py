@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import sys
+import json
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -10,6 +12,14 @@ import kb_retrieval as kb  # noqa: E402
 
 
 MANIFEST = {
+    "gbrain": {
+        "source_id": "xstudio-knowledge", "allowed_slug_prefixes": ["knowledge/", "deploy/skills/xstudio/"],
+        "excluded_slug_prefixes": ["agent_comms/", "knowledge/eval/"], "excluded_slugs": ["knowledge/atlas/old"],
+        "candidate_limit": 12, "return_limit": 3, "snippet_chars": 600, "timeout_seconds": 20,
+        "min_retrieval_score": 0.70, "min_embedding_coverage_pct": 100.0,
+        "query_domain_terms": ["xbatch", "sap", "heat", "billet", "spectro", "work", "order", "delay", "hermes",
+                               "gradeid", "relationship", "cardinality"],
+    },
     "always_load": ["L2_PIPELINE_STATE_MACHINE.md"],
     "identifier_routing": {
         "HeatNo": ["heat_execution"],
@@ -37,6 +47,159 @@ MANIFEST = {
         },
     ],
 }
+
+
+class GBrainManifestTests(unittest.TestCase):
+    def test_production_manifest_has_bounded_source_scoped_gbrain_contract(self):
+        cfg = kb.load_manifest()["gbrain"]
+        self.assertEqual((cfg["source_id"], cfg["candidate_limit"], cfg["return_limit"]),
+                         ("xstudio-knowledge", 24, 3))
+        self.assertEqual((cfg["snippet_chars"], cfg["min_retrieval_score"], cfg["min_embedding_coverage_pct"]),
+                         (600, 0.70, 100.0))
+
+    def test_gbrain_contract_never_allows_non_authority_surfaces(self):
+        cfg = kb.load_manifest()["gbrain"]
+        self.assertIn("knowledge/", cfg["allowed_slug_prefixes"])
+        self.assertTrue({"agent_comms/", "plans/", "attachments/", ".env"} <= set(cfg["excluded_slug_prefixes"]))
+
+
+class _Result:
+    def __init__(self, stdout="", stderr="", returncode=0):
+        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
+
+
+class GBrainAdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.cfg = MANIFEST["gbrain"]
+
+    def test_status_requires_exact_source_full_coverage_and_drained_jobs(self):
+        payload = {"sources": [{"source_id": "xstudio-knowledge", "total_pages": 142,
+                    "total_chunks": 601, "embedded_chunks": 601, "embed_coverage_pct": 100,
+                    "failed_jobs_24h": 0, "queue_depth": 0}]}
+        status = kb.get_gbrain_status(self.cfg, runner=lambda *a, **k: _Result(json.dumps(payload)))
+        self.assertEqual(status["status"], "READY")
+
+    def test_gbrain_runner_adds_bun_to_non_login_path(self):
+        seen = {}
+        def runner(cmd, **kwargs):
+            seen.update(kwargs); return _Result('{"sources":[]}')
+        kb.get_gbrain_status(self.cfg, runner=runner)
+        self.assertTrue(seen["env"]["PATH"].startswith("/home/snehil/.bun/bin:"))
+
+    def test_status_reports_incomplete_embeddings(self):
+        payload = {"sources": [{"source_id": "xstudio-knowledge", "total_pages": 142,
+                    "total_chunks": 601, "embedded_chunks": 227, "embed_coverage_pct": 37.8,
+                    "failed_jobs_24h": 0, "queue_depth": 0}]}
+        status = kb.get_gbrain_status(self.cfg, runner=lambda *a, **k: _Result(json.dumps(payload)))
+        self.assertEqual(status["status"], "DEGRADED")
+
+    def test_search_is_scoped_bounded_and_filters_weak_or_forbidden_hits(self):
+        rows = [
+            {"slug":"agent_comms/old","source_id":"xstudio-knowledge","score":.99},
+            {"slug":"knowledge/xbatch-investigation-surfaces","source_id":"xstudio-knowledge",
+             "title":"Xbatch", "chunk_text":"SAP posting", "score":.91, "keyword_hit":True},
+            {"slug":"knowledge/weak","source_id":"xstudio-knowledge","score":.42},
+        ]
+        calls = []
+        def runner(cmd, **kwargs):
+            calls.append(cmd); return _Result(json.dumps(rows))
+        result = kb.retrieve_gbrain("SAP posting pending", self.cfg, runner=runner)
+        self.assertEqual(calls[0][calls[0].index("--source-id") + 1], "xstudio-knowledge")
+        self.assertEqual(calls[0][calls[0].index("--limit") + 1], "12")
+        self.assertEqual([h["slug"] for h in result["hits"]], ["knowledge/xbatch-investigation-surfaces"])
+
+    def test_search_uses_current_direct_gbrain_cli_contract(self):
+        calls = []
+        def runner(cmd, **kwargs):
+            calls.append(cmd); return _Result("[]")
+        kb.retrieve_gbrain("SAP posting pending", self.cfg, runner=runner)
+        self.assertEqual(calls[0][1:3], ["search", "SAP posting pending"])
+        self.assertIn("--source-id", calls[0])
+        self.assertIn("--json", calls[0])
+
+    def test_search_failure_and_weak_neighbour_abstain(self):
+        failed = kb.retrieve_gbrain("SAP", self.cfg, runner=lambda *a, **k: _Result(stderr="closed", returncode=1))
+        weak = kb.retrieve_gbrain("leave policy", self.cfg, runner=lambda *a, **k: _Result(json.dumps([
+            {"slug":"knowledge/weak","source_id":"xstudio-knowledge","score":.95, "evidence":"weak_semantic"}])) )
+        self.assertEqual((failed["status"], failed["hits"], weak["abstained"]), ("UNAVAILABLE", [], True))
+
+    def test_weak_semantic_label_is_accepted_only_with_two_literal_ticket_terms(self):
+        rows = [{"slug":"knowledge/work-order", "source_id":"xstudio-knowledge", "score":.90,
+                 "title":"Work order execution", "chunk_text":"campaign status", "evidence":"weak_semantic"}]
+        result = kb.retrieve_gbrain("work order missing", self.cfg,
+                                    runner=lambda *a, **k: _Result(json.dumps(rows)))
+        self.assertFalse(result["abstained"])
+
+    def test_keyword_exact_result_without_xstudio_domain_signal_abstains(self):
+        rows = [{"slug":"knowledge/atlas/xstudio_xbatch-recipe-hermes-runtime",
+                 "source_id":"xstudio-knowledge", "score":1.0,
+                 "title":"Inspect the audited run lifecycle",
+                 "chunk_text":"Run and Helpdesk state agree.",
+                 "evidence":"keyword_exact", "keyword_hit":True}]
+        result = kb.retrieve_gbrain(
+            "best wireless headphones for running",
+            self.cfg,
+            runner=lambda *a, **k: _Result(json.dumps(rows)),
+        )
+        self.assertTrue(result["abstained"])
+        self.assertEqual(result["hits"], [])
+
+    def test_specific_reference_outranks_redundant_recipe_pages(self):
+        rows = [
+            {"slug":f"knowledge/atlas/xstudio_xbatch-recipe-{name}",
+             "source_id":"xstudio-knowledge", "score":score,
+             "title":f"{name} recipe", "chunk_text":"spectro chemistry result inspection lot",
+             "evidence":"keyword_exact", "keyword_hit":True}
+            for name, score in (("quality", .99), ("sap-posting", .98), ("api-transaction", .97))
+        ] + [{
+            "slug":"knowledge/view_docs/xstudio_xbatch.xstudio_list_quality_spectro_result_vw",
+            "source_id":"xstudio-knowledge", "score":.90,
+            "title":"Quality spectro result view", "chunk_text":"inspection lot chemistry result",
+            "evidence":"keyword_exact", "keyword_hit":True,
+        }]
+        result = kb.retrieve_gbrain(
+            "spectro chemistry result missing for inspection lot",
+            self.cfg,
+            runner=lambda *a, **k: _Result(json.dumps(rows)),
+        )
+        self.assertEqual(
+            result["hits"][0]["slug"],
+            "knowledge/view_docs/xstudio_xbatch.xstudio_list_quality_spectro_result_vw",
+        )
+
+    def test_literal_identifier_coverage_reranks_semantic_candidates(self):
+        rows = [
+            {"slug":"knowledge/relationship-x", "source_id":"xstudio-knowledge", "score":.96,
+             "title":"Material grade relationships", "chunk_text":"XBatch_Material_Grade_Mst_Tbl GradeID",
+             "evidence":"weak_semantic"},
+            {"slug":"knowledge/relationship-b", "source_id":"xstudio-knowledge", "score":.82,
+             "title":"Billet inventory relationship", "chunk_text":
+             "Billet_Inventory GradeID XBatch_Material_Grade_Mst_Tbl cardinality",
+             "evidence":"weak_semantic"},
+        ]
+        result = kb.retrieve_gbrain(
+            "Billet_Inventory GradeID XBatch_Material_Grade_Mst_Tbl cardinality",
+            {**self.cfg, "return_limit": 1},
+            runner=lambda *a, **k: _Result(json.dumps(rows)),
+        )
+        self.assertEqual(["knowledge/relationship-b"], [hit["slug"] for hit in result["hits"]])
+
+    def test_exact_multi_identifier_relationship_survives_low_semantic_score(self):
+        rows = [
+            {"slug":"knowledge/relationship-neighbour", "source_id":"xstudio-knowledge", "score":1.0,
+             "title":"Material relationship", "chunk_text":
+             "GradeID XBatch_Material_Grade_Mst_Tbl cardinality", "evidence":"keyword_exact"},
+            {"slug":"knowledge/relationship-billet", "source_id":"xstudio-knowledge", "score":.51,
+             "title":"Billet inventory relationship", "chunk_text":
+             "Billet_Inventory GradeID XBatch_Material_Grade_Mst_Tbl cardinality",
+             "evidence":"weak_semantic"},
+        ]
+        result = kb.retrieve_gbrain(
+            "Billet_Inventory GradeID relationship to XBatch_Material_Grade_Mst_Tbl ID cardinality",
+            {**self.cfg, "return_limit": 1},
+            runner=lambda *a, **k: _Result(json.dumps(rows)),
+        )
+        self.assertEqual(["knowledge/relationship-billet"], [hit["slug"] for hit in result["hits"]])
 
 
 class RouteTests(unittest.TestCase):
@@ -232,6 +395,23 @@ class ArticleRankingTests(unittest.TestCase):
         self.assertEqual(ranked[0]["source_ref"], "Hermes_Solution_Article_Mst_Tbl:C")
         self.assertTrue(ranked[0]["verification_required"])
         self.assertGreaterEqual(len(ranked[0]["matched_terms"]), 2)
+
+
+class CombinedRetrievalTests(unittest.TestCase):
+    def test_retrieve_keeps_routes_solutions_and_gbrain_separate(self):
+        gbrain = {"status":"READY", "hits":[{"kb_id":"gbrain:x:y"}], "abstained":False}
+        with patch.object(kb, "fetch_articles", return_value=[]), patch.object(kb, "retrieve_gbrain", return_value=gbrain):
+            result = kb.retrieve(None, "heat issue", MANIFEST)
+        self.assertEqual(result["gbrain"], gbrain)
+        self.assertEqual(result["solutions"], [])
+        self.assertIn("route_candidates", result)
+
+    def test_gbrain_failure_preserves_routes_and_explicit_unavailability(self):
+        unavailable = {"status":"UNAVAILABLE", "hits":[], "abstained":True, "abstention_reason":"timeout"}
+        with patch.object(kb, "fetch_articles", return_value=[]), patch.object(kb, "retrieve_gbrain", return_value=unavailable):
+            result = kb.retrieve(None, "HeatNo H123", MANIFEST)
+        self.assertEqual(result["route_candidates"][0]["route"], "heat_execution")
+        self.assertEqual(result["gbrain"]["status"], "UNAVAILABLE")
 
 
 if __name__ == "__main__":

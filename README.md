@@ -163,6 +163,11 @@ Default profile: `l2-jev-investigator`.
 
 Most of the old context-understanding burden is completed before this profile sees the card. It receives:
 
+1. reads the dispatch bundle and live evidence;
+2. uses the named `xstudio_*` tools for database/schema/ticket/ledger work;
+3. treats KB/history/mem0 as leads rather than ticket-specific proof;
+4. records meaningful ticket-specific findings in the run ledger;
+5. completes its own Kanban card with structured metadata.
 - Jev ticket characterization;
 - canonical route/route skill;
 - deterministic real schema candidates;
@@ -206,6 +211,12 @@ Knowledge is deliberately separated by authority and lifetime:
 Git-tracked Knowledge/ documents
     = canonical domain/runtime reference
 
+Knowledge/xstudio_semantic_atlas.json
+    = generated object, procedure, relationship, domain, and recipe world model
+
+GBrain xstudio-knowledge source
+    = derived searchable index of the committed knowledge; never ticket evidence
+
 Governed SQL Solution articles
     = reusable known-issue knowledge with lifecycle state
 
@@ -226,6 +237,13 @@ Start routing with:
 - `Knowledge/manifest.json` — machine-readable route map;
 - `Knowledge/task-router.md` — human-readable mirror;
 - `Knowledge/L2_PIPELINE_STATE_MACHINE.md` — normative architecture and lifecycle specification.
+
+The dispatcher also loads `Knowledge/xbatch_investigation_recipes.json` and the
+semantic atlas directly. It deterministically selects a bounded recipe/world
+context before model work. The reviewer receives a claim-to-action evidence
+matrix derived from the frozen proposal and persisted current-run actions.
+GBrain improves semantic retrieval around that fixed context; the model is not
+expected to discover the XBatch world by searching conversationally.
 
 ## TypeSafe Jev System-One control fabric
 
@@ -415,7 +433,7 @@ Model_Bench/xstudio_l2_orchestrator_plugin/
     Event-driven reconciler trigger; no lifecycle logic of its own.
 
 Model_Bench/xstudio_l2_tools_plugin/
-    Typed xstudio_l2 tool registration and execution guard.
+    Named xstudio_* tool registration and execution guard.
 
 Model_Bench/xstudio_l2_tool_bridge.py
     Harness-owned Windows/SQL transport behind the typed tool.
