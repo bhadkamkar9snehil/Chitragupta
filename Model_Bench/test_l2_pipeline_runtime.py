@@ -978,6 +978,35 @@ class PipelineContractTests(unittest.TestCase):
             reason = mod.reviewer_block_reason(task)
             self.assertIn("Jev flag confirmed", reason)
 
+    def test_rework_card_carries_same_typed_tool_contract_as_investigation(self):
+        """Ticket_242 residual: rework omitted `database` on 2 xstudio_l2 calls because
+        create_rework_card() never included the typed-tool routing reminder that
+        _investigator_task_spec() gives every fresh investigation. Guard against
+        regressing that omission."""
+        source_task = {
+            "id": "t-source",
+            "body": "run_id: run-1\nticket_id: ticket-1\nticket_no: Ticket_999\nreview_cycle: 0\n",
+        }
+        captured = {}
+
+        def fake_queue(args, *, run_id, purpose, execution_mode, priority, work_key, spec, dry_run=False):
+            captured["spec"] = spec
+            return {"QueueStatus": "QUEUED"}
+
+        with patch.object(mod, "_persist_rejected_ledger", return_value=""), \
+             patch.object(mod, "_source_has_rework", return_value=False), \
+             patch.object(mod, "_queue_local_model_task", side_effect=fake_queue):
+            result = mod.create_rework_card(
+                mod.default_args(),
+                source_task=source_task,
+                reason="ACTION_AUTHORITY mismatch",
+                investigation_task_id="t-inv",
+            )
+        self.assertEqual(result, "queued")
+        body = captured["spec"]["body"]
+        self.assertIn("Typed XStudio investigation contract", body)
+        self.assertIn("Pass database explicitly", body)
+
 
     def test_queued_local_model_without_card_is_not_orphan(self):
         args = mod.default_args()

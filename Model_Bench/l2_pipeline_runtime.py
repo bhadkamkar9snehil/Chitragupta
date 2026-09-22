@@ -1966,6 +1966,7 @@ def create_rework_card(
     )
     if prior:
         body += f"\nPRIOR FINDINGS (verbatim):\n{prior}\n"
+    body += _query_instructions(run_id, ticket_id)
 
     work_key = f"rework-{source_task['id']}"
     spec = {
