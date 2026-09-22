@@ -1263,6 +1263,14 @@ def _solution_context_compact(row: dict[str, Any]) -> dict[str, Any]:
     return _bounded_context_value({key: row.get(key) for key in fields if row.get(key) is not None}, 2)
 
 
+def _gbrain_hit_context_compact(hit: dict[str, Any]) -> dict[str, Any]:
+    fields = (
+        "kb_id", "source_ref", "title", "excerpt", "retrieval_score",
+        "verification_required",
+    )
+    return _bounded_context_value({key: hit.get(key) for key in fields if hit.get(key) is not None}, 2)
+
+
 def _make_context_chunks(
     *,
     ticket_context: dict[str, Any],
@@ -1273,6 +1281,7 @@ def _make_context_chunks(
     known_solutions: list[dict[str, Any]],
     evidence_plan: dict[str, Any],
     probes: list[dict[str, Any]],
+    gbrain: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     chunks: list[dict[str, Any]] = []
 
@@ -1353,6 +1362,31 @@ def _make_context_chunks(
             },
             fallback_level=1,
             recover_with="approved Solution article retrieval",
+        )
+    gbrain = gbrain or {}
+    gbrain_hits = [row for row in (gbrain.get("hits") or []) if isinstance(row, dict)][:5]
+    for index, hit in enumerate(gbrain_hits):
+        compact = _gbrain_hit_context_compact(hit)
+        add(
+            f"gbrain_hit_{index}", "knowledge", "UNVERIFIED_KB_LEAD",
+            str(hit.get("source_ref") or hit.get("kb_id") or f"gbrain hit {index}"),
+            f"gbrain.hits[{index}]", hit,
+            compact=compact,
+            summary={
+                "title": hit.get("title"),
+                "source_ref": hit.get("source_ref"),
+                "retrieval_score": hit.get("retrieval_score"),
+                "verification_required": hit.get("verification_required"),
+            },
+            fallback_level=1,
+            recover_with="GBrain semantic retrieval; unverified, live-verify before use",
+        )
+    if not gbrain_hits and gbrain.get("abstained"):
+        add(
+            "gbrain_abstained", "knowledge", "UNVERIFIED_KB_LEAD",
+            "GBrain semantic retrieval", "gbrain.abstention_reason",
+            {"status": gbrain.get("status"), "abstention_reason": gbrain.get("abstention_reason")},
+            fallback_level=0,
         )
     for index, probe in enumerate(probes[:3]):
         compact = _probe_context_compact(probe)
@@ -1570,6 +1604,7 @@ def _jev_first_investigation(
     known_solutions = [
         row for row in (kb_retrieval.get("solutions") or []) if isinstance(row, dict)
     ][:8]
+    gbrain = kb_retrieval.get("gbrain") if isinstance(kb_retrieval.get("gbrain"), dict) else {}
     routing_context = {
         "triage": kb_retrieval.get("ticket_characterization") or {},
         "route_candidates": kb_retrieval.get("route_candidates") or [],
@@ -1587,6 +1622,7 @@ def _jev_first_investigation(
             known_solutions=known_solutions,
             evidence_plan={"ok": False, "reason": "Jev-first investigation disabled"},
             probes=[],
+            gbrain=gbrain,
         )
         execution_contract = _resolve_execution_contract(assessment)
         return {
@@ -1663,6 +1699,7 @@ def _jev_first_investigation(
         known_solutions=known_solutions,
         evidence_plan=plan,
         probes=probes,
+        gbrain=gbrain,
     )
     assessment_state = {
         "ticket": ticket_context,

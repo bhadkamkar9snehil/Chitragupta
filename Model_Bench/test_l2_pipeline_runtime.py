@@ -98,6 +98,38 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(order, ["reconcile", "wip", "worker", "gbrain"])
         self.assertEqual(result["status"], "DEPENDENCY_UNAVAILABLE")
 
+    def test_gbrain_hits_surface_as_context_chunks(self):
+        """kb_retrieval's gbrain hits must reach the investigator, not just known_solutions."""
+        gbrain = {
+            "status": "READY", "source_id": "xstudio-knowledge", "abstained": False,
+            "hits": [{"kb_id": "gbrain:x:k", "source_ref": "xstudio-knowledge:knowledge/sap",
+                      "title": "SAP", "excerpt": "lead", "retrieval_score": 0.9,
+                      "verification_required": True}],
+        }
+        chunks = mod._make_context_chunks(
+            ticket_context={"ID": "t1"}, routing_context={}, prior_ledger=None,
+            prior_attempts=None, candidates=[], known_solutions=[],
+            evidence_plan={}, probes=[], gbrain=gbrain,
+        )
+        gbrain_chunks = [c for c in chunks if c["id"] == "gbrain_hit_0"]
+        self.assertEqual(len(gbrain_chunks), 1)
+        chunk = gbrain_chunks[0]
+        self.assertEqual(chunk["authority"], "UNVERIFIED_KB_LEAD")
+        self.assertEqual(chunk["summary"]["source_ref"], "xstudio-knowledge:knowledge/sap")
+        self.assertTrue(chunk["summary"]["verification_required"])
+
+    def test_gbrain_abstention_surfaces_as_context_chunk(self):
+        gbrain = {"status": "UNAVAILABLE", "hits": [], "abstained": True,
+                  "abstention_reason": "GBrain retrieval failed: timeout"}
+        chunks = mod._make_context_chunks(
+            ticket_context={"ID": "t1"}, routing_context={}, prior_ledger=None,
+            prior_attempts=None, candidates=[], known_solutions=[],
+            evidence_plan={}, probes=[], gbrain=gbrain,
+        )
+        abstained = [c for c in chunks if c["id"] == "gbrain_abstained"]
+        self.assertEqual(len(abstained), 1)
+        self.assertEqual(abstained[0]["content"]["abstention_reason"], "GBrain retrieval failed: timeout")
+
     def test_reviewer_block_is_audit_only_not_an_l3_escalation(self):
         """A normal reviewer rejection must stay inside the bounded rework loop."""
         event = type("Event", (), {
