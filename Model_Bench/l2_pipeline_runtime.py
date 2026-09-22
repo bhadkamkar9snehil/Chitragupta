@@ -1646,6 +1646,12 @@ def _build_and_persist_stage_context(
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
         print(f"WARNING: context delivery unavailable for run {run_id} stage {stage}: {exc}")
         return "", "", None
+    # The CLI always prints a JSON object, but stdout is an external boundary --
+    # valid-but-non-dict JSON (e.g. "null" from a truncated/corrupted write)
+    # must degrade the same as a parse failure, not crash card construction
+    # with response.get() on a None/list a line below (found in review: 0012).
+    if not isinstance(response, dict):
+        response = {}
     if not response.get("error") is None and not response.get("ok"):
         print(f"WARNING: context delivery degraded for run {run_id} stage {stage}: {response.get('error')}")
     header = str(response.get("provenance_header") or "")

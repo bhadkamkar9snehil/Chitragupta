@@ -887,6 +887,26 @@ class PipelineContractTests(unittest.TestCase):
         self.assertIn("Typed XStudio investigation contract", body)
         self.assertIn("Pass database explicitly", body)
 
+    def test_build_stage_context_degrades_on_valid_non_dict_json_from_cli(self):
+        """Antigravity review (Agent_Comms/0012): the CLI always prints a JSON
+        object today, but stdout is an external subprocess boundary -- valid
+        JSON that isn't a dict (a bare `null`/list from a truncated or
+        corrupted write) parsed fine and then crashed on response.get(...)
+        one line later, outside the try/except. That exception was
+        unguarded in create_reviewer_card()/create_rework_card(), so a
+        rare/future CLI misbehavior could have broken card construction
+        entirely despite this function's contract to never raise."""
+        for bad_stdout in ("null", "[1, 2, 3]", "\"just a string\""):
+            fake_proc = type("FakeProc", (), {"stdout": bad_stdout, "returncode": 0})()
+            with self.subTest(stdout=bad_stdout), \
+                 patch.object(mod.subprocess, "run", return_value=fake_proc):
+                header, rendered, receipt = mod._build_and_persist_stage_context(
+                    mod.default_args(),
+                    ticket={"BriefDetails": "x"}, run_id="r1", ticket_id="t1", ticket_no="T1",
+                    stage="review", review_cycle=0,
+                )
+        self.assertEqual((header, rendered, receipt), ("", "", None))
+
     def test_reviewer_card_carries_governed_context_when_delivery_succeeds(self):
         """Review cards get no canonical procedure, promoted facts, or historical
         negative cases today -- only proposal_json and instructions. Prove the
