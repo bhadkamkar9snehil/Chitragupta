@@ -2394,13 +2394,13 @@ def process_approvals(
     for task in source_tasks:
         if task.get("status") != "done" or (task.get("assignee") or "") not in REVIEWER_PROFILES:
             continue
+        if is_reviewer_rejection(task):
+            continue
         run_id, ticket_id = task_run_id(task), task_ticket_id(task)
         if not run_id or not ticket_id:
             continue
         if run_id not in active_ids:
             counts["inactive_skipped"] += 1
-            continue
-        if is_reviewer_rejection(task):
             continue
 
         proposal = task_proposal(task)
