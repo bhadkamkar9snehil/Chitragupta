@@ -32,7 +32,7 @@ class TracePluginTests(unittest.TestCase):
         self.assertRegex(event["trace_event_id"], r"^[0-9a-f-]{36}$")
         self.assertTrue(event["event_on_ist"].endswith("+05:30"))
 
-    def test_task_resolution_writes_one_context_event(self):
+    def test_task_resolution_writes_context_and_correlation_events(self):
         events = []
         result = type("Result", (), {
             "returncode": 0,
@@ -54,11 +54,18 @@ class TracePluginTests(unittest.TestCase):
             plugin._RESOLVING.clear()
             plugin._RESOLVING.update(original_resolving)
 
-        self.assertEqual(1, len(events))
+        # Two distinct trace_context events by design: the resolution-status
+        # event, and a separate correlation record the drain uses to backfill
+        # hook events written before run_id/ticket_id were known.
+        self.assertEqual(2, len(events))
         self.assertEqual("trace_context", events[0]["event_type"])
         self.assertEqual("resolved", events[0]["status"])
         self.assertEqual("run-1", events[0]["run_id"])
         self.assertEqual("ticket-1", events[0]["ticket_id"])
+        self.assertEqual("trace_context", events[1]["event_type"])
+        self.assertNotIn("status", events[1])
+        self.assertEqual("run-1", events[1]["run_id"])
+        self.assertEqual("ticket-1", events[1]["ticket_id"])
 
     def test_failed_task_resolution_writes_failed_context_without_ids(self):
         events = []
