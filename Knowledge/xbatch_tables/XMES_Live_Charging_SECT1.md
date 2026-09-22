@@ -1,0 +1,74 @@
+# XStudio_Xbatch.dbo.XMES_Live_Charging_SECT1
+
+**table_kind:** production_data
+
+### What this table is for
+
+- **Inferred from its own column names** (not human-verified): columns repeatedly reference time, billet, flow, out, reverse, status, type, work.
+
+**Primary Key:** ID  
+**Row Count:** 1,594  
+**Date Range (ModifiedOn):** 2026-07-30T12:59:12.2600000 to 2026-08-31T03:40:07.7970000  
+
+### Schema
+
+| Column | Data Type | Nullable | Length/Precision | Default |
+| --- | --- | --- | --- | --- |
+| ID | varchar | NO | 36 | (newid()) |
+| BilletNo | varchar | YES | 100 | — |
+| ParentID | varchar | YES | 36 | — |
+| CreatedBy | varchar | YES | 36 | — |
+| ModifiedBy | varchar | YES | 36 | — |
+| CreatedOn | datetime | YES | — | (getdate()) |
+| ModifiedOn | datetime | YES | — | — |
+| IsDeleted | bit | YES | — | ((0)) |
+| IsSystem | bit | YES | — | ((0)) |
+| AssignedUserID | varchar | YES | 36 | — |
+| HostAddress | varchar | YES | 100 | — |
+| DbSyncStatus | varchar | YES | 500 | — |
+| MobileSyncStatus | varchar | YES | 100 | — |
+| Source | varchar | YES | 20 | — |
+| IsProcessed | bit | YES | — | — |
+| InTIme | datetime | YES | — | — |
+| OutTime | datetime | YES | — | — |
+| Status | varchar | YES | 50 | ('Entered') |
+| Type | varchar | YES | 100 | — |
+| ReverseWorkFlow | varchar | YES | 50 | — |
+
+### Top 10 Records
+
+| ID | BilletNo | ParentID | CreatedBy | ModifiedBy | CreatedOn | ModifiedOn | IsDeleted | IsSystem | AssignedUserID |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| FA36CB36-2348-4454-9FB0-2F2FEF45E9A6 | 2603931_00_02 | A62551BA-9CA2-4646-BB86-2DD9C004E960 | NULL | NULL | 2026-08-31T10:34:50.2130000 | NULL | False | False | NULL |
+| E4FD4F3A-EBAC-4BD1-8EF5-3AE190613FD2 | 1603166_S5_01 | 85B418A3-BA84-41AD-A77C-F19B437DD68D | NULL | NULL | 2026-07-30T12:58:19.6930000 | 2026-07-30T12:59:12.2600000 | False | False | NULL |
+| 87443FB2-2524-4DC2-8CD6-79784D4A4327 | 1603166_S4_02 | B162A044-97F0-4D93-B54B-5F36C3D081FF | NULL | NULL | 2026-07-30T12:59:33.4670000 | 2026-07-30T13:05:58.0770000 | False | False | NULL |
+| F695CFF5-9757-43BC-8F97-AB733F17D7E1 | 1603166_S1_03 | B1F6EAE3-0221-4488-915C-703B1E551676 | NULL | NULL | 2026-07-30T13:06:18.7400000 | 2026-07-30T13:07:06.1700000 | False | False | NULL |
+| 4DC965FF-31F0-402B-8224-EDD1231E42D0 | 1603166_S3_04 | B2E8A975-917B-4ECB-91EC-982C7CEB2DC3 | NULL | NULL | 2026-07-30T13:07:27.7170000 | 2026-07-30T13:08:15.1630000 | False | False | NULL |
+| F12AD0CA-41B9-4EFC-9FB6-0069F24B7CBC | 1603166_S2_05 | 01DF8CEF-921C-4455-9BF7-5CA1B8FB376C | NULL | NULL | 2026-07-30T13:08:36.4730000 | 2026-07-30T13:09:22.4030000 | False | False | NULL |
+| 65F88272-3973-49CF-ADA7-16AFCE9DA860 | 1603166_S4_06 | E9CA8455-1118-40A6-B669-9833D026DE88 | NULL | NULL | 2026-07-30T13:09:44.7530000 | 2026-07-30T13:10:31.4100000 | False | False | NULL |
+| 4533072D-B0D3-4EE5-8C8B-99A34C436BBC | 1603166_S5_07 | 431E7C03-4B7B-419B-A210-EE847F8553DB | NULL | NULL | 2026-07-30T13:14:20.6570000 | 2026-07-30T13:15:06.9900000 | False | False | NULL |
+| 1CC8A912-A3BD-4CD7-BB09-932ECF68A513 | 1603166_S1_08 | FF39B306-41D2-4219-9AA3-95930AAA44CA | NULL | NULL | 2026-07-30T13:15:28.5330000 | 2026-07-30T13:16:15.8970000 | False | False | NULL |
+| 96796989-F200-47DB-95A3-D3FFB30C7139 | 1603166_S3_09 | 00C0F4DB-F883-453D-BC3A-346D42C00002 | NULL | NULL | 2026-07-30T13:17:45.8400000 | 2026-07-30T13:18:33.1900000 | False | False | NULL |
+
+### Bottom 10 Records
+
+| ID | BilletNo | ParentID | CreatedBy | ModifiedBy | CreatedOn | ModifiedOn | IsDeleted | IsSystem | AssignedUserID |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| EF12C871-EA85-46A6-9F33-81037C0DBD74 | 2603931_00_01 | DD25C91E-48BF-4B05-9416-3773DE00E396 | NULL | NULL | 2026-08-31T01:22:50.7600000 | 2026-08-31T03:40:07.7970000 | False | False | NULL |
+| 59859D22-7575-445B-96E4-92E11C3AC96C | 1260781_00_01 | C07229E4-C844-43B5-BEED-B9706BEFE06A | NULL | NULL | 2026-08-25T14:36:00.0070000 | 2026-08-25T14:49:49.4470000 | False | False | NULL |
+| E423E32B-F5B9-4B97-97EC-22A5F3F4C2D4 | 1260773_00_01 | F3ED0813-56B1-42E0-A26B-F261AEC210FC | NULL | NULL | 2026-08-25T13:54:33.5970000 | 2026-08-25T13:54:51.6200000 | False | False | NULL |
+| 23CA200F-329E-47EA-B304-F123E72C35C5 | 1260817_00_46 | 50D9BA0F-CFF0-4ED9-9C6F-99763033599B | NULL | NULL | 2026-08-25T13:06:02.9400000 | 2026-08-25T13:07:23.0100000 | False | False | NULL |
+| 026C7A2D-ED8A-4E40-AD8F-69F8D3593B70 | 1260817_00_45 | 717DE7F6-ACDE-407F-AEDC-07A4545DE08B | NULL | NULL | 2026-08-24T17:19:42.5230000 | 2026-08-24T17:20:50.6900000 | False | False | NULL |
+| A4544DFA-BE3B-42F6-A1CD-FE5CBF5F095D | 1260817_00_44 | 66FEE8E7-D57F-415A-9266-4F2AE5723820 | NULL | NULL | 2026-08-24T17:18:09.7870000 | 2026-08-24T17:19:18.4830000 | False | False | NULL |
+| 36D5C3E2-5315-4DA7-A4E9-4EB2F57A0912 | 1260817_00_43 | 9AD11696-179B-482A-AEC8-3AD3F5862E31 | NULL | NULL | 2026-08-24T17:16:39.3830000 | 2026-08-24T17:17:45.8570000 | False | False | NULL |
+| 1B51AF17-70DD-4D31-A7D9-48434D60645A | 1260817_00_42 | 14A85A2D-23A1-4F9C-94F1-4C96531E4D1C | NULL | NULL | 2026-08-24T17:15:07.8570000 | 2026-08-24T17:16:16.5370000 | False | False | NULL |
+| A9F4AA56-53ED-45C8-B3F4-6C36725A234E | 1260817_00_41 | EB791963-1D8D-4C39-AEE7-F701E0F7EC26 | NULL | NULL | 2026-08-24T17:13:34.4970000 | 2026-08-24T17:14:43.9470000 | False | False | NULL |
+| 7A5AE7FD-8BA6-43D0-90EB-2E60C6AE0D83 | 1260817_00_40 | 807993BD-77E8-4C4F-8AF9-CAF9DB20A181 | NULL | NULL | 2026-08-24T17:11:52.4000000 | 2026-08-24T17:13:10.5700000 | False | False | NULL |
+
+---
+
+### Known relationships (from Knowledge/xstudio_semantic_atlas.json)
+
+- `XStudio_XBatch.XMES_Billet_Movement_Dtl_Tbl.Section1BilletNo` -> `XStudio_XBatch.XMES_Live_Charging_SECT1.BilletNo` (Many to One)
+- `XStudio_XBatch.XMES_Live_Charging_SECT1.ParentID` -> `XStudio_XBatch.XMES_Live_Billet_Charging_Bed.ID` (Many to One)
+- `XStudio_XBatch.XMES_Live_Charging_SECT2.ParentID` -> `XStudio_XBatch.XMES_Live_Charging_SECT1.ID` (Many to One)

@@ -674,6 +674,7 @@ def retrieve(
     gbrain = retrieve_gbrain(query, manifest["gbrain"])
 
     kb_semantics = {"ok": False, "reason": "KB Jev judgments disabled", "candidates": ranked}
+    gbrain_semantics = {"ok": False, "reason": "KB Jev judgments disabled", "candidates": gbrain.get("hits") or []}
 
     if ranked and jev_policy.KB_JUDGMENTS_ENABLED:
         kb_semantics = assess_kb_candidates({"query": query, "routes": routes}, ranked)
@@ -688,6 +689,33 @@ def retrieve(
                     -float(row.get("retrieval_score") or 0.0),
                 )
             )
+
+    # GBrain hits previously reached the investigator with no Jev judgment at all --
+    # only the mechanical score/token-overlap filter in retrieve_gbrain() decided what
+    # survived. assess_kb_candidates() is generic over any candidate list (it already
+    # runs on SQL Solution Articles above); reuse it here unchanged so GBrain hits get
+    # the same relevance/applicability/negative-indicator/security screening.
+    gbrain_hits = gbrain.get("hits") or []
+    if gbrain_hits and jev_policy.KB_JUDGMENTS_ENABLED:
+        gbrain_semantics = assess_kb_candidates({"query": query, "routes": routes}, gbrain_hits)
+        if gbrain_semantics.get("ok"):
+            gbrain_hits = list(gbrain_semantics.get("candidates") or gbrain_hits)
+            for row in gbrain_hits:
+                row["jev_kb_composite"] = _compose_kb_score(row)
+            gbrain_hits = [
+                row for row in gbrain_hits
+                if float(row.get("jev_negative_indicator") or 0.0) < jev_policy.HIGH_RISK_NOUL
+            ]
+            gbrain_hits.sort(
+                key=lambda row: (
+                    -float(row.get("jev_kb_composite") or 0.0),
+                    -float(row.get("retrieval_score") or 0.0),
+                )
+            )
+            gbrain["hits"] = gbrain_hits
+            gbrain["abstained"] = not gbrain_hits
+            if not gbrain_hits:
+                gbrain["abstention_reason"] = "Jev judged all retrieved GBrain hits inapplicable or unsafe."
 
     retrieval_telemetry = log_retrieval_telemetry(
         conn,
@@ -706,6 +734,11 @@ def retrieve(
             "KB_APPLICABILITY",
             {"query": query, "candidate_ids": [str(row.get("kb_id") or "") for row in ranked]},
             kb_semantics,
+        ),
+        (
+            "GBRAIN_APPLICABILITY",
+            {"query": query, "candidate_ids": [str(row.get("kb_id") or "") for row in gbrain.get("hits") or []]},
+            gbrain_semantics,
         ),
     ):
         if result.get("ok"):
@@ -738,6 +771,11 @@ def retrieve(
             "model": kb_semantics.get("model"),
             "latency_ms": kb_semantics.get("latency_ms"),
             "coalesced_with": "KB_APPLICABILITY",
+        },
+        "jev_gbrain_applicability": {
+            "ok": bool(gbrain_semantics.get("ok")),
+            "model": gbrain_semantics.get("model"),
+            "latency_ms": gbrain_semantics.get("latency_ms"),
         },
         "jev_audit": audit_results,
         "retrieval_telemetry": retrieval_telemetry,

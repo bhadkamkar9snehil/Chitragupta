@@ -2,6 +2,29 @@
   "api": [
     "dbo.XMES_API_Transaction_Summary_Fact_Tbl"
   ],
+  "energy": [
+    "dbo.Power_Consumption_LogSheet",
+    "dbo.EAF_SMS_Data"
+  ],
+  "electrical consumption": [
+    "dbo.Power_Consumption_LogSheet",
+    "dbo.EAF_SMS_Data"
+  ],
+  "power consumption": [
+    "dbo.Power_Consumption_LogSheet",
+    "dbo.EAF_SMS_Data"
+  ],
+  "energy dashboard": [
+    "dbo.Power_Consumption_LogSheet"
+  ],
+  "electricity": [
+    "dbo.Power_Consumption_LogSheet",
+    "dbo.Electricity_Meter_Bill_Amount"
+  ],
+  "kwh": [
+    "dbo.Power_Consumption_LogSheet",
+    "dbo.EAF_SMS_Data"
+  ],
   "area": [
     "dbo.LRF_Per_Heat",
     "dbo.SMS_Plant_Process_EventTime",

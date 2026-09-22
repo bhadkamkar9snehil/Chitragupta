@@ -1,0 +1,72 @@
+# XStudio_Xbatch.dbo.XBatch_Storage_Rack_Mst_Tbl
+
+**table_kind:** production_data
+
+### What this table is for
+
+- **Inferred from its own column names** (not human-verified): columns repeatedly reference assign, billet, capacity, enabled, gradeno, number, store, total.
+
+**Primary Key:** ID  
+**Row Count:** 117  
+**Date Range (ModifiedOn):** 2025-09-10T13:36:35.0000000 to 2026-01-06T11:29:11.0000000  
+
+### Schema
+
+| Column | Data Type | Nullable | Length/Precision | Default |
+| --- | --- | --- | --- | --- |
+| ID | varchar | NO | 36 | (newid()) |
+| Name | varchar | YES | 100 | — |
+| ParentID | varchar | YES | 36 | — |
+| CreatedBy | varchar | YES | 36 | — |
+| ModifiedBy | varchar | YES | 36 | — |
+| CreatedOn | datetime | YES | — | (getdate()) |
+| ModifiedOn | datetime | YES | — | — |
+| IsDeleted | bit | YES | — | ((0)) |
+| IsSystem | bit | YES | — | ((0)) |
+| AssignedUserID | varchar | YES | 36 | — |
+| HostAddress | varchar | YES | 100 | — |
+| DbSyncStatus | varchar | YES | 500 | — |
+| MobileSyncStatus | varchar | YES | 100 | — |
+| Source | varchar | YES | 20 | — |
+| Number | int | YES | 10,0 | — |
+| IsEnabled | bit | YES | — | — |
+| TotalBilletStore | int | YES | 10,0 | — |
+| Capacity | int | YES | 10,0 | — |
+| assignGradeno | varchar | YES | 100 | — |
+
+### Top 10 Records
+
+| ID | Name | ParentID | CreatedBy | ModifiedBy | CreatedOn | ModifiedOn | IsDeleted | IsSystem | AssignedUserID |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 070469B1-71AD-4D28-874D-C800A948E29E | Stack C_L13 | AAAD80E9-72E3-41F5-9472-5C6D464B9E96 | NULL | NULL | 2025-09-11T11:01:51.3400000 | NULL | False | False | NULL |
+| 04EF522C-FD4C-4B00-8791-71AB1DA25E99 | Stack D_L9 | 02E5D1F5-139C-46DD-9F7A-303C1E22AD2A | NULL | NULL | 2025-09-11T11:01:55.7830000 | NULL | False | False | NULL |
+| 03827041-E8D9-4B58-A0D6-4C10DF1A2998 | Stack A_L1 | 8F1248AD-8102-462B-8351-A0B1CF141DE3 | NULL | NULL | 2025-09-15T15:41:39.4600000 | NULL | False | False | NULL |
+| 03535BBA-8291-425E-88B9-9EE5674A0819 | Stack B_L11 | 8F251D9B-34FC-4CF3-B00C-7578857583CA | NULL | NULL | 2025-09-11T11:01:14.4030000 | NULL | False | False | NULL |
+| 00503472-B822-4977-A81E-AB0B5C57F968 | Stack A_L2 | 8F1248AD-8102-462B-8351-A0B1CF141DE3 | NULL | NULL | 2025-09-15T15:41:39.4800000 | NULL | False | False | NULL |
+| 1574E3EE-916C-475A-B578-58B9B562BBFC | Stack C_L15 | AAAD80E9-72E3-41F5-9472-5C6D464B9E96 | NULL | NULL | 2025-09-11T11:01:51.3430000 | NULL | False | False | NULL |
+| 1131E591-A541-44AE-9195-38861EC4B917 | NULL | DC6EF45C-E82B-4B86-AF22-DB08AF77C4E6 | NULL | NULL | 2025-09-11T11:05:50.0700000 | NULL | False | False | NULL |
+| 0F0284C6-EBC4-47B8-B65B-CD77F839B7F4 | Stack D_L12 | 02E5D1F5-139C-46DD-9F7A-303C1E22AD2A | NULL | NULL | 2025-09-11T11:01:55.7870000 | NULL | False | False | NULL |
+| 0ECBBC3D-8E1E-453C-8A7F-17C97FDD893F | Stack A_L13 | 8F1248AD-8102-462B-8351-A0B1CF141DE3 | NULL | NULL | 2025-09-15T15:41:39.4870000 | NULL | False | False | NULL |
+| 0C6EE2F4-2F3E-40F6-9A2D-8E0103A47593 | Stack E_L11 | 36905E99-E126-41D5-AC7C-49525DF6F6E8 | NULL | NULL | 2025-09-11T11:01:59.7600000 | NULL | False | False | NULL |
+
+### Bottom 10 Records
+
+| ID | Name | ParentID | CreatedBy | ModifiedBy | CreatedOn | ModifiedOn | IsDeleted | IsSystem | AssignedUserID |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| C1EC449A-32F3-48E9-92F7-DFB735EC3CD0 | Shop Floor Raw Materials | D54AE55E-6CEF-45EA-A583-20859F8660F7 | B5257AE5-62A9-42F0-BBA2-714E1EE39ED9 | B5257AE5-62A9-42F0-BBA2-714E1EE39ED9 | 2026-01-06T11:29:11.8970000 | 2026-01-06T11:29:11.0000000 | False | False | NULL |
+| 559C7242-AC70-4DC5-B716-998BA619577A | SMS Shop Floor | CB24F7D8-D49E-4EBE-BC58-4CDE85FF98D0 | B5257AE5-62A9-42F0-BBA2-714E1EE39ED9 | B5257AE5-62A9-42F0-BBA2-714E1EE39ED9 | 2026-01-06T11:27:35.7130000 | 2026-01-06T11:27:35.0000000 | False | False | NULL |
+| 39B16EB9-F29D-4535-A1DD-314801FD5AB6 | Mill | 02A14F00-DCD7-4E18-9587-65D08F151B82 | NULL | 49796991-BC00-4368-8182-B39E4E6BD4A6 | 2025-09-30T13:06:00.2800000 | 2025-09-30T13:07:33.0000000 | False | False | NULL |
+| F4EE06F0-079E-4BEE-80CB-2A1B7738C60A | Mill_L2 | 02A14F00-DCD7-4E18-9587-65D08F151B82 | NULL | 49796991-BC00-4368-8182-B39E4E6BD4A6 | 2025-09-30T13:06:00.3070000 | 2025-09-30T13:07:19.5170000 | True | False | NULL |
+| 493854A9-6E80-4AB6-852C-5B6FD0C74280 | Mill_L3 | 02A14F00-DCD7-4E18-9587-65D08F151B82 | NULL | 49796991-BC00-4368-8182-B39E4E6BD4A6 | 2025-09-30T13:06:00.3070000 | 2025-09-30T13:07:14.3970000 | True | False | NULL |
+| 0BD34B46-C33F-40EE-8846-6E81CFDD7FC0 | Mill_L4 | 02A14F00-DCD7-4E18-9587-65D08F151B82 | NULL | 49796991-BC00-4368-8182-B39E4E6BD4A6 | 2025-09-30T13:06:00.3070000 | 2025-09-30T13:07:10.5300000 | True | False | NULL |
+| E7266182-2454-478D-B8B5-69A1C0C18A78 | Mill_L5 | 02A14F00-DCD7-4E18-9587-65D08F151B82 | NULL | 49796991-BC00-4368-8182-B39E4E6BD4A6 | 2025-09-30T13:06:00.3070000 | 2025-09-30T13:07:06.0800000 | True | False | NULL |
+| D2362C2E-33C4-47AC-8B2D-A09FCAA848C2 | Mill_L6 | 02A14F00-DCD7-4E18-9587-65D08F151B82 | NULL | 49796991-BC00-4368-8182-B39E4E6BD4A6 | 2025-09-30T13:06:00.3070000 | 2025-09-30T13:07:01.2730000 | True | False | NULL |
+| CD0349B4-2DA0-4BB4-9A5A-901F87CD3236 | Mill_L7 | 02A14F00-DCD7-4E18-9587-65D08F151B82 | NULL | 49796991-BC00-4368-8182-B39E4E6BD4A6 | 2025-09-30T13:06:00.3100000 | 2025-09-30T13:06:55.7130000 | True | False | NULL |
+| D001BEF0-1FA1-453B-B8C0-25A526369D22 | Mill_L8 | 02A14F00-DCD7-4E18-9587-65D08F151B82 | NULL | 49796991-BC00-4368-8182-B39E4E6BD4A6 | 2025-09-30T13:06:00.3100000 | 2025-09-30T13:06:48.6570000 | True | False | NULL |
+
+---
+
+### Known relationships (from Knowledge/xstudio_semantic_atlas.json)
+
+- `XStudio_XBatch.XBatch_Material_Inventory_Mst_Tbl.LocationID` -> `XStudio_XBatch.XBatch_Storage_Rack_Mst_Tbl.ID` (Many to Many)
+- `XStudio_XBatch.XBatch_Storage_Rack_Mst_Tbl.ParentID` -> `XStudio_XBatch.XBatch_Storage_Area_Mst_Tbl.ID` (Many to One)

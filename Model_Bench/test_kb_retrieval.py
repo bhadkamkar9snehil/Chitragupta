@@ -53,9 +53,9 @@ class GBrainManifestTests(unittest.TestCase):
     def test_production_manifest_has_bounded_source_scoped_gbrain_contract(self):
         cfg = kb.load_manifest()["gbrain"]
         self.assertEqual((cfg["source_id"], cfg["candidate_limit"], cfg["return_limit"]),
-                         ("xstudio-knowledge", 24, 3))
+                         ("xstudio-knowledge", 24, 5))
         self.assertEqual((cfg["snippet_chars"], cfg["min_retrieval_score"], cfg["min_embedding_coverage_pct"]),
-                         (600, 0.70, 100.0))
+                         (600, 0.50, 100.0))
 
     def test_gbrain_contract_never_allows_non_authority_surfaces(self):
         cfg = kb.load_manifest()["gbrain"]

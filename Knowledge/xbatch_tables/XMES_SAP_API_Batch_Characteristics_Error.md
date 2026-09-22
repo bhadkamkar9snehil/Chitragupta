@@ -1,0 +1,76 @@
+# XStudio_Xbatch.dbo.XMES_SAP_API_Batch_Characteristics_Error
+
+**table_kind:** production_data
+
+### What this table is for
+
+- **Inferred from its own column names** (not human-verified): columns repeatedly reference message, batch, body, error, record, status, success, transaction.
+
+**Primary Key:** ID  
+**Row Count:** 596  
+**Date Range (ModifiedOn):** 2026-01-29T14:13:45.8100000 to 2026-07-05T22:44:12.4870000  
+
+### Schema
+
+| Column | Data Type | Nullable | Length/Precision | Default |
+| --- | --- | --- | --- | --- |
+| ID | varchar | NO | 36 | (newid()) |
+| CreatedBy | varchar | YES | 36 | — |
+| ModifiedBy | varchar | YES | 36 | — |
+| CreatedOn | datetime | YES | — | (getdate()) |
+| ModifiedOn | datetime | YES | — | — |
+| IsDeleted | bit | YES | — | ((0)) |
+| IsSystem | bit | YES | — | ((0)) |
+| AssignedUserID | varchar | YES | 36 | — |
+| HostAddress | varchar | YES | 100 | — |
+| DbSyncStatus | varchar | YES | 500 | — |
+| MobileSyncStatus | varchar | YES | 100 | — |
+| Source | varchar | YES | 20 | — |
+| ReportDate | date | YES | — | — |
+| IsProcessed | bit | YES | — | — |
+| Name | varchar | YES | 100 | — |
+| ParentID | varchar | YES | 36 | — |
+| RecordID | varchar | YES | 100 | — |
+| ErrorMessage | varchar | YES | -1 | — |
+| BatchNo | varchar | YES | 100 | — |
+| TransactionID | varchar | YES | 100 | — |
+| Body | varchar | YES | -1 | — |
+| EntryDateTime | datetime | YES | — | — |
+| Status | varchar | YES | 50 | — |
+| SuccessMessage | varchar | YES | -1 | — |
+
+### Top 10 Records
+
+| ID | CreatedBy | ModifiedBy | CreatedOn | ModifiedOn | IsDeleted | IsSystem | AssignedUserID | HostAddress | DbSyncStatus |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A118D9F7-4D85-4C72-97F0-F5C4BBBCF8FE | NULL | NULL | 2026-01-29T14:13:45.8100000 | 2026-01-29T14:13:45.8100000 | False | False | NULL | NULL | NULL |
+| 452BAECF-FA14-469B-92CC-F9A791E0054C | NULL | NULL | 2026-01-29T16:25:24.0270000 | 2026-01-29T16:25:24.0270000 | False | False | NULL | NULL | NULL |
+| 7892252A-1108-4A59-AC1E-B897491ABE80 | 49796991-BC00-4368-8182-B39E4E6BD4A6 | 49796991-BC00-4368-8182-B39E4E6BD4A6 | 2026-01-29T16:58:47.9600000 | 2026-01-29T16:58:47.9600000 | False | False | NULL | NULL | NULL |
+| 16927DFC-593C-41E4-9065-9B873FAE6911 | 49796991-BC00-4368-8182-B39E4E6BD4A6 | 49796991-BC00-4368-8182-B39E4E6BD4A6 | 2026-01-29T16:59:44.1870000 | 2026-01-29T16:59:44.1870000 | False | False | NULL | NULL | NULL |
+| 0631B7FC-7C49-41FA-8B9F-9E634D7F36B4 | NULL | NULL | 2026-01-29T17:00:56.9600000 | 2026-01-29T17:00:56.9600000 | False | False | NULL | NULL | NULL |
+| 862BB115-D60E-4174-9A71-BE3EB91FFB35 | 1C3872A0-943B-48EE-8A8B-AC75D8925A9D | 1C3872A0-943B-48EE-8A8B-AC75D8925A9D | 2026-02-01T11:56:50.1270000 | 2026-02-01T11:56:50.1270000 | False | False | NULL | NULL | NULL |
+| 600ECF85-1A27-4080-93E5-7F69BA8112E0 | NULL | NULL | 2026-02-05T18:14:20.4300000 | 2026-02-05T18:14:20.4300000 | False | False | NULL | NULL | NULL |
+| 4D532016-64E7-4753-BE54-6382771D7118 | NULL | NULL | 2026-02-05T19:24:36.1970000 | 2026-02-05T19:24:36.1970000 | False | False | NULL | NULL | NULL |
+| 21E21202-3BF5-45ED-9024-1B4A04D59D46 | NULL | NULL | 2026-02-06T02:37:18.5770000 | 2026-02-06T02:37:18.5770000 | False | False | NULL | NULL | NULL |
+| 83ED2B50-7CC0-4DE7-8BE4-B8C3AB0052A1 | NULL | NULL | 2026-02-06T02:46:59.1500000 | 2026-02-06T02:46:59.1500000 | False | False | NULL | NULL | NULL |
+
+### Bottom 10 Records
+
+| ID | CreatedBy | ModifiedBy | CreatedOn | ModifiedOn | IsDeleted | IsSystem | AssignedUserID | HostAddress | DbSyncStatus |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 15A7E67C-9F8A-446F-8A25-92E923F8F5E9 | CF587DA9-0FDF-494E-8044-7620D00418AE | CF587DA9-0FDF-494E-8044-7620D00418AE | 2026-07-05T22:44:12.4870000 | 2026-07-05T22:44:12.4870000 | False | False | NULL | NULL | NULL |
+| 76B411BC-91C2-4DA0-97B1-EF7108C8341A | CF587DA9-0FDF-494E-8044-7620D00418AE | CF587DA9-0FDF-494E-8044-7620D00418AE | 2026-07-05T22:43:55.8230000 | 2026-07-05T22:43:55.8230000 | False | False | NULL | NULL | NULL |
+| DB20D12F-933A-4470-89BC-83978CC66F6B | CF587DA9-0FDF-494E-8044-7620D00418AE | CF587DA9-0FDF-494E-8044-7620D00418AE | 2026-07-05T22:43:52.6170000 | 2026-07-05T22:43:52.6170000 | False | False | NULL | NULL | NULL |
+| E25EBD86-A21C-4822-927E-E8EE4E5E08CB | CF587DA9-0FDF-494E-8044-7620D00418AE | CF587DA9-0FDF-494E-8044-7620D00418AE | 2026-07-05T22:43:33.3430000 | 2026-07-05T22:43:33.3430000 | False | False | NULL | NULL | NULL |
+| 6AD3ABF0-473A-4393-8E8D-4CEAB58F4958 | CF587DA9-0FDF-494E-8044-7620D00418AE | CF587DA9-0FDF-494E-8044-7620D00418AE | 2026-07-05T22:43:29.6770000 | 2026-07-05T22:43:29.6770000 | False | False | NULL | NULL | NULL |
+| EEBC4CF3-992A-4726-B3AD-1B75FAE018A8 | CF587DA9-0FDF-494E-8044-7620D00418AE | CF587DA9-0FDF-494E-8044-7620D00418AE | 2026-07-05T20:44:31.8600000 | 2026-07-05T20:44:31.8600000 | False | False | NULL | NULL | NULL |
+| 42D95DE3-0852-4A49-8F74-B96D9B455FF0 | CF587DA9-0FDF-494E-8044-7620D00418AE | CF587DA9-0FDF-494E-8044-7620D00418AE | 2026-07-05T20:44:11.6530000 | 2026-07-05T20:44:11.6530000 | False | False | NULL | NULL | NULL |
+| 353A1D4A-0F29-4FD7-8188-9BE1CBE76241 | CF587DA9-0FDF-494E-8044-7620D00418AE | CF587DA9-0FDF-494E-8044-7620D00418AE | 2026-07-05T20:43:25.0470000 | 2026-07-05T20:43:25.0470000 | False | False | NULL | NULL | NULL |
+| 6C7D8AF9-AFF7-4FEA-993A-13F697B8ED4D | CF587DA9-0FDF-494E-8044-7620D00418AE | CF587DA9-0FDF-494E-8044-7620D00418AE | 2026-07-05T20:43:05.3200000 | 2026-07-05T20:43:05.3200000 | False | False | NULL | NULL | NULL |
+| 87BBC5CE-8325-41FA-ACBA-A4F902EA6707 | CF587DA9-0FDF-494E-8044-7620D00418AE | CF587DA9-0FDF-494E-8044-7620D00418AE | 2026-07-05T20:42:42.1430000 | 2026-07-05T20:42:42.1430000 | False | False | NULL | NULL | NULL |
+
+---
+
+### Known relationships (from Knowledge/xstudio_semantic_atlas.json)
+
+- `XStudio_XBatch.XMES_SAP_Batch_Characteristic_Trn_Tbl.Saptransactionid` -> `XStudio_XBatch.XMES_SAP_API_Batch_Characteristics_Error.TransactionID` (Many to One)

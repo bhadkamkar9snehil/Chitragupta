@@ -1,0 +1,73 @@
+# XStudio_Xbatch.dbo.Grade_Characteristics_Mapping
+
+**table_kind:** production_data
+
+### What this table is for
+
+- **Inferred from its own column names** (not human-verified): columns repeatedly reference name, acceptable, accepted, limit, characteristic, grade, lower, not, test, upper.
+
+**Primary Key:** ID  
+**Row Count:** 14  
+
+### Schema
+
+| Column | Data Type | Nullable | Length/Precision | Default |
+| --- | --- | --- | --- | --- |
+| ID | varchar | NO | 36 | (newid()) |
+| GradeName | varchar | YES | 36 | — |
+| ParentID | varchar | YES | 36 | — |
+| CreatedBy | varchar | YES | 36 | — |
+| ModifiedBy | varchar | YES | 36 | — |
+| CreatedOn | datetime | YES | — | (getdate()) |
+| ModifiedOn | datetime | YES | — | — |
+| IsDeleted | bit | YES | — | ((0)) |
+| IsSystem | bit | YES | — | ((0)) |
+| AssignedUserID | varchar | YES | 36 | — |
+| HostAddress | varchar | YES | 100 | — |
+| DbSyncStatus | varchar | YES | 500 | — |
+| MobileSyncStatus | varchar | YES | 100 | — |
+| Source | varchar | YES | 20 | — |
+| CharacteristicName | varchar | YES | 36 | — |
+| AcceptableLowerLimit | decimal | YES | 18,4 | — |
+| AcceptableUpperLimit | decimal | YES | 18,4 | — |
+| IsAccepted | varchar | YES | 100 | — |
+| IsNotAccepted | varchar | YES | 100 | — |
+| TestName | varchar | YES | 36 | — |
+
+### Top 10 Records
+
+| ID | GradeName | ParentID | CreatedBy | ModifiedBy | CreatedOn | ModifiedOn | IsDeleted | IsSystem | AssignedUserID |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| C2CD9C28-A308-49C2-A0A4-A5D89DEF87E6 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| A3EF2319-BB26-4A53-B9D1-39DED4B774C5 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 9B39BDB0-614B-4AEE-A557-07590E0C258B | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 9111BA3B-9B76-4C6D-9113-29790A0882E4 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 8AB0D7C1-E82B-48A5-A83D-FC6B453A13F9 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 7E2D2AB0-FB44-449E-87D7-3B216908BB60 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 7C2F0BE8-8C30-4F5C-87C5-B0D959AC1998 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 4C232C2C-02F6-48FF-873E-53B781ADA248 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 4A0237C9-6209-4465-8628-188E61E2A3CC | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 4260DABF-D9BF-479C-9645-CC31DFA5E15A | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+
+### Bottom 10 Records
+
+| ID | GradeName | ParentID | CreatedBy | ModifiedBy | CreatedOn | ModifiedOn | IsDeleted | IsSystem | AssignedUserID |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| C2CD9C28-A308-49C2-A0A4-A5D89DEF87E6 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| A3EF2319-BB26-4A53-B9D1-39DED4B774C5 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 9B39BDB0-614B-4AEE-A557-07590E0C258B | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 9111BA3B-9B76-4C6D-9113-29790A0882E4 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 8AB0D7C1-E82B-48A5-A83D-FC6B453A13F9 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 7E2D2AB0-FB44-449E-87D7-3B216908BB60 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 7C2F0BE8-8C30-4F5C-87C5-B0D959AC1998 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 4C232C2C-02F6-48FF-873E-53B781ADA248 | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 4A0237C9-6209-4465-8628-188E61E2A3CC | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+| 4260DABF-D9BF-479C-9645-CC31DFA5E15A | 1C14DF3B-2EAC-4971-AB39-79AEA3E28F4B | C84991EE-6303-4665-AD65-C9151F093169 | NULL | NULL | 2025-08-19T08:18:29.5170000 | NULL | False | False | NULL |
+
+---
+
+### Known relationships (from Knowledge/xstudio_semantic_atlas.json)
+
+- `XStudio_XBatch.Grade_Characteristics_Mapping.CharacteristicName` -> `XStudio_XBatch.Grade_Characteristics.ID` (Many to One)
+- `XStudio_XBatch.Grade_Characteristics_Mapping.GradeName` -> `XStudio_XBatch.Steel_Grade_Master.ID` (Many to One)
+- `XStudio_XBatch.Grade_Characteristics_Mapping.TestName` -> `XStudio_XBatch.Grade_Test_Master.ID` (Many to One)
