@@ -3114,7 +3114,8 @@ def check_worker_dependencies() -> None:
     bridge = REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py"
     probe = subprocess.run([sys.executable, str(bridge)],
         input=json.dumps({"operation": "query", "database": DEFAULT_DATABASE,
-                          "sql": "SELECT 1 AS Healthy"}),
+                          "sql": "SELECT 1 AS Healthy",
+                          "run_id": "00000000-0000-0000-0000-000000000000"}),
         capture_output=True, text=True, timeout=25)
     if probe.returncode or not json.loads(probe.stdout).get("ok"):
         raise RuntimeError("WORKER_DEPENDENCY_UNAVAILABLE: typed SQL probe failed; claims paused")
