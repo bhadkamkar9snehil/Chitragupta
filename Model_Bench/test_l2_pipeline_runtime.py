@@ -878,6 +878,12 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(kwargs["purpose"], "REVIEW")
         self.assertEqual(kwargs["priority"], mod.REVIEW_PRIORITY)
         hermes.assert_not_called()
+        # Real-data canary (56-ticket seeded batch): review-stage xstudio_l2 calls
+        # accounted for most missing-`database` failures because create_reviewer_card()
+        # never carried the same typed-tool routing reminder investigation cards get.
+        body = kwargs["spec"]["body"]
+        self.assertIn("Typed XStudio investigation contract", body)
+        self.assertIn("Pass database explicitly", body)
 
     def test_resolution_fails_closed_without_binding(self):
         with self.assertRaises(RuntimeError):

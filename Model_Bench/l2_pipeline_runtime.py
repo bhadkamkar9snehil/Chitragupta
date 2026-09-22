@@ -1645,6 +1645,7 @@ def create_reviewer_card(
         "Approve with kanban_complete; reject with kanban_block. The deterministic reconciler owns "
         "publication/rework."
     )
+    body += _query_instructions(run_id, ticket_id)
     spec = {
         "title": f"REVIEW[{cycle}]: L2 {ticket_no}",
         "assignee": REVIEWER_PROFILE,
