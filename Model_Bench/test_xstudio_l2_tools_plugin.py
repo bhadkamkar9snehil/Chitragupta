@@ -886,6 +886,48 @@ def test_no_valid_tables_line_means_no_restriction_applied() -> None:
     assert result is None or result["action"] != "block"
 
 
+def test_select_requesting_a_column_not_in_the_evidence_plan_is_blocked() -> None:
+    session = "stall-guard-5"
+    _seed_valid_tables(
+        session, "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data[EAFHeatID,EAFEnergyMWH,ActivePower]"
+    )
+    blocked = plugin._pre_tool_call(
+        "xstudio_select",
+        {"database": "XStudio_Xbatch", "table": "dbo.EAF_SMS_Data", "columns": ["EAFHeatID", "SomeGuessedColumn"]},
+        task_id=session,
+    )
+    assert blocked and blocked["action"] == "block"
+    assert "SomeGuessedColumn" in blocked["message"] or "someguessedcolumn" in blocked["message"].lower()
+    assert "did not consume the investigation budget" in blocked["message"]
+
+
+def test_select_requesting_only_probed_columns_is_allowed() -> None:
+    session = "stall-guard-6"
+    _seed_valid_tables(
+        session, "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data[EAFHeatID,EAFEnergyMWH,ActivePower]"
+    )
+    result = plugin._pre_tool_call(
+        "xstudio_select",
+        {"database": "XStudio_Xbatch", "table": "dbo.EAF_SMS_Data", "columns": ["EAFHeatID", "ActivePower"]},
+        task_id=session,
+    )
+    assert result is None or result["action"] != "block"
+
+
+def test_table_with_no_recorded_columns_does_not_restrict_columns() -> None:
+    # Backward compatible: a valid_tables entry with no bracketed column list
+    # (e.g. a relationship hop whose probe found no rows) must not block on
+    # columns -- only the table-level check applies.
+    session = "stall-guard-7"
+    _seed_valid_tables(session, "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data")
+    result = plugin._pre_tool_call(
+        "xstudio_select",
+        {"database": "XStudio_Xbatch", "table": "dbo.EAF_SMS_Data", "columns": ["AnyColumnAtAll"]},
+        task_id=session,
+    )
+    assert result is None or result["action"] != "block"
+
+
 def test_blocked_select_call_does_not_consume_investigation_budget() -> None:
     session = "stall-guard-4"
     _seed_valid_tables(session, "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data")

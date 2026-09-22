@@ -1943,6 +1943,53 @@ class PipelineContractTests(unittest.TestCase):
         self.assertIn('"evidence_categories": ["heat_process_state"]', verification)
 
 
+class ValidTablesRenderingTests(unittest.TestCase):
+    def test_query_instructions_renders_table_with_bracketed_columns(self):
+        instructions = mod._query_instructions(
+            "run-1", "ticket-1",
+            [("XStudio_Xbatch", "dbo.EAF_SMS_Data", ["EAFHeatID", "ActivePower"])],
+        )
+        self.assertIn(
+            "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data[EAFHeatID,ActivePower]",
+            instructions,
+        )
+        self.assertIn("rejected before reaching SQL", instructions)
+
+    def test_query_instructions_omits_brackets_when_no_columns_known(self):
+        instructions = mod._query_instructions(
+            "run-1", "ticket-1", [("XStudio_Xbatch", "dbo.Grade_Master", [])],
+        )
+        self.assertIn("Current valid_tables: XStudio_Xbatch.dbo.Grade_Master\n", instructions)
+        self.assertNotIn("Grade_Master[", instructions)
+
+    def test_query_instructions_with_no_valid_tables_omits_the_line_entirely(self):
+        instructions = mod._query_instructions("run-1", "ticket-1", None)
+        self.assertNotIn("valid_tables", instructions)
+
+    def test_extraction_includes_primary_and_relationship_hop_tables_with_columns(self):
+        investigation = {
+            "live_probes": [{
+                "candidate": {"database": "XStudio_Xbatch", "table": "dbo.EAF_PER_HEAT"},
+                "probe": {"columns": ["HeatID", "SteelGrade"]},
+                "relationship_hops": [{
+                    "hop": {"target_database": "XStudio_Xbatch", "target_table": "Grade_Master"},
+                    "probe": {"columns": ["ID", "GradeName"]},
+                }],
+            }],
+        }
+        result = mod._valid_tables_from_investigation(investigation)
+        self.assertEqual(
+            result,
+            [
+                ("XStudio_Xbatch", "dbo.EAF_PER_HEAT", ["HeatID", "SteelGrade"]),
+                ("XStudio_Xbatch", "Grade_Master", ["ID", "GradeName"]),
+            ],
+        )
+
+    def test_extraction_with_no_investigation_data_returns_empty_list(self):
+        self.assertEqual(mod._valid_tables_from_investigation({}), [])
+
+
 class RelationshipHopTests(unittest.TestCase):
     def test_available_hops_only_includes_edges_this_row_can_actually_follow(self):
         relationships = [

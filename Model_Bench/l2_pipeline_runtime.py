@@ -3420,37 +3420,44 @@ def _route_skill(route: str | None) -> str | None:
     return None
 
 
-class InvestigationBundle(str):
-    route_skill: str | None
-
-    def __new__(cls, text: str, route_skill: str | None = None):
-        obj = str.__new__(cls, text)
-        obj.route_skill = route_skill
-        return obj
-
-    def __iter__(self):
-        return iter((str(self), self.route_skill))
-
-
-def _valid_tables_from_investigation(investigation: dict[str, Any]) -> list[tuple[str, str]]:
-    """The exact real database.table pairs Jev's evidence plan selected and
-    live-probed for this ticket -- the only tables the investigator should
-    ever query. Extracted from live_probes rather than the raw candidate
-    backlog, so it reflects Jev's actual picks, not everything considered.
+def _valid_tables_from_investigation(investigation: dict[str, Any]) -> list[tuple[str, str, list[str]]]:
+    """The exact real database.table pairs (with their real probed columns)
+    Jev's evidence plan selected and live-probed for this ticket, plus any
+    tables reached via relationship hops -- the only tables/columns the
+    investigator should query. Extracted from live_probes rather than the
+    raw candidate backlog, so it reflects Jev's actual picks, not everything
+    considered. Columns come from the probe's own real, schema-checked
+    column list -- the single biggest source of tool-call errors (95 of 302
+    in 24h, 2026-09-22) was Qwen guessing a wrong column name even on an
+    otherwise-correct table.
     """
     probes = investigation.get("live_probes") if isinstance(investigation, dict) else None
-    pairs: list[tuple[str, str]] = []
+    triples: list[tuple[str, str, list[str]]] = []
     seen: set[tuple[str, str]] = set()
-    for probe in probes if isinstance(probes, list) else []:
-        candidate = probe.get("candidate") if isinstance(probe, dict) else None
-        if not isinstance(candidate, dict):
-            continue
-        database = str(candidate.get("database") or "").strip()
-        table = str(candidate.get("table") or "").strip()
+
+    def _add(database: str, table: str, columns: list[str]) -> None:
+        database = str(database or "").strip()
+        table = str(table or "").strip()
         if database and table and (database, table) not in seen:
             seen.add((database, table))
-            pairs.append((database, table))
-    return pairs
+            triples.append((database, table, [str(c) for c in columns if c]))
+
+    for entry in probes if isinstance(probes, list) else []:
+        candidate = entry.get("candidate") if isinstance(entry, dict) else None
+        probe = entry.get("probe") if isinstance(entry, dict) else {}
+        if isinstance(candidate, dict):
+            _add(
+                candidate.get("database"), candidate.get("table"),
+                (probe.get("columns") or []) if isinstance(probe, dict) else [],
+            )
+        for hop_entry in entry.get("relationship_hops") or [] if isinstance(entry, dict) else []:
+            hop = hop_entry.get("hop") or {}
+            hop_probe = hop_entry.get("probe") or {}
+            _add(
+                hop.get("target_database"), hop.get("target_table"),
+                hop_probe.get("columns") or [],
+            )
+    return triples
 
 
 def _investigation_bundle(
@@ -3459,7 +3466,7 @@ def _investigation_bundle(
     fallback_ticket: dict[str, Any],
     *,
     run_id: str | None = None,
-) -> tuple[str, str | None, dict[str, Any] | None, str, list[tuple[str, str]]]:
+) -> tuple[str, str | None, dict[str, Any] | None, str, list[tuple[str, str, list[str]]]]:
     try:
         bundle = run_orchestrator(args, ["--investigate-bundle", ticket_id], timeout=90)
     except RuntimeError as exc:
@@ -3780,7 +3787,7 @@ def _dispatch_route_context(run_id: str, ticket_id: str, ticket: dict[str, Any],
 
 
 def _query_instructions(
-    run_id: str, ticket_id: str, valid_tables: list[tuple[str, str]] | None = None,
+    run_id: str, ticket_id: str, valid_tables: list[tuple[str, str, list[str]]] | None = None,
 ) -> str:
     """Render the typed-tool investigation contract for a fresh card body.
 
@@ -3800,12 +3807,17 @@ def _query_instructions(
     """
     valid_tables_line = ""
     if valid_tables:
-        joined = ", ".join(f"{db}.{table}" for db, table in valid_tables)
+        joined = ", ".join(
+            f"{db}.{table}[{','.join(columns)}]" if columns else f"{db}.{table}"
+            for db, table, columns in valid_tables
+        )
         valid_tables_line = (
             f"Current valid_tables: {joined}\n"
-            "Jev's evidence plan already selected these as the only tables worth inspecting for this "
-            "ticket. select/query calls against any other table will be rejected before reaching SQL -- "
-            "use exactly one of these, or find_objects/suggest_tables first if none of them fit.\n"
+            "Jev's evidence plan already selected these tables (with their real, already-probed "
+            "columns in brackets) as the only ones worth inspecting for this ticket. select/query "
+            "calls against any other table, or select calls requesting a column not listed for that "
+            "table, will be rejected before reaching SQL -- use exactly these, or find_objects/"
+            "suggest_tables first if none of them fit.\n"
         )
     return (
         "\n--- Typed XStudio investigation contract ---\n"
@@ -3895,7 +3907,7 @@ def _investigator_task_spec(
     investigation_bundle: str,
     route_skill: str | None,
     qwen_free_fallback_reason: str | None,
-    valid_tables: list[tuple[str, str]] | None = None,
+    valid_tables: list[tuple[str, str, list[str]]] | None = None,
 ) -> dict[str, Any]:
     body = (
         f"run_id: {run_id}\n"

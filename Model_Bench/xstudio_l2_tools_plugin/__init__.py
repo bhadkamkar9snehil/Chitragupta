@@ -335,26 +335,33 @@ def _context_for(session: str, kwargs: dict[str, Any] | None = None) -> dict[str
     return values
 
 
-def _parse_valid_tables(raw: str) -> set[str]:
-    """'db1.tbl1, db2.tbl2' -> {'tbl1', 'db1.tbl1', 'tbl2', 'db2.tbl2'} (lowercase).
+_VALID_TABLE_ENTRY_RE = re.compile(r"([^,\[\]]+?)(?:\[([^\]]*)\])?\s*(?:,|$)")
 
-    Both the bare table name and the fully-qualified form are accepted since
-    the model may supply either in its own `table` argument.
+
+def _parse_valid_tables(raw: str) -> dict[str, set[str] | None]:
+    """'db1.tbl1[colA,colB], db2.tbl2' -> {'tbl1': {'cola','colb'}, 'db1.tbl1': {...},
+    'tbl2': None, 'db2.tbl2': None} (lowercase keys; None means no column list
+    was recorded for that table, so columns are not restricted for it).
+
+    Both the bare table name and the fully-qualified form are accepted as keys
+    since the model may supply either in its own `table` argument.
     """
-    names: set[str] = set()
-    for part in raw.split(","):
-        part = part.strip().strip(".")
-        if not part:
+    allowed: dict[str, set[str] | None] = {}
+    for match in _VALID_TABLE_ENTRY_RE.finditer(raw):
+        name = match.group(1).strip().strip(".")
+        if not name:
             continue
-        names.add(part.lower())
-        if "." in part:
-            names.add(part.rsplit(".", 1)[-1].lower())
-    return names
+        cols_raw = match.group(2)
+        columns = {c.strip().lower() for c in cols_raw.split(",") if c.strip()} if cols_raw else None
+        for key in ({name.lower(), name.rsplit(".", 1)[-1].lower()} if "." in name else {name.lower()}):
+            allowed[key] = columns
+    return allowed
 
 
 def _table_not_in_valid_tables(session: str, effective_args: dict[str, Any]) -> str | None:
-    """None if the call's table is allowed (or no evidence-plan restriction
-    applies to this ticket); otherwise a message naming the real options.
+    """None if the call's table (and, when recorded, its requested columns)
+    are allowed, or no evidence-plan restriction applies to this ticket;
+    otherwise a message naming the real options.
     """
     with _lock:
         raw = _session_context.get(session, {}).get("valid_tables")
@@ -367,12 +374,24 @@ def _table_not_in_valid_tables(session: str, effective_args: dict[str, Any]) -> 
     if not table:
         return None
     bare = table.rsplit(".", 1)[-1].lower()
-    if table.lower() in allowed or bare in allowed:
-        return None
-    return (
-        f"'{table}' is not one of the tables Jev's evidence plan selected for this ticket "
-        f"(valid_tables: {raw})."
-    )
+    if table.lower() not in allowed and bare not in allowed:
+        return (
+            f"'{table}' is not one of the tables Jev's evidence plan selected for this ticket "
+            f"(valid_tables: {raw})."
+        )
+
+    allowed_columns = allowed.get(table.lower())
+    if allowed_columns is None:
+        allowed_columns = allowed.get(bare)
+    requested = effective_args.get("columns")
+    if allowed_columns and isinstance(requested, list):
+        bad = [c for c in requested if str(c).strip().lower() not in allowed_columns]
+        if bad:
+            return (
+                f"{bad} are not among the real columns Jev's evidence plan already probed on "
+                f"'{table}' (valid_tables: {raw})."
+            )
+    return None
 
 
 def _repair_args(tool_name: str, args: dict[str, Any], session: str,
