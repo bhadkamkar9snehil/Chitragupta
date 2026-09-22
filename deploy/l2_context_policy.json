@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "maximum_total_rendered_context_characters": 30000,
+  "maximum_total_rendered_context_characters": 80000,
   "route_canonical_documents": 3,
   "investigation": {
     "facts": 5,
