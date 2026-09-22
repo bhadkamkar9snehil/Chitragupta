@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
-"""Post-resolution Jev knowledge-curation suggestions.
+"""Post-resolution Jev knowledge-curation suggestions, and the deterministic
+write step that acts on them.
 
-This job never creates, updates, promotes, or links a Solution article. It
-produces auditable REUSE_EXISTING / UPDATE_EXISTING / CREATE_CANDIDATE / NONE
-judgments for verified resolved runs so KB governance can act separately.
+Jev never writes to the Solution Article table directly -- it only produces
+an auditable REUSE_EXISTING / UPDATE_EXISTING / CREATE_CANDIDATE / NONE
+judgment (assess_curation()). This module's write_curation_action() is the
+harness-owned deterministic code that decides what, if anything, to persist
+based on that judgment plus the run's own already-VERIFIED resolution
+fields -- never inventing new article content. Per the governance flags in
+`state["governance"]`, no ticket auto-approves an article: CREATE_CANDIDATE
+and UPDATE_EXISTING both land as ArticleStatus='Candidate' rows awaiting
+human/governed review; UPDATE_EXISTING never mutates an existing article's
+authoritative content in place, it links a new candidate via
+SupersedesSolutionID so a reviewer can compare old vs proposed. Only
+REUSE_EXISTING touches an existing row, and only its usage bookkeeping
+(UsageCount, LastVerifiedOn/RunID), never its content.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -100,6 +112,79 @@ def candidate_articles(cur, run: dict[str, Any], top: int = 8) -> tuple[list[dic
     return (list(rerank.get("ranked") or pool[:top]), rerank)
 
 
+def _content_hash(*parts: Any) -> str:
+    blob = "\x1f".join(str(p or "") for p in parts)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def write_curation_action(
+    cur,
+    *,
+    run: dict[str, Any],
+    disposition: str,
+    top_existing: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Deterministic write for a Jev curation judgment. Only acts on the
+    run's own already-verified fields; never generates new article prose.
+    """
+    ticket_no = run.get("TicketNo") or run.get("TicketID") or "unknown ticket"
+    problem_summary = (run.get("ProblemSummary") or "").strip()
+    root_cause = (run.get("RootCause") or "").strip()
+    resolution = (run.get("Resolution") or "").strip()
+    route = run.get("Route")
+    run_id = str(run["RunID"])
+    ticket_id = str(run["TicketID"])
+
+    if disposition == "REUSE_EXISTING":
+        if not top_existing or not top_existing.get("ID"):
+            return {"action": "NONE", "reason": "REUSE_EXISTING but no existing candidate to bump"}
+        cur.execute(
+            """
+            UPDATE dbo.Hermes_Solution_Article_Mst_Tbl
+            SET UsageCount = ISNULL(UsageCount, 0) + 1,
+                LastVerifiedOn = GETDATE(),
+                LastVerifiedRunID = ?,
+                ModifiedOn = GETDATE()
+            WHERE ID = ? AND IsDeleted = 0
+            """,
+            run_id, top_existing["ID"],
+        )
+        return {"action": "REUSE_EXISTING_BUMPED", "article_id": top_existing["ID"]}
+
+    if disposition in ("CREATE_CANDIDATE", "UPDATE_EXISTING"):
+        if not resolution or not root_cause:
+            return {"action": "NONE", "reason": "missing verified root_cause/resolution, refusing to write"}
+        title = f"{ticket_no}: {problem_summary[:120] or root_cause[:120]}".strip()
+        canonical_key = _content_hash(route, root_cause)[:32]
+        content_hash = _content_hash(problem_summary, root_cause, resolution)
+        supersedes = (
+            top_existing["ID"]
+            if disposition == "UPDATE_EXISTING" and top_existing and top_existing.get("ID")
+            else None
+        )
+        new_id = cur.execute(
+            """
+            INSERT INTO dbo.Hermes_Solution_Article_Mst_Tbl
+                (Title, ProblemSummary, RootCause, ResolutionSteps, Route,
+                 UsageCount, IsActive, ArticleStatus, CanonicalKey, ContentHash,
+                 SourceTicketID, SourceRunID, SupersedesSolutionID, KnowledgeType,
+                 Source)
+            OUTPUT INSERTED.ID
+            VALUES (?, ?, ?, ?, ?, 0, 1, 'Candidate', ?, ?, ?, ?, ?, 'jev_post_resolution_curation', 'T-SQL')
+            """,
+            title, problem_summary or None, root_cause, resolution, route,
+            canonical_key, content_hash, ticket_id, run_id, supersedes,
+        ).fetchone()[0]
+        if supersedes:
+            cur.execute(
+                "UPDATE dbo.Hermes_Solution_Article_Mst_Tbl SET SupersededBySolutionID = ? WHERE ID = ?",
+                new_id, supersedes,
+            )
+        return {"action": f"{disposition}_WRITTEN", "article_id": str(new_id), "supersedes": supersedes}
+
+    return {"action": "NONE", "reason": "disposition NONE or unrecognized"}
+
+
 def main() -> int:
     if not KB_JUDGMENTS_ENABLED:
         print("Jev KB judgments disabled.")
@@ -164,7 +249,22 @@ def main() -> int:
             ))
             assessed += int(audit.get("persisted") or 0) > 0
             disp = (result.get("answers") or {}).get("curation_disposition") or {}
-            print(f"Jev KB curation {run['RunID']}: {disp.get('choice')} ({disp.get('confidence')})")
+            choice = str(disp.get("choice") or "NONE")
+            confidence = float(disp.get("confidence") or 0.0)
+            print(f"Jev KB curation {run['RunID']}: {choice} ({confidence})")
+
+            # Deterministic write, gated on real evidence -- not on Jev's
+            # confidence alone. A low-confidence disposition still requires
+            # governed review later (ArticleStatus='Candidate'), but a
+            # low-confidence CREATE/UPDATE isn't even attempted.
+            write_result = {"action": "NONE", "reason": "confidence below write threshold"}
+            if confidence >= 0.60:
+                write_result = write_curation_action(
+                    cur, run=run, disposition=choice,
+                    top_existing=candidates[0] if candidates else None,
+                )
+            conn.commit()
+            print(f"  write: {write_result}")
     finally:
         conn.close()
     print(f"Jev KB curation complete: {assessed} newly assessed resolution(s).")
