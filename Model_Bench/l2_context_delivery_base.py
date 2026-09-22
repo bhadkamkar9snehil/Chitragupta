@@ -20,7 +20,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-import kb_retrieval as kb
+import l2_context_retriever as kb  # noqa: N813 -- see l2_context_retriever.py docstring:
+# this branch's kb_retrieval.py is the live SQL Solution Article + Jev retriever
+# with a different call signature; this adapter gives assemble_stage_context()
+# the retrieve(query, manifest, ...) shape it expects without replacing it.
 from l2_context_envelope import (
     SCHEMA_VERSION,
     build_context_envelope,

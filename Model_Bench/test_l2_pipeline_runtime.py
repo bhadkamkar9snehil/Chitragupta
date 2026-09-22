@@ -866,7 +866,9 @@ class PipelineContractTests(unittest.TestCase):
             mod,
             "_queue_local_model_task",
             return_value={"QueueStatus": "QUEUED"},
-        ) as queue, patch.object(mod, "run_hermes") as hermes:
+        ) as queue, patch.object(mod, "run_hermes") as hermes, \
+             patch.object(mod, "run_orchestrator", side_effect=RuntimeError("no live SQL in a unit test")), \
+             patch.object(mod, "_build_and_persist_stage_context", return_value=("", "", None)):
             result = mod.create_reviewer_card(
                 mod.default_args(),
                 source_task=source,
@@ -884,6 +886,60 @@ class PipelineContractTests(unittest.TestCase):
         body = kwargs["spec"]["body"]
         self.assertIn("Typed XStudio investigation contract", body)
         self.assertIn("Pass database explicitly", body)
+
+    def test_reviewer_card_carries_governed_context_when_delivery_succeeds(self):
+        """Review cards get no canonical procedure, promoted facts, or historical
+        negative cases today -- only proposal_json and instructions. Prove the
+        governed-context wiring actually lands in the card body when context
+        delivery succeeds, and that its provenance header/receipt appear too."""
+        source = {
+            "id": "t_inv",
+            "body": "run_id: r1\nticket_id: t1\nticket_no: Ticket_1\nreview_cycle: 0",
+        }
+        proposal = {"run_id": "r1", "ticket_id": "t1", "response_type": "UPDATE", "reply_text": "Verified update"}
+        with patch.object(mod, "_queue_local_model_task", side_effect=lambda *a, **kw: {"QueueStatus": "QUEUED"}) as queue, \
+             patch.object(mod, "run_hermes"), \
+             patch.object(mod, "run_orchestrator", side_effect=RuntimeError("no live SQL in a unit test")), \
+             patch.object(
+                 mod, "_build_and_persist_stage_context",
+                 return_value=("context_sha256: abc123\ncontext_receipt: /tmp/r1.json\n",
+                               "CANONICAL PROCEDURE / REFERENCE\nsome governed content here\n", "/tmp/r1.json"),
+             ) as build_ctx:
+            mod.create_reviewer_card(mod.default_args(), source_task=source, proposal=proposal)
+        self.assertEqual(build_ctx.call_args.kwargs["stage"], "review")
+        body = queue.call_args.kwargs["spec"]["body"]
+        self.assertIn("context_sha256: abc123", body)
+        self.assertIn("some governed content here", body)
+
+    def test_rework_card_carries_governed_context_when_delivery_succeeds(self):
+        source_task = {
+            "id": "t-source",
+            "body": "run_id: run-1\nticket_id: ticket-1\nticket_no: Ticket_999\nreview_cycle: 0\n",
+        }
+        captured = {}
+
+        def fake_queue(args, *, run_id, purpose, execution_mode, priority, work_key, spec, dry_run=False):
+            captured["spec"] = spec
+            return {"QueueStatus": "QUEUED"}
+
+        with patch.object(mod, "_persist_rejected_ledger", return_value=""), \
+             patch.object(mod, "_source_has_rework", return_value=False), \
+             patch.object(mod, "run_orchestrator", side_effect=RuntimeError("no live SQL in a unit test")), \
+             patch.object(
+                 mod, "_build_and_persist_stage_context",
+                 return_value=("context_sha256: def456\ncontext_receipt: /tmp/run-1.json\n",
+                               "PRIOR REJECTED REASONING\nverbatim rejection carried forward\n", "/tmp/run-1.json"),
+             ) as build_ctx, \
+             patch.object(mod, "_queue_local_model_task", side_effect=fake_queue):
+            mod.create_rework_card(
+                mod.default_args(), source_task=source_task,
+                reason="ACTION_AUTHORITY mismatch", investigation_task_id="t-inv",
+            )
+        self.assertEqual(build_ctx.call_args.kwargs["stage"], "rework")
+        self.assertEqual(build_ctx.call_args.kwargs["rejection_reason"], "ACTION_AUTHORITY mismatch")
+        body = captured["spec"]["body"]
+        self.assertIn("context_sha256: def456", body)
+        self.assertIn("verbatim rejection carried forward", body)
 
     def test_resolution_fails_closed_without_binding(self):
         with self.assertRaises(RuntimeError):
@@ -1001,6 +1057,8 @@ class PipelineContractTests(unittest.TestCase):
 
         with patch.object(mod, "_persist_rejected_ledger", return_value=""), \
              patch.object(mod, "_source_has_rework", return_value=False), \
+             patch.object(mod, "run_orchestrator", side_effect=RuntimeError("no live SQL in a unit test")), \
+             patch.object(mod, "_build_and_persist_stage_context", return_value=("", "", None)), \
              patch.object(mod, "_queue_local_model_task", side_effect=fake_queue):
             result = mod.create_rework_card(
                 mod.default_args(),

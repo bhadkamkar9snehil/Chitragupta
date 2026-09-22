@@ -102,6 +102,10 @@ PUBLISHED_PROCESS_STATES = {"COMPLETED", "WAITING_USER"}
 LOCAL_MODEL_PENDING_STATES = {"QUEUED", "RUNNING"}
 
 REPO_ROOT_WSL = Path("/mnt/c/Users/Admin/Documents/Office/AIHelpdesk")
+# WSL-native (needs l2_gbrain.py -> the bun-installed gbrain CLI, which lives
+# under WSL, not Windows) -- unlike KB_RETRIEVER_WIN/JEV_WORKFLOW_BRIDGE_WIN,
+# which need Windows Python for pyodbc.
+CONTEXT_DELIVERY_CLI_WSL = REPO_ROOT_WSL / "Model_Bench" / "l2_context_delivery_cli.py"
 BINDING_CANDIDATES = [
     Path(os.environ["L2_HELPDESK_WORKFLOW_BINDING"]) if os.environ.get("L2_HELPDESK_WORKFLOW_BINDING") else None,
     REPO_ROOT_WSL / "deploy" / "helpdesk_workflow_binding.json",
@@ -1548,6 +1552,109 @@ def _proposal_preflight_state(
 
 
 # ---------------------------------------------------------------------------
+# Governed context delivery (review/rework stages)
+#
+# Fresh investigation already gets a rich, Jev-compiled context bundle via
+# _investigation_bundle()/_make_context_chunks(). Review and rework cards
+# currently do not: create_reviewer_card() only carries proposal_json, and
+# create_rework_card() only carries the rejection reason and a free-text
+# ledger. Neither gets canonical procedure references, promoted facts, or
+# (once the learning cycle exists) negative historical cases. This wires
+# Model_Bench/l2_context_delivery_cli.py -- a repo-resident subprocess, same
+# pattern as KB_RETRIEVER_WIN/JEV_WORKFLOW_BRIDGE_WIN -- into those two
+# stages only. Fresh investigation is intentionally NOT wired here: doing so
+# without first merging governed retrieval into Jev's own context-chunk
+# compiler would hand the model two large, competing context blocks.
+# ---------------------------------------------------------------------------
+
+def _ticket_snapshot(args: argparse.Namespace, ticket_id: str) -> dict[str, Any]:
+    if not ticket_id:
+        return {}
+    try:
+        result = run_orchestrator(args, ["--get-ticket-context", ticket_id], timeout=45)
+    except RuntimeError:
+        return {}
+    ticket = result.get("ticket") if isinstance(result, dict) else None
+    return ticket if isinstance(ticket, dict) else (result if isinstance(result, dict) else {})
+
+
+def _run_evidence_snapshot(args: argparse.Namespace, run_id: str) -> list[Any]:
+    if not run_id:
+        return []
+    try:
+        actions = run_orchestrator(args, ["--get-run-actions", run_id], timeout=45)
+    except RuntimeError:
+        return []
+    return actions[-25:] if isinstance(actions, list) else []
+
+
+def _load_context_receipt(receipt_path: str | None) -> dict[str, Any] | None:
+    if not receipt_path:
+        return None
+    try:
+        data = json.loads(Path(receipt_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    envelope = data.get("envelope") if isinstance(data, dict) else None
+    return envelope if isinstance(envelope, dict) else None
+
+
+def _original_context_for_task(source_task: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """Load the governed context envelope the source task itself received, if any."""
+    receipt_path = body_field(source_task.get("body"), "context_receipt")
+    return _load_context_receipt(receipt_path), receipt_path
+
+
+def _build_and_persist_stage_context(
+    args: argparse.Namespace,
+    *,
+    ticket: dict[str, Any],
+    run_id: str,
+    ticket_id: str,
+    ticket_no: str,
+    stage: str,
+    review_cycle: int,
+    proposal: dict[str, Any] | None = None,
+    current_run_evidence: Any = None,
+    rejection_reason: str | None = None,
+    original_context: dict[str, Any] | None = None,
+    dry_run: bool = False,
+) -> tuple[str, str, str | None]:
+    """Returns (provenance_header_text, rendered_context_text, receipt_path).
+
+    Never raises. GBrain/context-delivery failure must not block card
+    construction (AGENTS.md: a derivative knowledge service outage cannot
+    become a lifecycle dependency) -- on any failure this returns empty
+    strings and a None receipt path, and the card is built without governed
+    context exactly as it was before this wiring existed.
+    """
+    if dry_run:
+        return "", "", None
+    request = {
+        "ticket": ticket, "run_id": run_id, "ticket_id": ticket_id, "ticket_no": ticket_no,
+        "stage": stage, "review_cycle": review_cycle, "proposal": proposal,
+        "current_run_evidence": current_run_evidence, "rejection_reason": rejection_reason,
+        "original_context": original_context,
+    }
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(CONTEXT_DELIVERY_CLI_WSL)],
+            input=json.dumps(request, default=str),
+            capture_output=True, text=True, timeout=60,
+        )
+        response = json.loads(proc.stdout) if proc.stdout.strip() else {}
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+        print(f"WARNING: context delivery unavailable for run {run_id} stage {stage}: {exc}")
+        return "", "", None
+    if not response.get("error") is None and not response.get("ok"):
+        print(f"WARNING: context delivery degraded for run {run_id} stage {stage}: {response.get('error')}")
+    header = str(response.get("provenance_header") or "")
+    rendered = str(response.get("rendered_context") or "")
+    receipt_path = response.get("receipt_path")
+    return header, rendered, (str(receipt_path) if receipt_path else None)
+
+
+# ---------------------------------------------------------------------------
 # Completion normalization and reviewer creation
 # ---------------------------------------------------------------------------
 
@@ -1630,6 +1737,21 @@ def create_reviewer_card(
     proposal_json = json.dumps(proposal, separators=(",", ":"), default=str)
     work_key = f"review-{run_id}-{cycle}-{source_task['id']}"
 
+    original_context, _ = _original_context_for_task(source_task)
+    header, rendered_context, receipt_path = _build_and_persist_stage_context(
+        args,
+        ticket=_ticket_snapshot(args, ticket_id),
+        run_id=run_id,
+        ticket_id=ticket_id,
+        ticket_no=ticket_no,
+        stage="review",
+        review_cycle=cycle,
+        proposal=proposal,
+        current_run_evidence=_run_evidence_snapshot(args, run_id),
+        original_context=original_context,
+        dry_run=dry_run,
+    )
+
     body = (
         f"run_id: {run_id}\n"
         f"ticket_id: {ticket_id}\n"
@@ -1637,8 +1759,10 @@ def create_reviewer_card(
         f"investigation_task_id: {source_task['id']}\n"
         f"review_cycle: {cycle}\n"
         "pipeline_stage: review\n"
-        f"proposal_json: {proposal_json}\n\n"
-        "This local review exists because Jev primary review selected LOCAL_REVIEW, was unavailable, "
+        + header
+        + f"proposal_json: {proposal_json}\n\n"
+        + (rendered_context + "\n" if rendered_context else "")
+        + "This local review exists because Jev primary review selected LOCAL_REVIEW, was unavailable, "
         "or failed deterministic confidence/safety gates. Do not repeat the whole investigation. "
         "Inspect the Jev primary-review result embedded in proposal_json, identify the exact disputed "
         "or underdetermined claim, and verify only the smallest sufficient live evidence set. "
@@ -1952,6 +2076,23 @@ def create_rework_card(
 
     prior = "" if dry_run else _persist_rejected_ledger(args, investigation_task_id, run_id)
     ticket_no = body_field(source_task.get("body"), "ticket_no") or ticket_id
+
+    original_context, _ = _original_context_for_task(source_task)
+    header, rendered_context, _receipt_path = _build_and_persist_stage_context(
+        args,
+        ticket=_ticket_snapshot(args, ticket_id),
+        run_id=run_id,
+        ticket_id=ticket_id,
+        ticket_no=ticket_no,
+        stage="rework",
+        review_cycle=next_cycle,
+        proposal=task_proposal(source_task),
+        current_run_evidence=_run_evidence_snapshot(args, run_id),
+        rejection_reason=reason,
+        original_context=original_context,
+        dry_run=dry_run,
+    )
+
     body = (
         f"run_id: {run_id}\n"
         f"ticket_id: {ticket_id}\n"
@@ -1959,8 +2100,10 @@ def create_rework_card(
         f"review_cycle: {next_cycle}\n"
         f"rework_source_id: {source_task['id']}\n"
         f"prior_investigation_task_id: {investigation_task_id or 'unknown'}\n"
-        "pipeline_stage: rework\n\n"
-        f"REWORK REASON:\n{reason}\n\n"
+        "pipeline_stage: rework\n"
+        + header + "\n"
+        + (rendered_context + "\n" if rendered_context else "")
+        + f"REWORK REASON:\n{reason}\n\n"
         "Address this exact rejected/invalid point using current live evidence. Reuse prior verified "
         "findings; do not restart the entire investigation unless the objection invalidates them. "
         "Complete with the full structured metadata contract.\n"
