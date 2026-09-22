@@ -19,15 +19,12 @@ and the table's own real column names) -- never invented.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SOURCE_EXPORT = Path(
-    r"C:\Users\Admin\AppData\Local\Temp\claude\C--Users-Admin-Documents-Office-AIHelpdesk"
-    r"\8e3b4e73-d355-4c01-9c82-3c46182d500f\scratchpad\XStudio_Xbatch_Schema_WithSamples.md"
-)
 ATLAS_PATH = REPO_ROOT / "Knowledge" / "xstudio_semantic_atlas.json"
 KEYWORD_INDEX_PATH = REPO_ROOT / "Knowledge" / "table_keyword_index.json"
 OUTPUT_DIR = REPO_ROOT / "Knowledge" / "xbatch_tables"
@@ -181,7 +178,20 @@ def format_relationships(bare_table: str, rel_index: dict[str, list[dict]]) -> s
 
 
 def main() -> None:
-    text = SOURCE_EXPORT.read_text(encoding="utf-8")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--source",
+        type=Path,
+        required=True,
+        help=(
+            "Path to the XS Builder 'export-schema --with-samples' output for "
+            "XStudio_Xbatch (e.g. from `xsb export-schema --connection <name> "
+            "--database XStudio_Xbatch --with-samples --output <path>`)."
+        ),
+    )
+    args = parser.parse_args()
+
+    text = args.source.read_text(encoding="utf-8")
     marker = "## Detailed Table Information"
     idx = text.index(marker)
     body = text[idx + len(marker):]
