@@ -148,6 +148,9 @@ GO
 IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelCompletedOn') IS NULL
     ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelCompletedOn datetime NULL;
 GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'ApprovalStatus') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD ApprovalStatus varchar(50) NULL;
+GO
 
 IF NOT EXISTS
 (
