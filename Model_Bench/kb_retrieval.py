@@ -51,6 +51,28 @@ STOPWORDS = {
 TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_\-]*")
 
 
+def _iter_gbrain_rows(payload: Any) -> list[dict[str, Any]]:
+    """Best-effort normalization of GBrain search output without trusting its synthesis.
+
+    Shared by l2_context_delivery_assembly so the context envelope's GBrain
+    hit-count is derived the same way regardless of which GBrain response
+    shape (list, or dict wrapping results/hits/items/documents/data) came back.
+    """
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("results", "hits", "items", "documents", "data"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [row for row in value if isinstance(row, dict)]
+        if isinstance(value, dict):
+            nested = _iter_gbrain_rows(value)
+            if nested:
+                return nested
+    return []
+
+
 def tokenize(text: str) -> set[str]:
     return {
         t.lower()

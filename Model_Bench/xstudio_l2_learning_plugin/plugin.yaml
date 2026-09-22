@@ -1,0 +1,7 @@
+name: xstudio-l2-learning
+version: "0.1.0"
+description: "Shared Chitragupta learning substrate: records every completed L2 turn as redacted unverified episodic Markdown and exposes explicit trust-scoped zvec hybrid recall plus unverified lesson-candidate capture. No automatic prefetch; storage and epistemic authority remain separate."
+author: Snehil Bhadkamkar, Hermes Agent
+requires_env: []
+provides_hooks:
+  - post_llm_call
