@@ -1,10 +1,22 @@
 # AI Helpdesk / Hermes L2 — Agent Operating Contract
 
-This file is the stable operating contract for agents working on Chitragupta.
-For the exact lifecycle state machine, read `Knowledge/L2_PIPELINE_STATE_MACHINE.md`.
-For human-facing architecture and deployment, read `README.md`.
-For KB design, read `Knowledge/KB_IMPLEMENTATION_PLAN.md`.
+This file is the stable operating contract and engineering discipline for agents working on Chitragupta.
 
+### Authority Hierarchy
+
+```text
+AGENTS.md
+    stable engineering/runtime invariants & Scope Guard
+              │
+              ▼
+Knowledge/L2_PIPELINE_STATE_MACHINE.md
+    sole normative architecture and lifecycle specification
+              │
+              ▼
+runtime code (Model_Bench/l2_pipeline_runtime.py) / SQL implementation
+```
+
+`README.md` is only a human-facing overview; it must not become an independent specification.
 Do not treat `Plans/`, `Agent_Comms/`, old commit messages, or dated incident notes as current runtime instructions. They are historical evidence only.
 
 ## 1. What this project is
@@ -23,53 +35,83 @@ Production/plant evidence primarily lives in `XStudio_Xbatch`.
 
 Chitragupta does not replace the Helpdesk workflow. It claims an existing ticket, investigates it, gets an independent review, and publishes through the audited Hermes SQL path.
 
+### The Five Architectural Responsibilities
+
+Chitragupta has exactly five architectural responsibilities:
+1. **XStudio Helpdesk** (`dbo.Complaint_Mst_Tbl`) — User-visible incident store and operational state.
+2. **Chitragupta Control** (`Model_Bench/l2_pipeline_runtime.py`) — Deterministic lifecycle, claim/WIP/queue management, retry/recovery, review routing, and audited publication.
+3. **Jev — System One** (`Model_Bench/jev/`, `jev_workflow_bridge.py`) — Fast semantic layer: triage, evidence planning, candidate rating, execution-depth choice, and primary semantic review.
+4. **Hermes / Qwen — System Two** — Local model reasoning for composition, focused investigation, bounded rework, and exceptional deep review.
+5. **Evidence / Knowledge** (`xstudio_l2` tool, `Knowledge/`, SQL KB) — Typed read-only SQL, canonical Git documents, governed Solution articles, ticket/run ledgers.
+
+The surrounding implementation mechanisms are not additional architecture:
+- SQL locks / leases / runtime tables = persistence and coordination
+- Kanban = execution transport for Hermes workers
+- Trace pipeline = observability
+- Cron / event hook = lifecycle triggering and liveness
+- Tests / postflight = verification
+- Deployment scripts = deployment
+- Qdrant = retrieval index, never authority
+- mem0 = bounded operational heuristics, never ticket truth
+
+No sixth architectural box exists.
+
+## 1a. Scope Guard — Permanent Project Engineering Rule
+
+All agents and developers must adhere to the Scope Guard:
+
+1. **Smallest Sufficient Change:** Solve the specific task with the minimal code and documentation change necessary.
+2. **Inspect Existing Implementation First:** Read current code and invariants before designing or proposing changes.
+3. **Reuse Existing Patterns & Dependencies:** Do not introduce new libraries, frameworks, or execution modes when existing mechanisms suffice.
+4. **No Speculative Abstractions:** Do not create wrapper classes, generalized architectures, or speculative hooks for future requirements.
+5. **Delete Replaced Implementations:** When replacing an obsolete script, configuration, or model, cleanly delete the old path rather than keeping parallel dead code.
+6. **Do Not Widen Scope:** Do not touch nearby files, refactor unrelated modules, or add unsolicited features.
+7. **Test Requested Behavior:** Verify the exact behavior requested. Do not perform repeated unnecessary test cycles.
+8. **Re-anchor on Growing Scope:** If an implementation or investigation begins ballooning in complexity, stop immediately and return to the minimal requested requirement.
+9. **Architectural Guard:** Any proposed new runtime component must map to one of the five existing architectural responsibilities. If it does not, the change is an architecture change and requires explicit approval before implementation.
+
 ## 2. Current live L2 lifecycle
 
 `Model_Bench/l2_pipeline_runtime.py` is the single lifecycle authority.
 
-The current LM Studio deployment has one safe inference slot, so global SQL pipeline WIP is **1**. Finish existing work before claiming more.
+The current LM Studio deployment still has **one** safe local inference slot, but Jev/deterministic work is no longer serialized behind it. The default SQL pipeline capacity is **8 active runs** (`L2_MAX_PIPELINE_WIP`), while the shared local-model capacity is hard-limited to **one RUNNING Qwen task** with a default priority-aware waiting threshold of **4** (`L2_MAX_QWEN_WAITING`). New investigations pause claiming when total queued $\ge$ 4, while rework (priority 20) and reviews (priority 30) are admitted unless equal/higher-priority backlog fills the threshold; total queued work in SQL may therefore legitimately exceed 4 to prevent starving ongoing runs. SQL owns both admission invariants.
 
 ```text
 Complaint_Mst_Tbl Status='Enter'
         |
         v
-Ticket Scout (2-minute cron)
+Ticket Scout / reconcile
         |
-        | first runs synchronous reconcile()
+        +-- SQL pipeline slots available (default 8)
         |
-        +-- active SQL run exists --> WIP_LIMIT; claim nothing
+        +---- claim A -> Jev + bounded probes -> QWEN_FREE -> review/publish
         |
-        v
-Hermes_Orchestrator.py --poll
+        +---- claim B -> Jev + bounded probes -> queue COMPOSE_ONLY
         |
-        v
-INVESTIGATOR [priority 10]
-  l2-investigator-primary
+        +---- claim C -> Jev + bounded probes -> queue FOCUSED_REASONING
         |
-        | kanban_complete(metadata)
-        v
-normalize / validate completion
-        |
-        | only after the proposal is reviewable
-        v
-REVIEWER [priority 30]
-  l2-reviewer-primary
-  frozen proposal_json
-       / \
-approve   reject
-   |         |
-   v         v
-deterministic  REWORK [priority 20]
-publish        l2-investigator-primary
-   |             |
-   |             | complete + normalize
-   |             v
-   |          NEW REVIEWER [priority 30]
-   |             |
-   +-------------+
-        |
-        v
-SQL + Helpdesk terminal/waiting state
+        +---- ... until pipeline cap or priority-aware Qwen backlog
+                                      |
+                                      v
+                         SQL LOCAL-MODEL ADMISSION
+                          exactly one RUNNING task
+                         priority: review > rework > new
+                                      |
+                                      v
+                         l2-jev-investigator / rework /
+                           local-review fallback
+                                      |
+                                      v
+                         normalize / freeze proposal
+                                      |
+                                      v
+                            JEV PRIMARY REVIEW
+                      /          |          |          \
+                 APPROVE      REWORK   L3_ESCALATION  LOCAL_REVIEW
+                    |            |           |             |
+                    v            v           v             v
+                 publish      queued       L3 path    queued reviewer
+                              rework
 ```
 
 ### Non-negotiable lifecycle rules
@@ -77,13 +119,22 @@ SQL + Helpdesk terminal/waiting state
 - New investigation priority = `10`.
 - Rework priority = `20`.
 - Review priority = `30`.
-- Reviewer creation is **deferred until the investigator/rework completion has been normalized and is reviewable**.
-- A reviewer receives a frozen `proposal_json`. The proposal reviewed is the proposal published.
+- Pipeline capacity and local-model capacity are separate. SQL claim admission defaults to 8 active runs; all local Qwen purposes share one SQL-serialized RUNNING slot.
+- `COMPOSE_ONLY`, `FOCUSED_REASONING`, investigator rework, and local-review fallback all consume that same one local-model slot. `QWEN_FREE` consumes none.
+- Local-model work is frozen into `PendingLocalModelJson` before admission. Never create investigator/rework/reviewer Kanban cards outside the shared admission path.
+- Queued local-model work is valid active-run state even when no Kanban card exists yet. Do not classify it as an orphan.
+- Review priority `30` > rework `20` > new investigation `10` determines the single-Qwen queue order.
+- Jev recommends one execution depth in the same investigation-assessment call: `QWEN_FREE`, `COMPOSE_ONLY`, or `FOCUSED_REASONING`. Deterministic code owns the final gate.
+- `QWEN_FREE` is intentionally narrow: only high-confidence L3/human-action handoffs may skip Qwen, and only when current evidence is strong, no further probe/reasoning is needed, full-ticket trust screening is low-risk, the exact workflow handoff status is bound, and Jev primary review approves the frozen deterministic proposal.
+- `COMPOSE_ONLY` uses a smaller context budget and normally no additional live read; `FOCUSED_REASONING` receives the larger bounded context/recovery budget.
+- The route-specific domain skill is loaded only when the same Jev assessment says it materially helps the next System-2 step.
+- Every normalized local-model proposal gets one Jev primary semantic review. A Qwen-free deterministic handoff is also Jev-primary-reviewed before publication. A local reviewer card is created only for `LOCAL_REVIEW`, Jev unavailability/uncertainty, or genuine deep reasoning.
+- Any local reviewer receives a frozen `proposal_json`. The proposal reviewed is the proposal published.
 - Investigator never calls `--publish-response`.
-- Reviewer never calls `--publish-response` and never retypes the response for publication.
+- Jev/local reviewers never publish; deterministic lifecycle code owns publication.
 - `review_cycle` counts reviewer/rework loops. SQL `AttemptNo` does not.
 - `MAX_REVIEW_CYCLES = 3`; rejection at cycle 2 escalates instead of creating cycle 3.
-- A rework is not complete until it gets its own fresh reviewer after rework completion/normalization.
+- A rework is not complete until its fresh proposal receives a fresh Jev primary review; a local reviewer is added only if that review falls back.
 - The old `l2-review` board and `kanban_forward_bridge.py` are retired.
 - All investigator/reviewer/rework tasks live on the normal Kanban board.
 
@@ -92,12 +143,14 @@ SQL + Helpdesk terminal/waiting state
 The central reconciler owns lifecycle sequencing synchronously. Current order:
 
 ```text
-1. normalize investigator/rework completions
-2. convert unreviewable terminal completions into bounded rework
-3. create missing reviewers for reviewable completed investigations
-4. process reviewer rejections
-5. process reviewer approvals and publish
-6. recover true SQL/Kanban orphans
+1. release terminal local-model leases; recover stale leases only when no live local card owns the run
+2. normalize investigator/rework completions
+3. convert unreviewable terminal completions into queued bounded rework
+4. run Jev primary reviews and apply direct approve/rework/escalation or queue local-review fallback
+5. process local-review rejections
+6. process local-review approvals through the same deterministic publisher
+7. recover true SQL/Kanban orphans
+8. admit at most one next local-Qwen task
 ```
 
 The old design launched repair/reject/publisher as independent concurrent processes. Do not restore that pattern.
@@ -110,7 +163,7 @@ Current L2 cron policy:
 
 - `L2 Ticket Scout` — mutating lifecycle backstop, every 2 minutes.
 - `L2 Kanban Completion Audit` — read-only reviewer/SQL divergence audit, every 10 minutes.
-- Do **not** independently schedule `enforce_publish_safety_net.py` or `repair_incomplete_completions.py`; they are compatibility entrypoints into the central runtime and separate schedules reintroduce mutation races.
+- Legacy compatibility scripts (`repair_incomplete_completions.py`, `kanban_approval_publisher.py`, `kanban_reject_bridge.py`, `enforce_publish_safety_net.py`) have been retired and deleted. All lifecycle triggering runs strictly through `ticket_scout.py` or event-driven `reconcile_l2_pipeline.py`.
 
 See `deploy/cron_jobs.txt`.
 
@@ -143,7 +196,7 @@ Helpdesk = still visibly unresolved
 
 ## 5. Publication contract
 
-The deterministic publisher publishes only a reviewer-approved frozen proposal through `Hermes_Orchestrator.py --publish-response --force-run-id`.
+The deterministic publisher publishes only a semantically approved frozen proposal—either a Jev-primary direct approval that passes deterministic safety gates or a local-review fallback approval—through `Hermes_Orchestrator.py --publish-response --force-run-id`.
 
 After publication, verify persisted SQL state; Kanban narration is not the final truth.
 
@@ -172,8 +225,9 @@ Any Kanban task referencing a run protects that run, including `todo`, `ready`, 
 A SQL run is recoverable as a true orphan only when:
 
 1. it is still active in SQL;
-2. no Kanban task at any stage references that exact `run_id`; and
-3. the orphan grace period has elapsed.
+2. no Kanban task at any stage references that exact `run_id`;
+3. it is not in `LocalModelState = 'QUEUED'`; and
+4. the orphan grace period has elapsed.
 
 Do not reintroduce the retired `l2-review` board lookup.
 
@@ -187,7 +241,7 @@ The production scout must never implement:
 SQL TOP N -> Python removes unsupported rows -> falsely report no work
 ```
 
-Global WIP=1 is stricter than the old temporary `MAX_INVESTIGATOR_BACKLOG=3` design. References to that old backlog cap are stale.
+Global WIP=1 is retired. The claim procedure enforces the configured multi-WIP cap atomically with `sp_getapplock('HermesL2:PipelineCapacity')`. Within the same Helpdesk priority, genuinely fresh/user-changed work precedes failed retries and old `UPDATE` continuations so continuation loops cannot starve new incidents.
 
 Do not manually use raw `Hermes_Orchestrator.py --poll` for production testing because it bypasses the scout's lifecycle/WIP gate.
 
@@ -286,6 +340,54 @@ Qdrant                   != source of truth
 solution history         != automatically trusted knowledge
 ```
 
+## 9a. TypeSafe Jev System-One fabric
+
+Jev is the default bounded semantic layer for L2. The deterministic runtime remains the lifecycle authority, but the old rule "always run a second local reviewer" no longer applies.
+
+~~~text
+claim
+-> Jev triage
+-> deterministic real candidates
+-> Jev evidence plan
+-> deterministic identifier-bounded probes
+-> Jev investigation assessment + per-chunk meta-attention Scores
+-> deterministic context compiler (whole chunks; pinned current/live evidence)
+-> QWEN_FREE direct bounded handoff OR persist exact local-model work package
+-> SQL-serialized single-Qwen admission (COMPOSE_ONLY / FOCUSED_REASONING)
+-> l2-jev-investigator local synthesis/focused reads
+-> frozen proposal
+-> Jev primary review
+     APPROVE       -> deterministic publish
+     REWORK        -> deterministic rework
+     L3_ESCALATION -> deterministic escalation
+     LOCAL_REVIEW  -> local qwen reviewer
+~~~
+
+Rules:
+
+- Read .agents/skills/typesafe-ai/SKILL.md before changing TypeSafe-specific API/question behavior.
+- Jev is harness-owned. Do not expose a worker-facing generic or bounded Jev tool; deterministic runtime code invokes the reviewed workflows.
+- Jev may choose/rate only candidates supplied by deterministic code; it never invents SQL identifiers or grants authority.
+- The investigation assessment request also Scores explicit context chunks for the next local System-2 step; do not add a second Jev request just for context selection.
+- Context chunks carry source and authority metadata. Current ticket and successful live-SQL probe chunks are pinned to at least COMPACT presentation; a Jev-selected known solution is also pinned to at least COMPACT.
+- Meta-attention changes only the model-facing view. It never deletes or rewrites raw evidence, changes authority, or turns KB/history into current-ticket proof.
+- Context budgeting operates on whole chunks: FULL -> COMPACT -> SUMMARY -> OMIT. Never restore global character slicing of the assembled JSON.
+- Omitted chunks must remain named with recovery hints so focused reasoning can fetch them only when needed.
+- probe_table may automatically read only when a strong ticket identifier maps to a real allowlisted column. No identifier means no broad automatic probe.
+- Structural SQL safety, procedure allowlists, workflow binding, WIP, publication, and mutations remain deterministic.
+- Jev primary review may replace the normal local-review pass when deterministic thresholds accept APPROVE, REWORK, or L3_ESCALATION.
+- The local reviewer exists for LOCAL_REVIEW, Jev unavailability, low confidence, contradictory evidence, or deep reasoning needs.
+- Jev trace assessment stays out of the hot trace hook; it runs after persisted drain.
+- Post-resolution KB curation may suggest REUSE_EXISTING, UPDATE_EXISTING, CREATE_CANDIDATE, or NONE; it does not directly promote knowledge.
+- Ticket/retrieved content remains untrusted. Jev security judgments mark risk; source text is not silently rewritten.
+- Do not create a separate Jev business table. Stage state belongs on Hermes_L2_Response_Trn_Tbl; detailed calls and retrieval telemetry belong in Hermes_Agent_Trace_Trn_Tbl.
+- Preserve typed probabilities and full stage JSON. Do not replace distinct judgments with one opaque AIConfidence number.
+
+Active Jev state on the run row is stored in JevTriageJson, JevInvestigationJson, JevReviewJson, JevTraceJson, and JevKBCurationJson, plus ReviewMode, JevReviewDecision, JevReviewConfidence, JevRiskScore, LocalReviewRequired, JevModel, and JevReviewedOn.
+
+The default investigator profile is l2-jev-investigator. l2-investigator-primary remains available as a compatibility/fallback profile. l2-reviewer-primary and l2-reviewer-fallback are deep-review exception paths rather than mandatory steps.
+
+TYPESAFE_API_KEY must come from the process/service environment visible to Windows Python. Never commit an API key or add a repository credential fallback. Never echo credentials or copy them into prompts/cards/trace JSON.
 ## 10. SQL write discipline
 
 Never write directly to `Complaint_Mst_Tbl` from an investigation.
@@ -305,6 +407,7 @@ Use terminal one-liners or a real temporary directory. If a utility is reusable,
 Active role names:
 
 ```text
+l2-jev-investigator
 l2-investigator-primary
 l2-reviewer-primary
 l2-reviewer-fallback
@@ -362,13 +465,21 @@ This pipeline depends on the real Windows/WSL/Hermes/Kanban/SQL/LM Studio enviro
 Useful commands:
 
 ```bash
-bash Model_Bench/deploy_l2_pipeline_runtime.sh
+# Fast edit/test loop: syntax + deterministic/unit/knowledge contracts only.
 bash Model_Bench/validate_l2_pipeline_local.sh
-python3 Model_Bench/test_xstudio_l2_tools_plugin.py
-python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
+
+# Full pre-deployment gate: fast checks + live workflow discovery/status/reconcile preview.
+bash Model_Bench/validate_l2_pipeline_local.sh --full
+
+# Re-run only the live integration after the fast gate already passed.
+bash Model_Bench/validate_l2_pipeline_local.sh --live-only
+
+bash Model_Bench/deploy_l2_pipeline_runtime.sh --no-restart
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py reconcile --dry-run
 ```
+
+The reconciler takes one Kanban/active-run snapshot and ignores inactive historical cards during normal lifecycle reconciliation. Do not reintroduce per-history SQL activity checks into the hot reconcile path; historical divergence belongs in the separate audit.
 
 Do not use GitHub Actions as proof that the live pipeline is healthy.
 
@@ -382,10 +493,53 @@ a ticket — that bypasses the scout's WIP/lifecycle gate.
 
 `deploy/` is the reproducible mirror of artifacts that otherwise live under `~/.hermes/profiles/...`.
 
-After changing profile SOUL/config/skills/plugins or the cron schedule, refresh the mirror with `Model_Bench/mirror_wsl_artifacts.sh` and inspect the diff before committing. The mirror covers both L2 plugins — `xstudio-l2-orchestrator` and `xstudio-l2-tools` — so a fresh install cannot come up without the typed investigation tool and end up rebuilding the retired shell path.
+After changing profile SOUL/config/skills/plugins or the cron schedule, refresh the mirror with `Model_Bench/mirror_wsl_artifacts.sh` and inspect the diff before committing. The mirror covers the L2 plugins — `xstudio-l2-orchestrator`, `xstudio-l2-tools`, and `xstudio-l2-trace` — so a fresh install cannot come up without the typed investigation and trace boundaries. Jev network work is harness-owned and remains out-of-band from the trace hook.
 
-`Model_Bench/deploy_l2_pipeline_runtime.sh` installs the lifecycle scripts, both plugins, SOULs, skills, the workflow-binding fallback, and the profile-config entries, then restarts the four active gateways unless `--no-restart` is passed. It is idempotent. Config edits are applied by `Model_Bench/patch_profile_config.py`, which is deliberately a targeted text editor rather than a YAML round-trip: the live configs carry explanatory comments (Security/Tirith, fallback-model providers) that a load-and-dump silently destroys.
+`Model_Bench/deploy_l2_pipeline_runtime.sh` installs the lifecycle scripts, three plugins, SOULs, skills, the workflow-binding fallback, and the profile-config entries, then restarts the four active gateways unless `--no-restart` is passed. It is idempotent. Config edits are applied by `Model_Bench/patch_profile_config.py`, which is deliberately a targeted text editor rather than a YAML round-trip: the live configs carry explanatory comments (Security/Tirith, fallback-model providers) that a load-and-dump silently destroys.
 
+## 16a. Ponytail audit standard
+
+Run a Ponytail audit before merging any substantial runtime/tooling/architecture branch.
+
+The order is strict:
+
+1. **Do not build it.** Ask whether the code/concept is needed now. Delete speculative future surfaces, compatibility facades with no live caller, duplicate abstractions, dead flags, and pre-built extension points.
+2. **Reuse existing ownership.** Prefer the existing lifecycle/tool/SQL/trace/KB owner over creating a parallel path or side table.
+3. **Prefer stdlib/native behavior.** Use the platform/runtime primitive before adding a dependency.
+4. **Prefer an already-installed dependency.** Reuse what the project already carries before adding another package.
+5. **Choose the shortest correct implementation.** Fewer state transitions, fewer files, fewer branches, fewer config switches.
+6. **Only then write new machinery.**
+
+Deletion/consolidation comes before extraction. Do not split a bad abstraction into five neat files; first ask whether the abstraction should exist.
+
+Audit every change for:
+
+- one authoritative owner per state/rule/transport;
+- duplicate business logic or duplicate semantic judgments;
+- compatibility code whose original caller is gone;
+- model-facing tools that duplicate harness-owned work;
+- hidden network calls inside deterministic evidence/safety surfaces;
+- generated/derived state replacing the raw evidence it came from;
+- speculative feature flags or future-only modules;
+- broad exception swallowing that hides correctness failures;
+- hard-coded machine paths/config where an existing canonical source exists;
+- credentials, tokens, passwords, or secret fallback files in Git;
+- deployment scripts that add new artifacts but fail to remove retired live copies;
+- tests/docs that preserve deleted concepts after the code is gone.
+
+Complexity is a hotspot detector, not a score to game:
+
+- investigate functions around **>45 lines** or approximate cyclomatic complexity **>12**;
+- **>20** is a strong refactor signal;
+- split by real responsibility/owner, not arbitrary line count;
+- prefer dispatch tables, early returns, and small pure helpers when they make ownership clearer;
+- do not increase indirection merely to lower a metric.
+
+For every Ponytail cleanup, update tests, deploy mirrors, documentation, and AGENTS.md contracts in the same branch. A Git deletion is incomplete if deployment can leave the retired artifact live.
+
+### Secret hygiene
+
+.env files, API keys, tokens, passwords, and credential fallbacks must never be tracked. Credentials come from process/service environment or an external secret store. If a secret ever enters Git history, remove the tracked file immediately and rotate the credential; deleting the latest file does not erase history.
 ## 17. Security / credentials
 
 Do not commit or print credentials.
@@ -398,8 +552,8 @@ Any lifecycle change must preserve or deliberately revise these invariants:
 
 - WIP ownership is explicit.
 - Exactly one lifecycle authority performs mutations.
-- Every publishable investigator/rework result gets exactly one reviewer.
-- Reviewers see an immutable proposal.
+- Every publishable investigator/rework result gets exactly one Jev primary semantic review; a local reviewer exists only on the fallback path.
+- All semantic review operates on the same immutable frozen proposal; a local reviewer never reconstructs it.
 - Publication is deterministic and idempotent.
 - Review cycles are bounded.
 - Event loss is recoverable by reconciliation.

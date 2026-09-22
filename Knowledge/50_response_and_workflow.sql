@@ -380,16 +380,31 @@ BEGIN
     (
         RunID, TicketID, TicketNo, EscalatedByBot,
         ProblemSummary, Findings, RootCause, SuggestedAction,
-        CreatedBy, Source
+        EscalationCategory, CreatedBy, Source
     )
     SELECT
         @RunID, @TicketID, c.TicketNo, r.WorkerID,
         COALESCE(c.ConversationSummary, c.BriefDetails), @Findings, @BlockReason,
         'Automated investigation blocked on a genuine capability gap -- needs human review.',
-        @HermesUserID, 'T-SQL'
+        'UNRESOLVED', @HermesUserID, 'T-SQL'
     FROM dbo.Complaint_Mst_Tbl c
     LEFT JOIN dbo.Hermes_L2_Response_Trn_Tbl r ON r.ID = @RunID
     WHERE c.ID = @TicketID;
+
+    /*
+      2026-09-22: this path is a genuine, terminal L3 escalation (the
+      review-cycle-cap exhaustion path in l2_pipeline_runtime.py's
+      _escalate_run), but unlike Hermes_L2_Publish_Response_Usp's
+      L3_ESCALATION/NEEDS_HUMAN_ACTION branch it never set EscalateToL3 on the
+      response row -- confirmed live: every one of the 17 escalation rows this
+      procedure had ever written carried EscalateToL3=0 on its run despite a
+      real, matching escalation record existing. Only set it when this call
+      actually inserted (the NOT EXISTS guard above may have short-circuited).
+    */
+    IF @@ROWCOUNT > 0
+        UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+        SET EscalateToL3 = 1
+        WHERE ID = @RunID;
 END;
 GO
 
@@ -606,7 +621,11 @@ BEGIN
         CompletedOn = GETDATE(),
         ModifiedBy = @HermesUserID,
         ModifiedOn = GETDATE(),
-        Source = 'T-SQL'
+        Source = 'T-SQL',
+        -- A run can fail while its local-model task is still QUEUED/RUNNING;
+        -- without this the ledger keeps showing a live-looking task for a
+        -- run that is no longer active (live-verified 2026-09-22: 6 rows).
+        LocalModelState = CASE WHEN LocalModelState IN ('QUEUED', 'RUNNING') THEN 'FAILED' ELSE LocalModelState END
     WHERE ID = @RunID
       AND IsActive = 1
       AND IsDeleted = 0;

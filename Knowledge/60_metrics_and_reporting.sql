@@ -344,3 +344,101 @@ OUTER APPLY (
 WHERE t.IsDeleted = 0 AND t.TicketID IS NOT NULL
 GROUP BY t.TicketID, t.RunID;
 GO
+
+
+-- ============================================================================
+-- Jev semantic quality / review reporting.
+-- Jev is another bounded reviewer/investigator for the same run, so stage
+-- state lives directly on Hermes_L2_Response_Trn_Tbl. The view extracts named
+-- dimensions from those JSON columns; detailed calls remain in Agent Trace.
+-- ============================================================================
+IF OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NOT NULL
+    DROP VIEW dbo.Hermes_Jev_Run_Assessment_Vw;
+GO
+
+CREATE VIEW dbo.Hermes_Jev_Run_Assessment_Vw
+AS
+SELECT
+    r.ID AS RunID,
+    r.TicketID,
+
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.task_completed.noul'))
+        AS TaskCompletedProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.evidence_actually_gathered.noul'))
+        AS EvidenceGatheredProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.silent_failure.noul'))
+        AS SilentFailureProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.false_success_claim.noul'))
+        AS FalseSuccessClaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.policy_violation.noul'))
+        AS PolicyViolationProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.transport_flailing.noul'))
+        AS TransportFlailingProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.human_attention_needed.noul'))
+        AS HumanAttentionProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.unnecessary_tool_repetition.score'))
+        AS UnnecessaryToolRepetitionScore,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.investigation_efficiency.score'))
+        AS InvestigationEfficiencyScore,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.attention_priority.score'))
+        AS AttentionPriorityScore,
+    JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.failure_class.choice')
+        AS FailureClass,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.failure_class.confidence'))
+        AS FailureClassConfidence,
+
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.evidence_supports_core_claim.noul'))
+        AS ReviewEvidenceSupportProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.reply_overstates_evidence.noul'))
+        AS ReviewOverclaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.reply_claims_action_was_performed.noul'))
+        AS ReviewActionClaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.audit_shows_claimed_action.noul'))
+        AS ReviewActionAuditProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.publication_risk.score'))
+        AS ReviewRiskScore,
+
+    JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.execution_mode.choice')
+        AS JevRecommendedExecutionMode,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.execution_mode.confidence'))
+        AS JevRecommendedExecutionConfidence,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.evidence_sufficient.noul'))
+        AS JevEvidenceSufficientProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.needs_local_model.noul'))
+        AS JevNeedsLocalModelProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.needs_route_skill.noul'))
+        AS JevNeedsRouteSkillProbability,
+
+    r.ExecutionMode,
+    r.LocalModelState,
+    r.LocalModelPurpose,
+    r.LocalModelPriority,
+    r.LocalModelQueuedOn,
+    r.LocalModelStartedOn,
+    r.LocalModelCompletedOn,
+    CASE WHEN r.LocalModelStartedOn IS NULL THEN 0 ELSE 1 END AS LocalModelStarted,
+    CASE
+        WHEN r.LocalModelQueuedOn IS NOT NULL AND r.LocalModelStartedOn IS NOT NULL
+        THEN DATEDIFF(SECOND, r.LocalModelQueuedOn, r.LocalModelStartedOn)
+    END AS LocalModelQueueWaitSeconds,
+    CASE
+        WHEN r.LocalModelStartedOn IS NOT NULL AND r.LocalModelCompletedOn IS NOT NULL
+        THEN DATEDIFF(SECOND, r.LocalModelStartedOn, r.LocalModelCompletedOn)
+    END AS LocalModelRunSeconds,
+
+    r.ReviewMode,
+    r.JevReviewDecision,
+    r.JevReviewConfidence,
+    r.JevRiskScore,
+    r.LocalReviewRequired,
+
+    JSON_VALUE(r.JevKBCurationJson, '$.POST_RESOLUTION_KB.answers.curation_disposition.choice')
+        AS KBCurationDisposition,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevKBCurationJson, '$.POST_RESOLUTION_KB.answers.curation_disposition.confidence'))
+        AS KBCurationConfidence,
+
+    r.JevModel,
+    r.JevReviewedOn AS LastJevAssessmentOn
+FROM dbo.Hermes_L2_Response_Trn_Tbl r
+WHERE r.IsDeleted = 0;
+GO

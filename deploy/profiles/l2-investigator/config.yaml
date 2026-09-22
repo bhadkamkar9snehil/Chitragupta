@@ -38,7 +38,7 @@ kanban:
   dispatch_interval_seconds: 30
   max_in_progress: 1
   max_in_progress_per_profile: 1
-_config_version: 40
+_config_version: 45
 platforms:
   api_server:
     host: 0.0.0.0
@@ -46,6 +46,7 @@ platforms:
 platform_toolsets:
   cli:
     - clarify
+    - connections
     - cronjob
     - delegation
     - file
@@ -67,6 +68,7 @@ known_builtin_toolsets:
     - clarify
     - code_execution
     - computer_use
+    - connections
     - context_engine
     - cronjob
     - delegation
@@ -89,6 +91,10 @@ known_builtin_toolsets:
     - web
     - x_search
     - yuanbao
+tools:
+  tool_search:
+    enabled: off
+agent: {}
 
 # ── Security ──────────────────────────────────────────────────────────
 # Secret redaction is ON by default — strings that look like API keys,
@@ -127,6 +133,3 @@ known_builtin_toolsets:
 # fallback_model:
 #   provider: openrouter
 #   model: anthropic/claude-sonnet-4
-tools:
-  tool_search:
-    enabled: off

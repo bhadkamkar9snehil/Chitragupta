@@ -11,6 +11,67 @@ ELSE IF OBJECT_DEFINITION(OBJECT_ID('dbo.Hermes_L2_Get_Candidate_Tickets_Usp')) 
 IF OBJECT_ID('dbo.Hermes_L2_Default_Update_Continuation_Trg', 'TR') IS NULL
     INSERT INTO @Failures VALUES ('update_continuation_hardening', 'Apply Knowledge/55_update_retry_hardening.sql; UPDATE responses can otherwise become permanently ineligible.');
 
+IF OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl', 'U') IS NULL
+    INSERT INTO @Failures VALUES ('agent_trace_table', 'Hermes_Agent_Trace_Trn_Tbl is missing; trace observability and Jev trace assessment cannot operate.');
+
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewJson') IS NULL
+    INSERT INTO @Failures VALUES ('jev_run_state', 'Jev run/review columns are missing on Hermes_L2_Response_Trn_Tbl.');
+
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevInvestigationJson') IS NULL
+    INSERT INTO @Failures VALUES ('jev_investigation_state', 'Jev investigation state column is missing on Hermes_L2_Response_Trn_Tbl.');
+
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelState') IS NULL
+   OR COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'PendingLocalModelJson') IS NULL
+   OR COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelTaskID') IS NULL
+    INSERT INTO @Failures VALUES ('local_model_queue_state', 'Run-owned local-model queue columns are missing; deploy the current 00_tables_and_indexes.sql.');
+
+IF OBJECT_ID('dbo.Hermes_L2_Queue_Local_Model_Usp', 'P') IS NULL
+   OR OBJECT_DEFINITION(OBJECT_ID('dbo.Hermes_L2_Queue_Local_Model_Usp')) NOT LIKE '%@MaxWaiting%'
+   OR OBJECT_ID('dbo.Hermes_L2_Try_Acquire_Local_Model_Usp', 'P') IS NULL
+   OR OBJECT_ID('dbo.Hermes_L2_Bind_Local_Model_Task_Usp', 'P') IS NULL
+   OR OBJECT_ID('dbo.Hermes_L2_Finish_Local_Model_Usp', 'P') IS NULL
+    INSERT INTO @Failures VALUES ('local_model_admission_procs', 'SQL-backed local-model queue/admission procedures are missing or Hermes_L2_Queue_Local_Model_Usp lacks @MaxWaiting.');
+
+IF OBJECT_ID('dbo.Hermes_L2_Claim_Ticket_Usp', 'P') IS NULL
+   OR OBJECT_DEFINITION(OBJECT_ID('dbo.Hermes_L2_Claim_Ticket_Usp')) NOT LIKE '%@MaxPipelineWip%'
+   OR OBJECT_DEFINITION(OBJECT_ID('dbo.Hermes_L2_Claim_Ticket_Usp')) NOT LIKE '%HermesL2:PipelineCapacity%'
+    INSERT INTO @Failures VALUES ('pipeline_capacity_gate', 'Claim procedure is missing the atomic SQL pipeline-capacity gate.');
+
+IF EXISTS
+(
+    SELECT 1
+    FROM dbo.Hermes_L2_Response_Trn_Tbl
+    WHERE IsActive = 1
+      AND IsDeleted = 0
+      AND LocalModelState = 'RUNNING'
+    GROUP BY LocalModelState
+    HAVING COUNT(*) > 1
+)
+    INSERT INTO @Failures VALUES ('single_local_model_slot', 'More than one active run owns LocalModelState=RUNNING; the one-Qwen invariant is violated.');
+
+IF EXISTS
+(
+    SELECT 1
+    FROM dbo.Hermes_L2_Response_Trn_Tbl
+    WHERE IsActive = 1
+      AND IsDeleted = 0
+      AND LocalModelState IS NOT NULL
+      AND LocalModelState NOT IN ('QUEUED', 'RUNNING', 'DONE')
+)
+    INSERT INTO @Failures VALUES ('local_model_state_domain', 'Unexpected LocalModelState exists outside QUEUED/RUNNING/DONE.');
+
+IF OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NULL
+    INSERT INTO @Failures VALUES ('jev_assessment_view', 'Hermes_Jev_Run_Assessment_Vw is missing; deploy Knowledge/60_metrics_and_reporting.sql from the current bundle.');
+
+IF OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl', 'U') IS NULL
+    INSERT INTO @Failures VALUES ('agent_trace', 'Hermes_Agent_Trace_Trn_Tbl is missing; Jev call/retrieval telemetry reuses this existing trace store.');
+
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ArticleStatus') IS NULL
+    INSERT INTO @Failures VALUES ('kb_article_lifecycle', 'Solution article governance columns are missing (ArticleStatus/KnowledgeType/applicability).');
+
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ApplicabilityJson') IS NULL
+    INSERT INTO @Failures VALUES ('kb_applicability', 'ApplicabilityJson is missing from Hermes_Solution_Article_Mst_Tbl.');
+
 IF EXISTS
 (
     SELECT TicketID
@@ -28,10 +89,38 @@ DECLARE @ActiveRunCount int =
     WHERE IsActive = 1 AND IsDeleted = 0
 );
 
+DECLARE @RunningLocalModelCount int =
+(
+    SELECT COUNT(*)
+    FROM dbo.Hermes_L2_Response_Trn_Tbl
+    WHERE IsActive = 1
+      AND IsDeleted = 0
+      AND LocalModelState = 'RUNNING'
+);
+
+DECLARE @QueuedLocalModelCount int =
+(
+    SELECT COUNT(*)
+    FROM dbo.Hermes_L2_Response_Trn_Tbl
+    WHERE IsActive = 1
+      AND IsDeleted = 0
+      AND LocalModelState = 'QUEUED'
+);
+
 SELECT
     'active_pipeline_runs' AS CheckName,
     @ActiveRunCount AS CurrentValue,
-    CASE WHEN @ActiveRunCount <= 1 THEN 'OK' ELSE 'WARN: current runtime contract is global WIP=1; reconcile/drain existing backlog before enabling scout.' END AS Result;
+    'INFO: multi-WIP is supported; the configured cap is supplied atomically to the claim procedure by the runtime.' AS Result
+UNION ALL
+SELECT
+    'running_local_model_tasks',
+    @RunningLocalModelCount,
+    CASE WHEN @RunningLocalModelCount <= 1 THEN 'OK' ELSE 'FAIL: only one local-Qwen task may run.' END
+UNION ALL
+SELECT
+    'queued_local_model_tasks',
+    @QueuedLocalModelCount,
+    'INFO: queued local-model work is bounded by runtime backpressure.';
 
 IF EXISTS (SELECT 1 FROM @Failures)
 BEGIN

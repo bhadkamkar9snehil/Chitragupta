@@ -95,11 +95,14 @@ python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 Expected lifecycle contract:
 
 ```text
-max_pipeline_wip = 1
+max_pipeline_wip = 8
+max_qwen_running = 1
+max_qwen_waiting = 4
 review priority = 30
 rework priority = 20
 new investigation priority = 10
 max_review_cycles = 3
+execution_modes = QWEN_FREE, COMPOSE_ONLY, FOCUSED_REASONING
 ```
 
 No unexplained `ACTIVE_SQL_WITH_NO_KANBAN` anomaly should remain.
@@ -126,22 +129,29 @@ The deployment script is intended to be idempotent.
 ## 5. Current lifecycle
 
 ```text
-ticket_scout tick
+ticket_scout tick (every 2 minutes)
   -> reconcile all in-flight work
-  -> active SQL run?
-       yes -> WIP_LIMIT; claim nothing
-       no  -> claim one ticket
-             -> investigator [10]
-             -> normalize structured completion
-             -> create reviewer [30] with frozen proposal_json
-                  -> approve -> deterministic publish
-                  -> reject  -> rework investigator [20]
-                               -> normalize
-                               -> fresh reviewer [30]
-             -> bounded review_cycle -> human escalation when exhausted
+  -> active SQL runs < max_pipeline_wip (8) AND queued < max_qwen_waiting (4)?
+       no  -> WIP_LIMIT / BACKPRESSURE; claim nothing
+       yes -> claim candidate tickets up to capacity
+              -> Jev triage + candidate retrieval + evidence plan
+              -> deterministic bounded probes
+              -> Jev investigation assessment + meta-attention scoring
+                   -> QWEN_FREE -> Jev primary review -> deterministic publish
+                   -> COMPOSE_ONLY / FOCUSED_REASONING -> queued in SQL
+                        -> serialized single-slot admission to local model (Qwen)
+                        -> investigator [10] (xstudio_l2 typed tool only)
+                        -> normalize structured completion into frozen proposal
+                        -> Jev primary review
+                             -> APPROVE -> deterministic publish
+                             -> REWORK [20] -> rework investigator -> fresh Jev review
+                             -> L3_ESCALATION -> deterministic escalation
+                             -> LOCAL_REVIEW -> reviewer [30] (Qwen fallback)
+                                  -> approve -> deterministic publish
+                                  -> reject  -> rework investigator [20]
 ```
 
-Reviewer cards are created **after** the source completion becomes reviewable. There is no pre-created or parent-gated reviewer.
+Reviewer cards are created only when Jev primary review selects `LOCAL_REVIEW` fallback, is unavailable, or fails deterministic confidence/safety gates.
 
 The 2-minute scout is the durable correctness backstop. Event hooks call the same reconciler for low-latency handoff but are not required for correctness.
 

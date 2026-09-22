@@ -75,6 +75,80 @@ BEGIN
 END;
 GO
 
+
+/* Jev is a semantic reviewer/investigator for the same run, not a parallel
+   business object. Persist stage state directly on Hermes_L2_Response_Trn_Tbl;
+   detailed call telemetry belongs in Hermes_Agent_Trace_Trn_Tbl. */
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevTriageJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevTriageJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevInvestigationJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevInvestigationJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevTraceJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevTraceJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevKBCurationJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevKBCurationJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'ReviewMode') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD ReviewMode varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewDecision') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewDecision varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewConfidence') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewConfidence decimal(9,6) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevRiskScore') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevRiskScore decimal(9,6) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalReviewRequired') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalReviewRequired bit NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevModel') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevModel varchar(120) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'JevReviewedOn') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD JevReviewedOn datetime NULL;
+GO
+
+/* Local-model admission state lives on the run row: one lifecycle owner,
+   no parallel scheduler table. Jev-only work does not consume this slot. */
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'ExecutionMode') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD ExecutionMode varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelState') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelState varchar(20) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelPurpose') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelPurpose varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelPriority') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelPriority int NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelWorkKey') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelWorkKey varchar(255) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'PendingLocalModelJson') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD PendingLocalModelJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelTaskID') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelTaskID varchar(100) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelQueuedOn') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelQueuedOn datetime NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelStartedOn') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelStartedOn datetime NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_L2_Response_Trn_Tbl', 'LocalModelCompletedOn') IS NULL
+    ALTER TABLE dbo.Hermes_L2_Response_Trn_Tbl ADD LocalModelCompletedOn datetime NULL;
+GO
+
 IF NOT EXISTS
 (
     SELECT 1
@@ -112,6 +186,27 @@ IF NOT EXISTS
 BEGIN
     CREATE NONCLUSTERED INDEX IX_Hermes_L2_Response_RunState
         ON dbo.Hermes_L2_Response_Trn_Tbl(IsActive, ProcessStatus, NextEligibleOn, HeartbeatOn);
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_L2_Response_Trn_Tbl')
+      AND name = 'IX_Hermes_L2_Response_LocalModelQueue'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_L2_Response_LocalModelQueue
+        ON dbo.Hermes_L2_Response_Trn_Tbl
+        (
+            LocalModelState,
+            LocalModelPriority DESC,
+            LocalModelQueuedOn,
+            ClaimedOn
+        )
+        INCLUDE (ID, TicketID, LocalModelPurpose, LocalModelTaskID, LocalModelWorkKey, ExecutionMode)
+        WHERE IsActive = 1 AND IsDeleted = 0;
 END;
 GO
 
@@ -269,6 +364,27 @@ IF NOT EXISTS
 BEGIN
     CREATE NONCLUSTERED INDEX IX_Hermes_L3_Escalation_Ticket
         ON dbo.Hermes_L3_Escalation_Trn_Tbl(TicketID, EscalatedOn DESC);
+END;
+GO
+
+/*
+  2026-09-05: distinguishes "bot could not diagnose/solve it" (UNRESOLVED) from
+  "bot diagnosed it and knows the fix, a human must execute it"
+  (NEEDS_HUMAN_ACTION) -- see Hermes_L2_Publish_Response_Usp. This was applied
+  directly to the live database when that split was introduced and never
+  backported into this source file, so a fresh install from this bundle would
+  have been missing the column. Added here idempotently to close that gap.
+*/
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.columns
+    WHERE object_id = OBJECT_ID('dbo.Hermes_L3_Escalation_Trn_Tbl')
+      AND name = 'EscalationCategory'
+)
+BEGIN
+    ALTER TABLE dbo.Hermes_L3_Escalation_Trn_Tbl
+        ADD EscalationCategory varchar(100) NULL;
 END;
 GO
 
@@ -569,6 +685,254 @@ BEGIN
 END;
 GO
 
+
+
+/* Remove the first-pass Jev side tables if an earlier dev build created them.
+   Jev now reuses the run row + Agent Trace instead of maintaining parallel state. */
+IF OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NOT NULL
+    DROP VIEW dbo.Hermes_Jev_Run_Assessment_Vw;
+GO
+IF OBJECT_ID('dbo.Hermes_Jev_Judgment_Trn_Tbl', 'U') IS NOT NULL
+    DROP TABLE dbo.Hermes_Jev_Judgment_Trn_Tbl;
+GO
+IF OBJECT_ID('dbo.Hermes_KB_Retrieval_Trn_Tbl', 'U') IS NOT NULL
+    DROP TABLE dbo.Hermes_KB_Retrieval_Trn_Tbl;
+GO
+
+
+/* ============================================================================
+   Governed reusable-knowledge lifecycle required by Jev applicability/curation.
+   These ALTERs migrate the existing Solution table in place and preserve all
+   legacy content. Jev suggestions never directly change ArticleStatus.
+   ============================================================================ */
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'KnowledgeType') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD KnowledgeType varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ArticleStatus') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ArticleStatus varchar(30) NOT NULL
+        CONSTRAINT DF_Hermes_Solution_ArticleStatus DEFAULT ('Approved') WITH VALUES;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'CanonicalKey') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD CanonicalKey varchar(250) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'RevisionNo') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD RevisionNo int NOT NULL
+        CONSTRAINT DF_Hermes_Solution_RevisionNo DEFAULT (1) WITH VALUES;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ContentHash') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ContentHash varchar(64) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'SourceTicketID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD SourceTicketID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'SourceRunID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD SourceRunID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'SupersedesSolutionID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD SupersedesSolutionID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'SupersededBySolutionID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD SupersededBySolutionID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ApprovedOn') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ApprovedOn datetime NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ApprovedBy') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ApprovedBy varchar(200) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'LastVerifiedOn') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD LastVerifiedOn datetime NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'LastVerifiedRunID') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD LastVerifiedRunID varchar(36) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ApplicabilityJson') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ApplicabilityJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'NegativeIndicatorsJson') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD NegativeIndicatorsJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'VerificationJson') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD VerificationJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'EvidenceJson') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD EvidenceJson nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'DiagnosticSteps') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD DiagnosticSteps nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'VerificationSteps') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD VerificationSteps nvarchar(max) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Solution_Article_Mst_Tbl', 'ExpectedResult') IS NULL
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl ADD ExpectedResult nvarchar(max) NULL;
+GO
+
+UPDATE dbo.Hermes_Solution_Article_Mst_Tbl
+SET KnowledgeType = COALESCE(KnowledgeType, 'KnownIssue'),
+    ArticleStatus = CASE
+        WHEN ArticleStatus IS NOT NULL THEN ArticleStatus
+        WHEN IsActive = 1 THEN 'Approved'
+        ELSE 'Deprecated'
+    END
+WHERE KnowledgeType IS NULL OR ArticleStatus IS NULL;
+GO
+
+-- The NOT NULL default above migrates all legacy rows as Approved. Preserve
+-- legacy IsActive=0 semantics by marking those rows Deprecated.
+UPDATE dbo.Hermes_Solution_Article_Mst_Tbl
+SET ArticleStatus = 'Deprecated'
+WHERE IsDeleted = 0 AND IsActive = 0 AND ArticleStatus = 'Approved';
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.check_constraints
+    WHERE parent_object_id = OBJECT_ID('dbo.Hermes_Solution_Article_Mst_Tbl')
+      AND name = 'CK_Hermes_Solution_ArticleStatus'
+)
+BEGIN
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl
+    ADD CONSTRAINT CK_Hermes_Solution_ArticleStatus
+        CHECK (ArticleStatus IN ('Candidate','Approved','NeedsReview','Superseded','Deprecated'));
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.check_constraints
+    WHERE parent_object_id = OBJECT_ID('dbo.Hermes_Solution_Article_Mst_Tbl')
+      AND name = 'CK_Hermes_Solution_KnowledgeType'
+)
+BEGIN
+    ALTER TABLE dbo.Hermes_Solution_Article_Mst_Tbl
+    ADD CONSTRAINT CK_Hermes_Solution_KnowledgeType
+        CHECK (KnowledgeType IS NULL OR KnowledgeType IN ('KnownIssue','Diagnostic','HowTo'));
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Solution_Article_Mst_Tbl')
+      AND name = 'IX_Hermes_Solution_StatusRoute'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Solution_StatusRoute
+        ON dbo.Hermes_Solution_Article_Mst_Tbl(ArticleStatus, Route, KnowledgeType)
+        INCLUDE (CanonicalKey, LastVerifiedOn, UsageCount)
+        WHERE IsDeleted = 0;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Solution_Article_Mst_Tbl')
+      AND name = 'IX_Hermes_Solution_CanonicalKey'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Solution_CanonicalKey
+        ON dbo.Hermes_Solution_Article_Mst_Tbl(CanonicalKey)
+        WHERE CanonicalKey IS NOT NULL AND IsDeleted = 0;
+END;
+GO
+
+/* Distinguish retrieval, actual use, and verified outcome. */
+IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'UseDisposition') IS NULL
+    ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD UseDisposition varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'OutcomeStatus') IS NULL
+    ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD OutcomeStatus varchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'OutcomeReason') IS NULL
+    ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD OutcomeReason nvarchar(1000) NULL;
+GO
+IF COL_LENGTH('dbo.Hermes_Ticket_Solution_Link_Tbl', 'OutcomeOn') IS NULL
+    ALTER TABLE dbo.Hermes_Ticket_Solution_Link_Tbl ADD OutcomeOn datetime NULL;
+GO
+
+/* ============================================================================
+   Agent observer trace store.
+   The writer procedure lives in 50_response_and_workflow.sql and the compute/
+   Jev reporting views live in 60_metrics_and_reporting.sql. Keep this table in
+   the base schema so a fresh full install is self-contained.
+   ============================================================================ */
+IF OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Hermes_Agent_Trace_Trn_Tbl
+    (
+        ID               bigint IDENTITY(1,1) NOT NULL,
+        EventType        varchar(50)     NOT NULL,
+        EventOn          datetime        NOT NULL,
+        SessionID        varchar(100)    NULL,
+        TaskID           varchar(100)    NULL,
+        TurnID           varchar(100)    NULL,
+        ToolCallID       varchar(100)    NULL,
+        ApiRequestID     varchar(100)    NULL,
+        ToolName         varchar(200)    NULL,
+        Status           varchar(30)     NULL,
+        DurationMs       int             NULL,
+        ArgsJson         nvarchar(max)   NULL,
+        ResultJson       nvarchar(max)   NULL,
+        ErrorMessage     nvarchar(max)   NULL,
+        Model            varchar(200)    NULL,
+        Provider         varchar(100)    NULL,
+        UsageJson        nvarchar(max)   NULL,
+        RunID            varchar(36)     NULL,
+        TicketID         varchar(36)     NULL,
+        Source           varchar(20)     NULL,
+        CreatedOn        datetime        NOT NULL
+            CONSTRAINT DF_Hermes_Agent_Trace_CreatedOn DEFAULT (GETDATE()),
+        IsDeleted        bit             NOT NULL
+            CONSTRAINT DF_Hermes_Agent_Trace_IsDeleted DEFAULT (0),
+
+        CONSTRAINT PK_Hermes_Agent_Trace PRIMARY KEY CLUSTERED (ID)
+    );
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl')
+      AND name = 'IX_Hermes_Agent_Trace_Run'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_Run
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(RunID, EventOn ASC)
+        INCLUDE (TicketID, EventType, ToolName, Status, DurationMs, Model)
+        WHERE IsDeleted = 0;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl')
+      AND name = 'IX_Hermes_Agent_Trace_Ticket'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_Ticket
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(TicketID, EventOn ASC)
+        INCLUDE (RunID, EventType, SessionID)
+        WHERE IsDeleted = 0;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID('dbo.Hermes_Agent_Trace_Trn_Tbl')
+      AND name = 'IX_Hermes_Agent_Trace_Task'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_Hermes_Agent_Trace_Task
+        ON dbo.Hermes_Agent_Trace_Trn_Tbl(TaskID, EventOn ASC)
+        INCLUDE (RunID, TicketID, EventType)
+        WHERE IsDeleted = 0 AND TaskID IS NOT NULL;
+END;
+GO
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
@@ -791,6 +1155,18 @@ BEGIN
             WHEN 'standard' THEN 3
             ELSE 4
         END,
+        /* Within the same operational priority, fresh/user-changed work must
+           not be starved by an old UPDATE continuation that became eligible
+           again. */
+        CASE
+            WHEN latest.ID IS NULL THEN 0
+            WHEN ISNULL(c.ModifiedOn, c.CreatedOn)
+                 > ISNULL(latest.TicketModifiedOnSeen, CONVERT(datetime, '19000101', 112))
+                THEN 1
+            WHEN latest.ProcessStatus = 'FAILED' THEN 2
+            WHEN latest.ResponseType = 'UPDATE' THEN 3
+            ELSE 4
+        END,
         c.CreatedOn ASC,
         c.ID ASC;
 END;
@@ -803,6 +1179,7 @@ CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Claim_Ticket_Usp
     @WorkerID          varchar(200),
     @HermesUserID      varchar(36) = NULL,
     @HostAddress       varchar(100) = NULL,
+    @MaxPipelineWip    int = 8,
     @RunID             varchar(36) OUTPUT
 )
 AS
@@ -823,17 +1200,47 @@ BEGIN
     END;
 
     DECLARE
+        @CapacityLockResult int,
         @LockResult int,
         @AttemptNo int,
         @TicketModifiedOn datetime,
         @TicketStatus varchar(50),
         @LockResource varchar(255);
 
-    SET @RunID = CONVERT(varchar(36), NEWID());
+    IF @MaxPipelineWip IS NULL OR @MaxPipelineWip < 1 SET @MaxPipelineWip = 1;
+    IF @MaxPipelineWip > 64 SET @MaxPipelineWip = 64;
+
+    SET @RunID = NULL;
     SET @LockResource = 'HermesL2:Ticket:' + @TicketID;
 
     BEGIN TRY
         BEGIN TRANSACTION;
+
+        /* Capacity is SQL-owned so overlapping scout processes cannot both
+           observe one remaining slot and over-claim it. */
+        EXEC @CapacityLockResult = sys.sp_getapplock
+            @Resource = 'HermesL2:PipelineCapacity',
+            @LockMode = 'Exclusive',
+            @LockOwner = 'Transaction',
+            @LockTimeout = 0;
+
+        IF @CapacityLockResult < 0
+        BEGIN
+            ROLLBACK TRANSACTION;
+            RETURN;
+        END;
+
+        IF
+        (
+            SELECT COUNT(*)
+            FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+            WHERE IsActive = 1
+              AND IsDeleted = 0
+        ) >= @MaxPipelineWip
+        BEGIN
+            ROLLBACK TRANSACTION;
+            RETURN;
+        END;
 
         EXEC @LockResult = sys.sp_getapplock
             @Resource = @LockResource,
@@ -879,6 +1286,8 @@ BEGIN
         BEGIN
             RAISERROR('Ticket already has an active Hermes run.', 16, 1);
         END;
+
+        SET @RunID = CONVERT(varchar(36), NEWID());
 
         SELECT @AttemptNo = ISNULL(MAX(AttemptNo), 0) + 1
         FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
@@ -976,7 +1385,12 @@ BEGIN
         CompletedOn = GETDATE(),
         ModifiedBy = @HermesUserID,
         ModifiedOn = GETDATE(),
-        Source = 'T-SQL'
+        Source = 'T-SQL',
+        -- A run can be recovered as stale while its local-model task is
+        -- still QUEUED/RUNNING; without this the ledger keeps showing a
+        -- live-looking task for a run that is no longer active
+        -- (live-verified 2026-09-22: 6 rows).
+        LocalModelState = CASE WHEN LocalModelState IN ('QUEUED', 'RUNNING') THEN 'FAILED' ELSE LocalModelState END
     WHERE IsActive = 1
       AND IsDeleted = 0
       AND ISNULL(HeartbeatOn, ClaimedOn) < DATEADD(MINUTE, -@StaleMinutes, GETDATE())
@@ -1118,6 +1532,18 @@ BEGIN
             WHEN 'critical' THEN 1
             WHEN 'high priority' THEN 2
             WHEN 'standard' THEN 3
+            ELSE 4
+        END,
+        /* Within the same operational priority, fresh/user-changed work must
+           not be starved by an old UPDATE continuation that became eligible
+           again. */
+        CASE
+            WHEN latest.ID IS NULL THEN 0
+            WHEN ISNULL(c.ModifiedOn, c.CreatedOn)
+                 > ISNULL(latest.TicketModifiedOnSeen, CONVERT(datetime, '19000101', 112))
+                THEN 1
+            WHEN latest.ProcessStatus = 'FAILED' THEN 2
+            WHEN latest.ResponseType = 'UPDATE' THEN 3
             ELSE 4
         END,
         c.CreatedOn ASC,
@@ -1563,6 +1989,384 @@ BEGIN
 
     IF @@ROWCOUNT = 0
         RAISERROR('Active Hermes run not found.', 16, 1);
+END;
+GO
+
+
+/*
+  Local model admission controller.
+  Jev/deterministic work may run for several active tickets concurrently, but
+  every task that actually invokes the shared local LM Studio model is queued
+  on the run row and admitted through one SQL-serialized slot.
+*/
+CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Queue_Local_Model_Usp
+(
+    @RunID          varchar(36),
+    @Purpose        varchar(30),
+    @Priority       int,
+    @WorkKey        varchar(255),
+    @ExecutionMode  varchar(30) = NULL,
+    @WorkJson       nvarchar(max),
+    @HermesUserID   varchar(36) = NULL,
+    @MaxWaiting     int = NULL
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    IF NULLIF(LTRIM(RTRIM(@RunID)), '') IS NULL
+       OR NULLIF(LTRIM(RTRIM(@Purpose)), '') IS NULL
+       OR NULLIF(LTRIM(RTRIM(@WorkKey)), '') IS NULL
+       OR NULLIF(LTRIM(RTRIM(@WorkJson)), '') IS NULL
+    BEGIN
+        RAISERROR('RunID, Purpose, WorkKey and WorkJson are required.', 16, 1);
+        RETURN;
+    END;
+
+    IF ISJSON(@WorkJson) <> 1
+    BEGIN
+        RAISERROR('WorkJson must be valid JSON.', 16, 1);
+        RETURN;
+    END;
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        DECLARE
+            @CurrentState varchar(20),
+            @CurrentKey varchar(255);
+
+        SELECT
+            @CurrentState = LocalModelState,
+            @CurrentKey = LocalModelWorkKey
+        FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+        WHERE ID = @RunID
+          AND IsActive = 1
+          AND IsDeleted = 0;
+
+        IF @CurrentState IS NULL AND @CurrentKey IS NULL
+           AND NOT EXISTS
+           (
+               SELECT 1
+               FROM dbo.Hermes_L2_Response_Trn_Tbl
+               WHERE ID = @RunID
+                 AND IsActive = 1
+                 AND IsDeleted = 0
+           )
+        BEGIN
+            RAISERROR('Active Hermes run not found.', 16, 1);
+        END;
+
+        IF @CurrentState IN ('QUEUED', 'RUNNING') AND @CurrentKey = @WorkKey
+        BEGIN
+            COMMIT TRANSACTION;
+            SELECT
+                'ALREADY_QUEUED' AS QueueStatus,
+                ID AS RunID,
+                TicketID,
+                LocalModelState,
+                LocalModelPurpose,
+                LocalModelPriority,
+                LocalModelWorkKey,
+                LocalModelTaskID,
+                ExecutionMode
+            FROM dbo.Hermes_L2_Response_Trn_Tbl
+            WHERE ID = @RunID;
+            RETURN;
+        END;
+
+        IF @CurrentState IN ('QUEUED', 'RUNNING') AND ISNULL(@CurrentKey, '') <> @WorkKey
+        BEGIN
+            RAISERROR('Run already owns different pending local-model work.', 16, 1);
+        END;
+
+        IF @MaxWaiting IS NOT NULL
+        BEGIN
+            DECLARE @BlockingQueued int;
+
+            SELECT @BlockingQueued = COUNT(*)
+            FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+            WHERE IsActive = 1
+              AND IsDeleted = 0
+              AND LocalModelState = 'QUEUED'
+              AND ID <> @RunID
+              AND (@Priority <= 10 OR LocalModelPriority >= @Priority);
+
+            IF @BlockingQueued >= @MaxWaiting
+            BEGIN
+                COMMIT TRANSACTION;
+                SELECT
+                    'BACKPRESSURE' AS QueueStatus,
+                    ID AS RunID,
+                    TicketID,
+                    LocalModelState,
+                    LocalModelPurpose,
+                    LocalModelPriority,
+                    LocalModelWorkKey,
+                    LocalModelTaskID,
+                    ExecutionMode
+                FROM dbo.Hermes_L2_Response_Trn_Tbl
+                WHERE ID = @RunID;
+                RETURN;
+            END;
+        END;
+
+        UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+        SET
+            ExecutionMode = COALESCE(@ExecutionMode, ExecutionMode),
+            LocalModelState = 'QUEUED',
+            LocalModelPurpose = @Purpose,
+            LocalModelPriority = @Priority,
+            LocalModelWorkKey = @WorkKey,
+            PendingLocalModelJson = @WorkJson,
+            LocalModelTaskID = NULL,
+            LocalModelQueuedOn = GETDATE(),
+            LocalModelStartedOn = NULL,
+            LocalModelCompletedOn = NULL,
+            HeartbeatOn = GETDATE(),
+            ModifiedBy = @HermesUserID,
+            ModifiedOn = GETDATE(),
+            Source = 'T-SQL'
+        WHERE ID = @RunID
+          AND IsActive = 1
+          AND IsDeleted = 0;
+
+        COMMIT TRANSACTION;
+
+        SELECT
+            'QUEUED' AS QueueStatus,
+            ID AS RunID,
+            TicketID,
+            LocalModelState,
+            LocalModelPurpose,
+            LocalModelPriority,
+            LocalModelWorkKey,
+            LocalModelTaskID,
+            ExecutionMode
+        FROM dbo.Hermes_L2_Response_Trn_Tbl
+        WHERE ID = @RunID;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Try_Acquire_Local_Model_Usp
+(
+    @HermesUserID varchar(36) = NULL
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        DECLARE
+            @LockResult int,
+            @RunID varchar(36);
+
+        EXEC @LockResult = sys.sp_getapplock
+            @Resource = 'HermesL2:LocalModelSlot',
+            @LockMode = 'Exclusive',
+            @LockOwner = 'Transaction',
+            @LockTimeout = 0;
+
+        IF @LockResult < 0
+        BEGIN
+            ROLLBACK TRANSACTION;
+            SELECT 'BUSY' AS AcquireStatus;
+            RETURN;
+        END;
+
+        IF EXISTS
+        (
+            SELECT 1
+            FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+            WHERE IsActive = 1
+              AND IsDeleted = 0
+              AND LocalModelState = 'RUNNING'
+        )
+        BEGIN
+            COMMIT TRANSACTION;
+            SELECT 'BUSY' AS AcquireStatus;
+            RETURN;
+        END;
+
+        SELECT TOP (1)
+            @RunID = ID
+        FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, READPAST)
+        WHERE IsActive = 1
+          AND IsDeleted = 0
+          AND LocalModelState = 'QUEUED'
+          AND PendingLocalModelJson IS NOT NULL
+        ORDER BY
+            LocalModelPriority DESC,
+            LocalModelQueuedOn ASC,
+            ClaimedOn ASC,
+            ID ASC;
+
+        IF @RunID IS NULL
+        BEGIN
+            COMMIT TRANSACTION;
+            SELECT 'EMPTY' AS AcquireStatus;
+            RETURN;
+        END;
+
+        UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+        SET
+            LocalModelState = 'RUNNING',
+            LocalModelStartedOn = GETDATE(),
+            HeartbeatOn = GETDATE(),
+            ModifiedBy = @HermesUserID,
+            ModifiedOn = GETDATE(),
+            Source = 'T-SQL'
+        WHERE ID = @RunID
+          AND LocalModelState = 'QUEUED'
+          AND IsActive = 1
+          AND IsDeleted = 0;
+
+        IF @@ROWCOUNT <> 1
+        BEGIN
+            RAISERROR('Could not acquire queued local-model work.', 16, 1);
+        END;
+
+        COMMIT TRANSACTION;
+
+        SELECT
+            'ACQUIRED' AS AcquireStatus,
+            ID AS RunID,
+            TicketID,
+            ExecutionMode,
+            LocalModelPurpose,
+            LocalModelPriority,
+            LocalModelWorkKey,
+            PendingLocalModelJson,
+            LocalModelQueuedOn,
+            LocalModelStartedOn
+        FROM dbo.Hermes_L2_Response_Trn_Tbl
+        WHERE ID = @RunID;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Bind_Local_Model_Task_Usp
+(
+    @RunID        varchar(36),
+    @WorkKey      varchar(255),
+    @TaskID       varchar(100),
+    @HermesUserID varchar(36) = NULL
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+    SET
+        LocalModelTaskID = @TaskID,
+        HeartbeatOn = GETDATE(),
+        ModifiedBy = @HermesUserID,
+        ModifiedOn = GETDATE(),
+        Source = 'T-SQL'
+    WHERE ID = @RunID
+      AND IsActive = 1
+      AND IsDeleted = 0
+      AND LocalModelState = 'RUNNING'
+      AND LocalModelWorkKey = @WorkKey;
+
+    IF @@ROWCOUNT <> 1
+        RAISERROR('Running local-model work did not match RunID/WorkKey.', 16, 1);
+
+    SELECT
+        ID AS RunID,
+        TicketID,
+        LocalModelState,
+        LocalModelPurpose,
+        LocalModelWorkKey,
+        LocalModelTaskID
+    FROM dbo.Hermes_L2_Response_Trn_Tbl
+    WHERE ID = @RunID;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Finish_Local_Model_Usp
+(
+    @RunID        varchar(36),
+    @TaskID       varchar(100) = NULL,
+    @Outcome      varchar(20) = 'DONE',
+    @HermesUserID varchar(36) = NULL
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SET @Outcome = UPPER(LTRIM(RTRIM(ISNULL(@Outcome, 'DONE'))));
+
+    IF @Outcome NOT IN ('DONE', 'REQUEUE')
+    BEGIN
+        RAISERROR('Outcome must be DONE or REQUEUE.', 16, 1);
+        RETURN;
+    END;
+
+    IF @Outcome = 'DONE'
+    BEGIN
+        UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+        SET
+            LocalModelState = 'DONE',
+            LocalModelCompletedOn = GETDATE(),
+            HeartbeatOn = GETDATE(),
+            ModifiedBy = @HermesUserID,
+            ModifiedOn = GETDATE(),
+            Source = 'T-SQL'
+        WHERE ID = @RunID
+          AND IsActive = 1
+          AND IsDeleted = 0
+          AND LocalModelState = 'RUNNING'
+          AND (@TaskID IS NULL OR LocalModelTaskID = @TaskID);
+    END
+    ELSE
+    BEGIN
+        UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+        SET
+            LocalModelState = 'QUEUED',
+            LocalModelTaskID = NULL,
+            LocalModelStartedOn = NULL,
+            LocalModelCompletedOn = NULL,
+            LocalModelQueuedOn = GETDATE(),
+            HeartbeatOn = GETDATE(),
+            ModifiedBy = @HermesUserID,
+            ModifiedOn = GETDATE(),
+            Source = 'T-SQL'
+        WHERE ID = @RunID
+          AND IsActive = 1
+          AND IsDeleted = 0
+          AND LocalModelState = 'RUNNING'
+          AND (@TaskID IS NULL OR LocalModelTaskID = @TaskID);
+    END;
+
+    IF @@ROWCOUNT <> 1
+        RAISERROR('No matching running local-model work was found.', 16, 1);
+
+    SELECT
+        ID AS RunID,
+        TicketID,
+        LocalModelState,
+        LocalModelPurpose,
+        LocalModelWorkKey,
+        LocalModelTaskID,
+        LocalModelQueuedOn,
+        LocalModelStartedOn,
+        LocalModelCompletedOn
+    FROM dbo.Hermes_L2_Response_Trn_Tbl
+    WHERE ID = @RunID;
 END;
 GO
 
@@ -2205,16 +3009,31 @@ BEGIN
     (
         RunID, TicketID, TicketNo, EscalatedByBot,
         ProblemSummary, Findings, RootCause, SuggestedAction,
-        CreatedBy, Source
+        EscalationCategory, CreatedBy, Source
     )
     SELECT
         @RunID, @TicketID, c.TicketNo, r.WorkerID,
         COALESCE(c.ConversationSummary, c.BriefDetails), @Findings, @BlockReason,
         'Automated investigation blocked on a genuine capability gap -- needs human review.',
-        @HermesUserID, 'T-SQL'
+        'UNRESOLVED', @HermesUserID, 'T-SQL'
     FROM dbo.Complaint_Mst_Tbl c
     LEFT JOIN dbo.Hermes_L2_Response_Trn_Tbl r ON r.ID = @RunID
     WHERE c.ID = @TicketID;
+
+    /*
+      2026-09-22: this path is a genuine, terminal L3 escalation (the
+      review-cycle-cap exhaustion path in l2_pipeline_runtime.py's
+      _escalate_run), but unlike Hermes_L2_Publish_Response_Usp's
+      L3_ESCALATION/NEEDS_HUMAN_ACTION branch it never set EscalateToL3 on the
+      response row -- confirmed live: every one of the 17 escalation rows this
+      procedure had ever written carried EscalateToL3=0 on its run despite a
+      real, matching escalation record existing. Only set it when this call
+      actually inserted (the NOT EXISTS guard above may have short-circuited).
+    */
+    IF @@ROWCOUNT > 0
+        UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+        SET EscalateToL3 = 1
+        WHERE ID = @RunID;
 END;
 GO
 
@@ -2431,7 +3250,11 @@ BEGIN
         CompletedOn = GETDATE(),
         ModifiedBy = @HermesUserID,
         ModifiedOn = GETDATE(),
-        Source = 'T-SQL'
+        Source = 'T-SQL',
+        -- A run can fail while its local-model task is still QUEUED/RUNNING;
+        -- without this the ledger keeps showing a live-looking task for a
+        -- run that is no longer active (live-verified 2026-09-22: 6 rows).
+        LocalModelState = CASE WHEN LocalModelState IN ('QUEUED', 'RUNNING') THEN 'FAILED' ELSE LocalModelState END
     WHERE ID = @RunID
       AND IsActive = 1
       AND IsDeleted = 0;
@@ -3043,4 +3866,102 @@ OUTER APPLY (
 ) u
 WHERE t.IsDeleted = 0 AND t.TicketID IS NOT NULL
 GROUP BY t.TicketID, t.RunID;
+GO
+
+
+-- ============================================================================
+-- Jev semantic quality / review reporting.
+-- Jev is another bounded reviewer/investigator for the same run, so stage
+-- state lives directly on Hermes_L2_Response_Trn_Tbl. The view extracts named
+-- dimensions from those JSON columns; detailed calls remain in Agent Trace.
+-- ============================================================================
+IF OBJECT_ID('dbo.Hermes_Jev_Run_Assessment_Vw', 'V') IS NOT NULL
+    DROP VIEW dbo.Hermes_Jev_Run_Assessment_Vw;
+GO
+
+CREATE VIEW dbo.Hermes_Jev_Run_Assessment_Vw
+AS
+SELECT
+    r.ID AS RunID,
+    r.TicketID,
+
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.task_completed.noul'))
+        AS TaskCompletedProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.evidence_actually_gathered.noul'))
+        AS EvidenceGatheredProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.silent_failure.noul'))
+        AS SilentFailureProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.false_success_claim.noul'))
+        AS FalseSuccessClaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.policy_violation.noul'))
+        AS PolicyViolationProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.transport_flailing.noul'))
+        AS TransportFlailingProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.human_attention_needed.noul'))
+        AS HumanAttentionProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.unnecessary_tool_repetition.score'))
+        AS UnnecessaryToolRepetitionScore,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.investigation_efficiency.score'))
+        AS InvestigationEfficiencyScore,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.attention_priority.score'))
+        AS AttentionPriorityScore,
+    JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.failure_class.choice')
+        AS FailureClass,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevTraceJson, '$.TRACE_ASSESSMENT.answers.failure_class.confidence'))
+        AS FailureClassConfidence,
+
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.evidence_supports_core_claim.noul'))
+        AS ReviewEvidenceSupportProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.reply_overstates_evidence.noul'))
+        AS ReviewOverclaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.reply_claims_action_was_performed.noul'))
+        AS ReviewActionClaimProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.audit_shows_claimed_action.noul'))
+        AS ReviewActionAuditProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevReviewJson, '$.PRIMARY_REVIEW.answers.publication_risk.score'))
+        AS ReviewRiskScore,
+
+    JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.execution_mode.choice')
+        AS JevRecommendedExecutionMode,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.execution_mode.confidence'))
+        AS JevRecommendedExecutionConfidence,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.evidence_sufficient.noul'))
+        AS JevEvidenceSufficientProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.needs_local_model.noul'))
+        AS JevNeedsLocalModelProbability,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevInvestigationJson, '$.JEV_INVESTIGATION.answers.needs_route_skill.noul'))
+        AS JevNeedsRouteSkillProbability,
+
+    r.ExecutionMode,
+    r.LocalModelState,
+    r.LocalModelPurpose,
+    r.LocalModelPriority,
+    r.LocalModelQueuedOn,
+    r.LocalModelStartedOn,
+    r.LocalModelCompletedOn,
+    CASE WHEN r.LocalModelStartedOn IS NULL THEN 0 ELSE 1 END AS LocalModelStarted,
+    CASE
+        WHEN r.LocalModelQueuedOn IS NOT NULL AND r.LocalModelStartedOn IS NOT NULL
+        THEN DATEDIFF(SECOND, r.LocalModelQueuedOn, r.LocalModelStartedOn)
+    END AS LocalModelQueueWaitSeconds,
+    CASE
+        WHEN r.LocalModelStartedOn IS NOT NULL AND r.LocalModelCompletedOn IS NOT NULL
+        THEN DATEDIFF(SECOND, r.LocalModelStartedOn, r.LocalModelCompletedOn)
+    END AS LocalModelRunSeconds,
+
+    r.ReviewMode,
+    r.JevReviewDecision,
+    r.JevReviewConfidence,
+    r.JevRiskScore,
+    r.LocalReviewRequired,
+
+    JSON_VALUE(r.JevKBCurationJson, '$.POST_RESOLUTION_KB.answers.curation_disposition.choice')
+        AS KBCurationDisposition,
+    TRY_CONVERT(decimal(9,6), JSON_VALUE(r.JevKBCurationJson, '$.POST_RESOLUTION_KB.answers.curation_disposition.confidence'))
+        AS KBCurationConfidence,
+
+    r.JevModel,
+    r.JevReviewedOn AS LastJevAssessmentOn
+FROM dbo.Hermes_L2_Response_Trn_Tbl r
+WHERE r.IsDeleted = 0;
 GO

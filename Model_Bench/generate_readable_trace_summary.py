@@ -12,7 +12,7 @@ Helpdesk does NOT want to read. Deterministic, no extra LLM call: this
 just formats what already happened into plain sentences. It runs whether
 or not the investigation ever reached --publish-response, which is the
 whole point -- Hermes_Ticket_Activity_Trn_Tbl today only gets written to
-on a real publish (kanban_approval_publisher.py's post_publish_data_entry)
+on a real publish (deterministic publication via l2_pipeline_runtime.py)
 or when the model remembers to call --log-activity mid-investigation;
 neither happens for the ~83% of runs that don't complete cleanly.
 
@@ -204,6 +204,55 @@ def find_runs_to_summarize(cur, already_summarized: set):
     return [(str(r[0]), str(r[1]) if r[1] else None) for r in cur.fetchall() if str(r[0]) not in already_summarized]
 
 
+def _jev_assessment_note(cur, run_id: str) -> str:
+    """Human-readable semantic audit summary; absence is normal before deployment/calibration."""
+    try:
+        cur.execute(
+            "SELECT * FROM dbo.Hermes_Jev_Run_Assessment_Vw WHERE RunID = ?",
+            run_id,
+        )
+        row = cur.fetchone()
+    except Exception:
+        return ""
+    if not row:
+        return ""
+
+    parts = []
+    if getattr(row, "FailureClass", None):
+        confidence = getattr(row, "FailureClassConfidence", None)
+        parts.append(
+            "Jev trace class: "
+            + str(row.FailureClass)
+            + (f" (confidence {float(confidence):.2f})" if confidence is not None else "")
+        )
+    for label, attr in (
+        ("silent failure", "SilentFailureProbability"),
+        ("false success", "FalseSuccessClaimProbability"),
+        ("policy violation", "PolicyViolationProbability"),
+        ("human attention", "HumanAttentionProbability"),
+    ):
+        value = getattr(row, attr, None)
+        if value is not None:
+            parts.append(f"{label}: {float(value):.2f}")
+    decision = getattr(row, "JevReviewDecision", None)
+    if decision:
+        confidence = getattr(row, "JevReviewConfidence", None)
+        parts.append(
+            "primary review: "
+            + str(decision)
+            + (f" ({float(confidence):.2f})" if confidence is not None else "")
+        )
+    risk = getattr(row, "ReviewRiskScore", None)
+    if risk is not None:
+        parts.append(f"primary review risk: {float(risk):.2f}/3")
+    if not parts:
+        return ""
+    return (
+        "\n\nJev System-One audit (advisory, not proof):\n- "
+        + "\n- ".join(parts)
+    )
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dry-run", action="store_true")
@@ -234,6 +283,7 @@ def main():
             compute_row = cur.fetchone()
 
             summary = build_summary(events, compute_row)
+            summary += _jev_assessment_note(cur, run_id)
             print(f"{'[DRY RUN] ' if args.dry_run else ''}Summarizing run {run_id} (ticket {ticket_id}): {len(events)} event(s)")
             if args.dry_run:
                 print(summary[:500])

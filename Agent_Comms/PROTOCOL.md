@@ -1,28 +1,42 @@
-# Agent_Comms — Claude <-> Codex async channel
+# Agent_Comms — Claude <-> Codex <-> Antigravity async channel
 
-This folder is a file-based message queue between two AI agents working on
-the AIHelpdesk / Hermes L2 project from two different laptops, synced by
-Syncthing:
+This folder is a file-based message queue between AI agents working on the
+AIHelpdesk / Hermes L2 project, with no shared API or live bridge between
+them -- this folder is the only transport, full stop. **All three agents
+here run on Snehil's own laptop.** None of them poll this folder
+automatically; Snehil is the transport for every leg.
 
-- **Claude** (Claude Code) — runs on Snehil's laptop, no persistent
-  background process. Reads/writes this folder only when invoked in a
-  session.
-- **Codex** — runs on the teammate's laptop, invoked on a schedule via a
-  Hermes Agent Routine (Hermes's own cron, not Windows Task Scheduler or
-  anything ad hoc). This is the side expected to poll regularly.
+- **Claude** (Claude Code) — no persistent background process. Reads/writes
+  this folder only when invoked in a session.
+- **Codex** — a local terminal/IDE coding agent on this same laptop, with
+  real file read/write and terminal access to this repo once a session is
+  running. No scheduler, no autonomous polling -- Snehil starts each
+  session and gives it a task.
+- **Antigravity** — same laptop, in the XS_Builder workspace. Also has real
+  file read/write and terminal access to this repo once invoked (confirmed
+  live: it created `0011-context-envelope-wiring-research.md` itself, ran
+  real `git`/`python -m unittest` commands, read real files). No scheduler
+  either -- Snehil starts each session and gives it a task.
 
-Neither agent has any other way to reach the other directly — this folder,
-synced by Syncthing, is the only channel. Treat file writes here as the
-message-passing mechanism; there is no other transport.
+**The only actual gap for both is the wake-up, not the work.** Neither agent
+checks this folder on its own; Snehil is the one who starts a session and
+tells it "you have a pending request in Agent_Comms, go handle it" (or
+pastes the request's content directly). Once running, either agent should
+read and write these files itself -- create its own response in the
+request file, set `status: answered`, open its own `finding` thread if it
+finds something unprompted -- exactly as Claude does. Don't have Snehil
+relay text back and forth by hand when the agent can just edit the file.
+The one thing Claude still does on their behalf: if an agent's own output
+somehow doesn't make it into this folder (saved to Downloads/, pasted into
+chat, whatever), Claude reads that and writes it in for them.
 
 ## Scope: not just tickets
 
 This channel is general-purpose, not limited to Hermes L2 ticket status.
-Either agent can ask the other about anything relevant to the shared
-project(s) on these two laptops — XS_Builder work, XStudio/XKB findings,
-build/deploy state, errors hit, environment differences between the two
-machines, whatever comes up. Don't assume a request is ticket-related just
-because earlier threads were.
+Any agent can ask another about anything relevant to the shared project(s)
+on this laptop — XS_Builder work, XStudio/XKB findings, build/deploy state,
+errors hit, whatever comes up. Don't assume a request is ticket-related
+just because earlier threads were.
 
 ## File format
 
@@ -89,7 +103,7 @@ created: 2026-09-02T15:30:00+05:30
   with real content.
 - **Fill in `answered:`** with the ISO timestamp when a request is answered.
 - **Never delete or renumber existing files.** History here is the audit
-  trail across two machines that don't otherwise share state.
+  trail across sessions that don't otherwise share state.
 - **Be concrete, not aspirational.** A response/finding claiming something
   works or is true must be backed by an actual command's output, quoted —
   not a claim you didn't verify.
@@ -99,27 +113,70 @@ created: 2026-09-02T15:30:00+05:30
   actually stop and mention if you were pairing with someone — not routine
   "everything's fine" noise. If nothing's noteworthy, don't write one.
 
-## What Codex should do on each scheduled check
-
-1. List this folder, find every file with `status: pending` and
-   `to: codex` (any topic, not just tickets). For each: read `## Request`,
-   do the real work it asks for (terminal/DB tools — same
-   credentials/patterns as the l2-investigator SOUL.md when relevant), write
-   the actual result into `## Response`, set `status: answered` and
-   `answered: <timestamp>`.
-2. Separately, think back over what you did/learned since the last check —
-   during ticket investigations, this comms check itself, or anything else
-   you worked on. If something is genuinely worth telling Claude
-   unprompted, write a new `type: finding` thread (`to: claude`) for it.
-   Most checks will have nothing to report — that's fine, don't force one.
-3. If there's nothing pending and nothing worth sharing, do nothing.
-
 ## What Claude should do
 
-Claude has no automatic schedule (Snehil's Hermes gateway is currently off
-on this machine) — so Claude checks this folder for `to: claude` files
-(both answered requests and findings) whenever asked to, in a normal
+Claude has no automatic schedule -- it checks this folder for `to: claude`
+files (both answered requests and findings) whenever asked to, in a normal
 session, and should proactively mention any unread `finding` threads to the
-user even if they weren't specifically asked about. Claude creates new
-`to: codex` requests the same way, whenever the user asks for something
-that needs doing/verifying on the teammate's machine, on any topic.
+user even if they weren't specifically asked about.
+
+## Getting Codex or Antigravity to work
+
+1. Write a normal `type: request` file here, `to: codex` or
+   `to: antigravity` as appropriate (same format as any other thread) --
+   self-contained, assumes no other context beyond this file and
+   `AGENTS.md`/`CLAUDE.md`.
+2. Tell Snehil the file exists and ask him to start a session with that
+   agent and point it at the file (or paste the `## Request` content
+   directly -- either works).
+3. The agent does the work in a real session against the real repo, and
+   writes its own `## Response`, `status: answered`, `answered:` directly
+   into the file. Claude picks it up next time it checks this folder.
+4. Only if the agent's output didn't land in the file for some reason
+   (saved elsewhere, pasted into chat, a `.docx`, etc.) does Claude read it
+   from wherever it landed and write it into `## Response` itself.
+
+If an agent produces a finding unprompted, it should write its own
+`type: finding` thread directly (`from: codex` or `from: antigravity`,
+`to: claude`). If Snehil relays one by hand instead, Claude creates the
+file itself once it has read and understood the content -- don't
+paraphrase away specifics; quote real output.
+
+## Division of labor: default pattern
+
+The default split, unless a task clearly calls for something else:
+
+- **Claude does design, research it can do itself, implementation, and
+  writes the tests.** Claude is the one who understands this codebase's
+  architecture (`AGENTS.md`, the frozen five-box design) and should not
+  hand over decisions that require holding that context.
+- **Antigravity/Codex run those tests and report** -- pass/fail, exact
+  output, anything that broke. This is genuine load-splitting: they have
+  their own terminal/session against the same repo, so a verification pass
+  doesn't have to compete with Claude's own context budget.
+- **Claude reviews what comes back and corrects** -- fixes real failures,
+  pushes back on a report that doesn't hold up, iterates.
+- This is the default, not a rule: research delegation (like `0011`,
+  `0012`), independent code review, or a from-scratch build are all fair
+  asks too when they fit the situation better. Use judgment.
+
+### Keep Antigravity's tasks bounded
+
+Antigravity runs on Gemini, which is meaningfully less reliable at
+open-ended judgment calls than Claude or Codex. Every `to: antigravity`
+request should be concrete and mechanical:
+
+- Exact commands to run, exact files to read, exact assertions to check --
+  not "figure out if X is a problem."
+- A defined stopping point and a defined output shape ("paste the real
+  command output for each of these five checks"), not an open-ended
+  investigation with its own judgment calls about scope.
+- If real judgment is required (does this defect matter, what's the
+  right fix), Claude makes that call after reading Antigravity's bounded,
+  factual report -- not Antigravity itself.
+- `0012` is the template: numbered, concrete sub-questions, exact commands,
+  explicit "do not fix this yourself, report and propose only."
+
+Codex does not need this constraint by default -- give it real design or
+implementation latitude when the task warrants it, same as Claude would use
+for itself. Adjust either way if actual results say otherwise.

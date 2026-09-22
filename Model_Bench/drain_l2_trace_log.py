@@ -95,6 +95,24 @@ def main():
     if parse_errors:
         print(f"  WARNING: {parse_errors} line(s) failed to parse as JSON, skipped.")
 
+    # Resolve per-task identity across the whole drained batch before inserting.
+    # trace_context may arrive after the first tool/model events because the hot
+    # hook resolves Kanban metadata asynchronously.
+    task_identity = {}
+    for e in parsed:
+        task_id = e.get("task_id")
+        if task_id and (e.get("run_id") or e.get("ticket_id")):
+            task_identity[str(task_id)] = {
+                "run_id": e.get("run_id"),
+                "ticket_id": e.get("ticket_id"),
+            }
+    for e in parsed:
+        task_id = e.get("task_id")
+        identity = task_identity.get(str(task_id)) if task_id else None
+        if identity:
+            e["run_id"] = e.get("run_id") or identity.get("run_id")
+            e["ticket_id"] = e.get("ticket_id") or identity.get("ticket_id")
+
     if args.dry_run:
         for e in parsed[:5]:
             print(f"  [DRY RUN] {e.get('event_type')} tool={e.get('tool_name')} status={e.get('status')}")
@@ -110,10 +128,16 @@ def main():
         cur = conn.cursor()
         for e in parsed:
             written_at = e.get("written_at")
-            event_on = None
+            from datetime import datetime, timezone
             if written_at is not None:
-                from datetime import datetime, timezone
                 event_on = datetime.fromtimestamp(written_at, tz=timezone.utc)
+            elif e.get("event_on_ist"):
+                try:
+                    event_on = datetime.fromisoformat(e["event_on_ist"]).astimezone(timezone.utc)
+                except Exception:
+                    event_on = datetime.now(timezone.utc)
+            else:
+                event_on = datetime.now(timezone.utc)
 
             usage = e.get("usage")
             args_json = e.get("args")
@@ -145,6 +169,23 @@ def main():
                 ),
             )
             inserted += 1
+        # Backfill any trace rows from an earlier drain tick that belonged to
+        # this same task but were inserted before correlation resolved.
+        for task_id, identity in task_identity.items():
+            if not (identity.get("run_id") or identity.get("ticket_id")):
+                continue
+            cur.execute(
+                """
+                UPDATE dbo.Hermes_Agent_Trace_Trn_Tbl
+                SET
+                    RunID = COALESCE(RunID, ?),
+                    TicketID = COALESCE(TicketID, ?)
+                WHERE TaskID = ?
+                  AND IsDeleted = 0
+                  AND (RunID IS NULL OR TicketID IS NULL);
+                """,
+                (identity.get("run_id"), identity.get("ticket_id"), task_id),
+            )
         conn.commit()
     finally:
         conn.close()

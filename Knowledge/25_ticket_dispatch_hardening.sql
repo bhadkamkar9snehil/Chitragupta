@@ -130,6 +130,18 @@ BEGIN
             WHEN 'standard' THEN 3
             ELSE 4
         END,
+        /* Within the same operational priority, fresh/user-changed work must
+           not be starved by an old UPDATE continuation that became eligible
+           again. */
+        CASE
+            WHEN latest.ID IS NULL THEN 0
+            WHEN ISNULL(c.ModifiedOn, c.CreatedOn)
+                 > ISNULL(latest.TicketModifiedOnSeen, CONVERT(datetime, '19000101', 112))
+                THEN 1
+            WHEN latest.ProcessStatus = 'FAILED' THEN 2
+            WHEN latest.ResponseType = 'UPDATE' THEN 3
+            ELSE 4
+        END,
         c.CreatedOn ASC,
         c.ID ASC;
 END;

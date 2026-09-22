@@ -6,7 +6,7 @@ set -euo pipefail
 SRC_HERMES=~/.hermes/profiles
 DST=/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/deploy
 
-PROFILES="l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback"
+PROFILES="l2-jev-investigator l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback"
 SKILLS="xstudio-l2-ticket-workflow xstudio-sap-api-investigation xstudio-sohar-heat-execution xstudio-quality-delay-workorder xstudio-sql-write-discipline xstudio-l2-draft-verifier"
 
 mkdir -p "$DST/profiles" "$DST/skills/xstudio" "$DST/plugins"
@@ -26,7 +26,7 @@ done
 skill_owner() {
   case "$1" in
     xstudio-l2-draft-verifier) echo "l2-reviewer-primary l2-reviewer-fallback" ;;
-    *)                         echo "l2-investigator l2-investigator-primary" ;;
+    *)                         echo "l2-jev-investigator l2-investigator l2-investigator-primary" ;;
   esac
 }
 
@@ -50,7 +50,6 @@ cp "$SRC_HERMES/l2-investigator/plugins/xstudio-l2-trace/plugin.yaml" \
   "$DST/plugins/xstudio-l2-trace.plugin.yaml" 2>/dev/null || true
 cp "$SRC_HERMES/l2-investigator/plugins/xstudio-l2-tools/plugin.yaml" \
   "$DST/plugins/xstudio-l2-tools.plugin.yaml" 2>/dev/null || true
-
 # Hermes cron list has no JSON output in the deployed version. Keep one truthful text mirror.
 rm -f "$DST/cron_jobs.json"
 hermes -p l2-investigator cron list > "$DST/cron_jobs.txt" 2>&1

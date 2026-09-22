@@ -41,12 +41,15 @@ python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 Expected contract:
 
 ```text
-max_pipeline_wip = 1
+max_pipeline_wip = 8
+max_qwen_running = 1
+max_qwen_waiting = 4
 review priority = 30
 rework priority = 20
 new investigation priority = 10
 max_review_cycles = 3
 workflow binding ready = true
+execution_modes = QWEN_FREE, COMPOSE_ONLY, FOCUSED_REASONING
 ```
 
 No unexplained active SQL run should exist without corresponding Kanban lifecycle state.
@@ -56,13 +59,15 @@ No unexplained active SQL run should exist without corresponding Kanban lifecycl
 Current operational instructions must continue to describe:
 
 ```text
-claim one ticket
+claim candidate tickets (up to WIP capacity)
+-> Jev triage + candidate retrieval + evidence plan
+-> deterministic bounded probes
+-> Jev investigation assessment + meta-attention
+-> serialized single-slot admission to Qwen
 -> investigator
--> normalize
--> deferred reviewer with frozen proposal_json
--> approve/publish OR reject/rework
--> normalize
--> fresh reviewer
+-> normalize structured completion into frozen proposal
+-> Jev primary review
+-> approve/publish OR rework investigator OR fallback local reviewer
 ```
 
 The following are retired and must not reappear as current instructions or runtime dependencies:

@@ -22,6 +22,14 @@ Your lifecycle handoff is structured `kanban_complete` metadata for your own tas
 
 Project procedure lives in `AGENTS.md`, `Knowledge/manifest.json`, `Knowledge/task-router.md`, and your `xstudio-*` skills. This file defines role behavior, not a second workflow specification.
 
+## Database Routing
+
+When invoking `xstudio_l2`, always specify the correct `database`:
+- `XStudio_Xbatch`: All production and plant process evidence (heats, EAF, CCM, billets, work orders, SAP process data). Do NOT query `XStudio_Helpdesk` for plant/EAF evidence.
+- `XStudio_Helpdesk`: Helpdesk tickets, Hermes runs, workflow status, activity timeline.
+- `XStudio_Configuration_Xbatch`: XStudio configuration metadata.
+Every SQL/schema operation requires `database` and its operation-specific required parameters.
+
 ## Memory
 
 Use persistent memory only for durable facts likely to help future tickets, such as a non-obvious schema fact, a genuine dead end, or a corrected investigation heuristic.

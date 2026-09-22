@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export PATH="$HOME/.local/bin:$PATH"
+
 # Deploy the repo's deterministic L2 pipeline runtime AND the typed XStudio
 # investigation harness into the Hermes profile script/plugin/skill locations.
 # Run from the Chitragupta repo under WSL. Safe to run repeatedly.
@@ -13,12 +15,20 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$HOME/.hermes/profiles/l2-investigator/scripts"
-ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
-INVESTIGATOR_PROFILES=(l2-investigator l2-investigator-primary)
+ACTIVE_PROFILES=(l2-jev-investigator l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
+INVESTIGATOR_PROFILES=(l2-jev-investigator l2-investigator l2-investigator-primary)
 REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
 RETIRED_DEPLOYED_SCRIPTS=(dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py)
+RETIRED_PLUGIN_DIRS=(xstudio-l2-jev)
 
 mkdir -p "$SCRIPTS_DIR"
+
+# Seed the new Jev-first Hermes profile from the repo on first deployment.
+JEV_PROFILE_DIR="$HOME/.hermes/profiles/l2-jev-investigator"
+mkdir -p "$JEV_PROFILE_DIR"
+if [[ ! -f "$JEV_PROFILE_DIR/config.yaml" ]]; then
+  cp "$ROOT/deploy/profiles/l2-jev-investigator/config.yaml" "$JEV_PROFILE_DIR/config.yaml"
+fi
 
 # Repo deletion is not deployment deletion. Earlier cleanup removed these files
 # from Git but left old copies under ~/.hermes/profiles/.../scripts, which made
@@ -32,17 +42,47 @@ for retired in "${RETIRED_DEPLOYED_SCRIPTS[@]}"; do
   fi
 done
 
+for profile in "${ACTIVE_PROFILES[@]}"; do
+  for retired_plugin in "${RETIRED_PLUGIN_DIRS[@]}"; do
+    stale="$HOME/.hermes/profiles/$profile/plugins/$retired_plugin"
+    if [[ -d "$stale" ]]; then
+      rm -rf "$stale"
+      echo "removed retired profile plugin: $stale"
+    fi
+  done
+done
+for retired_plugin in "${RETIRED_PLUGIN_DIRS[@]}"; do
+  stale="$HOME/.hermes/plugins/$retired_plugin"
+  if [[ -d "$stale" ]]; then
+    rm -rf "$stale"
+    echo "removed retired shared plugin: $stale"
+  fi
+done
+
+RETIRED_SCRIPTS=(
+  kanban_approval_publisher.py
+  kanban_reject_bridge.py
+  repair_incomplete_completions.py
+  enforce_publish_safety_net.py
+)
+for retired_script in "${RETIRED_SCRIPTS[@]}"; do
+  for profile in "${ACTIVE_PROFILES[@]}"; do
+    stale="$HOME/.hermes/profiles/$profile/scripts/$retired_script"
+    if [[ -f "$stale" ]]; then
+      rm -f "$stale"
+      echo "removed retired script: $stale"
+    fi
+  done
+done
+
 for f in \
   l2_pipeline_runtime.py \
   ticket_scout.py \
   reconcile_l2_pipeline.py \
-  kanban_approval_publisher.py \
-  kanban_reject_bridge.py \
-  repair_incomplete_completions.py \
   audit_kanban_completions.py \
-  enforce_publish_safety_net.py \
   run_coalesced.py \
-  drain_and_summarize.py
+  drain_and_summarize.py \
+  l2_gbrain.py
  do
   cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
  done
@@ -56,21 +96,38 @@ chmod +x "$SCRIPTS_DIR"/*.py
 test -f "$ROOT/Model_Bench/xstudio_l2_tool_bridge.py" \
   || { echo "FATAL: Model_Bench/xstudio_l2_tool_bridge.py is missing" >&2; exit 1; }
 
+# KB retrieval executes directly from the repo path. Its TypeSafe Jev helper is
+# likewise repo-local: there is no runtime package installation or profile copy.
+test -f "$ROOT/Model_Bench/kb_retrieval.py" \
+  || { echo "FATAL: Model_Bench/kb_retrieval.py is missing" >&2; exit 1; }
+test -f "$ROOT/Model_Bench/jev_workflow_bridge.py" \
+  || { echo "FATAL: Model_Bench/jev_workflow_bridge.py is missing" >&2; exit 1; }
+test -f "$ROOT/Model_Bench/jev_trace_assessor.py" \
+  || { echo "FATAL: Model_Bench/jev_trace_assessor.py is missing" >&2; exit 1; }
+test -f "$ROOT/Model_Bench/jev_post_resolution_curation.py" \
+  || { echo "FATAL: Model_Bench/jev_post_resolution_curation.py is missing" >&2; exit 1; }
+test -f "$ROOT/Model_Bench/jev/client.py" \
+  || { echo "FATAL: Model_Bench/jev fabric is missing" >&2; exit 1; }
+
 # Keep the workflow binding beside the deployed scripts as a fallback. The
 # runtime also reads the canonical repo copy directly.
 cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow_binding.json"
 
-# Deploy both observer plugins to every active role. The orchestrator plugin
-# only triggers reconciliation; the tools plugin registers `xstudio_l2` and
-# enforces the execution guard. Correctness never depends on the event hook,
-# because ticket_scout runs the same reconciler before every new claim.
+# Deploy the orchestrator, typed-tools, and trace observer plugins to every
+# active role. Trace remains a cheap local observer; all Jev network work runs
+# later from the drain pipeline, never inside observer hooks. Correctness never
+# depends on an event hook because ticket_scout reconciles before every claim.
 deploy_plugins() {
   local profile="$1" plugin src dir
-  for plugin in xstudio-l2-orchestrator xstudio-l2-tools; do
+  for plugin in xstudio-l2-orchestrator xstudio-l2-tools xstudio-l2-trace xstudio-l2-learning; do
     if [[ "$plugin" == "xstudio-l2-orchestrator" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_orchestrator_plugin"
-    else
+    elif [[ "$plugin" == "xstudio-l2-tools" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_tools_plugin"
+    elif [[ "$plugin" == "xstudio-l2-trace" ]]; then
+      src="$ROOT/Model_Bench/xstudio_l2_trace_plugin"
+    else
+      src="$ROOT/Model_Bench/xstudio_l2_learning_plugin"
     fi
     dir="$HOME/.hermes/profiles/$profile/plugins/$plugin"
     mkdir -p "$dir"
@@ -122,6 +179,7 @@ for profile in "${INVESTIGATOR_PROFILES[@]}"; do
 done
 
 for profile in "${REVIEWER_PROFILES[@]}"; do
+  rm -rf "$HOME/.hermes/profiles/$profile/skills/xstudio/xstudio-l2-ticket-workflow"
   for skill in xstudio-l2-draft-verifier xstudio-sql-write-discipline; do
     copy_skill "$profile" "$skill"
   done
@@ -133,11 +191,19 @@ done
 echo "== Shared plugin install (required for toolset discovery) =="
 install_shared_plugin_for_discovery xstudio-l2-tools "$ROOT/Model_Bench/xstudio_l2_tools_plugin"
 echo "installed xstudio-l2-tools into $HOME/.hermes/plugins for toolset discovery"
+install_shared_plugin_for_discovery xstudio-l2-learning "$ROOT/Model_Bench/xstudio_l2_learning_plugin"
+echo "installed xstudio-l2-learning into $HOME/.hermes/plugins for toolset discovery"
 
 echo "== Profile config (idempotent, additive) =="
 for profile in "${ACTIVE_PROFILES[@]}"; do
   config="$HOME/.hermes/profiles/$profile/config.yaml"
   if [[ -f "$config" ]]; then
+    # Converge configs after retiring the worker-facing Jev plugin/toolset.
+    # Remove only the exact list entries we previously owned.
+    sed -i \
+      -e '/^[[:space:]]*- xstudio-l2-jev[[:space:]]*$/d' \
+      -e '/^[[:space:]]*- xstudio_jev[[:space:]]*$/d' \
+      "$config"
     python3 "$ROOT/Model_Bench/patch_profile_config.py" "$config"
     # Never make the worker DISCOVER xstudio_l2. Deferred tool-search is a fine
     # trade for a large model and a trap for the 9B local one: on Ticket_360 the
@@ -152,6 +218,10 @@ done
 # The root config drives plugin discovery, which is what makes `xstudio_l2` a
 # recognised toolset name instead of an unknown one that gets filtered out.
 echo "== Root config (plugin discovery) =="
+sed -i \
+  -e '/^[[:space:]]*- xstudio-l2-jev[[:space:]]*$/d' \
+  -e '/^[[:space:]]*- xstudio_jev[[:space:]]*$/d' \
+  "$HOME/.hermes/config.yaml"
 python3 "$ROOT/Model_Bench/patch_profile_config.py" --enable-plugin-only "$HOME/.hermes/config.yaml"
 
 if [[ "${1:-}" != "--no-restart" ]]; then
@@ -161,8 +231,8 @@ if [[ "${1:-}" != "--no-restart" ]]; then
 fi
 
 echo
-echo "Deployed deterministic L2 lifecycle + typed XStudio investigation harness."
-echo "Typed tool: xstudio_l2. Retired terminal transports (Hermes_Orchestrator.py,"
+echo "Deployed deterministic L2 lifecycle + typed XStudio harness + trace observer + Jev System-One fabric."
+echo "Typed worker tool: xstudio_l2. Jev planning/review remains harness-owned. Retired terminal transports (Hermes_Orchestrator.py,"
 echo "Windows Python, sqlcmd, pyodbc, pip) are blocked by plugin hook + approvals.deny."
 echo "Known retired deployed lifecycle scripts are removed on every deploy."
-echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh"
+echo "Next: bash $ROOT/Model_Bench/validate_l2_pipeline_local.sh --full"

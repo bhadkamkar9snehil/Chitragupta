@@ -2,8 +2,7 @@
   "_comment": "Machine-readable routing manifest for the current deterministic L2 pipeline. task-router.md is the human-readable mirror. Git-tracked documents route investigation; ticket-specific claims still require live evidence through xstudio_l2.",
   "verified": "2026-09-05",
   "always_load": [
-    "mental-model.md",
-    "execution-model.md"
+    "L2_PIPELINE_STATE_MACHINE.md"
   ],
   "skills": [
     {

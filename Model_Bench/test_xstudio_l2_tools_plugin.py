@@ -99,10 +99,6 @@ def test_terminal_guard_inspects_alternate_argument_keys() -> None:
     assert plugin._pre_tool_call("terminal", {"cmd": "sqlcmd -Q 'SELECT 1'"}, task_id="s")["action"] == "block"
 
 
-# --------------------------------------------------------------------------
-# Bridge transport
-# --------------------------------------------------------------------------
-
 def test_bridge_transport_never_prefixes_windows_python_with_python3() -> None:
     completed = mock.Mock(returncode=0, stdout='{"ok":true,"rows":[]}', stderr="")
     with mock.patch.object(plugin.subprocess, "run", return_value=completed) as run:
@@ -223,6 +219,87 @@ def test_read_procedure_escapes_quotes_in_parameter_values() -> None:
     assert "O''Brien''" in captured["sql"]
 
 
+def test_probe_table_uses_real_identifier_and_never_broad_fishes() -> None:
+    class FakeOrchestrator:
+        @staticmethod
+        def build_query_mechanically(**kwargs):
+            assert kwargs["table"] == "dbo.Heat_Vw"
+            assert "[HeatNo] = N'H123'" in kwargs["where"]
+            assert "HeatNo" in kwargs["columns"]
+            return {"ok": True, "sql": "SELECT ...", "table": "dbo.Heat_Vw"}
+
+        @staticmethod
+        def run_readonly_query(client, sql, database, run_id=None):
+            assert database == "XStudio_Xbatch"
+            assert run_id == "r1"
+            return [{"HeatNo": "H123", "Status": "Running"}]
+
+    allowlist = {"XStudio_Xbatch": {"dbo.Heat_Vw": ["HeatNo", "Status", "Reason", "EventTime"]}}
+    with mock.patch.object(bridge, "_load_allowlist", return_value=allowlist), \
+         mock.patch.object(bridge, "_orchestrator", return_value=FakeOrchestrator()):
+        result = bridge._probe_table({
+            "operation": "probe_table",
+            "database": "XStudio_Xbatch",
+            "table": "dbo.Heat_Vw",
+            "ticket": {"HeatNo": "H123"},
+            "run_id": "r1",
+            "matched_columns": ["Status"],
+        }, object())
+    assert result["ok"] is True
+    assert result["probe_possible"] is True
+    assert result["identifier"] == {"column": "HeatNo", "value": "H123"}
+    assert result["rows"][0]["Status"] == "Running"
+
+
+def test_probe_table_requires_run_id_before_a_live_read() -> None:
+    """Real-data batch finding: select/query/probe_table treated run_id as
+    optional, so a real successful evidence read left no row in
+    Hermes_L2_SQL_Action_Trn_Tbl, and a later reviewer's get_run_actions
+    cross-check saw nothing and rejected the proposal (Ticket_242
+    ACTION_AUTHORITY). run_id is not a database-style judgment call -- the
+    task body hands it to the model once -- so it is required, not
+    silently defaulted, before any live probe_table read happens."""
+    class FakeOrchestrator:
+        @staticmethod
+        def build_query_mechanically(**kwargs):
+            raise AssertionError("must not build a query before run_id is validated")
+
+    allowlist = {"XStudio_Xbatch": {"dbo.Heat_Vw": ["HeatNo", "Status", "Reason", "EventTime"]}}
+    with mock.patch.object(bridge, "_load_allowlist", return_value=allowlist), \
+         mock.patch.object(bridge, "_orchestrator", return_value=FakeOrchestrator()):
+        try:
+            bridge._probe_table({
+                "operation": "probe_table",
+                "database": "XStudio_Xbatch",
+                "table": "dbo.Heat_Vw",
+                "ticket": {"HeatNo": "H123"},
+            }, object())
+        except ValueError as exc:
+            assert "run_id is required" in str(exc)
+        else:
+            raise AssertionError("probe_table must not succeed without run_id")
+
+
+def test_probe_table_refuses_broad_read_without_strong_identifier() -> None:
+    class FakeOrchestrator:
+        @staticmethod
+        def build_query_mechanically(**kwargs):
+            raise AssertionError("broad automatic query must not be built")
+
+    allowlist = {"XStudio_Xbatch": {"dbo.Heat_Vw": ["HeatNo", "Status", "Reason"]}}
+    with mock.patch.object(bridge, "_load_allowlist", return_value=allowlist), \
+         mock.patch.object(bridge, "_orchestrator", return_value=FakeOrchestrator()):
+        result = bridge._probe_table({
+            "operation": "probe_table",
+            "database": "XStudio_Xbatch",
+            "table": "dbo.Heat_Vw",
+            "ticket": {"Description": "something looks wrong"},
+        }, object())
+    assert result["ok"] is True
+    assert result["probe_possible"] is False
+    assert result["rows"] == []
+
+
 def test_database_must_be_explicitly_allowlisted() -> None:
     try:
         bridge._database({"database": "master"})
@@ -230,6 +307,123 @@ def test_database_must_be_explicitly_allowlisted() -> None:
         assert "not allowed" in str(exc)
     else:
         raise AssertionError("master must not be an allowed database")
+
+
+def test_tool_schema_describes_database_routing_and_operation_contracts() -> None:
+    schema_str = json.dumps(plugin._SCHEMA)
+    assert "oneOf" not in schema_str, "oneOf causes HTTP 400 with LM Studio; must remain flat"
+    assert "anyOf" not in schema_str, "anyOf causes HTTP 400 with LM Studio; must remain flat"
+
+    props = plugin._SCHEMA["parameters"]["properties"]
+    assert "operation" in props
+    op_desc = props["operation"]["description"]
+    for op in (
+        "select", "query", "probe_table", "suggest_tables", "find_objects",
+        "get_definition", "validate_identifiers", "read_procedure",
+        "get_ticket_context", "get_run_actions", "save_ledger"
+    ):
+        assert op in op_desc, f"operation {op} missing from schema description"
+
+    db_desc = props["database"]["description"]
+    assert "XStudio_Xbatch" in db_desc
+    assert "XStudio_Helpdesk" in db_desc
+    assert "XStudio_Configuration_Xbatch" in db_desc
+
+    context = plugin._pre_llm_call()["context"]
+    assert "DATABASE ROUTING" in context
+    assert "XStudio_Xbatch" in context
+    assert "XStudio_Helpdesk" in context
+
+
+def test_operations_reject_missing_database_before_sql() -> None:
+    fake_client = mock.MagicMock()
+    db_ops = [
+        ("select", {"table": "dbo.EAF_PER_HEAT", "columns": ["HeatNo"]}),
+        ("query", {"sql": "SELECT 1"}),
+        ("suggest_tables", {"search": "EAF"}),
+        ("find_objects", {"search": "EAF"}),
+        ("get_definition", {"object_name": "EAF_PER_HEAT"}),
+        ("validate_identifiers", {"table": "dbo.EAF_PER_HEAT", "identifiers": ["HeatNo"]}),
+        ("probe_table", {"table": "dbo.EAF_PER_HEAT", "ticket": {"HeatNo": "123"}}),
+        ("read_procedure", {"run_id": "r1", "procedure": "XMES_Get_API_Transaction_Summary", "parameters": {"APIType": "UD"}}),
+    ]
+    for op, payload in db_ops:
+        req = dict(payload, operation=op)
+        handler = bridge._CONNECTED_OPERATIONS.get(op)
+        if handler:
+            try:
+                handler(req, fake_client)
+            except ValueError as exc:
+                assert "database is required" in str(exc), f"op={op} did not mention database in error: {exc}"
+            else:
+                raise AssertionError(f"op={op} unexpectedly succeeded without database")
+        elif op == "validate_identifiers":
+            try:
+                bridge._validate_identifiers(req)
+            except ValueError as exc:
+                assert "database is required" in str(exc)
+            else:
+                raise AssertionError(f"op={op} unexpectedly succeeded without database")
+        elif op == "suggest_tables":
+            try:
+                bridge._database(req)
+            except ValueError as exc:
+                assert "database is required" in str(exc)
+            else:
+                raise AssertionError(f"op={op} unexpectedly succeeded without database")
+
+
+def test_operations_reject_missing_required_arguments_before_sql() -> None:
+    fake_client = mock.MagicMock()
+    cases = [
+        ("select", {"database": "XStudio_Xbatch"}, "table is required"),
+        ("select", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "columns is required"),
+        ("select", {"database": "XStudio_Xbatch", "table": "dbo.T", "columns": []}, "columns is required"),
+        ("select", {"database": "XStudio_Xbatch", "table": "dbo.T", "columns": ["ID"]}, "run_id is required"),
+        ("query", {"database": "XStudio_Xbatch"}, "sql is required"),
+        ("query", {"database": "XStudio_Xbatch", "sql": ""}, "sql is required"),
+        ("query", {"database": "XStudio_Xbatch", "sql": "SELECT 1"}, "run_id is required"),
+        ("suggest_tables", {"database": "XStudio_Xbatch"}, "search is required"),
+        ("find_objects", {"database": "XStudio_Xbatch"}, "search is required"),
+        ("get_definition", {"database": "XStudio_Xbatch"}, "object_name is required"),
+        ("validate_identifiers", {"database": "XStudio_Xbatch"}, "table is required"),
+        ("validate_identifiers", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "identifiers is required"),
+        ("validate_identifiers", {"database": "XStudio_Xbatch", "table": "dbo.T", "identifiers": []}, "identifiers is required"),
+        ("read_procedure", {"database": "XStudio_Xbatch"}, "run_id is required"),
+        ("read_procedure", {"database": "XStudio_Xbatch", "run_id": "r1"}, "procedure is required"),
+        ("read_procedure", {"database": "XStudio_Xbatch", "run_id": "r1", "procedure": "P"}, "parameters is required"),
+        ("get_ticket_context", {}, "ticket_id is required"),
+        ("get_run_actions", {}, "run_id is required"),
+        ("save_ledger", {}, "run_id is required"),
+        ("save_ledger", {"run_id": "r1"}, "ledger is required"),
+        ("probe_table", {"database": "XStudio_Xbatch"}, "table is required"),
+        ("probe_table", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "ticket is required"),
+    ]
+    for op, payload, err in cases:
+        req = dict(payload, operation=op)
+        handler = bridge._CONNECTED_OPERATIONS.get(op)
+        try:
+            if handler:
+                handler(req, fake_client)
+            elif op == "validate_identifiers":
+                bridge._validate_identifiers(req)
+            elif op == "suggest_tables":
+                bridge._require(req, "search")
+            else:
+                raise ValueError(f"unknown op: {op}")
+        except ValueError as exc:
+            assert err in str(exc), f"op={op} expected {err!r} in {exc!r}"
+        else:
+            raise AssertionError(f"op={op} unexpectedly succeeded with payload {payload}")
+
+
+def test_dispatch_requires_operation() -> None:
+    try:
+        bridge.dispatch({})
+    except ValueError as exc:
+        assert "operation is required" in str(exc)
+    else:
+        raise AssertionError("dispatch without operation must fail")
 
 
 # --------------------------------------------------------------------------
@@ -394,6 +588,17 @@ def test_config_patch_adds_plugin_toolset_and_deny_rules() -> None:
     assert "'*pip install*'" in patched
 
 
+def test_config_patch_adds_all_profile_hook_plugins_on_fresh_config() -> None:
+    fresh = _SAMPLE_CONFIG.replace(
+        "    - xstudio-l2-trace\n    - xstudio-l2-orchestrator\n",
+        "",
+    )
+    patched = _patch_sample(fresh)
+    assert "    - xstudio-l2-orchestrator\n" in patched
+    assert "    - xstudio-l2-tools\n" in patched
+    assert "    - xstudio-l2-trace\n" in patched
+
+
 def test_config_patch_is_idempotent() -> None:
     once = _patch_sample(_SAMPLE_CONFIG)
     twice = _patch_sample(once)
@@ -432,7 +637,7 @@ def test_config_patch_handles_flow_style_lists() -> None:
     flow = _SAMPLE_CONFIG.replace("  cli:\n    - terminal\n    - todo\n", "  cli: [terminal, todo]\n")
     patched = _patch_sample(flow)
     assert "xstudio_l2" in patched
-    assert "[terminal, todo, xstudio_l2]" in patched
+    assert "[terminal, todo, xstudio_l2, l2_learning]" in patched
 
 
 def test_config_patch_does_not_abort_when_optional_section_absent() -> None:

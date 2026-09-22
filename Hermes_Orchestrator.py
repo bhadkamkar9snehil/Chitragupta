@@ -590,7 +590,8 @@ class HermesL2Client:
         return _rows_as_dicts(cur)
 
     def claim_ticket(self, ticket_id: str, eligible_status_csv: str,
-                      host_address: Optional[str] = None) -> Optional[str]:
+                      host_address: Optional[str] = None,
+                      max_pipeline_wip: int = 8) -> Optional[str]:
         """
         EXEC dbo.Hermes_L2_Claim_Ticket_Usp -- atomic claim (sp_getapplock + UPDLOCK).
         Returns the new RunID, or None if another worker already holds this ticket
@@ -606,10 +607,14 @@ class HermesL2Client:
                 @WorkerID = ?,
                 @HermesUserID = ?,
                 @HostAddress = ?,
+                @MaxPipelineWip = ?,
                 @RunID = @RunIDOut OUTPUT;
             SELECT @RunIDOut AS RunID;
             """,
-            (ticket_id, eligible_status_csv, self.worker_id, self.hermes_user_id, host_address),
+            (
+                ticket_id, eligible_status_csv, self.worker_id,
+                self.hermes_user_id, host_address, max_pipeline_wip,
+            ),
         )
         row = _last_result_row(cur)
         self.conn.commit()
@@ -664,6 +669,83 @@ class HermesL2Client:
             (run_id, self.hermes_user_id),
         )
         self.conn.commit()
+
+
+    def queue_local_model_work(
+        self,
+        run_id: str,
+        purpose: str,
+        priority: int,
+        work_key: str,
+        work_json: Dict[str, Any],
+        execution_mode: Optional[str] = None,
+        max_waiting: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Persist one exact local-model work package on the active run."""
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            EXEC dbo.Hermes_L2_Queue_Local_Model_Usp
+                @RunID = ?,
+                @Purpose = ?,
+                @Priority = ?,
+                @WorkKey = ?,
+                @ExecutionMode = ?,
+                @WorkJson = ?,
+                @HermesUserID = ?,
+                @MaxWaiting = ?;
+            """,
+            (
+                run_id, purpose, priority, work_key, execution_mode,
+                json.dumps(work_json, separators=(",", ":"), default=str),
+                self.hermes_user_id, max_waiting,
+            ),
+        )
+        rows = _rows_as_dicts(cur)
+        self.conn.commit()
+        return rows[0] if rows else {}
+
+    def try_acquire_local_model_work(self) -> Dict[str, Any]:
+        """Atomically acquire the one shared local LM Studio slot."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "EXEC dbo.Hermes_L2_Try_Acquire_Local_Model_Usp @HermesUserID = ?;",
+            (self.hermes_user_id,),
+        )
+        rows = _rows_as_dicts(cur)
+        self.conn.commit()
+        return rows[0] if rows else {"AcquireStatus": "EMPTY"}
+
+    def bind_local_model_task(self, run_id: str, work_key: str, task_id: str) -> Dict[str, Any]:
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            EXEC dbo.Hermes_L2_Bind_Local_Model_Task_Usp
+                @RunID = ?, @WorkKey = ?, @TaskID = ?, @HermesUserID = ?;
+            """,
+            (run_id, work_key, task_id, self.hermes_user_id),
+        )
+        rows = _rows_as_dicts(cur)
+        self.conn.commit()
+        return rows[0] if rows else {}
+
+    def finish_local_model_work(
+        self,
+        run_id: str,
+        task_id: Optional[str] = None,
+        outcome: str = "DONE",
+    ) -> Dict[str, Any]:
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            EXEC dbo.Hermes_L2_Finish_Local_Model_Usp
+                @RunID = ?, @TaskID = ?, @Outcome = ?, @HermesUserID = ?;
+            """,
+            (run_id, task_id, outcome, self.hermes_user_id),
+        )
+        rows = _rows_as_dicts(cur)
+        self.conn.commit()
+        return rows[0] if rows else {}
 
     def save_investigation_state(self, run_id: str, route: Optional[str] = None,
                                   problem_summary: Optional[str] = None,
@@ -1173,7 +1255,13 @@ def run_readonly_query(client: "HermesL2Client", sql: str, database: Optional[st
     return _rows_as_dicts(cur)
 
 
-def poll_and_claim(client: HermesL2Client, eligible_status_csv: str, bot_label: Optional[str] = None) -> Dict[str, Any]:
+def poll_and_claim(
+    client: HermesL2Client,
+    eligible_status_csv: str,
+    bot_label: Optional[str] = None,
+    max_pipeline_wip: int = 8,
+    persist_claim_state: bool = True,
+) -> Dict[str, Any]:
     """
     Deterministic, safe half of a cycle: recover stale runs, find candidates,
     atomically claim ONE, load its full context (including any structured L1
@@ -1210,7 +1298,11 @@ def poll_and_claim(client: HermesL2Client, eligible_status_csv: str, bot_label: 
         return result
 
     for candidate in candidates:
-        run_id = client.claim_ticket(candidate["TicketID"], eligible_status_csv)
+        run_id = client.claim_ticket(
+            candidate["TicketID"],
+            eligible_status_csv,
+            max_pipeline_wip=max_pipeline_wip,
+        )
         if run_id:
             context = client.get_ticket_context(candidate["TicketID"])
             client.start_investigation(run_id, route="AGENT_INVESTIGATION")
@@ -1227,17 +1319,13 @@ def poll_and_claim(client: HermesL2Client, eligible_status_csv: str, bot_label: 
             # not a context-loss bug, a small-model verbatim-recall failure.
             # Don't make the model responsible for exact-value fidelity when
             # code can pass it through mechanically instead.
-            _LAST_CLAIM_STATE_PATH.write_text(json.dumps({
-                "run_id": run_id,
-                "ticket_id": candidate["TicketID"],
-                "claimed_at": datetime.now(timezone.utc).isoformat(),
-                # Which bot (profile/model combo) claimed this -- needed to
-                # score/compare combos honestly once more than one profile
-                # is polling the same live queue concurrently. Not a DB
-                # column deliberately (no schema change for something this
-                # local); model_scorecard.py reads it straight from here.
-                "bot_label": bot_label,
-            }), encoding="utf-8")
+            if persist_claim_state:
+                _LAST_CLAIM_STATE_PATH.write_text(json.dumps({
+                    "run_id": run_id,
+                    "ticket_id": candidate["TicketID"],
+                    "claimed_at": datetime.now(timezone.utc).isoformat(),
+                    "bot_label": bot_label,
+                }), encoding="utf-8")
             return result
 
     result["status"] = "NO_CLAIMABLE_TICKET"
@@ -1272,6 +1360,28 @@ def main() -> None:
                          help="Claim one eligible ticket and print its full context as JSON, "
                               "then stop (no investigation/write). For an LLM agent driving "
                               "this script via its own terminal tool -- see poll_and_claim().")
+    parser.add_argument("--max-pipeline-wip", type=int, default=8,
+                         help="Atomic SQL-enforced maximum number of active L2 runs. "
+                              "Jev-only work can occupy several slots; local-Qwen concurrency "
+                              "is governed separately by the local-model admission controller.")
+    parser.add_argument("--no-local-claim-state", action="store_true",
+                         help="Do not overwrite the singleton manual-CLI last-claim file. "
+                              "Required for deterministic multi-WIP scout polling.")
+    parser.add_argument("--local-model-action",
+                         choices=["queue", "acquire", "bind", "finish"],
+                         default=None,
+                         help="Trusted lifecycle operation for the SQL-backed single local-model slot.")
+    parser.add_argument("--local-model-purpose", default=None)
+    parser.add_argument("--local-model-priority", type=int, default=None)
+    parser.add_argument("--local-model-max-waiting", type=int, default=None,
+                         help="Enforce priority-aware queue waiting capacity; returns BACKPRESSURE if exceeded.")
+    parser.add_argument("--local-model-work-key", default=None)
+    parser.add_argument("--local-model-execution-mode", default=None)
+    parser.add_argument("--local-model-work-json", default=None)
+    parser.add_argument("--local-model-work-stdin", action="store_true",
+                         help="With local-model queue, read WorkJson from stdin to avoid command-line length limits.")
+    parser.add_argument("--local-model-task-id", default=None)
+    parser.add_argument("--local-model-outcome", choices=["DONE", "REQUEUE"], default="DONE")
     parser.add_argument("--bot-label", default=None,
                          help="Free-text identity of the bot/profile claiming this ticket "
                               "(e.g. 'l2-nemo' or 'nemotron-3-nano-4b'). Recorded in the local "
@@ -1364,7 +1474,7 @@ def main() -> None:
                               "the caller uses) to this run's InvestigationJson column, "
                               "independent of whether/how the run terminates. Requires --ledger. "
                               "Exists so a REJECTED investigation's findings aren't lost -- "
-                              "kanban_reject_bridge.py carries this forward verbatim into the "
+                              "l2_pipeline_runtime.py carries this forward verbatim into the "
                               "rework card instead of the next attempt starting cold.")
     parser.add_argument("--ledger", default=None,
                          help="JSON string. Required with --save-ledger; optional with "
@@ -1515,10 +1625,68 @@ def main() -> None:
                 print(f"  {row}")
             return
 
+        if args.local_model_action:
+            action = args.local_model_action
+            if action == "queue":
+                if not (
+                    args.run_id and args.local_model_purpose
+                    and args.local_model_priority is not None
+                    and args.local_model_work_key
+                    and (args.local_model_work_json or args.local_model_work_stdin)
+                ):
+                    parser.error(
+                        "--local-model-action queue requires --run-id, --local-model-purpose, "
+                        "--local-model-priority, --local-model-work-key and WorkJson via "
+                        "--local-model-work-json or --local-model-work-stdin"
+                    )
+                raw_work_json = sys.stdin.read() if args.local_model_work_stdin else args.local_model_work_json
+                try:
+                    work_json = json.loads(raw_work_json or "")
+                except json.JSONDecodeError as exc:
+                    parser.error(f"local-model WorkJson is invalid JSON: {exc}")
+                result = client.queue_local_model_work(
+                    args.run_id,
+                    args.local_model_purpose,
+                    args.local_model_priority,
+                    args.local_model_work_key,
+                    work_json,
+                    execution_mode=args.local_model_execution_mode,
+                    max_waiting=args.local_model_max_waiting,
+                )
+            elif action == "acquire":
+                result = client.try_acquire_local_model_work()
+            elif action == "bind":
+                if not (args.run_id and args.local_model_work_key and args.local_model_task_id):
+                    parser.error(
+                        "--local-model-action bind requires --run-id, "
+                        "--local-model-work-key and --local-model-task-id"
+                    )
+                result = client.bind_local_model_task(
+                    args.run_id,
+                    args.local_model_work_key,
+                    args.local_model_task_id,
+                )
+            else:
+                if not args.run_id:
+                    parser.error("--local-model-action finish requires --run-id")
+                result = client.finish_local_model_work(
+                    args.run_id,
+                    task_id=args.local_model_task_id,
+                    outcome=args.local_model_outcome,
+                )
+            print(json.dumps(result, indent=2, default=str))
+            return
+
         if args.poll:
             if not args.eligible_status:
                 parser.error("--eligible-status is required with --poll")
-            result = poll_and_claim(client, args.eligible_status, bot_label=args.bot_label)
+            result = poll_and_claim(
+                client,
+                args.eligible_status,
+                bot_label=args.bot_label,
+                max_pipeline_wip=args.max_pipeline_wip,
+                persist_claim_state=not args.no_local_claim_state,
+            )
             print(json.dumps(result, indent=2, default=str))
             return
 

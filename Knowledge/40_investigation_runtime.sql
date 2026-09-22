@@ -95,6 +95,384 @@ BEGIN
 END;
 GO
 
+
+/*
+  Local model admission controller.
+  Jev/deterministic work may run for several active tickets concurrently, but
+  every task that actually invokes the shared local LM Studio model is queued
+  on the run row and admitted through one SQL-serialized slot.
+*/
+CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Queue_Local_Model_Usp
+(
+    @RunID          varchar(36),
+    @Purpose        varchar(30),
+    @Priority       int,
+    @WorkKey        varchar(255),
+    @ExecutionMode  varchar(30) = NULL,
+    @WorkJson       nvarchar(max),
+    @HermesUserID   varchar(36) = NULL,
+    @MaxWaiting     int = NULL
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    IF NULLIF(LTRIM(RTRIM(@RunID)), '') IS NULL
+       OR NULLIF(LTRIM(RTRIM(@Purpose)), '') IS NULL
+       OR NULLIF(LTRIM(RTRIM(@WorkKey)), '') IS NULL
+       OR NULLIF(LTRIM(RTRIM(@WorkJson)), '') IS NULL
+    BEGIN
+        RAISERROR('RunID, Purpose, WorkKey and WorkJson are required.', 16, 1);
+        RETURN;
+    END;
+
+    IF ISJSON(@WorkJson) <> 1
+    BEGIN
+        RAISERROR('WorkJson must be valid JSON.', 16, 1);
+        RETURN;
+    END;
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        DECLARE
+            @CurrentState varchar(20),
+            @CurrentKey varchar(255);
+
+        SELECT
+            @CurrentState = LocalModelState,
+            @CurrentKey = LocalModelWorkKey
+        FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+        WHERE ID = @RunID
+          AND IsActive = 1
+          AND IsDeleted = 0;
+
+        IF @CurrentState IS NULL AND @CurrentKey IS NULL
+           AND NOT EXISTS
+           (
+               SELECT 1
+               FROM dbo.Hermes_L2_Response_Trn_Tbl
+               WHERE ID = @RunID
+                 AND IsActive = 1
+                 AND IsDeleted = 0
+           )
+        BEGIN
+            RAISERROR('Active Hermes run not found.', 16, 1);
+        END;
+
+        IF @CurrentState IN ('QUEUED', 'RUNNING') AND @CurrentKey = @WorkKey
+        BEGIN
+            COMMIT TRANSACTION;
+            SELECT
+                'ALREADY_QUEUED' AS QueueStatus,
+                ID AS RunID,
+                TicketID,
+                LocalModelState,
+                LocalModelPurpose,
+                LocalModelPriority,
+                LocalModelWorkKey,
+                LocalModelTaskID,
+                ExecutionMode
+            FROM dbo.Hermes_L2_Response_Trn_Tbl
+            WHERE ID = @RunID;
+            RETURN;
+        END;
+
+        IF @CurrentState IN ('QUEUED', 'RUNNING') AND ISNULL(@CurrentKey, '') <> @WorkKey
+        BEGIN
+            RAISERROR('Run already owns different pending local-model work.', 16, 1);
+        END;
+
+        IF @MaxWaiting IS NOT NULL
+        BEGIN
+            DECLARE @BlockingQueued int;
+
+            SELECT @BlockingQueued = COUNT(*)
+            FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+            WHERE IsActive = 1
+              AND IsDeleted = 0
+              AND LocalModelState = 'QUEUED'
+              AND ID <> @RunID
+              AND (@Priority <= 10 OR LocalModelPriority >= @Priority);
+
+            IF @BlockingQueued >= @MaxWaiting
+            BEGIN
+                COMMIT TRANSACTION;
+                SELECT
+                    'BACKPRESSURE' AS QueueStatus,
+                    ID AS RunID,
+                    TicketID,
+                    LocalModelState,
+                    LocalModelPurpose,
+                    LocalModelPriority,
+                    LocalModelWorkKey,
+                    LocalModelTaskID,
+                    ExecutionMode
+                FROM dbo.Hermes_L2_Response_Trn_Tbl
+                WHERE ID = @RunID;
+                RETURN;
+            END;
+        END;
+
+        UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+        SET
+            ExecutionMode = COALESCE(@ExecutionMode, ExecutionMode),
+            LocalModelState = 'QUEUED',
+            LocalModelPurpose = @Purpose,
+            LocalModelPriority = @Priority,
+            LocalModelWorkKey = @WorkKey,
+            PendingLocalModelJson = @WorkJson,
+            LocalModelTaskID = NULL,
+            LocalModelQueuedOn = GETDATE(),
+            LocalModelStartedOn = NULL,
+            LocalModelCompletedOn = NULL,
+            HeartbeatOn = GETDATE(),
+            ModifiedBy = @HermesUserID,
+            ModifiedOn = GETDATE(),
+            Source = 'T-SQL'
+        WHERE ID = @RunID
+          AND IsActive = 1
+          AND IsDeleted = 0;
+
+        COMMIT TRANSACTION;
+
+        SELECT
+            'QUEUED' AS QueueStatus,
+            ID AS RunID,
+            TicketID,
+            LocalModelState,
+            LocalModelPurpose,
+            LocalModelPriority,
+            LocalModelWorkKey,
+            LocalModelTaskID,
+            ExecutionMode
+        FROM dbo.Hermes_L2_Response_Trn_Tbl
+        WHERE ID = @RunID;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Try_Acquire_Local_Model_Usp
+(
+    @HermesUserID varchar(36) = NULL
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        DECLARE
+            @LockResult int,
+            @RunID varchar(36);
+
+        EXEC @LockResult = sys.sp_getapplock
+            @Resource = 'HermesL2:LocalModelSlot',
+            @LockMode = 'Exclusive',
+            @LockOwner = 'Transaction',
+            @LockTimeout = 0;
+
+        IF @LockResult < 0
+        BEGIN
+            ROLLBACK TRANSACTION;
+            SELECT 'BUSY' AS AcquireStatus;
+            RETURN;
+        END;
+
+        IF EXISTS
+        (
+            SELECT 1
+            FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+            WHERE IsActive = 1
+              AND IsDeleted = 0
+              AND LocalModelState = 'RUNNING'
+        )
+        BEGIN
+            COMMIT TRANSACTION;
+            SELECT 'BUSY' AS AcquireStatus;
+            RETURN;
+        END;
+
+        SELECT TOP (1)
+            @RunID = ID
+        FROM dbo.Hermes_L2_Response_Trn_Tbl WITH (UPDLOCK, READPAST)
+        WHERE IsActive = 1
+          AND IsDeleted = 0
+          AND LocalModelState = 'QUEUED'
+          AND PendingLocalModelJson IS NOT NULL
+        ORDER BY
+            LocalModelPriority DESC,
+            LocalModelQueuedOn ASC,
+            ClaimedOn ASC,
+            ID ASC;
+
+        IF @RunID IS NULL
+        BEGIN
+            COMMIT TRANSACTION;
+            SELECT 'EMPTY' AS AcquireStatus;
+            RETURN;
+        END;
+
+        UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+        SET
+            LocalModelState = 'RUNNING',
+            LocalModelStartedOn = GETDATE(),
+            HeartbeatOn = GETDATE(),
+            ModifiedBy = @HermesUserID,
+            ModifiedOn = GETDATE(),
+            Source = 'T-SQL'
+        WHERE ID = @RunID
+          AND LocalModelState = 'QUEUED'
+          AND IsActive = 1
+          AND IsDeleted = 0;
+
+        IF @@ROWCOUNT <> 1
+        BEGIN
+            RAISERROR('Could not acquire queued local-model work.', 16, 1);
+        END;
+
+        COMMIT TRANSACTION;
+
+        SELECT
+            'ACQUIRED' AS AcquireStatus,
+            ID AS RunID,
+            TicketID,
+            ExecutionMode,
+            LocalModelPurpose,
+            LocalModelPriority,
+            LocalModelWorkKey,
+            PendingLocalModelJson,
+            LocalModelQueuedOn,
+            LocalModelStartedOn
+        FROM dbo.Hermes_L2_Response_Trn_Tbl
+        WHERE ID = @RunID;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Bind_Local_Model_Task_Usp
+(
+    @RunID        varchar(36),
+    @WorkKey      varchar(255),
+    @TaskID       varchar(100),
+    @HermesUserID varchar(36) = NULL
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+    SET
+        LocalModelTaskID = @TaskID,
+        HeartbeatOn = GETDATE(),
+        ModifiedBy = @HermesUserID,
+        ModifiedOn = GETDATE(),
+        Source = 'T-SQL'
+    WHERE ID = @RunID
+      AND IsActive = 1
+      AND IsDeleted = 0
+      AND LocalModelState = 'RUNNING'
+      AND LocalModelWorkKey = @WorkKey;
+
+    IF @@ROWCOUNT <> 1
+        RAISERROR('Running local-model work did not match RunID/WorkKey.', 16, 1);
+
+    SELECT
+        ID AS RunID,
+        TicketID,
+        LocalModelState,
+        LocalModelPurpose,
+        LocalModelWorkKey,
+        LocalModelTaskID
+    FROM dbo.Hermes_L2_Response_Trn_Tbl
+    WHERE ID = @RunID;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Finish_Local_Model_Usp
+(
+    @RunID        varchar(36),
+    @TaskID       varchar(100) = NULL,
+    @Outcome      varchar(20) = 'DONE',
+    @HermesUserID varchar(36) = NULL
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SET @Outcome = UPPER(LTRIM(RTRIM(ISNULL(@Outcome, 'DONE'))));
+
+    IF @Outcome NOT IN ('DONE', 'REQUEUE')
+    BEGIN
+        RAISERROR('Outcome must be DONE or REQUEUE.', 16, 1);
+        RETURN;
+    END;
+
+    IF @Outcome = 'DONE'
+    BEGIN
+        UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+        SET
+            LocalModelState = 'DONE',
+            LocalModelCompletedOn = GETDATE(),
+            HeartbeatOn = GETDATE(),
+            ModifiedBy = @HermesUserID,
+            ModifiedOn = GETDATE(),
+            Source = 'T-SQL'
+        WHERE ID = @RunID
+          AND IsActive = 1
+          AND IsDeleted = 0
+          AND LocalModelState = 'RUNNING'
+          AND (@TaskID IS NULL OR LocalModelTaskID = @TaskID);
+    END
+    ELSE
+    BEGIN
+        UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+        SET
+            LocalModelState = 'QUEUED',
+            LocalModelTaskID = NULL,
+            LocalModelStartedOn = NULL,
+            LocalModelCompletedOn = NULL,
+            LocalModelQueuedOn = GETDATE(),
+            HeartbeatOn = GETDATE(),
+            ModifiedBy = @HermesUserID,
+            ModifiedOn = GETDATE(),
+            Source = 'T-SQL'
+        WHERE ID = @RunID
+          AND IsActive = 1
+          AND IsDeleted = 0
+          AND LocalModelState = 'RUNNING'
+          AND (@TaskID IS NULL OR LocalModelTaskID = @TaskID);
+    END;
+
+    IF @@ROWCOUNT <> 1
+        RAISERROR('No matching running local-model work was found.', 16, 1);
+
+    SELECT
+        ID AS RunID,
+        TicketID,
+        LocalModelState,
+        LocalModelPurpose,
+        LocalModelWorkKey,
+        LocalModelTaskID,
+        LocalModelQueuedOn,
+        LocalModelStartedOn,
+        LocalModelCompletedOn
+    FROM dbo.Hermes_L2_Response_Trn_Tbl
+    WHERE ID = @RunID;
+END;
+GO
+
 CREATE OR ALTER PROCEDURE dbo.Hermes_L2_Execute_SQL_Usp
 (
     @RunID          varchar(36),

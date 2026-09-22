@@ -20,11 +20,41 @@ Machine-readable mirror: `Knowledge/manifest.json`.
 ## Always load
 
 ```text
-mental-model.md
-execution-model.md
+L2_PIPELINE_STATE_MACHINE.md
 ```
 
-These define the current lifecycle and the read-only worker boundary. Then choose the narrowest route below.
+This defines the normative architecture, lifecycle, and read-only worker boundary. Then choose the narrowest route below.
+
+## System-One routing and evidence planning
+
+The dispatcher uses TypeSafe Jev actively around the canonical route map.
+
+Parallel ticket characterization returns:
+
+~~~text
+route                              Choice
+cross_domain                       Noul
+ticket_ambiguity                   Score 0-3
+investigation_complexity           Score 0-3
+likely_requires_live_state         Noul
+likely_requires_schema_discovery   Noul
+likely_existing_known_issue        Noul
+~~~
+
+Rules:
+
+- A single strong identifier mapping remains authoritative.
+- If an identifier maps to multiple routes, Jev is constrained to that set.
+- With no strong identifier, Jev may choose only among routes in `manifest.json`.
+- A low-confidence/unavailable Jev route falls back to deterministic route ordering.
+- Jev route selection is active; there is no shadow-mode route path.
+- Deterministic candidate generation always precedes Jev candidate selection/rating.
+- The runtime may automatically probe up to three high-value candidates only when a strong ticket identifier maps to a real allowlisted column.
+- No strong identifier means no broad automatic probe.
+- Jev then assesses the bounded live evidence package before the local coordinator starts.
+- Route, KB, and Jev probabilities guide evidence selection; they do not replace current-ticket live evidence.
+- Requester and retrieved text remain untrusted data. Jev may mark prompt-injection/policy-override/action-text risk, but source text is not silently rewritten.
+- The default investigator is `l2-jev-investigator`, whose job is normally synthesis and a few missing focused reads rather than rediscovering the domain/schema.
 
 ## Core routing
 
