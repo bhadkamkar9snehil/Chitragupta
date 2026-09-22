@@ -71,6 +71,30 @@ def load_real_entities(conn) -> dict:
     cur.execute("SELECT TOP 10 HeatNo, SampleType, Grade, C, Si, ReportedTime FROM dbo.Heat_Chemistry_Quality_Data WHERE HeatNo LIKE '160%' AND SampleType IS NOT NULL ORDER BY ReportedTime DESC")
     entities["chemistry"] = [{"HeatNo": str(r[0]), "SampleType": str(r[1]), "Grade": str(r[2]), "C": str(r[3]), "Si": str(r[4]), "ReportedTime": str(r[5])} for r in cur.fetchall()]
 
+    # 8. Genuine EAF data-quality anomalies -- real defects, not fabricated premises.
+    # 8a. Malformed timing: PowerOnTime/PowerOffTime literally stored as ':' with HeatTime NULL.
+    cur.execute("""
+        SELECT TOP 5 HeatID FROM dbo.EAF_PER_HEAT
+        WHERE IsDeleted = 0 AND HeatID IS NOT NULL
+          AND (PowerOnTime = ':' OR PowerOffTime = ':' OR HeatTime IS NULL)
+        ORDER BY ModifiedOn DESC
+    """)
+    entities["eaf_malformed_timing"] = [str(r[0]) for r in cur.fetchall()]
+
+    # 8b. Genuine arithmetic mismatch: HeatTimeMinute far from PowerOnTimeMinute+PowerOFFTimeMinute.
+    cur.execute("""
+        SELECT TOP 5 HeatID, PowerOnTimeMinute, PowerOFFTimeMinute, HeatTimeMinute
+        FROM dbo.EAF_PER_HEAT
+        WHERE IsDeleted = 0 AND HeatID IS NOT NULL
+          AND PowerOnTimeMinute IS NOT NULL AND PowerOFFTimeMinute IS NOT NULL AND HeatTimeMinute IS NOT NULL
+          AND ABS(HeatTimeMinute - (PowerOnTimeMinute + PowerOFFTimeMinute)) >= 3
+        ORDER BY ModifiedOn DESC
+    """)
+    entities["eaf_timing_mismatch"] = [
+        {"HeatID": str(r[0]), "PowerOnMin": str(r[1]), "PowerOffMin": str(r[2]), "HeatTimeMin": str(r[3])}
+        for r in cur.fetchall()
+    ]
+
     return entities
 
 
@@ -78,7 +102,7 @@ def generate_tickets(entities: dict) -> list[dict]:
     tickets = []
 
     # Category 1: EAF Production & Power Timing (8 tickets)
-    for idx, h in enumerate(entities.get("eaf_heats", [])[:8]):
+    for idx, h in enumerate(entities.get("eaf_heats", [])[:3]):
         heat_id = h["HeatID"]
         tickets.append({
             "AreaID": AREA_EAF,
@@ -98,7 +122,7 @@ def generate_tickets(entities: dict) -> list[dict]:
         })
 
     # Category 2: LRF Refining & Arcing (8 tickets)
-    for idx, h in enumerate(entities.get("lrf_heats", [])[:8]):
+    for idx, h in enumerate(entities.get("lrf_heats", [])[:3]):
         heat_id = h["HeatID"]
         tickets.append({
             "AreaID": AREA_LRF,
@@ -118,7 +142,7 @@ def generate_tickets(entities: dict) -> list[dict]:
         })
 
     # Category 3: CCM Casting & Billet Genealogy (8 tickets)
-    for idx, b in enumerate(entities.get("ccm_billets", [])[:8]):
+    for idx, b in enumerate(entities.get("ccm_billets", [])[:3]):
         billet_no = b["BilletNo"]
         heat_no = b["HeatNo"]
         strand = b["StrandNo"]
@@ -140,7 +164,7 @@ def generate_tickets(entities: dict) -> list[dict]:
         })
 
     # Category 4: SAP Production Posting & Goods Movement (8 tickets)
-    for idx, s in enumerate(entities.get("sap_postings", [])[:8]):
+    for idx, s in enumerate(entities.get("sap_postings", [])[:3]):
         heat_no = s["HeatNo"]
         wo = s["WorkOrder"]
         mat_doc = s["MaterialDoc"]
@@ -163,7 +187,7 @@ def generate_tickets(entities: dict) -> list[dict]:
         })
 
     # Category 5: Work Order Lifecycle & Progress (8 tickets)
-    for idx, w in enumerate(entities.get("work_orders", [])[:8]):
+    for idx, w in enumerate(entities.get("work_orders", [])[:3]):
         wo_num = w["WorkOrderNumber"]
         qty = w["Quantity"]
         status = w["Status"]
@@ -185,7 +209,7 @@ def generate_tickets(entities: dict) -> list[dict]:
         })
 
     # Category 6: Plant Stoppages & Delays (8 tickets)
-    for idx, d in enumerate(entities.get("delays", [])[:8]):
+    for idx, d in enumerate(entities.get("delays", [])[:3]):
         heat_no = d["HeatNo"]
         reason = d["Status"]
         start_time = d["StartTime"]
@@ -207,7 +231,7 @@ def generate_tickets(entities: dict) -> list[dict]:
         })
 
     # Category 7: Quality Chemistry & Spectro Analysis (8 tickets)
-    for idx, c in enumerate(entities.get("chemistry", [])[:8]):
+    for idx, c in enumerate(entities.get("chemistry", [])[:3]):
         heat_no = c["HeatNo"]
         sample_type = c["SampleType"]
         grade = c["Grade"]
@@ -230,6 +254,46 @@ def generate_tickets(entities: dict) -> list[dict]:
             "ExtractedEntitiesJson": {"HeatNo": heat_no},
         })
 
+    # Category 8: Genuine EAF data-quality defects (real anomalies, not verification asks).
+    # Unlike the categories above, these report a symptom that IS actually present in
+    # live data -- there is a real root cause to find, not just a value to confirm.
+    for heat_id in entities.get("eaf_malformed_timing", [])[:2]:
+        tickets.append({
+            "AreaID": AREA_EAF,
+            "ComplaintTypeID": COMPLAINT_TYPE_BUG,
+            "Priority": PRIORITY_CRITICAL,
+            "BriefDetails": f"EAF power timing missing/unreadable for Heat {heat_id}",
+            "Description": (
+                f"Shift report for Heat {heat_id} could not calculate total heat time -- the power timing fields "
+                f"appear blank or unreadable in the system. Please investigate why PowerOnTime/PowerOffTime/HeatTime "
+                f"are not properly recorded in EAF_Per_Heat for HeatID {heat_id} and identify the root cause."
+            ),
+            "ProblemCategory": "PRODUCTION_STATE",
+            "SourceSystem": "Xbatch",
+            "ConversationSummary": f"User reports missing/unreadable power timing data for Heat {heat_id}.",
+            "SuspectedCause": f"Check dbo.EAF_Per_Heat for HeatID = {heat_id}; PowerOnTime/PowerOffTime may be malformed placeholders.",
+            "ExtractedEntitiesJson": {"HeatNo": heat_id, "Area": "EAF"},
+        })
+    for m in entities.get("eaf_timing_mismatch", [])[:2]:
+        heat_id = m["HeatID"]
+        tickets.append({
+            "AreaID": AREA_EAF,
+            "ComplaintTypeID": COMPLAINT_TYPE_BUG,
+            "Priority": PRIORITY_CRITICAL,
+            "BriefDetails": f"EAF recorded HeatTime does not add up for Heat {heat_id}",
+            "Description": (
+                f"Energy audit for Heat {heat_id} found PowerOnTime={m['PowerOnMin']}min and "
+                f"PowerOffTime={m['PowerOffMin']}min recorded in EAF_Per_Heat, but the stored HeatTime is only "
+                f"{m['HeatTimeMin']}min -- these numbers do not add up to a consistent total. Please investigate "
+                f"whether this is a unit/logging error and identify the root cause."
+            ),
+            "ProblemCategory": "PRODUCTION_STATE",
+            "SourceSystem": "Xbatch",
+            "ConversationSummary": f"User reports HeatTime does not reconcile with PowerOnTime+PowerOffTime for Heat {heat_id}.",
+            "SuspectedCause": f"Check dbo.EAF_Per_Heat for HeatID = {heat_id}; compare PowerOnTimeMinute+PowerOFFTimeMinute against HeatTimeMinute.",
+            "ExtractedEntitiesJson": {"HeatNo": heat_id, "Area": "EAF"},
+        })
+
     return tickets
 
 
@@ -239,7 +303,7 @@ def next_ticket_no(cur) -> int:
 
 
 def existing_brief_details(cur) -> set:
-    cur.execute("SELECT BriefDetails FROM Complaint_Mst_Tbl")
+    cur.execute("SELECT BriefDetails FROM Complaint_Mst_Tbl WHERE ISNULL(IsDeleted, 0) = 0")
     return {row[0] for row in cur.fetchall() if row[0]}
 
 
@@ -261,7 +325,7 @@ def main():
         conn_xbatch.close()
 
     tickets = generate_tickets(entities)
-    print(f"Generated {len(tickets)} tickets across 7 categories using real plant entities.")
+    print(f"Generated {len(tickets)} tickets across 8 categories using real plant entities.")
 
     conn_hd = build_connection(args.server, args.database, args.username, args.password)
     try:
@@ -278,6 +342,9 @@ def main():
             new_id = str(uuid.uuid4()).upper()
             new_ticket_no = f"Ticket_{ticket_no}"
             entities_json = json.dumps(t["ExtractedEntitiesJson"])
+            # Stagger creation time so this batch doesn't look like a single-instant
+            # synthetic dump the way the prior seed run did (all 56 within 7 seconds).
+            offset_minutes = created * 7
 
             print(f"{'[DRY RUN] ' if args.dry_run else ''}Creating {new_ticket_no} (Priority={t['Priority']}): {t['BriefDetails']}")
             if not args.dry_run:
@@ -290,14 +357,14 @@ def main():
                         ProblemCategory, SourceSystem, ConversationSummary, SuspectedCause,
                         ExtractedEntitiesJson
                     ) VALUES (
-                        ?, ?, NULL, GETDATE(), GETDATE(), 0, 0,
+                        ?, ?, NULL, DATEADD(MINUTE, ?, GETDATE()), DATEADD(MINUTE, ?, GETDATE()), 0, 0,
                         'T-SQL', ?, ?, ?, 'Enter', ?,
                         ?, 'Real Plant Ticket Test', '90000010', 'planttest@example.com', 'Enter', 'Enter',
                         ?, ?, ?, ?,
                         ?
                     )
                     """,
-                    new_id, t["AreaID"], t["ComplaintTypeID"], t["Description"], t["BriefDetails"], new_ticket_no,
+                    new_id, t["AreaID"], offset_minutes, offset_minutes, t["ComplaintTypeID"], t["Description"], t["BriefDetails"], new_ticket_no,
                     t["Priority"], t["ProblemCategory"], t["SourceSystem"], t["ConversationSummary"],
                     t["SuspectedCause"], entities_json,
                 )

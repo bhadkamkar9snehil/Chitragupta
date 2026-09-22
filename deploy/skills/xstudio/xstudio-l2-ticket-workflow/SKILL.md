@@ -122,6 +122,19 @@ These are **leads, not proof**:
 
 Use only when the outcome is verified strongly enough that the user-facing ticket may be closed after semantic review.
 
+This explicitly includes the case where live evidence confidently disproves the
+ticket's own reported premise -- e.g. the requester reports a discrepancy, timing
+mismatch, or missing record, and current live SQL clearly shows the values match,
+the record exists, or the described condition is not present. That is not an
+unresolved case: state the true finding as a `VERIFIED` material claim backed by
+the current-run evidence you checked it against, and close with `resolution`
+describing what the evidence actually shows (e.g. "Heat 1604014's PowerOnTime
+(47:35) + PowerOffTime (7:55) sum to the recorded HeatTime (55:30); no
+discrepancy found against the reported concern"). Do not soften a confidently
+verified "the reported issue does not exist" into `UPDATE` or `QUESTION` --
+uncertainty about whether disproving a premise "counts" as resolving it is not a
+reason to leave the ticket open when the evidence is actually conclusive.
+
 ### `QUESTION`
 
 Use only when a specific requester fact is genuinely required and cannot be established from current evidence.

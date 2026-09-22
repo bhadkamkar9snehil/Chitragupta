@@ -3614,6 +3614,11 @@ def _query_instructions(run_id: str, ticket_id: str) -> str:
         "and a claims array in metadata; each material VERIFIED claim needs evidence [{action_id:<Hermes action ID>}]. "
         "Context tools return refs; otherwise use xstudio_get_run_actions. Absence of records is evidence of absence, "
         "not evidence of causation.\n"
+        "If live evidence confidently shows the ticket's own reported premise does not hold (values "
+        "match, record exists, no discrepancy found), that is a RESOLUTION, not an UPDATE or QUESTION: "
+        "state the true finding as a VERIFIED claim with current-run evidence and close. Do not leave a "
+        "conclusively disproven concern open out of hesitation about whether disproving it counts as "
+        "resolving it.\n"
         "Never write the live ticket directly. Complete the Kanban task with full "
         "structured metadata; deterministic review/publish owns the rest.\n"
     )
