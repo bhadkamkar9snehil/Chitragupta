@@ -320,6 +320,8 @@ def run_orchestrator(
             capture_output=True,
             text=True,
             timeout=timeout,
+            encoding="utf-8",
+            errors="replace",
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(f"orchestrator invocation failed: {type(exc).__name__}: {exc}") from exc
@@ -352,7 +354,10 @@ def run_hermes(argv: list[str], *, timeout: int = 30) -> subprocess.CompletedPro
         cmd = ["wsl", "-d", "Ubuntu", "--", "bash", "-lc", "hermes " + shlex.join(argv)]
     else:
         cmd = [_hermes_executable(), *argv]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(
+        cmd, capture_output=True, text=True, timeout=timeout,
+        encoding="utf-8", errors="replace",
+    )
 
 
 def list_all_tasks(status: Optional[str] = None) -> list[dict[str, Any]]:
