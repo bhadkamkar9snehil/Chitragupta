@@ -338,6 +338,68 @@ def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
     }
 
 
+def _probe_related_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
+    """Probe one allowlisted table by an EXPLICIT column/value -- the
+    relationship-hop counterpart to probe_table(). Where probe_table()
+    guesses the filter from ticket text, here the filter is already known
+    (a real foreign-key value read off a row a prior probe already
+    returned), so there is no identifier-detection step and no ticket
+    argument at all. Same safety primitives, same bounded row cap, same
+    schema-checked columns -- only the source of the filter differs.
+    """
+    database = str(_database(req))
+    table = str(_require(req, "table")).strip()
+    filter_column = str(_require(req, "filter_column")).strip()
+    filter_value = str(_require(req, "filter_value"))
+    run_id = str(_require(req, "run_id"))
+
+    resolved = _allowed_table(database, table)
+    if resolved is None:
+        return {
+            "ok": False,
+            "operation": "probe_related_table",
+            "error": f"table/view {table!r} is not present in the schema allowlist",
+            "retry_same_call": False,
+        }
+    qualified, real_columns = resolved
+    real_filter_column = next(
+        (c for c in real_columns if c.lower() == filter_column.lower()), None
+    )
+    if real_filter_column is None:
+        return {
+            "ok": False,
+            "operation": "probe_related_table",
+            "error": f"column {filter_column!r} is not a real column on {qualified}",
+            "retry_same_call": False,
+        }
+
+    columns = _probe_columns(real_filter_column, real_columns, req.get("matched_columns") or [])
+    built = _orchestrator().build_query_mechanically(
+        table=qualified,
+        columns=columns,
+        where=f"[{real_filter_column}] = N'{_escape_sql_string(filter_value)}'",
+        order_by=None,
+        top=_top(req, 20),
+        database=database,
+    )
+    if not built.get("ok"):
+        return {"operation": "probe_related_table", **built, "retry_same_call": False}
+
+    rows = _orchestrator().run_readonly_query(
+        client, built["sql"], database=database, run_id=run_id
+    )
+    return {
+        "ok": True,
+        "operation": "probe_related_table",
+        "database": database,
+        "table": qualified,
+        "identifier": {"column": real_filter_column, "value": filter_value},
+        "columns": columns,
+        "sql": built.get("sql"),
+        "rows": rows,
+    }
+
+
 def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
     database = _database(req)
     run_id = str(_require(req, "run_id"))
@@ -713,6 +775,7 @@ def _save_ledger(req: dict[str, Any], client: Any) -> dict[str, Any]:
 
 _CONNECTED_OPERATIONS = {
     "probe_table": _probe_table,
+    "probe_related_table": _probe_related_table,
     "select": _select,
     "query": _query,
     "find_objects": _find_objects,

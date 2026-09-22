@@ -197,6 +197,7 @@ _CONTEXT_FIELD_RE = {
     "contract_repaired_from_unstructured": re.compile(
         r"contract_repaired_from_unstructured[`\"']?\s*:\s*(true)\b", re.IGNORECASE
     ),
+    "valid_tables": re.compile(r"(?:current\s+)?valid_tables\s*[:=]\s*(.+)", re.IGNORECASE),
 }
 
 # Bounded so a single session cannot spend the 65.6K context on transport
@@ -332,6 +333,46 @@ def _context_for(session: str, kwargs: dict[str, Any] | None = None) -> dict[str
     with _lock:
         values = {**_session_context.get(session, {}), **values}
     return values
+
+
+def _parse_valid_tables(raw: str) -> set[str]:
+    """'db1.tbl1, db2.tbl2' -> {'tbl1', 'db1.tbl1', 'tbl2', 'db2.tbl2'} (lowercase).
+
+    Both the bare table name and the fully-qualified form are accepted since
+    the model may supply either in its own `table` argument.
+    """
+    names: set[str] = set()
+    for part in raw.split(","):
+        part = part.strip().strip(".")
+        if not part:
+            continue
+        names.add(part.lower())
+        if "." in part:
+            names.add(part.rsplit(".", 1)[-1].lower())
+    return names
+
+
+def _table_not_in_valid_tables(session: str, effective_args: dict[str, Any]) -> str | None:
+    """None if the call's table is allowed (or no evidence-plan restriction
+    applies to this ticket); otherwise a message naming the real options.
+    """
+    with _lock:
+        raw = _session_context.get(session, {}).get("valid_tables")
+    if not raw:
+        return None
+    allowed = _parse_valid_tables(raw)
+    if not allowed:
+        return None
+    table = str(effective_args.get("table") or "").strip()
+    if not table:
+        return None
+    bare = table.rsplit(".", 1)[-1].lower()
+    if table.lower() in allowed or bare in allowed:
+        return None
+    return (
+        f"'{table}' is not one of the tables Jev's evidence plan selected for this ticket "
+        f"(valid_tables: {raw})."
+    )
 
 
 def _repair_args(tool_name: str, args: dict[str, Any], session: str,
@@ -754,6 +795,18 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
                 f"the investigation budget. RETRY_WITH: {json.dumps({'tool': tool_name, 'required': retry_fields})}"
             ),
         }
+
+    if tool_name in ("xstudio_select", "xstudio_validate_identifiers"):
+        table_error = _table_not_in_valid_tables(session, effective_args)
+        if table_error:
+            return {
+                "action": "block",
+                "message": (
+                    f"{table_error} This call was not sent to SQL and did not consume the "
+                    "investigation budget. Use one of the listed valid_tables, or call "
+                    "find_objects/suggest_tables first if genuinely none of them fit."
+                ),
+            }
 
     fp = _fingerprint(
         {"tool": tool_name, **effective_args} if tool_name in TOOL_OPERATIONS else effective_args

@@ -19,6 +19,7 @@ if str(REPO_ROOT) not in sys.path:
 from Model_Bench.jev.audit import persist_rows, rows_for_result
 from Model_Bench.jev.evidence_plan import plan_evidence
 from Model_Bench.jev.investigation_assessment import assess_investigation
+from Model_Bench.jev.relationship_hops import select_relationship_hops
 from Model_Bench.jev.reviewer import review_proposal
 from Model_Bench.jev.ticket_triage import assess_ticket_security
 
@@ -38,6 +39,15 @@ def _evidence_plan(req: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
     )
 
 
+def _relationship_hops(req: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    return select_relationship_hops(
+        dict(req.get("ticket") or state.get("ticket") or {}),
+        str(req.get("primary_table") or state.get("primary_table") or ""),
+        dict(req.get("primary_row") or state.get("primary_row") or {}),
+        list(req.get("available_hops") or state.get("available_hops") or []),
+    )
+
+
 def _investigation_assessment(_req: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     return assess_investigation(state)
 
@@ -49,6 +59,7 @@ def _primary_review(_req: dict[str, Any], state: dict[str, Any]) -> dict[str, An
 _WORKFLOWS: dict[str, WorkflowHandler] = {
     "ticket_security": _ticket_security,
     "evidence_plan": _evidence_plan,
+    "relationship_hops": _relationship_hops,
     "investigation_assessment": _investigation_assessment,
     "primary_review": _primary_review,
 }
@@ -56,6 +67,7 @@ _WORKFLOWS: dict[str, WorkflowHandler] = {
 _QUESTION_VERSIONS = {
     "ticket_security": "v1",
     "evidence_plan": "v1",
+    "relationship_hops": "v1",
     # v2 adds execution-depth + route-skill judgments to the existing
     # evidence/meta-attention request. Keep audit dedupe aware of that change.
     "investigation_assessment": "v2",

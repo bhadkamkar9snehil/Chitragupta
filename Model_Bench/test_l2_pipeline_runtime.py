@@ -1943,6 +1943,66 @@ class PipelineContractTests(unittest.TestCase):
         self.assertIn('"evidence_categories": ["heat_process_state"]', verification)
 
 
+class RelationshipHopTests(unittest.TestCase):
+    def test_available_hops_only_includes_edges_this_row_can_actually_follow(self):
+        relationships = [
+            {"source": {"object": "EAF_PER_HEAT", "attribute": "SteelGrade"},
+             "target": {"database": "XStudio_Xbatch", "object": "Grade_Master", "attribute": "GradeName"},
+             "cardinality": {"source": "Many", "target": "One"}},
+            {"source": {"object": "EAF_PER_HEAT", "attribute": "WorkOrder"},
+             "target": {"database": "XStudio_Xbatch", "object": "XBatch_Work_Order_Mst_Tbl", "attribute": "ID"},
+             "cardinality": {"source": "Many", "target": "One"}},
+            {"source": {"object": "SomeOtherTable", "attribute": "X"},
+             "target": {"database": "XStudio_Xbatch", "object": "Y", "attribute": "ID"},
+             "cardinality": {"source": "Many", "target": "One"}},
+        ]
+        # WorkOrder is present but NULL on this row -- must not produce a hop.
+        row = {"SteelGrade": "S355", "WorkOrder": None, "HeatNo": "1604015"}
+        hops = mod._available_relationship_hops("XStudio_Xbatch", "dbo.EAF_PER_HEAT", row, relationships)
+        self.assertEqual(len(hops), 1)
+        self.assertEqual(hops[0]["target_table"], "Grade_Master")
+        self.assertEqual(hops[0]["source_value"], "S355")
+
+    def test_run_relationship_hops_executes_only_jev_selected_hops(self):
+        relationships = [
+            {"source": {"object": "EAF_PER_HEAT", "attribute": "SteelGrade"},
+             "target": {"database": "XStudio_Xbatch", "object": "Grade_Master", "attribute": "GradeName"},
+             "cardinality": {}},
+        ]
+        row = {"SteelGrade": "S355"}
+        selected_hop = {
+            "source_column": "SteelGrade", "source_value": "S355", "target_database": "XStudio_Xbatch",
+            "target_table": "Grade_Master", "target_column": "GradeName", "jev_worth_fetching": 0.9,
+        }
+        with patch.object(mod, "_run_jev_workflow", return_value={
+                "ok": True, "result": {"selected": [selected_hop]}}) as jev_call, \
+             patch.object(mod, "_run_xstudio_bridge", return_value={
+                "ok": True, "rows": [{"GradeName": "S355", "Spec": "..."}]}) as bridge_call:
+            executed = mod._run_relationship_hops(
+                ticket={"BriefDetails": "x"}, run_id="r", ticket_id="t",
+                database="XStudio_Xbatch", table="dbo.EAF_PER_HEAT", row=row,
+                relationships=relationships,
+            )
+        jev_call.assert_called_once()
+        self.assertEqual(jev_call.call_args.args[0], "relationship_hops")
+        bridge_call.assert_called_once()
+        bridge_args = bridge_call.call_args.args[0]
+        self.assertEqual(bridge_args["operation"], "probe_related_table")
+        self.assertEqual(bridge_args["table"], "Grade_Master")
+        self.assertEqual(bridge_args["filter_column"], "GradeName")
+        self.assertEqual(bridge_args["filter_value"], "S355")
+        self.assertEqual(len(executed), 1)
+
+    def test_run_relationship_hops_with_no_edges_never_calls_jev(self):
+        with patch.object(mod, "_run_jev_workflow") as jev_call:
+            executed = mod._run_relationship_hops(
+                ticket={}, run_id="r", ticket_id="t", database="XStudio_Xbatch",
+                table="dbo.Unrelated_Table", row={"X": "1"}, relationships=[],
+            )
+        jev_call.assert_not_called()
+        self.assertEqual(executed, [])
+
+
 class PipelineStallDetectionTests(unittest.TestCase):
     def _row(self, waiting, last_claim, server_now):
         return [{"WaitingCount": waiting, "LastClaimOn": last_claim, "ServerNow": server_now}]

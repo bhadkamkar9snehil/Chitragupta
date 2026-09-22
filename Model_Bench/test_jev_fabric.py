@@ -14,6 +14,7 @@ from jev.evidence_plan import plan_evidence
 from jev.investigation_assessment import assess_investigation
 from jev.kb_applicability import assess_kb_candidates
 from jev.kb_curation import assess_curation, rerank_articles
+from jev.relationship_hops import select_relationship_hops
 from jev.reviewer import review_proposal
 from jev.ticket_triage import assess_ticket, assess_ticket_security
 from jev.trace_assessment import assess_trace
@@ -44,6 +45,41 @@ class FabricTests(unittest.TestCase):
 
     def test_investigation_assessment_audit_contract_is_versioned(self):
         self.assertEqual(_QUESTION_VERSIONS["investigation_assessment"], "v2")
+
+    def test_relationship_hops_asks_one_noul_per_available_hop_and_filters_by_threshold(self):
+        available = [
+            {"source_column": "SteelGrade", "source_value": "S355", "target_database": "XStudio_Xbatch",
+             "target_table": "Grade_Master", "target_column": "GradeName", "cardinality": {"source": "Many", "target": "One"}},
+            {"source_column": "WorkOrder", "source_value": "WO-1", "target_database": "XStudio_Xbatch",
+             "target_table": "XBatch_Work_Order_Mst_Tbl", "target_column": "ID", "cardinality": {"source": "Many", "target": "One"}},
+        ]
+
+        def sender(url, payload, headers, timeout):
+            self.assertEqual(set(payload["questions"]), {"worth_fetching_h0", "worth_fetching_h1"})
+            return {
+                "model": "jev-test",
+                "answers": {
+                    "worth_fetching_h0": {"type": "noul", "noul": 0.85},
+                    "worth_fetching_h1": {"type": "noul", "noul": 0.20},
+                },
+                "usage": {},
+            }
+
+        result = select_relationship_hops(
+            {"BriefDetails": "wrong grade recorded"}, "EAF_PER_HEAT", {"SteelGrade": "S355", "WorkOrder": "WO-1"},
+            available, api_key="k", sender=sender,
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["selected"]), 1)
+        self.assertEqual(result["selected"][0]["target_table"], "Grade_Master")
+        self.assertAlmostEqual(result["selected"][0]["jev_worth_fetching"], 0.85)
+
+    def test_relationship_hops_with_no_available_edges_short_circuits_without_a_call(self):
+        result = select_relationship_hops(
+            {}, "SomeTable", {}, [], sender=lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not call")),
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["selected"], [])
 
     def test_system_one_sends_multiple_questions_in_one_request(self):
         seen = {}

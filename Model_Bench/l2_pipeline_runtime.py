@@ -1330,6 +1330,23 @@ def _ticket_context_compact(ticket: dict[str, Any]) -> dict[str, Any]:
     return _bounded_context_value(compact, 2)
 
 
+def _relationship_hops_compact(hops: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    compact = []
+    for entry in hops if isinstance(hops, list) else []:
+        hop = entry.get("hop") or {}
+        probe = entry.get("probe") or {}
+        rows = probe.get("rows") if isinstance(probe, dict) else []
+        compact.append({
+            "via_column": hop.get("source_column"),
+            "target_table": f"{hop.get('target_database')}.{hop.get('target_table')}",
+            "jev_worth_fetching": hop.get("jev_worth_fetching"),
+            "row_count": len(rows) if isinstance(rows, list) else None,
+            "rows": _bounded_context_value(rows if isinstance(rows, list) else [], 2),
+            "error": probe.get("error"),
+        })
+    return compact
+
+
 def _probe_context_compact(item: dict[str, Any]) -> dict[str, Any]:
     candidate = item.get("candidate") or {}
     probe = item.get("probe") or {}
@@ -1348,6 +1365,7 @@ def _probe_context_compact(item: dict[str, Any]) -> dict[str, Any]:
         "row_count": len(rows) if isinstance(rows, list) else None,
         "rows": _bounded_context_value(rows if isinstance(rows, list) else [], 2),
         "error": probe.get("error"),
+        "relationship_hops": _relationship_hops_compact(item.get("relationship_hops") or []),
     }
 
 
@@ -1502,6 +1520,7 @@ def _make_context_chunks(
                 "row_count": compact.get("row_count"),
                 "probe_possible": compact.get("probe_possible"),
                 "error": compact.get("error"),
+                "relationship_hops_fetched": len(compact.get("relationship_hops") or []),
             },
             minimum_level=2,
             fallback_level=3,
@@ -1687,6 +1706,73 @@ def _assessment_for_model(assessment: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _available_relationship_hops(
+    database: str, table: str, row: dict[str, Any], relationships: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Real atlas edges whose source is this table and whose source column
+    is present with a non-null value on the row a probe already returned.
+    Never invented, never a guessed column -- only edges the semantic atlas
+    itself already asserts, filtered to ones this specific row can actually
+    follow right now.
+    """
+    bare_table = str(table).split(".")[-1].strip("[]").lower()
+    hops: list[dict[str, Any]] = []
+    row_lookup = {str(k).lower(): v for k, v in row.items()}
+    for edge in relationships:
+        src = edge.get("source") or {}
+        tgt = edge.get("target") or {}
+        src_table = str(src.get("object") or "").split(".")[-1].strip("[]").lower()
+        if src_table != bare_table:
+            continue
+        src_col = str(src.get("attribute") or "")
+        value = row_lookup.get(src_col.lower())
+        if value in (None, "", "NULL"):
+            continue
+        hops.append({
+            "source_column": src_col,
+            "source_value": str(value),
+            "target_database": tgt.get("database") or database,
+            "target_table": tgt.get("object"),
+            "target_column": tgt.get("attribute"),
+            "cardinality": edge.get("cardinality"),
+        })
+    return hops
+
+
+def _run_relationship_hops(
+    *, ticket: dict[str, Any], run_id: str | None, ticket_id: str,
+    database: str, table: str, row: dict[str, Any], relationships: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    available = _available_relationship_hops(database, table, row, relationships)
+    if not available:
+        return []
+    hop_call = _run_jev_workflow(
+        "relationship_hops",
+        {
+            "ticket": ticket, "primary_table": table, "primary_row": row,
+            "available_hops": available,
+        },
+        ticket_id=ticket_id, run_id=run_id, audit_stage="JEV_RELATIONSHIP_HOPS",
+    )
+    hop_result = hop_call.get("result") if hop_call.get("ok") else {}
+    selected = hop_result.get("selected") if isinstance(hop_result, dict) else []
+    executed: list[dict[str, Any]] = []
+    for hop in (selected if isinstance(selected, list) else [])[:5]:
+        target_table = hop.get("target_table")
+        if not target_table:
+            continue
+        probe = _run_xstudio_bridge({
+            "operation": "probe_related_table",
+            "database": hop.get("target_database") or database,
+            "table": target_table,
+            "filter_column": hop.get("target_column"),
+            "filter_value": hop.get("source_value"),
+            "run_id": run_id,
+        })
+        executed.append({"hop": hop, "probe": probe})
+    return executed
+
+
 def _jev_first_investigation(
     *,
     ticket: dict[str, Any],
@@ -1765,6 +1851,11 @@ def _jev_first_investigation(
     selected.sort(key=lambda row: (-row[0], -row[1], row[2]))
     selected = selected[:3]
 
+    try:
+        atlas_relationships = load_world()["atlas"].get("relationships") or []
+    except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        atlas_relationships = []
+
     probes: list[dict[str, Any]] = []
     for value, inspect, i, candidate in selected:
         database = candidate.get("database")
@@ -1781,12 +1872,21 @@ def _jev_first_investigation(
             "matched_columns": candidate.get("matched_columns") or [],
             "top": 20,
         })
+        hops: list[dict[str, Any]] = []
+        first_row = (probe.get("rows") or [{}])[0] if probe.get("probe_possible") else None
+        if isinstance(first_row, dict) and atlas_relationships:
+            hops = _run_relationship_hops(
+                ticket=ticket, run_id=run_id, ticket_id=ticket_id,
+                database=str(database), table=str(table), row=first_row,
+                relationships=atlas_relationships,
+            )
         probes.append({
             "candidate_index": i,
             "candidate": candidate,
             "plan_inspect_probability": inspect,
             "plan_value_score": value,
             "probe": probe,
+            "relationship_hops": hops,
         })
 
     chunks = _make_context_chunks(
@@ -3332,13 +3432,34 @@ class InvestigationBundle(str):
         return iter((str(self), self.route_skill))
 
 
+def _valid_tables_from_investigation(investigation: dict[str, Any]) -> list[tuple[str, str]]:
+    """The exact real database.table pairs Jev's evidence plan selected and
+    live-probed for this ticket -- the only tables the investigator should
+    ever query. Extracted from live_probes rather than the raw candidate
+    backlog, so it reflects Jev's actual picks, not everything considered.
+    """
+    probes = investigation.get("live_probes") if isinstance(investigation, dict) else None
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for probe in probes if isinstance(probes, list) else []:
+        candidate = probe.get("candidate") if isinstance(probe, dict) else None
+        if not isinstance(candidate, dict):
+            continue
+        database = str(candidate.get("database") or "").strip()
+        table = str(candidate.get("table") or "").strip()
+        if database and table and (database, table) not in seen:
+            seen.add((database, table))
+            pairs.append((database, table))
+    return pairs
+
+
 def _investigation_bundle(
     args: argparse.Namespace,
     ticket_id: str,
     fallback_ticket: dict[str, Any],
     *,
     run_id: str | None = None,
-) -> tuple[str, str | None, dict[str, Any] | None, str]:
+) -> tuple[str, str | None, dict[str, Any] | None, str, list[tuple[str, str]]]:
     try:
         bundle = run_orchestrator(args, ["--investigate-bundle", ticket_id], timeout=90)
     except RuntimeError as exc:
@@ -3486,6 +3607,7 @@ def _investigation_bundle(
             else None
         ),
         execution_mode,
+        _valid_tables_from_investigation(investigation if isinstance(investigation, dict) else {}),
     )
 
 
@@ -3657,7 +3779,9 @@ def _dispatch_route_context(run_id: str, ticket_id: str, ticket: dict[str, Any],
     )
 
 
-def _query_instructions(run_id: str, ticket_id: str) -> str:
+def _query_instructions(
+    run_id: str, ticket_id: str, valid_tables: list[tuple[str, str]] | None = None,
+) -> str:
     """Render the typed-tool investigation contract for a fresh card body.
 
     This deliberately renders NO interpreter path, script path, or shell
@@ -3666,13 +3790,30 @@ def _query_instructions(run_id: str, ticket_id: str) -> str:
     the transport itself, malform it, and then burn the whole context window
     retrying wrappers and `pip install pyodbc`. Transport is harness-owned and
     reachable only through the guarded named `xstudio_*` tools.
+
+    valid_tables (when Jev's evidence plan selected any) is rendered in the
+    same `key: value` convention as run_id/ticket_id above, specifically so
+    xstudio_l2_tools_plugin can parse it with the same session-context
+    mechanism and reject a select/query against any other table before it
+    ever reaches SQL -- 148 of 302 real tool-call errors in the last 24h
+    (2026-09-22) were the model guessing a wrong table or column name.
     """
+    valid_tables_line = ""
+    if valid_tables:
+        joined = ", ".join(f"{db}.{table}" for db, table in valid_tables)
+        valid_tables_line = (
+            f"Current valid_tables: {joined}\n"
+            "Jev's evidence plan already selected these as the only tables worth inspecting for this "
+            "ticket. select/query calls against any other table will be rejected before reaching SQL -- "
+            "use exactly one of these, or find_objects/suggest_tables first if none of them fit.\n"
+        )
     return (
         "\n--- Typed XStudio investigation contract ---\n"
         "Use only the named xstudio_* tools in the xstudio_l2 toolset for ALL XStudio/Helpdesk database, schema, ticket, "
         "run-audit and ledger work. The harness owns Windows/WSL transport, Python, "
         "pyodbc, credentials, auditing, output limits and retry guards.\n"
         f"Current run_id: {run_id}\nCurrent ticket_id: {ticket_id}\n"
+        + valid_tables_line +
         "The starting context view is already above; do not refetch included context. "
         "If a chunk was omitted, use its recovery hint only when focused reasoning genuinely needs it.\n"
         "If the incident cannot be identified from the ticket or its conversation, ask for the missing "
@@ -3754,6 +3895,7 @@ def _investigator_task_spec(
     investigation_bundle: str,
     route_skill: str | None,
     qwen_free_fallback_reason: str | None,
+    valid_tables: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     body = (
         f"run_id: {run_id}\n"
@@ -3770,7 +3912,7 @@ def _investigator_task_spec(
             if qwen_free_fallback_reason
             else ""
         )
-        + _query_instructions(run_id, ticket_id)
+        + _query_instructions(run_id, ticket_id, valid_tables)
     )
     skills = ["xstudio-l2-ticket-workflow", "xstudio-sql-write-discipline"]
     if route_skill and route_skill not in skills:
@@ -3797,7 +3939,7 @@ def _prepare_claimed_ticket(
     ticket_no = str(ticket.get("TicketNo") or ticket_id)
     _archive_stale_cards_for_ticket(ticket_id, run_id)
 
-    investigation_bundle, route_skill, qwen_free_proposal, execution_mode = _investigation_bundle(
+    investigation_bundle, route_skill, qwen_free_proposal, execution_mode, valid_tables = _investigation_bundle(
         args, ticket_id, ticket, run_id=run_id
     )
     fast_result, fallback_reason = _try_qwen_free_handoff(
@@ -3813,6 +3955,7 @@ def _prepare_claimed_ticket(
         investigation_bundle=investigation_bundle,
         route_skill=route_skill,
         qwen_free_fallback_reason=fallback_reason,
+        valid_tables=valid_tables,
     )
     try:
         queued = _queue_local_model_task(

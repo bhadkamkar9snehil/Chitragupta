@@ -838,6 +838,78 @@ def test_default_budget_matches_the_reviewed_contract() -> None:
     assert plugin.MAX_IDENTICAL_FAILURES == 2
 
 
+def _seed_valid_tables(session: str, tables_line: str) -> None:
+    plugin._post_tool_call(
+        "kanban_show", {},
+        json.dumps({"task": {"body": f"run_id: R\nticket_id: T\n{tables_line}\n"}}),
+        task_id=session,
+    )
+
+
+def test_select_against_a_non_evidence_plan_table_is_blocked_before_sql() -> None:
+    session = "stall-guard-1"
+    _seed_valid_tables(
+        session, "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data, XStudio_Xbatch.dbo.Power_Consumption_LogSheet"
+    )
+    blocked = plugin._pre_tool_call(
+        "xstudio_select",
+        {"database": "XStudio_Xbatch", "table": "dbo.SomeGuessedTable", "columns": ["ID"]},
+        task_id=session,
+    )
+    assert blocked and blocked["action"] == "block"
+    assert "not one of the tables Jev's evidence plan selected" in blocked["message"]
+    assert "did not consume the investigation budget" in blocked["message"]
+
+
+def test_select_against_an_evidence_plan_table_is_allowed_bare_or_qualified() -> None:
+    session = "stall-guard-2"
+    _seed_valid_tables(session, "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data")
+    for table in ("dbo.EAF_SMS_Data", "EAF_SMS_Data", "XStudio_Xbatch.dbo.EAF_SMS_Data"):
+        result = plugin._pre_tool_call(
+            "xstudio_select",
+            {"database": "XStudio_Xbatch", "table": table, "columns": ["ID"]},
+            task_id=session,
+        )
+        assert result is None or result["action"] != "block", f"{table} should have been allowed"
+
+
+def test_no_valid_tables_line_means_no_restriction_applied() -> None:
+    session = "stall-guard-3"
+    plugin._post_tool_call(
+        "kanban_show", {}, json.dumps({"task": {"body": "run_id: R\nticket_id: T\n"}}), task_id=session,
+    )
+    result = plugin._pre_tool_call(
+        "xstudio_select",
+        {"database": "XStudio_Xbatch", "table": "dbo.AnyTableAtAll", "columns": ["ID"]},
+        task_id=session,
+    )
+    assert result is None or result["action"] != "block"
+
+
+def test_blocked_select_call_does_not_consume_investigation_budget() -> None:
+    session = "stall-guard-4"
+    _seed_valid_tables(session, "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data")
+    old = plugin.MAX_TOOL_CALLS
+    plugin.MAX_TOOL_CALLS = 1
+    try:
+        for _ in range(3):
+            blocked = plugin._pre_tool_call(
+                "xstudio_select",
+                {"database": "XStudio_Xbatch", "table": "dbo.Wrong", "columns": ["ID"]},
+                task_id=session,
+            )
+            assert blocked["action"] == "block"
+        # Budget was never touched by the rejected calls -- a real one still fits.
+        real = plugin._pre_tool_call(
+            "xstudio_select",
+            {"database": "XStudio_Xbatch", "table": "dbo.EAF_SMS_Data", "columns": ["ID"]},
+            task_id=session,
+        )
+        assert real is None or real["action"] != "block"
+    finally:
+        plugin.MAX_TOOL_CALLS = old
+
+
 def test_session_cleanup_releases_counters() -> None:
     plugin._pre_llm_call(task_id="tidy", user_message="Current run_id: RUN-TIDY")
     plugin._pre_tool_call("xstudio_get_run_actions", {}, task_id="tidy")
