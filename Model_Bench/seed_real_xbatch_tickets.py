@@ -98,11 +98,12 @@ def load_real_entities(conn) -> dict:
     return entities
 
 
-def generate_tickets(entities: dict) -> list[dict]:
+def generate_tickets(entities: dict, offset: int = 0) -> list[dict]:
     tickets = []
+    end = offset + 3
 
     # Category 1: EAF Production & Power Timing (8 tickets)
-    for idx, h in enumerate(entities.get("eaf_heats", [])[:3]):
+    for idx, h in enumerate(entities.get("eaf_heats", [])[offset:end]):
         heat_id = h["HeatID"]
         tickets.append({
             "AreaID": AREA_EAF,
@@ -122,7 +123,7 @@ def generate_tickets(entities: dict) -> list[dict]:
         })
 
     # Category 2: LRF Refining & Arcing (8 tickets)
-    for idx, h in enumerate(entities.get("lrf_heats", [])[:3]):
+    for idx, h in enumerate(entities.get("lrf_heats", [])[offset:end]):
         heat_id = h["HeatID"]
         tickets.append({
             "AreaID": AREA_LRF,
@@ -142,7 +143,7 @@ def generate_tickets(entities: dict) -> list[dict]:
         })
 
     # Category 3: CCM Casting & Billet Genealogy (8 tickets)
-    for idx, b in enumerate(entities.get("ccm_billets", [])[:3]):
+    for idx, b in enumerate(entities.get("ccm_billets", [])[offset:end]):
         billet_no = b["BilletNo"]
         heat_no = b["HeatNo"]
         strand = b["StrandNo"]
@@ -164,7 +165,7 @@ def generate_tickets(entities: dict) -> list[dict]:
         })
 
     # Category 4: SAP Production Posting & Goods Movement (8 tickets)
-    for idx, s in enumerate(entities.get("sap_postings", [])[:3]):
+    for idx, s in enumerate(entities.get("sap_postings", [])[offset:end]):
         heat_no = s["HeatNo"]
         wo = s["WorkOrder"]
         mat_doc = s["MaterialDoc"]
@@ -187,7 +188,7 @@ def generate_tickets(entities: dict) -> list[dict]:
         })
 
     # Category 5: Work Order Lifecycle & Progress (8 tickets)
-    for idx, w in enumerate(entities.get("work_orders", [])[:3]):
+    for idx, w in enumerate(entities.get("work_orders", [])[offset:end]):
         wo_num = w["WorkOrderNumber"]
         qty = w["Quantity"]
         status = w["Status"]
@@ -209,7 +210,7 @@ def generate_tickets(entities: dict) -> list[dict]:
         })
 
     # Category 6: Plant Stoppages & Delays (8 tickets)
-    for idx, d in enumerate(entities.get("delays", [])[:3]):
+    for idx, d in enumerate(entities.get("delays", [])[offset:end]):
         heat_no = d["HeatNo"]
         reason = d["Status"]
         start_time = d["StartTime"]
@@ -231,7 +232,7 @@ def generate_tickets(entities: dict) -> list[dict]:
         })
 
     # Category 7: Quality Chemistry & Spectro Analysis (8 tickets)
-    for idx, c in enumerate(entities.get("chemistry", [])[:3]):
+    for idx, c in enumerate(entities.get("chemistry", [])[offset:end]):
         heat_no = c["HeatNo"]
         sample_type = c["SampleType"]
         grade = c["Grade"]
@@ -315,6 +316,11 @@ def main():
     ap.add_argument("--username", default="sa")
     ap.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--offset", type=int, default=0,
+                     help="Skip the first N real entities per category (each entity list "
+                          "fetches TOP 10) so a re-run produces different real tickets instead "
+                          "of the same deterministic top-3 every time. Existing-title dedup still "
+                          "applies as a safety net regardless of offset.")
     args = ap.parse_args()
 
     print(f"Connecting to {args.server} (DB: {args.xbatch_db} for entities, {args.database} for tickets)...")
@@ -324,7 +330,7 @@ def main():
     finally:
         conn_xbatch.close()
 
-    tickets = generate_tickets(entities)
+    tickets = generate_tickets(entities, offset=args.offset)
     print(f"Generated {len(tickets)} tickets across 8 categories using real plant entities.")
 
     conn_hd = build_connection(args.server, args.database, args.username, args.password)
