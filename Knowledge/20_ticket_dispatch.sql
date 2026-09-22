@@ -360,7 +360,12 @@ BEGIN
         CompletedOn = GETDATE(),
         ModifiedBy = @HermesUserID,
         ModifiedOn = GETDATE(),
-        Source = 'T-SQL'
+        Source = 'T-SQL',
+        -- A run can be recovered as stale while its local-model task is
+        -- still QUEUED/RUNNING; without this the ledger keeps showing a
+        -- live-looking task for a run that is no longer active
+        -- (live-verified 2026-09-22: 6 rows).
+        LocalModelState = CASE WHEN LocalModelState IN ('QUEUED', 'RUNNING') THEN 'FAILED' ELSE LocalModelState END
     WHERE IsActive = 1
       AND IsDeleted = 0
       AND ISNULL(HeartbeatOn, ClaimedOn) < DATEADD(MINUTE, -@StaleMinutes, GETDATE())
