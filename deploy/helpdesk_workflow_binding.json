@@ -4,9 +4,9 @@
   "resolved_ticket_status": "Closed",
   "waiting_user_ticket_status": null,
   "waiting_user_ask_status": "Ask",
-  "l3_ticket_status": null,
-  "needs_human_action_ticket_status": null,
+  "l3_ticket_status": "Enter",
+  "needs_human_action_ticket_status": "Enter",
   "strict_resolution_status_binding": true,
   "allow_metadata_status_override": false,
-  "notes": "Generated from operator-supplied values after live --discover-workflow inspection."
+  "notes": "Generated from operator-supplied values after live --discover-workflow inspection. l3_ticket_status/needs_human_action_ticket_status are bound to 'Enter' (a no-op on Complaint_Mst_Tbl.Status) because live discovery confirmed the Helpdesk schema has no distinct ticket-level status for L3/human-action outcomes -- only 'Enter'/'Closed' exist. L3/human-action state is tracked independently via Hermes_L3_Escalation_Trn_Tbl and the EscalateToL3 flag on Hermes_L2_Response_Trn_Tbl, which Hermes_L2_Get_Candidate_Tickets_Usp already uses to exclude these tickets from re-claim regardless of Complaint_Mst_Tbl.Status."
 }

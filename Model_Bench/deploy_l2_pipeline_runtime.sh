@@ -107,11 +107,7 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
     xbatch_world.py \
     ticket_scout.py \
     reconcile_l2_pipeline.py \
-    kanban_approval_publisher.py \
-    kanban_reject_bridge.py \
-    repair_incomplete_completions.py \
     audit_kanban_completions.py \
-    enforce_publish_safety_net.py \
     run_coalesced.py \
     drain_and_summarize.py
   do
