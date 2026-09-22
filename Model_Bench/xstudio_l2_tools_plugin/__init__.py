@@ -280,9 +280,9 @@ _SCHEMA = {
                 ],
                 "description": (
                     "Operation to execute. Required fields per operation:\n"
-                    "- 'select': requires [database, table, columns]\n"
-                    "- 'query': requires [database, sql]\n"
-                    "- 'probe_table': requires [database, table, ticket]\n"
+                    "- 'select': requires [database, table, columns, run_id]\n"
+                    "- 'query': requires [database, sql, run_id]\n"
+                    "- 'probe_table': requires [database, table, ticket, run_id]\n"
                     "- 'suggest_tables': requires [database, search]\n"
                     "- 'find_objects': requires [database, search]\n"
                     "- 'get_definition': requires [database, object_name]\n"
@@ -353,7 +353,7 @@ _SCHEMA = {
             },
             "run_id": {
                 "type": "string",
-                "description": "Active Hermes run UUID. REQUIRED for: get_run_actions, save_ledger, read_procedure. Optional for select/query for action tracking."
+                "description": "Active Hermes run UUID (given at the top of this task's body). REQUIRED for: select, query, probe_table, get_run_actions, save_ledger, read_procedure -- every read that returns evidence must be attributable in the run's own action audit trail."
             },
             "ticket_id": {
                 "type": "string",

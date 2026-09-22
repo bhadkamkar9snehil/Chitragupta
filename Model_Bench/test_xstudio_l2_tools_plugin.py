@@ -251,6 +251,35 @@ def test_probe_table_uses_real_identifier_and_never_broad_fishes() -> None:
     assert result["rows"][0]["Status"] == "Running"
 
 
+def test_probe_table_requires_run_id_before_a_live_read() -> None:
+    """Real-data batch finding: select/query/probe_table treated run_id as
+    optional, so a real successful evidence read left no row in
+    Hermes_L2_SQL_Action_Trn_Tbl, and a later reviewer's get_run_actions
+    cross-check saw nothing and rejected the proposal (Ticket_242
+    ACTION_AUTHORITY). run_id is not a database-style judgment call -- the
+    task body hands it to the model once -- so it is required, not
+    silently defaulted, before any live probe_table read happens."""
+    class FakeOrchestrator:
+        @staticmethod
+        def build_query_mechanically(**kwargs):
+            raise AssertionError("must not build a query before run_id is validated")
+
+    allowlist = {"XStudio_Xbatch": {"dbo.Heat_Vw": ["HeatNo", "Status", "Reason", "EventTime"]}}
+    with mock.patch.object(bridge, "_load_allowlist", return_value=allowlist), \
+         mock.patch.object(bridge, "_orchestrator", return_value=FakeOrchestrator()):
+        try:
+            bridge._probe_table({
+                "operation": "probe_table",
+                "database": "XStudio_Xbatch",
+                "table": "dbo.Heat_Vw",
+                "ticket": {"HeatNo": "H123"},
+            }, object())
+        except ValueError as exc:
+            assert "run_id is required" in str(exc)
+        else:
+            raise AssertionError("probe_table must not succeed without run_id")
+
+
 def test_probe_table_refuses_broad_read_without_strong_identifier() -> None:
     class FakeOrchestrator:
         @staticmethod
@@ -350,8 +379,10 @@ def test_operations_reject_missing_required_arguments_before_sql() -> None:
         ("select", {"database": "XStudio_Xbatch"}, "table is required"),
         ("select", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "columns is required"),
         ("select", {"database": "XStudio_Xbatch", "table": "dbo.T", "columns": []}, "columns is required"),
+        ("select", {"database": "XStudio_Xbatch", "table": "dbo.T", "columns": ["ID"]}, "run_id is required"),
         ("query", {"database": "XStudio_Xbatch"}, "sql is required"),
         ("query", {"database": "XStudio_Xbatch", "sql": ""}, "sql is required"),
+        ("query", {"database": "XStudio_Xbatch", "sql": "SELECT 1"}, "run_id is required"),
         ("suggest_tables", {"database": "XStudio_Xbatch"}, "search is required"),
         ("find_objects", {"database": "XStudio_Xbatch"}, "search is required"),
         ("get_definition", {"database": "XStudio_Xbatch"}, "object_name is required"),

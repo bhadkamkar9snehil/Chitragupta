@@ -294,6 +294,7 @@ def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
             "rows": [],
         }
 
+    run_id = str(_require(req, "run_id"))
     filter_column, filter_value = selected_filter
     columns = _probe_columns(filter_column, real_columns, req.get("matched_columns") or [])
     built = _orchestrator().build_query_mechanically(
@@ -308,7 +309,7 @@ def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
         return {"operation": "probe_table", **built, "retry_same_call": False}
 
     rows = _orchestrator().run_readonly_query(
-        client, built["sql"], database=database, run_id=req.get("run_id")
+        client, built["sql"], database=database, run_id=run_id
     )
     return {
         "ok": True,
@@ -379,9 +380,12 @@ def _read_procedure(req: dict[str, Any], client: Any) -> dict[str, Any]:
 
 def _select(req: dict[str, Any], client: Any) -> dict[str, Any]:
     database = str(_database(req))
+    table = str(_require(req, "table"))
+    columns = [str(x) for x in _require(req, "columns")]
+    run_id = str(_require(req, "run_id"))
     built = _orchestrator().build_query_mechanically(
-        table=str(_require(req, "table")),
-        columns=[str(x) for x in _require(req, "columns")],
+        table=table,
+        columns=columns,
         where=req.get("where"),
         order_by=req.get("order_by"),
         top=_top(req, 20),
@@ -390,7 +394,7 @@ def _select(req: dict[str, Any], client: Any) -> dict[str, Any]:
     if not built.get("ok"):
         return {"operation": "select", **built, "retry_same_call": False}
     rows = _orchestrator().run_readonly_query(
-        client, built["sql"], database=database, run_id=req.get("run_id")
+        client, built["sql"], database=database, run_id=run_id
     )
     return {
         "ok": True,
@@ -406,6 +410,7 @@ def _select(req: dict[str, Any], client: Any) -> dict[str, Any]:
 def _query(req: dict[str, Any], client: Any) -> dict[str, Any]:
     database = str(_database(req))
     sql = str(_require(req, "sql")).strip()
+    run_id = str(_require(req, "run_id"))
     if not is_read_only_sql(sql):
         return {
             "ok": False,
@@ -417,7 +422,7 @@ def _query(req: dict[str, Any], client: Any) -> dict[str, Any]:
             "retry_same_call": False,
         }
     rows = _orchestrator().run_readonly_query(
-        client, sql, database=database, run_id=req.get("run_id")
+        client, sql, database=database, run_id=run_id
     )
     return {"ok": True, "operation": "query", "database": database, "rows": rows}
 
