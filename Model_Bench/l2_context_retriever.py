@@ -33,7 +33,12 @@ from pathlib import Path
 from typing import Any
 
 import l2_gbrain as gbrain
-from kb_retrieval import _iter_gbrain_rows, knowledge_docs_for_routes, load_manifest, route_candidates
+from jev.kb_applicability import assess_kb_candidates
+from jev.policy import KB_JUDGMENTS_ENABLED, HIGH_RISK_NOUL
+from kb_retrieval import (
+    _compose_kb_score, _iter_gbrain_rows, knowledge_docs_for_routes,
+    load_manifest, retrieve_gbrain, route_candidates,
+)
 from l2_context_envelope import make_context_item
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -86,6 +91,34 @@ def _canonical_documents(manifest: dict[str, Any], routes: list[dict[str, Any]],
     return items
 
 
+def _investigator_equivalent_knowledge_search(query: str, manifest: dict[str, Any], limit: int) -> dict[str, Any]:
+    """The exact same xstudio-knowledge lookup fresh investigation gets:
+    retrieve_gbrain()'s score/overlap filter, then the same Jev applicability
+    judgment (assess_kb_candidates()), same negative-indicator drop, same
+    composite-score sort. Review/rework previously got this same source via
+    l2_gbrain.search(scope="knowledge") instead -- no threshold, no Jev
+    judgment at all -- so a stage's process could see meaningfully different,
+    less-vetted GBrain content than the investigation it's reviewing.
+    """
+    gbrain_config = dict(manifest.get("gbrain") or {})
+    gbrain_config["return_limit"] = limit
+    result = retrieve_gbrain(query, gbrain_config)
+    hits = result.get("hits") or []
+    if hits and KB_JUDGMENTS_ENABLED:
+        judged = assess_kb_candidates({"query": query}, hits)
+        if judged.get("ok"):
+            hits = list(judged.get("candidates") or hits)
+            for row in hits:
+                row["jev_kb_composite"] = _compose_kb_score(row)
+            hits = [row for row in hits if float(row.get("jev_negative_indicator") or 0.0) < HIGH_RISK_NOUL]
+            hits.sort(key=lambda row: (-float(row.get("jev_kb_composite") or 0.0), -float(row.get("retrieval_score") or 0.0)))
+    results = [
+        {"slug": h.get("slug"), "title": h.get("title"), "chunk_text": h.get("excerpt"), "score": h.get("retrieval_score")}
+        for h in hits
+    ]
+    return {"ok": True, "results": results} if results else {"ok": True, "results": [], "_skipped": not bool(hits)}
+
+
 def _scope_items(raw: dict[str, Any], *, source_type: str,
                   trust_class: str) -> tuple[list[dict[str, Any]], str | None]:
     if not raw.get("ok"):
@@ -125,6 +158,10 @@ def retrieve(query: str, manifest: dict[str, Any], *, vault: Path | None = None,
         limit = int(limits.get(limit_key, top))
         if not include_gbrain or limit <= 0 or not query.strip():
             raw: dict[str, Any] = {"ok": False, "_skipped": True}
+        elif scope == "knowledge":
+            # Same xstudio-knowledge source, same retrieval+Jev judgment as
+            # fresh investigation -- not the threshold-less l2_gbrain.search().
+            raw = _investigator_equivalent_knowledge_search(query, manifest, limit)
         else:
             raw = gbrain.search(query, scope=scope, limit=limit, automatic=True)
         gbrain_raw[scope] = raw

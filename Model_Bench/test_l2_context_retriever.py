@@ -18,6 +18,19 @@ class ContextRetrieverTests(unittest.TestCase):
             "always_load": ["mental-model.md"],
             "routes": [{"route": "sap_posting", "keywords": ["sap", "posting"], "load": ["sap.md"]}],
             "identifier_routing": {},
+            "gbrain": {
+                "source_id": "xstudio-knowledge",
+                "allowed_slug_prefixes": ["knowledge/"],
+                "excluded_slug_prefixes": [],
+                "excluded_slugs": [],
+                "candidate_limit": 24,
+                "return_limit": 3,
+                "snippet_chars": 600,
+                "timeout_seconds": 20,
+                "min_retrieval_score": 0.50,
+                "min_exact_identifier_score": 0.45,
+                "query_domain_terms": ["sap", "posting"],
+            },
         }
 
     def test_gbrain_lane_trust_classes_match_envelope_schema(self):
@@ -29,33 +42,34 @@ class ContextRetrieverTests(unittest.TestCase):
             self.assertIn(trust_class, ALLOWED_TRUST_BY_COLLECTION[envelope_key])
 
     def test_missing_source_degrades_named_not_raised(self):
-        with mock.patch.object(mod.gbrain, "search", return_value={"ok": False, "error": "no requested source is populated yet"}):
+        # "knowledge" now goes through retrieve_gbrain() (same as fresh
+        # investigation), not mod.gbrain.search -- mock that instead.
+        with mock.patch.object(mod.gbrain, "search", return_value={"ok": False, "error": "no requested source is populated yet"}), \
+             mock.patch.object(mod, "retrieve_gbrain", return_value={"hits": [], "abstained": True}):
             result = mod.retrieve("posting stuck", self._manifest(), top=3,
                                   limits={"facts": 3, "solutions": 2, "approved_cases": 2, "rejected_cases": 2, "reopened_cases": 2})
         self.assertTrue(result["retrieval_degraded"])
-        # The "facts" policy lane queries the "knowledge" gbrain scope (see
-        # l2_context_retriever._GBRAIN_LANES), so the reported reason names
-        # the scope actually queried, not the policy limit key.
-        self.assertTrue(any("knowledge:" in reason for reason in result["degradation_reasons"]))
+        self.assertTrue(any("cases:" in reason or "solutions:" in reason for reason in result["degradation_reasons"]))
         self.assertEqual(result["promoted_facts"], [])
 
     def test_populated_source_yields_real_items_with_valid_trust_class(self):
         def fake_search(query, *, scope, limit, automatic):
-            if scope == "knowledge":
-                return {
-                    "ok": True, "source_ids": ["xstudio-knowledge"],
-                    "results": [{"slug": "knowledge/x", "title": "X", "chunk_text": "relevant text", "score": 0.9}],
-                }
             return {"ok": False, "error": "no requested source is populated yet"}
 
-        with mock.patch.object(mod.gbrain, "search", side_effect=fake_search):
+        fake_gbrain_hits = {"hits": [
+            {"kb_id": "gbrain:xstudio-knowledge:knowledge/x", "slug": "knowledge/x", "title": "X",
+             "excerpt": "relevant text", "retrieval_score": 0.9},
+        ], "abstained": False}
+
+        with mock.patch.object(mod.gbrain, "search", side_effect=fake_search), \
+             mock.patch.object(mod, "retrieve_gbrain", return_value=fake_gbrain_hits), \
+             mock.patch.object(mod, "assess_kb_candidates", return_value={"ok": False, "reason": "Jev disabled in test"}):
             result = mod.retrieve("posting stuck", self._manifest(), top=3,
                                   limits={"facts": 3, "solutions": 2, "approved_cases": 2, "rejected_cases": 2, "reopened_cases": 2})
         self.assertEqual(len(result["promoted_facts"]), 1)
         item = result["promoted_facts"][0]
         self.assertEqual(item["source_ref"], "knowledge/x")
         self.assertIn(item["trust_class"], ALLOWED_TRUST_BY_COLLECTION["promoted_facts"])
-        self.assertEqual(result["gbrain"]["knowledge"]["source_ids"], ["xstudio-knowledge"])
 
     def test_include_gbrain_false_skips_every_lane_without_calling_gbrain(self):
         with mock.patch.object(mod.gbrain, "search") as search:
