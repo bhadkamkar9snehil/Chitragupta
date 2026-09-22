@@ -177,24 +177,58 @@ Following the deployment of the hardened `xstudio_l2` contract, bridge parameter
 | :--- | :--- | :--- | :---: | :--- | :--- | :--- | :--- |
 | **Ticket_241** | `739D297C-C8D6-470D-BCAC-C18ED64A7312` | `F2DB9885-2943-4E89-ABC9-664FF2FACCA9` | 2 | `t_c28297e3` | `l2-jev-investigator` | `COMPLETED` | Direct live query on `XStudio_Xbatch.dbo.LRF_Per_Heat` for Heat 1604013. 2 tool calls, 0 errors. Completed with `kanban_complete`. |
 | **Ticket_241** | `739D297C-C8D6-470D-BCAC-C18ED64A7312` | `F2DB9885-2943-4E89-ABC9-664FF2FACCA9` | 2 | `t_1e014b2a` | `l2-reviewer-primary` | `COMPLETED` | Jev primary review requested local review fallback. Reviewer verified live values in `XStudio_Xbatch`, confirmed match, approved via `kanban_complete`. Deterministic publisher published `UPDATE` to SQL. |
-| **Ticket_242** | `E1835201-9F31-473D-9F59-E3CFF1654D28` | `7698DD3A-02E7-4417-B0F1-16136D5364E0` | 2 | `t_87dea97f` | `l2-jev-investigator` | `INVESTIGATING` | Investigator targeted `XStudio_Xbatch`, retrieved Heat 1604012 timings via `select`, completed cleanly with 0 missing-argument errors. |
-| **Ticket_242** | `E1835201-9F31-473D-9F59-E3CFF1654D28` | `7698DD3A-02E7-4417-B0F1-16136D5364E0` | 2 | `t_64e658c1` | `l2-reviewer-primary` | `INVESTIGATING` | Reviewer called `select` with `HeatNo`. Bridge returned fuzzy suggestion `HeatID`; model immediately corrected. Reviewer blocked with `kanban_block` citing missing run actions. |
-| **Ticket_242** | `E1835201-9F31-473D-9F59-E3CFF1654D28` | `7698DD3A-02E7-4417-B0F1-16136D5364E0` | 2 | `t_2e3cd3ae` / `t_e339de75` | `l2-jev-investigator` (Rework) | `INVESTIGATING` | Reconciler converted block to priority-20 rework. Missing `database` on 2 probe calls intercepted immediately by bridge before SQL. |
+| **Ticket_242** | `E1835201-9F31-473D-9F59-E3CFF1654D28` | `7698DD3A-02E7-4417-B0F1-16136D5364E0` | 2 | `t_87dea97f` | `l2-jev-investigator` | `done` | Investigator targeted `XStudio_Xbatch`, retrieved Heat 1604012 timings via `select`, completed cleanly with 0 missing-argument errors. |
+| **Ticket_242** | `E1835201-9F31-473D-9F59-E3CFF1654D28` | `7698DD3A-02E7-4417-B0F1-16136D5364E0` | 2 | `t_64e658c1` | `l2-reviewer-primary` | `blocked` | Reviewer called `select` with `HeatNo`. Bridge returned fuzzy suggestion `HeatID`; model immediately corrected. Reviewer blocked with `kanban_block` citing an `ACTION_AUTHORITY` mismatch: `get_run_actions` returned no auditable record of the claimed verification. |
+| **Ticket_242** | `E1835201-9F31-473D-9F59-E3CFF1654D28` | `7698DD3A-02E7-4417-B0F1-16136D5364E0` | 2 | `t_2e3cd3ae` (rework cycle 1) | `l2-jev-investigator` (Rework) | `done` | Reconciler converted block to priority-20 rework. Missing `database` on 2 probe calls (`find_objects`, `suggest_tables`) intercepted immediately by bridge before SQL; the resulting retry churn tripped the 14-call session budget block. |
+| **Ticket_242** | `E1835201-9F31-473D-9F59-E3CFF1654D28` | `7698DD3A-02E7-4417-B0F1-16136D5364E0` | 2 | `t_e339de75` (rework cycle 2) | `l2-jev-investigator` (Rework) | `done` | 2 clean tool calls, 0 missing-database errors. Reasserted the same `ACTION_AUTHORITY` claim without new corroborating audit evidence. |
+| **Ticket_242** | `E1835201-9F31-473D-9F59-E3CFF1654D28` | `7698DD3A-02E7-4417-B0F1-16136D5364E0` | 2 | `t_7cf7b8e1` | `l2-reviewer-primary` | `blocked` | Reviewer re-probed schema (`Hermes_Runs`, `Hermes_L2_SQL_Action_Trn_Tbl` column mismatches), still found no action-trail evidence. Jev primary review issued a 3rd `REWORK`, which hit `MAX_REVIEW_CYCLES = 3` and escalated to L3 at `2026-09-22 07:27:37 UTC` (`Hermes_L3_Escalation_Trn_Tbl.ID = 396CAF39-B5B6-4BCA-9EB0-B85D1CE5D8BB`). This terminal outcome was reached *after* this document's original canary snapshot and is unrelated to the `xstudio_l2` contract defect this audit tracks — see §10 for the full diagnosis. |
 
 ### Quantitative Comparison: Pre-Fix (Tickets 232/233) vs. Post-Fix (Canary 241/242)
 
 Aggregated metrics from `dbo.Hermes_Agent_Trace_Trn_Tbl` across all attempts:
 
-| Metric | Pre-Fix Baseline (`Ticket_232` & `Ticket_233`) | Post-Fix Canary (`Ticket_241` & `Ticket_242` Att 2) | Impact / Assessment |
+> [!IMPORTANT]
+> **Corrected 2026-09-22.** The figures below are re-derived directly from `dbo.Hermes_Agent_Trace_Trn_Tbl` with
+> `EventType = 'post_tool_call' AND ToolName = 'xstudio_l2'` (one row per actual invocation). The original
+> version of this table counted both `pre_tool_call` and `post_tool_call` trace rows for the same invocations,
+> doubling the pre/post-fix call counts (758/68), and the missing-required-argument category list summed to
+> 47/42 instead of the stated total. The corrected numbers are reproducible with the query in the appendix at
+> the end of this section.
+
+| Metric | Pre-Fix Baseline (`Ticket_232` & `Ticket_233`) | Post-Fix Canary (`Ticket_241` & `Ticket_242` Att 2, full RunID scope) | Impact / Assessment |
 | :--- | :---: | :---: | :--- |
-| **Total Trace Events** | 1,561 | 186 | **88.1% reduction** in noisy trace churn. |
-| **`xstudio_l2` Tool Invocations** | 758 | 68 | Efficient, bounded investigations replacing run-away loops. |
-| **Missing `database` Errors** | **73** (`ValueError: database is required`) | **2** (only during complex rework query synthesis; 0 in normal investigations) | **97.3% reduction**; intercepted by bridge before SQL. |
-| **Missing Required Argument Errors** | **42** (`table`: 15, `search`: 13, `object_name`: 8, `run_id`: 8, `columns`: 3) | **0** | **100% elimination** across all investigator and reviewer calls. |
-| **Tool Budget / Breaker Blocks** | **28** (26 budget exhausted, 2 repeated-failure breaker) | **1** (single rework budget cap hit; 0 breaker blocks) | Normal sessions use 2–6 calls (well under 14-call cap). |
-| **Plant Database Routing Accuracy** | Misdirected to `XStudio_Helpdesk` (reporting tables missing) | **100% `XStudio_Xbatch`** for plant/heat queries | Correct database selected on first turn. |
+| **`xstudio_l2` Tool Invocations** (`post_tool_call` only) | **379** (Ticket_232: 244, Ticket_233: 135) | **46** (Ticket_241: 9, Ticket_242 Att2: 37) | Efficient, bounded investigations replacing run-away loops. |
+| **OK / Error / Blocked** | 181 / 170 / 28 | 31 / 14 / 1 | Consistent with the reduction above. |
+| **Missing `database` Errors** | **73** (`ValueError: database is required`) | **2**, both on the first rework cycle (`t_2e3cd3ae`: one `find_objects`, one `suggest_tables` call); **0** in the fresh investigation, the second rework cycle, or either reviewer stage | **97.3% reduction**; intercepted by bridge before SQL in every case (never reached SQL Server). |
+| **Missing Required Argument Errors** (non-`database`) | **49** (`validate_identifiers` table: 12, `select` table: 3 &rarr; table 15; `suggest_tables` search: 10, `find_objects` search: 4 &rarr; search 14; `get_definition` object_name: 8; `save_ledger` run_id: 8; `select` columns: 4) | **0** | **100% elimination** across all investigator and reviewer calls. |
+| **Tool Budget / Breaker Blocks** | **28** (26 budget exhausted, 2 repeated-failure breaker) | **1** (single rework-cycle-1 budget cap hit, directly downstream of the 2 missing-`database` retries above; 0 breaker blocks) | Normal sessions use 2–6 calls (well under 14-call cap). |
+| **Plant Database Routing Accuracy** | Misdirected to `XStudio_Helpdesk` (reporting tables missing) | All plant/heat queries that reached SQL used `XStudio_Xbatch`. Two bounded-rework tool attempts (`t_2e3cd3ae`) omitted `database` entirely and were rejected by the bridge before SQL execution — see §10. | Correct database selected on first turn in every call that specified one. |
 | **Live Evidence Retrieval** | Failed or erroneously concluded tables missing | **100% Success** (`LRF_Per_Heat` retrieved for Heats 1604013 & 1604012) | Real plant records fetched in < 350 ms. |
-| **Full Lifecycle Completion** | Blocked on malformed payloads / loop exhaustion | **Full Success** (Investigator $\rightarrow$ Jev Review $\rightarrow$ Deep Review $\rightarrow$ Publication) | Ticket_241 published to SQL (`COMPLETED`, `UPDATE`). |
+| **Full Lifecycle Completion** | Blocked on malformed payloads / loop exhaustion | Ticket_241: **Full Success**, published (`COMPLETED`, `UPDATE`). Ticket_242 Att2: reached `MAX_REVIEW_CYCLES = 3` on an unrelated `ACTION_AUTHORITY` audit-trail objection and escalated to L3 — see §10. | The `xstudio_l2` contract defect this audit tracks is resolved independent of Ticket_242's final escalation reason. |
+
+<details>
+<summary>Appendix: read-only queries used for the corrected metrics (run via <code>Hermes_Orchestrator.py --query</code>, `XStudio_Helpdesk`)</summary>
+
+```sql
+-- Actual invocation counts (post_tool_call only), by ticket/run
+SELECT TicketID, COUNT(*) AS PostToolCallCount,
+       SUM(CASE WHEN Status='ok' THEN 1 ELSE 0 END) AS OK,
+       SUM(CASE WHEN Status='error' THEN 1 ELSE 0 END) AS ErrorCt,
+       SUM(CASE WHEN Status='blocked' THEN 1 ELSE 0 END) AS BlockedCt
+FROM dbo.Hermes_Agent_Trace_Trn_Tbl
+WHERE ToolName='xstudio_l2' AND EventType='post_tool_call'
+  AND TicketID IN ('E2A0AB2F-5993-40C4-8BDB-721039B00381','0F8299FE-9D97-4948-B90B-E6B7956F4346')
+GROUP BY TicketID;
+
+-- Exact failure-signature counts
+SELECT SUBSTRING(ErrorMessage,1,80) AS ErrSig, COUNT(*) AS Cnt
+FROM dbo.Hermes_Agent_Trace_Trn_Tbl
+WHERE ToolName='xstudio_l2' AND EventType='post_tool_call' AND Status IN ('error','blocked')
+  AND TicketID IN ('E2A0AB2F-5993-40C4-8BDB-721039B00381','0F8299FE-9D97-4948-B90B-E6B7956F4346')
+GROUP BY SUBSTRING(ErrorMessage,1,80) ORDER BY Cnt DESC;
+```
+
+</details>
 
 ### Key Observations from Canary Telemetry
 
@@ -221,4 +255,89 @@ Aggregated metrics from `dbo.Hermes_Agent_Trace_Trn_Tbl` across all attempts:
    - Local reviewer independently verified the evidence in `XStudio_Xbatch`, confirmed accuracy, and completed via `kanban_complete`.
    - The deterministic reconciler and publisher successfully published the response to SQL Server (`Hermes_L2_Response_Trn_Tbl.ProcessStatus = 'COMPLETED'`, `ResponseType = 'UPDATE'`, `IsActive = 0`).
 
+---
 
+## 10. Residual Rework-Only `database` Omission (Ticket_242) — Root Cause and Fix
+
+### 10.1 Exact task chain
+
+RunID `7698DD3A-02E7-4417-B0F1-16136D5364E0` (Ticket_242, Attempt 2):
+
+| TaskID | Role | Stage | Outcome |
+| :--- | :--- | :--- | :--- |
+| `t_87dea97f` | `l2-jev-investigator` | investigation | `done` — 4 clean `xstudio_l2` calls, 0 errors, verified `XStudio_Xbatch.dbo.LRF_Per_Heat` for Heat 1604012. |
+| `t_64e658c1` | `l2-reviewer-primary` | review (cycle 0) | `blocked` — self-corrected a `HeatNo`/`HeatID` column typo, then rejected the proposal on `ACTION_AUTHORITY`: `get_run_actions` showed no audit record of the claimed verification. |
+| `t_2e3cd3ae` | `l2-jev-investigator` (rework) | rework (cycle 1) | `done`, but 2 of its `xstudio_l2` calls (`find_objects`, `suggest_tables`) omitted `database` and were rejected by the bridge before SQL; the resulting retries tripped the 14-call session budget block. |
+| `t_e339de75` | `l2-jev-investigator` (rework) | rework (cycle 2) | `done` — 2 clean calls, 0 missing-`database` errors; reasserted the same claim without new audit-trail evidence. |
+| `t_7cf7b8e1` | `l2-reviewer-primary` | review (cycle 2) | `blocked` — found no new audit-trail evidence either; Jev issued a 3rd `REWORK`, which hit `MAX_REVIEW_CYCLES = 3` and escalated to L3 (`Hermes_L3_Escalation_Trn_Tbl.ID = 396CAF39-B5B6-4BCA-9EB0-B85D1CE5D8BB`, `2026-09-22 07:27:37 UTC`). |
+
+The eventual L3 escalation was for a **different, genuine reason** (an `ACTION_AUTHORITY` audit-trail gap — the reviewer could not find a `Hermes_L2_SQL_Action_Trn_Tbl` record proving the investigator's claimed SQL query actually ran) and is **not** part of the `xstudio_l2` contract defect this audit tracks. It is documented here only because it is the terminal outcome of the same RunID and because the missing-`database` rework failures directly contributed to it: the two rejected calls and the budget block they triggered consumed rework cycle 1 without adding new evidence, which is part of why cycle 2 also had nothing new to show the reviewer.
+
+### 10.2 Context present before rework vs. inside rework
+
+The original investigation task body (`t_87dea97f`) is a Jev-compiled bundle containing pinned live-evidence context plus this closing block (function `_query_instructions()` in `Model_Bench/l2_pipeline_runtime.py`, live-confirmed present at offset 22147 of the task body):
+
+```text
+--- Typed XStudio investigation contract ---
+Use the xstudio_l2 tool for ALL XStudio/Helpdesk database, schema, ticket, ...
+Operations:
+  select              validated table+columns read ...
+  ...
+Pass database explicitly: XStudio_Helpdesk for ticket/Hermes runtime data,
+XStudio_Xbatch for production/heat/billet/quality/delay/SAP data.
+```
+
+The rework task bodies (`t_2e3cd3ae`, `t_e339de75`), read live from Kanban, contain only:
+
+```text
+run_id / ticket_id / ticket_no / review_cycle / rework_source_id /
+prior_investigation_task_id / pipeline_stage
+REWORK REASON: <the ACTION_AUTHORITY objection text>
+PRIOR FINDINGS (verbatim): <persisted ledger JSON — source, summary, response_type, reply_text>
+```
+
+`create_rework_card()` (`Model_Bench/l2_pipeline_runtime.py`, previously ending right after the `PRIOR FINDINGS` block) never called `_query_instructions()`. The database name `XStudio_Xbatch` appears in the `PRIOR FINDINGS` ledger, but only twice, as free-text prose inside a disputed evidentiary claim ("queried `XStudio_Xbatch.dbo.LRF_Per_Heat` and confirmed...") — never as a structured field, and never alongside the operation list or the explicit "pass `database` explicitly" instruction. Confirmed live: the reviewer task bodies (`t_64e658c1`, `t_7cf7b8e1`) also lack `_query_instructions()`, and reviewers issued 0 missing-`database` errors — but reviewer calls are narrow `select`/`get_run_actions` validations against a table already named in the proposal under review, not open-ended `find_objects`/`suggest_tables` schema discovery, so the two situations are not directly comparable.
+
+The active profile SOUL (`deploy/profiles/l2-jev-investigator/SOUL.md`, shared by both investigation and rework because both use `INVESTIGATOR_PROFILE`) does carry a persistent, general "Database Routing" section instructing the model to "always specify the correct `database`". This means the omission was **not** a total absence of guidance — the model had a standing system-level reminder — but it lost the per-task, operation-adjacent reinforcement (the same reinforcement whose addition, per §8 of this document, is what eliminated the 73 pre-fix missing-`database` failures in the investigation stage). The omission occurred specifically on `find_objects` and `suggest_tables` — the two open-ended discovery operations that require deciding a target database from reasoning rather than reusing one already bound to a known table/proposal.
+
+### 10.3 Answering the diagnosis questions
+
+- **Was `XStudio_Xbatch` present in the rework body?** Yes, but only as unstructured prose inside `PRIOR FINDINGS`, not as a directive.
+- **Was `dbo.LRF_Per_Heat` present?** Yes, same caveat.
+- **Was the prior ledger carried?** Yes, via `_persist_rejected_ledger()` → `PRIOR FINDINGS (verbatim)`.
+- **Was database context dropped by `create_rework_card()`?** The *structured, operation-adjacent* routing reminder (`_query_instructions()`) was dropped; the free-text mention in the ledger was not.
+- **Did the rework model receive the hardened tool guidance?** Partially: the persistent SOUL-level routing sentence, yes; the per-task typed-tool contract block with the explicit operation list, no.
+- **Were the two malformed calls repeated or distinct?** Distinct operations (`find_objects` once, `suggest_tables` once), each failing exactly once — not a repeated-failure-guard pattern.
+- **Did they touch SQL?** No. Both raised `ValueError: database is required for operation=...` inside the bridge's own pre-SQL validation (`Model_Bench/xstudio_l2_tool_bridge.py`), before any `pyodbc` call.
+- **Why was the 14-call budget reached?** The two rejected calls plus their surrounding retry/discovery churn in `t_2e3cd3ae` (schema probing after the `ACTION_AUTHORITY` objection) accumulated to the 14-call session cap; the budget guard then fired correctly and stopped the session rather than looping further.
+
+### 10.4 Root cause
+
+Reproducible propagation defect, not an isolated model lapse: `create_rework_card()` is the only card-construction path that omits the typed-tool contract block (`_query_instructions()`) that `_investigator_task_spec()` already gives every fresh investigation. This is structural — every rework card is built this way, not just this one instance — and it correlates with the observed failure mode (both omissions on the two discovery-style operations the block exists to guide).
+
+### 10.5 Fix decision
+
+**Code change made.** The gap is a verified, reproducible content-propagation defect (missing reminder text), not a case of the model ignoring context that was actually given to it in the rework card. The smallest sufficient fix is to give `create_rework_card()` parity with `_investigator_task_spec()` by reusing the existing `_query_instructions()` helper — no new tool, service, taxonomy, threshold, or inferred/defaulted database value.
+
+### 10.6 Implementation
+
+- `Model_Bench/l2_pipeline_runtime.py`, `create_rework_card()`: append `_query_instructions(run_id, ticket_id)` to the rework card body, after `PRIOR FINDINGS`, identical to how `_investigator_task_spec()` already appends it to fresh investigation cards.
+- `Model_Bench/test_l2_pipeline_runtime.py`: added `test_rework_card_carries_same_typed_tool_contract_as_investigation`, asserting the rework spec body contains the typed-tool contract text and the explicit "Pass database explicitly" line.
+
+No changes to thresholds, WIP, priorities, the review-cycle cap, bridge validation, or architecture.
+
+### 10.7 Test results
+
+```text
+python3 -m unittest -v Model_Bench.test_l2_pipeline_runtime      -> 52 tests, OK (new test included)
+python3 Model_Bench/test_xstudio_l2_tools_plugin.py               -> 41 tests, OK
+python3 Model_Bench/test_jev_fabric.py                             -> 15 tests, OK
+python3 Model_Bench/test_kb_retrieval.py                           -> 11 tests, OK
+bash Model_Bench/validate_l2_pipeline_local.sh --fast              -> FAST LOCAL GATE PASSED
+bash Model_Bench/deploy_l2_pipeline_runtime.sh                      -> deployed, 4 gateways restarted and active
+bash Model_Bench/validate_l2_pipeline_local.sh --live-only          -> FULL/LIVE VALIDATION COMPLETE (dry-run reconcile only; no mutation)
+```
+
+### 10.8 Success criteria status
+
+The tested rework path now carries the same `database` routing reminder as a fresh investigation. Whether this reduces the omission rate to zero in production can only be confirmed by the next naturally arriving ticket that goes through a rework cycle with an open-ended schema-discovery operation — this was not manufactured or force-triggered, consistent with §15 of `AGENTS.md`.
