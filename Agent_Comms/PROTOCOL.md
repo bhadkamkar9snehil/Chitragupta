@@ -180,3 +180,34 @@ request should be concrete and mechanical:
 Codex does not need this constraint by default -- give it real design or
 implementation latitude when the task warrants it, same as Claude would use
 for itself. Adjust either way if actual results say otherwise.
+
+## Known gotchas for live DB checks (read this before writing a query)
+
+Antigravity has repeatedly hit two avoidable errors when running its own
+live-DB diagnostic checks. Both are process mistakes, not environment
+limitations -- follow this and they stop recurring:
+
+1. **Never guess a column name.** If a check needs a column you haven't
+   already seen used elsewhere in this repo, look it up first:
+   - Grep for the table name in `Knowledge/00_tables_and_indexes.sql` (the
+     canonical schema source) to see its real columns, OR
+   - Run `SELECT TOP 0 * FROM dbo.<Table>` / query
+     `INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '<Table>'` live first,
+     THEN write the real check against confirmed column names.
+   `ExecutionDepth` is not a real column on any Hermes_L2 table -- that
+   error was a guess, not a schema surprise.
+
+2. **Never write a multi-quote SQL/Python one-liner as an inline
+   `wsl ... -- bash -lc "python3 -c '...'"` command.** Nesting
+   Windows-shell -> `wsl` -> `bash -lc` -> `python3 -c` -> an embedded SQL
+   string, each layer with its own quoting rules, is exactly how you get
+   "unexpected EOF while looking for matching backtick/quote". Instead:
+   - Write the check as a real `.py` file (same pattern as
+     `check_local_model_state.py` -- that part is right), and
+   - Invoke it as `wsl python3 /mnt/c/path/to/script.py` with NO inline
+     Python or SQL source on the command line at all -- just the file
+     path. If you need different parameters per run, take them as
+     `sys.argv`, don't inline different source each time.
+
+Both agents should follow this, not just Antigravity -- it's just that
+Antigravity has been the one hitting it in practice so far.
