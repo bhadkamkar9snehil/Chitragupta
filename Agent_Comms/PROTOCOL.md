@@ -8,22 +8,27 @@ automatically; Snehil is the transport for every leg.
 
 - **Claude** (Claude Code) — no persistent background process. Reads/writes
   this folder only when invoked in a session.
-- **Codex** — a local terminal/IDE coding agent on this same laptop,
-  invoked manually by Snehil per task (no Hermes Agent Routine, no
-  scheduler, no direct autonomous access to this repo outside a session
-  Snehil starts). Snehil relays: he gives Codex a request's content, and
-  brings its output back for Claude to read.
-- **Antigravity** — same laptop, in the XS_Builder workspace, invoked
-  manually by Snehil per task, same relay pattern as Codex (no scheduler,
-  no direct filesystem/API access to this repo from inside its own
-  session). Snehil copies a request's content into Antigravity, and copies
-  its finished output back out as a file Claude then reads from this
-  folder (or from wherever Antigravity saved it -- Claude checks
-  Downloads/ and the working tree if it isn't in Agent_Comms/ yet).
+- **Codex** — a local terminal/IDE coding agent on this same laptop, with
+  real file read/write and terminal access to this repo once a session is
+  running. No scheduler, no autonomous polling -- Snehil starts each
+  session and gives it a task.
+- **Antigravity** — same laptop, in the XS_Builder workspace. Also has real
+  file read/write and terminal access to this repo once invoked (confirmed
+  live: it created `0011-context-envelope-wiring-research.md` itself, ran
+  real `git`/`python -m unittest` commands, read real files). No scheduler
+  either -- Snehil starts each session and gives it a task.
 
-No agent has any other way to reach another directly. Treat Snehil's manual
-copy-paste as the transport for all three legs -- the file format and
-numbering below is what makes that relay auditable, not a live channel.
+**The only actual gap for both is the wake-up, not the work.** Neither agent
+checks this folder on its own; Snehil is the one who starts a session and
+tells it "you have a pending request in Agent_Comms, go handle it" (or
+pastes the request's content directly). Once running, either agent should
+read and write these files itself -- create its own response in the
+request file, set `status: answered`, open its own `finding` thread if it
+finds something unprompted -- exactly as Claude does. Don't have Snehil
+relay text back and forth by hand when the agent can just edit the file.
+The one thing Claude still does on their behalf: if an agent's own output
+somehow doesn't make it into this folder (saved to Downloads/, pasted into
+chat, whatever), Claude reads that and writes it in for them.
 
 ## Scope: not just tickets
 
@@ -115,28 +120,63 @@ files (both answered requests and findings) whenever asked to, in a normal
 session, and should proactively mention any unread `finding` threads to the
 user even if they weren't specifically asked about.
 
-## Working with Codex or Antigravity (both relay-only, identical mechanics)
-
-Neither Codex nor Antigravity can poll this folder or edit its files
-themselves -- Snehil is the transport for both. When Claude wants either of
-them to do something:
+## Getting Codex or Antigravity to work
 
 1. Write a normal `type: request` file here, `to: codex` or
    `to: antigravity` as appropriate (same format as any other thread) --
    self-contained, assumes no other context beyond this file and
    `AGENTS.md`/`CLAUDE.md`.
-2. Tell Snehil the file exists and ask him to hand its `## Request` content
-   to the relevant agent.
-3. When Snehil brings back that agent's output (pasted text, a file path,
-   a saved `.md`/`.docx`, whatever form it takes), Claude reads it and is
-   the one who writes it into `## Response` in the original request file --
-   filling in `status: answered` and `answered:` the same as any other
-   reply. Claude checks Downloads/ and the working tree for a saved output
-   file if Snehil doesn't hand over the content directly.
+2. Tell Snehil the file exists and ask him to start a session with that
+   agent and point it at the file (or paste the `## Request` content
+   directly -- either works).
+3. The agent does the work in a real session against the real repo, and
+   writes its own `## Response`, `status: answered`, `answered:` directly
+   into the file. Claude picks it up next time it checks this folder.
+4. Only if the agent's output didn't land in the file for some reason
+   (saved elsewhere, pasted into chat, a `.docx`, etc.) does Claude read it
+   from wherever it landed and write it into `## Response` itself.
 
-If either agent produces a finding unprompted (Snehil relays it without a
-matching request file), Claude creates the `type: finding` file itself,
-`from: codex` or `from: antigravity`, `to: claude`, once it has read and
-understood the content -- don't paraphrase away specifics; quote real
-output the same way any other agent's finding must be backed by real
-evidence, not a claim.
+If an agent produces a finding unprompted, it should write its own
+`type: finding` thread directly (`from: codex` or `from: antigravity`,
+`to: claude`). If Snehil relays one by hand instead, Claude creates the
+file itself once it has read and understood the content -- don't
+paraphrase away specifics; quote real output.
+
+## Division of labor: default pattern
+
+The default split, unless a task clearly calls for something else:
+
+- **Claude does design, research it can do itself, implementation, and
+  writes the tests.** Claude is the one who understands this codebase's
+  architecture (`AGENTS.md`, the frozen five-box design) and should not
+  hand over decisions that require holding that context.
+- **Antigravity/Codex run those tests and report** -- pass/fail, exact
+  output, anything that broke. This is genuine load-splitting: they have
+  their own terminal/session against the same repo, so a verification pass
+  doesn't have to compete with Claude's own context budget.
+- **Claude reviews what comes back and corrects** -- fixes real failures,
+  pushes back on a report that doesn't hold up, iterates.
+- This is the default, not a rule: research delegation (like `0011`,
+  `0012`), independent code review, or a from-scratch build are all fair
+  asks too when they fit the situation better. Use judgment.
+
+### Keep Antigravity's tasks bounded
+
+Antigravity runs on Gemini, which is meaningfully less reliable at
+open-ended judgment calls than Claude or Codex. Every `to: antigravity`
+request should be concrete and mechanical:
+
+- Exact commands to run, exact files to read, exact assertions to check --
+  not "figure out if X is a problem."
+- A defined stopping point and a defined output shape ("paste the real
+  command output for each of these five checks"), not an open-ended
+  investigation with its own judgment calls about scope.
+- If real judgment is required (does this defect matter, what's the
+  right fix), Claude makes that call after reading Antigravity's bounded,
+  factual report -- not Antigravity itself.
+- `0012` is the template: numbered, concrete sub-questions, exact commands,
+  explicit "do not fix this yourself, report and propose only."
+
+Codex does not need this constraint by default -- give it real design or
+implementation latitude when the task warrants it, same as Claude would use
+for itself. Adjust either way if actual results say otherwise.
