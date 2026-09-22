@@ -354,6 +354,27 @@ BEGIN
 END;
 GO
 
+/*
+  2026-09-05: distinguishes "bot could not diagnose/solve it" (UNRESOLVED) from
+  "bot diagnosed it and knows the fix, a human must execute it"
+  (NEEDS_HUMAN_ACTION) -- see Hermes_L2_Publish_Response_Usp. This was applied
+  directly to the live database when that split was introduced and never
+  backported into this source file, so a fresh install from this bundle would
+  have been missing the column. Added here idempotently to close that gap.
+*/
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.columns
+    WHERE object_id = OBJECT_ID('dbo.Hermes_L3_Escalation_Trn_Tbl')
+      AND name = 'EscalationCategory'
+)
+BEGIN
+    ALTER TABLE dbo.Hermes_L3_Escalation_Trn_Tbl
+        ADD EscalationCategory varchar(100) NULL;
+END;
+GO
+
 IF NOT EXISTS
 (
     SELECT 1

@@ -367,6 +367,27 @@ BEGIN
 END;
 GO
 
+/*
+  2026-09-05: distinguishes "bot could not diagnose/solve it" (UNRESOLVED) from
+  "bot diagnosed it and knows the fix, a human must execute it"
+  (NEEDS_HUMAN_ACTION) -- see Hermes_L2_Publish_Response_Usp. This was applied
+  directly to the live database when that split was introduced and never
+  backported into this source file, so a fresh install from this bundle would
+  have been missing the column. Added here idempotently to close that gap.
+*/
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.columns
+    WHERE object_id = OBJECT_ID('dbo.Hermes_L3_Escalation_Trn_Tbl')
+      AND name = 'EscalationCategory'
+)
+BEGIN
+    ALTER TABLE dbo.Hermes_L3_Escalation_Trn_Tbl
+        ADD EscalationCategory varchar(100) NULL;
+END;
+GO
+
 /* ============================================================================
    Advanced Helpdesk enhancements (2026-09-03, user's explicit request):
    activity/work-log timeline, knowledge base + solution linking, problem
@@ -2983,16 +3004,31 @@ BEGIN
     (
         RunID, TicketID, TicketNo, EscalatedByBot,
         ProblemSummary, Findings, RootCause, SuggestedAction,
-        CreatedBy, Source
+        EscalationCategory, CreatedBy, Source
     )
     SELECT
         @RunID, @TicketID, c.TicketNo, r.WorkerID,
         COALESCE(c.ConversationSummary, c.BriefDetails), @Findings, @BlockReason,
         'Automated investigation blocked on a genuine capability gap -- needs human review.',
-        @HermesUserID, 'T-SQL'
+        'UNRESOLVED', @HermesUserID, 'T-SQL'
     FROM dbo.Complaint_Mst_Tbl c
     LEFT JOIN dbo.Hermes_L2_Response_Trn_Tbl r ON r.ID = @RunID
     WHERE c.ID = @TicketID;
+
+    /*
+      2026-09-22: this path is a genuine, terminal L3 escalation (the
+      review-cycle-cap exhaustion path in l2_pipeline_runtime.py's
+      _escalate_run), but unlike Hermes_L2_Publish_Response_Usp's
+      L3_ESCALATION/NEEDS_HUMAN_ACTION branch it never set EscalateToL3 on the
+      response row -- confirmed live: every one of the 17 escalation rows this
+      procedure had ever written carried EscalateToL3=0 on its run despite a
+      real, matching escalation record existing. Only set it when this call
+      actually inserted (the NOT EXISTS guard above may have short-circuited).
+    */
+    IF @@ROWCOUNT > 0
+        UPDATE dbo.Hermes_L2_Response_Trn_Tbl
+        SET EscalateToL3 = 1
+        WHERE ID = @RunID;
 END;
 GO
 
