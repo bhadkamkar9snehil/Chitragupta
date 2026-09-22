@@ -19,8 +19,23 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
-DEFAULT_GBRAIN_HOME = Path.home() / ".hermes" / "l2-gbrain"
+# The real, already-populated Chitragupta brain on this deployment (415 pages
+# synced from the repo's own Knowledge/deploy/skills tree: SP catalog, runtime
+# DB design, XBatch relationship atlas, vendor per-heat docs). Still a
+# dedicated project brain, not the operator's generic personal one -- just not
+# the not-yet-existing donor-proposed "l2-gbrain" name. CHITRAGUPTA_GBRAIN_HOME
+# overrides this for local testing.
+DEFAULT_GBRAIN_HOME = Path.home() / ".hermes" / "xstudio-gbrain"
 DEFAULT_TIMEOUT = max(10, int(os.environ.get("L2_GBRAIN_TIMEOUT_SECONDS", "60")))
+
+# bun-installed CLIs (gbrain among them) are not reliably on PATH for a
+# systemd --user gateway service, whose Environment=PATH is a snapshot taken
+# at profile-install time. Mirrors l2_pipeline_runtime._hermes_executable()'s
+# fallback-path search rather than requiring a service-unit edit per machine.
+_BINARY_FALLBACKS = (
+    Path.home() / ".bun" / "bin" / "gbrain",
+    Path.home() / ".local" / "bin" / "gbrain",
+)
 
 # Real, already-populated source on this deployment: a full-repo Knowledge/
 # deploy/skills sync (SP catalog, runtime DB design, XBatch relationship
@@ -83,7 +98,16 @@ def gbrain_home(value: str | None = None) -> Path:
 
 
 def binary() -> str:
-    return os.environ.get("CHITRAGUPTA_GBRAIN_BIN", "gbrain").strip() or "gbrain"
+    override = os.environ.get("CHITRAGUPTA_GBRAIN_BIN", "").strip()
+    if override:
+        return override
+    on_path = shutil.which("gbrain")
+    if on_path:
+        return on_path
+    for fallback in _BINARY_FALLBACKS:
+        if fallback.exists() and os.access(fallback, os.X_OK):
+            return str(fallback)
+    return "gbrain"
 
 
 def available() -> bool:
@@ -95,6 +119,13 @@ def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT,
     """Run one GBrain command inside the dedicated Chitragupta brain home."""
     env = os.environ.copy()
     env["GBRAIN_HOME"] = str(gbrain_home())
+    # gbrain's own shebang is `env bun`; a systemd --user gateway's PATH is a
+    # snapshot from profile-install time and does not reliably carry bun's
+    # install directory. Make it resolvable without requiring a service-unit
+    # edit per machine, same rationale as the binary() fallback above.
+    bun_bin = str(Path.home() / ".bun" / "bin")
+    if bun_bin not in env.get("PATH", "").split(os.pathsep):
+        env["PATH"] = bun_bin + os.pathsep + env.get("PATH", "")
     try:
         proc = subprocess.run(
             [binary(), *args],

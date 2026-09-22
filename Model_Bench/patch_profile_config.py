@@ -41,9 +41,9 @@ DENY_ENTRIES = [
     "'*uv pip*'",
 ]
 
-PROFILE_PLUGIN_ENTRIES = ["xstudio-l2-orchestrator", "xstudio-l2-tools", "xstudio-l2-trace"]
-ROOT_PLUGIN_ENTRIES = ["xstudio-l2-tools"]
-TOOLSET_ENTRIES = ["xstudio_l2"]
+PROFILE_PLUGIN_ENTRIES = ["xstudio-l2-orchestrator", "xstudio-l2-tools", "xstudio-l2-trace", "xstudio-l2-learning"]
+ROOT_PLUGIN_ENTRIES = ["xstudio-l2-tools", "xstudio-l2-learning"]
+TOOLSET_ENTRIES = ["xstudio_l2", "l2_learning"]
 
 SECTIONS: list[tuple[list[str], list[str], bool]] = [
     # (key path, entries to ensure, required)

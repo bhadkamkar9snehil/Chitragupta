@@ -637,7 +637,7 @@ def test_config_patch_handles_flow_style_lists() -> None:
     flow = _SAMPLE_CONFIG.replace("  cli:\n    - terminal\n    - todo\n", "  cli: [terminal, todo]\n")
     patched = _patch_sample(flow)
     assert "xstudio_l2" in patched
-    assert "[terminal, todo, xstudio_l2]" in patched
+    assert "[terminal, todo, xstudio_l2, l2_learning]" in patched
 
 
 def test_config_patch_does_not_abort_when_optional_section_absent() -> None:

@@ -108,7 +108,24 @@ class GBrainAdapterTests(unittest.TestCase):
     def test_default_gbrain_home_is_not_generic_user_brain(self):
         with mock.patch.dict(os.environ, {}, clear=True):
             home = mod.gbrain_home()
-        self.assertEqual(home, Path.home() / ".hermes" / "l2-gbrain")
+        self.assertEqual(home, Path.home() / ".hermes" / "xstudio-gbrain")
+
+    def test_binary_falls_back_to_bun_install_dir_when_not_on_path(self):
+        """A systemd --user gateway's PATH is a snapshot from profile-install
+        time and typically lacks bun's install dir. gbrain (a bun-installed
+        CLI) must still resolve without a per-machine service-unit edit."""
+        with mock.patch.object(mod.shutil, "which", return_value=None), \
+             mock.patch.object(Path, "exists", return_value=True), \
+             mock.patch("os.access", return_value=True):
+            self.assertEqual(mod.binary(), str(Path.home() / ".bun" / "bin" / "gbrain"))
+
+    def test_run_injects_bun_bin_into_subprocess_path(self):
+        completed = mock.Mock(returncode=0, stdout="[]", stderr="")
+        with mock.patch("subprocess.run", return_value=completed) as subprocess_run, \
+             mock.patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=True):
+            mod.run(["sources", "list", "--json"])
+        env_path = subprocess_run.call_args.kwargs["env"]["PATH"]
+        self.assertIn(str(Path.home() / ".bun" / "bin"), env_path.split(os.pathsep))
 
     def test_non_json_output_fails_closed(self):
         with mock.patch.object(mod, "run", return_value=(0, "not json", "")):

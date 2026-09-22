@@ -78,6 +78,19 @@ PY_FILES=(
   Model_Bench/xstudio_l2_tools_plugin/__init__.py
   Model_Bench/xstudio_l2_tool_bridge.py
   Model_Bench/test_xstudio_l2_tools_plugin.py
+  Model_Bench/l2_gbrain.py
+  Model_Bench/sync_l2_gbrain.py
+  Model_Bench/l2_context_envelope.py
+  Model_Bench/l2_context_delivery.py
+  Model_Bench/l2_context_delivery_base.py
+  Model_Bench/l2_context_delivery_assembly.py
+  Model_Bench/l2_context_delivery_receipts.py
+  Model_Bench/xstudio_l2_learning_plugin/__init__.py
+  Model_Bench/test_l2_gbrain.py
+  Model_Bench/test_sync_l2_gbrain.py
+  Model_Bench/test_l2_context_envelope.py
+  Model_Bench/test_l2_context_delivery.py
+  Model_Bench/test_xstudio_l2_learning_plugin.py
 )
 
 run_fast_checks() {
@@ -104,6 +117,13 @@ run_fast_checks() {
   section "Knowledge/skill validation"
   timed "knowledge manifest" python3 Model_Bench/validate_knowledge_manifest.py
   timed "KB retrieval tests" python3 Model_Bench/test_kb_retrieval.py
+
+  section "GBrain adapter / governed context-delivery contract tests"
+  timed "gbrain/context tests" bash -c '
+    cd Model_Bench && python3 -m unittest -v \
+      test_l2_gbrain test_sync_l2_gbrain test_l2_context_envelope \
+      test_l2_context_delivery test_xstudio_l2_learning_plugin
+  '
 }
 
 run_live_checks() {

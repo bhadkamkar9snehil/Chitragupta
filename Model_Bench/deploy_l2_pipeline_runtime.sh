@@ -81,7 +81,8 @@ for f in \
   reconcile_l2_pipeline.py \
   audit_kanban_completions.py \
   run_coalesced.py \
-  drain_and_summarize.py
+  drain_and_summarize.py \
+  l2_gbrain.py
  do
   cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
  done
@@ -118,13 +119,15 @@ cp "$ROOT/deploy/helpdesk_workflow_binding.json" "$SCRIPTS_DIR/helpdesk_workflow
 # depends on an event hook because ticket_scout reconciles before every claim.
 deploy_plugins() {
   local profile="$1" plugin src dir
-  for plugin in xstudio-l2-orchestrator xstudio-l2-tools xstudio-l2-trace; do
+  for plugin in xstudio-l2-orchestrator xstudio-l2-tools xstudio-l2-trace xstudio-l2-learning; do
     if [[ "$plugin" == "xstudio-l2-orchestrator" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_orchestrator_plugin"
     elif [[ "$plugin" == "xstudio-l2-tools" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_tools_plugin"
-    else
+    elif [[ "$plugin" == "xstudio-l2-trace" ]]; then
       src="$ROOT/Model_Bench/xstudio_l2_trace_plugin"
+    else
+      src="$ROOT/Model_Bench/xstudio_l2_learning_plugin"
     fi
     dir="$HOME/.hermes/profiles/$profile/plugins/$plugin"
     mkdir -p "$dir"
@@ -188,6 +191,8 @@ done
 echo "== Shared plugin install (required for toolset discovery) =="
 install_shared_plugin_for_discovery xstudio-l2-tools "$ROOT/Model_Bench/xstudio_l2_tools_plugin"
 echo "installed xstudio-l2-tools into $HOME/.hermes/plugins for toolset discovery"
+install_shared_plugin_for_discovery xstudio-l2-learning "$ROOT/Model_Bench/xstudio_l2_learning_plugin"
+echo "installed xstudio-l2-learning into $HOME/.hermes/plugins for toolset discovery"
 
 echo "== Profile config (idempotent, additive) =="
 for profile in "${ACTIVE_PROFILES[@]}"; do
