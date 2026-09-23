@@ -75,7 +75,7 @@ class WriteCurationActionTests(unittest.TestCase):
         result = write_curation_action(FakeCursor(insert_id="X"), run=run, disposition="CREATE_CANDIDATE", top_existing=None)
         self.assertEqual(result["action"], "NONE")
 
-    def test_update_existing_links_supersedes_both_directions(self):
+    def test_update_existing_creates_replacement_candidate_without_retiring_predecessor(self):
         cur = FakeCursor(insert_id="ART-NEW-2")
         top_existing = {"ID": "ART-OLD"}
         result = write_curation_action(cur, run=BASE_RUN, disposition="UPDATE_EXISTING", top_existing=top_existing)
@@ -84,27 +84,48 @@ class WriteCurationActionTests(unittest.TestCase):
         self.assertEqual(result["supersedes"], "ART-OLD")
         insert_sql, insert_params = cur.calls[0]
         self.assertIn("ART-OLD", insert_params)
-        update_sql, update_params = cur.calls[1]
-        self.assertIn("SupersededBySolutionID", update_sql)
-        self.assertEqual(update_params, ("ART-NEW-2", "ART-OLD"))
+        self.assertIn("'Candidate'", insert_sql)
+        # The predecessor remains Approved/retrievable until the replacement earns
+        # independent corroboration; no second UPDATE is allowed at creation time.
+        self.assertEqual(len(cur.calls), 1)
 
-    def test_reuse_existing_only_bumps_usage_never_touches_content(self):
+    def test_reuse_existing_uses_the_single_link_owner_then_promotes(self):
         cur = FakeCursor()
         top_existing = {"ID": "ART-OLD"}
         result = write_curation_action(cur, run=BASE_RUN, disposition="REUSE_EXISTING", top_existing=top_existing)
 
-        self.assertEqual(result["action"], "REUSE_EXISTING_BUMPED")
-        sql, params = cur.calls[0]
-        self.assertIn("UsageCount = ISNULL(UsageCount, 0) + 1", sql)
-        self.assertNotIn("ResolutionSteps", sql)
-        self.assertNotIn("RootCause", sql)
-        self.assertEqual(params, (BASE_RUN["RunID"], "ART-OLD"))
-        # Corroboration promotion: guarded to Candidate rows from a different source ticket.
+        self.assertEqual(result["action"], "REUSE_EXISTING_LINKED")
+        link_sql, link_params = cur.calls[0]
+        self.assertIn("Hermes_Link_Solution_To_Ticket_Usp", link_sql)
+        self.assertNotIn("UsageCount =", link_sql)
+        self.assertEqual(
+            link_params,
+            (BASE_RUN["TicketID"], "ART-OLD", BASE_RUN["RunID"]),
+        )
+
         promote_sql, promote_params = cur.calls[1]
         self.assertIn("ArticleStatus = 'Approved'", promote_sql)
         self.assertIn("ArticleStatus = 'Candidate'", promote_sql)
         self.assertIn("SourceTicketID", promote_sql)
+        self.assertIn("ArticleStatus = 'Superseded'", promote_sql)
+        self.assertIn("SupersededBySolutionID", promote_sql)
+        self.assertIn("SupersedesSolutionID", promote_sql)
         self.assertEqual(promote_params, ("ART-OLD", BASE_RUN["TicketID"]))
+
+    def test_replacement_is_retired_only_inside_successful_promotion_statement(self):
+        cur = FakeCursor()
+        write_curation_action(
+            cur,
+            run=BASE_RUN,
+            disposition="REUSE_EXISTING",
+            top_existing={"ID": "ART-NEW"},
+        )
+
+        promote_sql = cur.calls[1][0]
+        self.assertIn("OUTPUT INSERTED.ID, INSERTED.SupersedesSolutionID", promote_sql)
+        self.assertIn("INNER JOIN @promoted", promote_sql)
+        self.assertIn("previous.ArticleStatus = 'Superseded'", promote_sql)
+        self.assertIn("previous.IsActive = 0", promote_sql)
 
     def test_reuse_existing_without_a_candidate_is_a_noop(self):
         cur = FakeCursor()
