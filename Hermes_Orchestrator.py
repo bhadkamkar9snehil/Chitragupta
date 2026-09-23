@@ -1008,7 +1008,8 @@ class HermesL2Client:
     def log_activity(self, ticket_id: str, activity_type: str, note_text: Optional[str] = None,
                       actor_type: str = "Bot", actor_name: Optional[str] = None,
                       old_value: Optional[str] = None, new_value: Optional[str] = None,
-                      is_customer_visible: bool = False, run_id: Optional[str] = None) -> None:
+                      is_customer_visible: bool = False, run_id: Optional[str] = None,
+                      deduplicate_exact: bool = False) -> None:
         """EXEC dbo.Hermes_Log_Ticket_Activity_Usp"""
         cur = self.conn.cursor()
         cur.execute(
@@ -1016,10 +1017,10 @@ class HermesL2Client:
             EXEC dbo.Hermes_Log_Ticket_Activity_Usp
                 @TicketID = ?, @ActivityType = ?, @ActorType = ?, @ActorName = ?,
                 @NoteText = ?, @OldValue = ?, @NewValue = ?, @IsCustomerVisible = ?,
-                @RunID = ?, @HermesUserID = ?;
+                @RunID = ?, @HermesUserID = ?, @DeduplicateExact = ?;
             """,
             (ticket_id, activity_type, actor_type, actor_name, note_text, old_value,
-             new_value, is_customer_visible, run_id, self.hermes_user_id),
+             new_value, is_customer_visible, run_id, self.hermes_user_id, deduplicate_exact),
         )
         self._commit(cur)
 
@@ -1419,6 +1420,7 @@ def _cli_log_activity(args: argparse.Namespace, parser: argparse.ArgumentParser,
     client.log_activity(
         ticket_id=args.ticket_id, activity_type=args.activity_type,
         note_text=args.note_text, actor_type=args.actor_type, run_id=args.run_id,
+        deduplicate_exact=args.deduplicate_exact,
     )
     print(f"Logged {args.activity_type} activity for ticket {args.ticket_id}.")
 
@@ -2050,6 +2052,10 @@ def build_parser() -> argparse.ArgumentParser:
                          choices=["Note", "StatusChange", "Escalation", "Resolution", "Reopen", "SolutionLinked", "ProblemLinked"],
                          help="Required with --log-activity.")
     parser.add_argument("--note-text", default=None, help="Free text for --log-activity.")
+    parser.add_argument("--deduplicate-exact", action="store_true",
+                         help="With --log-activity, suppress an exact duplicate for the same "
+                              "ticket/run/type/actor/note. Intended for deterministic publication "
+                              "activity repair; ordinary activity logging remains append-only.")
     parser.add_argument("--actor-type", default="Bot", choices=["Bot", "Human", "System"])
     parser.add_argument("--search-solutions", default=None, metavar="ROUTE",
                          help="Print active Hermes_Solution_Article_Mst_Tbl rows for this Route "
