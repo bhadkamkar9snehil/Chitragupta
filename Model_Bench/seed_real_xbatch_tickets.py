@@ -337,9 +337,13 @@ def generate_human_tickets(entities: dict, offset: int = 0, seed: int = 7) -> li
 
     def add(area, kind, brief, text, case, expect, facts):
         who = rng.choice(REQUESTERS)
+        # Label from the outcome actually written, not the rotation slot (a category that has
+        # no vague/missing-id variant writes a normal ticket in that slot).
+        label = {"CONFIRMED": "MATCH", "CORRECTED": "MISMATCH", "ANSWERED": "MATCH",
+                 "QUESTION": "MISSING_ID", "L3_ESCALATION": "VAGUE"}[expect]
         out.append({"AreaID": area, "ComplaintTypeID": kind, "Priority": PRIORITY_HIGH,
                     "BriefDetails": brief, "Description": text, "Requester": who,
-                    "Expectation": {"case": case, "expected": expect, "facts": facts}})
+                    "Expectation": {"case": label, "expected": expect, "facts": facts}})
 
     for i, h in enumerate(entities.get("lrf_heats", [])[offset:end]):
         case = _human_case(i)

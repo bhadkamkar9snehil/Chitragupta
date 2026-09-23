@@ -268,6 +268,40 @@ def jev_review_gates(cur, since: datetime) -> dict[str, Any]:
             "blocked_by_gate": dict(sorted(blocked.items(), key=lambda kv: -kv[1]))}
 
 
+EXPECTATIONS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seeded_ticket_expectations.jsonl")
+# Expected outcome -> the response types that satisfy it.
+_EXPECTED_TYPES = {"CONFIRMED": {"RESOLUTION"}, "CORRECTED": {"RESOLUTION"}, "ANSWERED": {"RESOLUTION"},
+                   "QUESTION": {"QUESTION"}, "L3_ESCALATION": {"L3_ESCALATION", "NEEDS_HUMAN_ACTION"}}
+
+
+def expectation_score(cur) -> dict[str, Any]:
+    """Human-style seeded tickets: latest published response type vs the recorded expected outcome."""
+    if not os.path.exists(EXPECTATIONS_PATH):
+        return {"scored": 0, "rows": []}
+    with open(EXPECTATIONS_PATH, encoding="utf-8") as handle:
+        expected = {e["ticket_no"]: e for e in map(json.loads, handle) if e.get("ticket_no")}
+    if not expected:
+        return {"scored": 0, "rows": []}
+    marks = ",".join("?" * len(expected))
+    rows = _rows(cur, f"""
+        SELECT c.TicketNo, r.ResponseType, r.LocalModelPurpose, LEFT(r.ReplyText, 160) AS Reply
+        FROM dbo.Complaint_Mst_Tbl c
+        OUTER APPLY (SELECT TOP 1 * FROM dbo.Hermes_L2_Response_Trn_Tbl x WHERE x.TicketID = c.ID
+                     AND x.IsDeleted = 0 AND x.ProcessStatus IN ('COMPLETED', 'WAITING_USER')
+                     ORDER BY x.CompletedOn DESC) r
+        WHERE c.TicketNo IN ({marks})""", *expected)
+    out = []
+    for row in rows:
+        want = expected[row["TicketNo"]]["expected"]
+        row["Expected"] = want
+        row["Case"] = expected[row["TicketNo"]]["case"]
+        row["Pass"] = None if not row["ResponseType"] else row["ResponseType"] in _EXPECTED_TYPES.get(want, set())
+        out.append(row)
+    done = [r for r in out if r["Pass"] is not None]
+    return {"scored": len(done), "passed": sum(1 for r in done if r["Pass"]), "pending": len(out) - len(done),
+            "rows": sorted(out, key=lambda r: r["TicketNo"])}
+
+
 def claim_health(cur) -> dict[str, Any]:
     """Is the scout claiming? Waiting eligible tickets with no active run and no recent claim = stall."""
     row = _rows(cur, """
@@ -302,6 +336,7 @@ def build_report(cur, since: datetime) -> dict[str, Any]:
         "largest_card": largest_card_sections(cur, since),
         "spill_threshold_chars": SPILL_THRESHOLD_CHARS,
         "claim_health": claim_health(cur),
+        "expectations": expectation_score(cur),
         "invariants": invariants(cur),
     }
 
@@ -349,6 +384,15 @@ def print_markdown(report: dict[str, Any], limit: int) -> None:
             print(f"- context compiler: {card['context_compiler']}")
         for sec in card["sections"]:
             print(f"- {sec['chars']:>7,}  {sec['section']}")
+    e = report["expectations"]
+    if e["rows"]:
+        print(f"\n## Human-style tickets vs expected outcome\n- passed {e.get('passed', 0)} of {e['scored']} "
+              f"scored, {e.get('pending', 0)} pending")
+        for r in e["rows"]:
+            mark = "PASS" if r["Pass"] else ("pending" if r["Pass"] is None else "FAIL")
+            via = "no-Qwen" if r["ResponseType"] and not r["LocalModelPurpose"] else "Qwen" if r["ResponseType"] else "-"
+            print(f"- {mark:7} {r['TicketNo']} {r['Case']:10} expected {r['Expected']:13} got "
+                  f"{r['ResponseType'] or '-':13} {via}")
     h = report["claim_health"]
     print(f"\n## Claim health\n- {'STALLED' if h['Stalled'] else 'OK'}: {h['Waiting']} waiting, "
           f"{h['Active']} active, last claim {h['MinutesSinceClaim']} min ago")
