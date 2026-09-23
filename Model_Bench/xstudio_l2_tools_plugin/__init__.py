@@ -177,7 +177,7 @@ _REQUIRED_FIELDS_BY_TOOL = {
     for name, schema in TOOL_SCHEMAS.items()
 }
 _EFFECTIVE_REQUIRED_FIELDS_BY_TOOL: dict[str, tuple[str, ...]] = {
-    "xstudio_select": ("database", "table", "columns"),
+    "xstudio_select": ("database", "table"),
     "xstudio_query": ("database", "sql"),
     "xstudio_suggest_tables": ("database", "search"),
     "xstudio_find_objects": ("database", "search"),
@@ -411,8 +411,8 @@ def _shape_error_for_tool(tool_name: str, args: dict[str, Any]) -> str | None:
     missing = [key for key in required if args.get(key) is None or args.get(key) == "" or args.get(key) == []]
     if missing:
         return f"tool={tool_name!r} requires: {', '.join(required)}; missing: {', '.join(missing)}"
-    if tool_name == "xstudio_select" and not isinstance(args.get("columns"), list):
-        return "xstudio_select requires columns as an array of column names"
+    if tool_name == "xstudio_select" and args.get("columns") is not None and not isinstance(args.get("columns"), list):
+        return "xstudio_select columns must be an array of column names (or omit it for all real columns)"
     if tool_name == "xstudio_read_procedure" and not isinstance(args.get("parameters"), dict):
         return "xstudio_read_procedure requires parameters as an object"
     if tool_name == "xstudio_save_ledger" and not isinstance(args.get("ledger"), dict):
