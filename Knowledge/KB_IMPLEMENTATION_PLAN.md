@@ -64,6 +64,8 @@ CREATE_CANDIDATE
 NONE
 ```
 
+Promotion (2026-09-23): a `Candidate` becomes `Approved` only when a later verified RESOLUTION on a different ticket is judged `REUSE_EXISTING` for it (independent corroboration). Retrieval reads only `Approved`, so this is what lets the KB grow without a human reviewer.
+
 `RESOLUTION -> CREATE NEW ARTICLE` is explicitly rejected as the permanent model.
 
 ### 2.5 Retrieval must be able to abstain
