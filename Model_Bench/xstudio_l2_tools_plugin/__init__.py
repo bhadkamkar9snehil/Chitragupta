@@ -492,13 +492,11 @@ def _derive_proposal_metadata(fields: dict[str, Any], params: dict[str, Any]) ->
 
 
 def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
-    """Assemble flat proposal args into full kanban_complete metadata, then complete the task.
+    """Assemble flat proposal args into the full completion metadata and stage it.
 
-    This is trusted harness code. The model fills in simple top-level string
-    fields; this handler builds the nested claims array and metadata dict that
-    the completion contract requires, then calls ``hermes kanban complete``
-    directly.  It does NOT consume the XStudio tool-call budget and does NOT
-    go through the SQL bridge.
+    The model fills in simple top-level fields; this trusted handler builds the nested
+    claims and metadata. The card is then finished by Hermes's own kanban_complete, into
+    which _kanban_contract_guard injects the staged proposal. No SQL bridge, no budget.
     """
     session = _session_key(kwargs.get("task_id", ""))
     context = _context_for(session, kwargs)
@@ -526,34 +524,17 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
             "retry_same_call": False,
         })
 
-    cmd = [
-        "hermes", "kanban", "complete", task_id,
-        "--summary", fields["summary"][:500],
-        "--result", response_type,
-        "--metadata", json.dumps(metadata, separators=(",", ":"), default=str),
-    ]
-    try:
-        # Explicit cwd: an inherited, since-deleted worker cwd made `hermes`
-        # fail with "getcwd() failed" and lost a VERIFIED RESOLUTION (2026-09-22).
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30, cwd=str(Path.home()),
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return json.dumps({
-            "ok": False,
-            "error": f"kanban complete failed: {type(exc).__name__}: {exc}",
-            "retry_same_call": False,
-        })
-    if proc.returncode != 0:
-        stderr = (proc.stderr or "").strip()[:500]
-        return json.dumps({
-            "ok": False,
-            "error": f"kanban complete exited {proc.returncode}: {stderr}",
-            "retry_same_call": False,
-        })
-
+    # Staged, not completed here. Hermes's turn-end guard recognises only kanban_complete /
+    # kanban_block as terminal; completing via the CLI inside this tool made Hermes inject
+    # "task is still running ... call kanban_complete" (25 wasted calls per 2h on 2026-09-23).
+    # The native kanban_complete that follows carries this exact proposal.
     with _lock:
-        _submitted_tasks.add(task_id)
+        _session_context[session]["staged_task"] = task_id
+        _staged_completions[task_id] = {
+            "summary": fields["summary"][:500],
+            "result": response_type,
+            "metadata": metadata,
+        }
     return json.dumps({
         "ok": True,
         "submitted": True,
@@ -561,9 +542,9 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
         "evidence_status": evidence_status,
         "claim_status": claim_status,
         "message": (
-            f"Proposal submitted as {response_type} with {claim_status} claim. "
-            "This task is now complete: stop here and do not call kanban_complete "
-            "(the card is already closed). The reconciler handles review and publication."
+            f"Proposal accepted as {response_type} with {claim_status} claim. "
+            "Now call kanban_complete (no arguments needed: the harness attaches this proposal). "
+            "That finishes the card."
         ),
     })
 
@@ -601,7 +582,8 @@ _SUBMIT_REDIRECT = (
     "requester_question for QUESTION. The harness builds the structured proposal."
 )
 # Cards already closed by a successful xstudio_submit_proposal (worker task ids).
-_submitted_tasks: set[str] = set()
+# task_id -> {summary, result, metadata} awaiting the worker's kanban_complete.
+_staged_completions: dict[str, dict[str, Any]] = {}
 # Empty investigator completions already redirected once, keyed by worker task/run.
 _redirected_empty_completions: set[str] = set()
 
@@ -719,13 +701,11 @@ def _kanban_contract_guard(tool_name: str, args: dict[str, Any], context: dict[s
         if result is not None:
             return result
         with _lock:
-            already_submitted = os.environ.get("HERMES_KANBAN_TASK", "") in _submitted_tasks
-        if already_submitted:
-            # Live: after a successful submit the model called kanban_complete and was
-            # told to submit again, looping on an already-closed card.
-            return {"action": "block", "message": (
-                "Already done: xstudio_submit_proposal completed this card. Do not call any more tools; "
-                "end the session now.")}
+            staged = _staged_completions.get(os.environ.get("HERMES_KANBAN_TASK", "")
+                                             or context.get("staged_task", ""))
+        if staged:
+            # The validated proposal is the completion; whatever the model typed is replaced.
+            return {"action": "modify", "args": dict(staged)}
         result = _kanban_completion_metadata_guard(args, context) or _review_completion_metadata(args, context)
         if result is not None and result.get("action") == "block":
             return result
@@ -929,8 +909,8 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str]:
         "Reject RESOLUTION if it only diagnoses a problem or proposes an unexecuted fix. "
         "Reject unsupported causal assertions without broad schema exploration. "
         if context.get("pipeline_stage", "").lower() == "review" else
-        "You are the WRITER: the evidence is on the card. Finish with one "
-        "xstudio_submit_proposal call; if the evidence does not answer the ticket, choose "
+        "You are the WRITER: the evidence is on the card. Finish with xstudio_submit_proposal, "
+        "then kanban_complete with no arguments; if the evidence does not answer the ticket, choose "
         "L3_ESCALATION, or QUESTION when only the requester can supply the missing identifier. "
     )
     return {

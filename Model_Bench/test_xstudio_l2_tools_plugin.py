@@ -874,6 +874,11 @@ def test_config_patch_does_not_abort_when_optional_section_absent() -> None:
 # xstudio_submit_proposal (flat completion tool)
 # --------------------------------------------------------------------------
 
+def _staged_metadata() -> dict:
+    """The proposal xstudio_submit_proposal staged for the worker's kanban_complete."""
+    return list(plugin._staged_completions.values())[-1]["metadata"]
+
+
 def _setup_investigator_context(task_id: str = "submit-test",
                                 run_id: str = "RUN-SP", ticket_id: str = "TICKET-SP") -> None:
     """Seed session context so the handler can resolve run_id/ticket_id."""
@@ -904,22 +909,16 @@ def test_submit_proposal_rejects_incomplete_update_without_next_step() -> None:
 
 def test_submit_proposal_assembles_complete_metadata_from_flat_args() -> None:
     _setup_investigator_context()
-    with mock.patch.object(plugin.subprocess, "run") as mock_run:
-        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
-        result = plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
-            task_id="submit-test",
-        )
-    parsed = json.loads(result)
+    parsed = json.loads(plugin._submit_proposal_handler(
+        {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP}, task_id="submit-test"))
     assert parsed["ok"] is True
     assert parsed["response_type"] == "UPDATE"
     assert parsed["claim_status"] == "UNVERIFIED"
     assert parsed["evidence_status"] == "INCOMPLETE"
-    # Verify the metadata passed to hermes kanban complete
-    call_args = mock_run.call_args[0][0]
-    assert call_args[:4] == ["hermes", "kanban", "complete", "submit-test"]
-    metadata_idx = call_args.index("--metadata")
-    metadata = json.loads(call_args[metadata_idx + 1])
+    assert "kanban_complete" in parsed["message"]
+    staged = plugin._staged_completions["submit-test"]
+    assert staged["result"] == "UPDATE"
+    metadata = staged["metadata"]
     assert metadata["run_id"] == "RUN-SP"
     assert metadata["ticket_id"] == "TICKET-SP"
     assert metadata["response_type"] == "UPDATE"
@@ -976,7 +975,7 @@ def test_submit_proposal_verified_claim_with_action_id_passes() -> None:
     assert result["ok"] is True
     assert result["claim_status"] == "VERIFIED"
     assert result["evidence_status"] == "COMPLETE"
-    metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
+    metadata = _staged_metadata()
     assert metadata["claims"][0]["evidence"] == [{"action_id": "ACTION-123"}]
 
 
@@ -988,7 +987,7 @@ def test_submit_proposal_generates_reply_text_when_absent() -> None:
             {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
             task_id="submit-reply",
         )
-    metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
+    metadata = _staged_metadata()
     assert metadata["reply_text"] == _SUBSTANTIVE_SUMMARY
     assert metadata["evidence_status"] == "INCOMPLETE"
 
@@ -1002,7 +1001,7 @@ def test_submit_proposal_uses_explicit_reply_text_when_provided() -> None:
              "reply_text": "Custom user-facing message."},
             task_id="submit-reply-explicit",
         )
-    metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
+    metadata = _staged_metadata()
     assert metadata["reply_text"] == "Custom user-facing message."
 
 
@@ -1014,7 +1013,7 @@ def test_submit_proposal_injects_run_and_ticket_from_context() -> None:
             {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
             task_id="submit-ctx",
         )
-    metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
+    metadata = _staged_metadata()
     assert metadata["run_id"] == "CTX-RUN"
     assert metadata["ticket_id"] == "CTX-TICKET"
 
@@ -1030,20 +1029,18 @@ def test_submit_proposal_uses_kanban_task_id_learned_from_show() -> None:
         task_id=session_id,
         session_id=session_id,
     )
-    with mock.patch.object(plugin.subprocess, "run") as mock_run:
-        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
-        result = json.loads(plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
-            task_id=session_id,
-            session_id=session_id,
-        ))
+    result = json.loads(plugin._submit_proposal_handler(
+        {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
+        task_id=session_id,
+        session_id=session_id,
+    ))
     assert result["ok"] is True
-    assert mock_run.call_args[0][0][3] == "t_real_kanban_task"
+    assert "t_real_kanban_task" in plugin._staged_completions
 
 
 def test_submit_proposal_targets_own_worker_task_not_inspected_prior_card() -> None:
-    """Live 2026-09-22: a rework worker ran kanban_show on the prior attempt's card,
-    the handler then completed that card and Hermes refused the mutation."""
+    """Live 2026-09-22: a rework worker ran kanban_show on the prior attempt's card; the
+    proposal must still belong to the worker's own card and run."""
     session_id = "rework-session"
     show = lambda tid, run: plugin._post_tool_call(
         "kanban_show",
@@ -1053,27 +1050,22 @@ def test_submit_proposal_targets_own_worker_task_not_inspected_prior_card() -> N
     with mock.patch.dict(plugin.os.environ, {"HERMES_KANBAN_TASK": "t_own_rework"}):
         show("t_own_rework", "RUN-OWN")
         show("t_prior_attempt", "RUN-PRIOR")
-        with mock.patch.object(plugin.subprocess, "run") as mock_run:
-            mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
-            result = json.loads(plugin._submit_proposal_handler(
-                {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
-                task_id=session_id, session_id=session_id,
-            ))
+        result = json.loads(plugin._submit_proposal_handler(
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
+            task_id=session_id, session_id=session_id,
+        ))
     assert result["ok"] is True
-    cmd = mock_run.call_args[0][0]
-    assert cmd[3] == "t_own_rework"
-    assert json.loads(cmd[cmd.index("--metadata") + 1])["run_id"] == "RUN-OWN"
+    assert plugin._staged_completions["t_own_rework"]["metadata"]["run_id"] == "RUN-OWN"
+    assert "t_prior_attempt" not in plugin._staged_completions
 
 
-def test_submit_proposal_runs_hermes_from_a_stable_cwd() -> None:
-    """Live 2026-09-22: an inherited deleted cwd made `hermes` die with getcwd()."""
-    _setup_investigator_context(task_id="submit-cwd")
-    with mock.patch.object(plugin.subprocess, "run") as mock_run:
-        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+def test_submit_proposal_never_shells_out_to_hermes() -> None:
+    """Completion is Hermes's own kanban_complete; the submit tool starts no subprocess."""
+    _setup_investigator_context(task_id="submit-no-cli")
+    with mock.patch.object(plugin.subprocess, "run") as run:
         plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP}, task_id="submit-cwd",
-        )
-    assert mock_run.call_args.kwargs["cwd"] == str(plugin.Path.home())
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP}, task_id="submit-no-cli")
+    run.assert_not_called()
 
 
 def test_leaked_qwen_parameter_markup_is_cut_and_swallowed_args_recovered() -> None:
@@ -1136,7 +1128,7 @@ def test_submit_proposal_includes_optional_fields_in_metadata() -> None:
              "resolution": "Manual data entry required"},
             task_id="submit-optional",
         )
-    metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
+    metadata = _staged_metadata()
     assert metadata["problem_summary"] == "SAP posting missing"
     assert metadata["root_cause"] == "Heat not in MES"
     assert metadata["resolution"] == "Manual data entry required"
@@ -1216,8 +1208,7 @@ def test_submit_proposal_cannot_mark_unverified_claim_complete() -> None:
              "claim_status": "UNVERIFIED", "evidence_status": "COMPLETE"},
             task_id="submit-unverified-complete",
         )
-    command = mock_run.call_args[0][0]
-    metadata = json.loads(command[command.index("--metadata") + 1])
+    metadata = _staged_metadata()
     assert metadata["evidence_status"] == "INCOMPLETE"
     assert not metadata["reply_text"].startswith("Evidence status")
 
@@ -1251,16 +1242,20 @@ def test_l2_worker_cannot_author_unrunnable_scripts() -> None:
     assert notes is None
 
 
-def test_kanban_complete_after_successful_submit_says_stop_not_resubmit() -> None:
-    """Live 13:07: the guard told a worker to resubmit an already-closed card."""
+def test_kanban_complete_after_submit_carries_the_staged_proposal() -> None:
+    """Live 2026-09-23: submit closed the card via the CLI, Hermes's turn-end guard did not see a
+    kanban_complete, told the worker the task was still running, and the worker's
+    kanban_complete was then refused (25 per 2h). Now the native kanban_complete finishes the
+    card and carries the validated proposal."""
     _setup_investigator_context(task_id="submitted-then-complete")
-    with mock.patch.dict(plugin.os.environ, {"HERMES_KANBAN_TASK": "t_done_card"}),             mock.patch.object(plugin.subprocess, "run") as run:
-        run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+    with mock.patch.dict(plugin.os.environ, {"HERMES_KANBAN_TASK": "t_done_card"}):
         plugin._submit_proposal_handler({"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
                                         task_id="submitted-then-complete")
-        blocked = plugin._pre_tool_call("kanban_complete", {"summary": "done"}, task_id="submitted-then-complete")
-    assert blocked["action"] == "block" and "Already done" in blocked["message"]
-    assert "xstudio_submit_proposal now" not in blocked["message"]
+        verdict = plugin._pre_tool_call("kanban_complete", {"summary": "done"}, task_id="submitted-then-complete")
+    assert verdict["action"] == "modify"
+    assert verdict["args"]["result"] == "UPDATE"
+    assert verdict["args"]["metadata"]["response_type"] == "UPDATE"
+    assert verdict["args"]["summary"] == _SUBSTANTIVE_SUMMARY[:500]
 
 
 def test_empty_reviewer_approval_still_gets_summary_and_record() -> None:
@@ -1311,14 +1306,11 @@ def test_empty_kanban_block_is_repaired_with_a_safe_reason() -> None:
 def test_requester_question_produces_question_with_customer_text() -> None:
     _setup_investigator_context(task_id="submit-question")
     question = "Please provide the affected heat number and the value you entered."
-    with mock.patch.object(plugin.subprocess, "run") as run:
-        run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
-        result = json.loads(plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP,
-             "requester_question": question}, task_id="submit-question"))
+    result = json.loads(plugin._submit_proposal_handler(
+        {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP,
+         "requester_question": question}, task_id="submit-question"))
     assert result["response_type"] == "QUESTION"
-    command = run.call_args[0][0]
-    metadata = json.loads(command[command.index("--metadata") + 1])
+    metadata = _staged_metadata()
     assert metadata["reply_text"] == question
     assert metadata["investigator_notes"] == _SUBSTANTIVE_SUMMARY
 
@@ -1385,7 +1377,7 @@ def test_verified_resolution_without_resolution_field_uses_the_summary() -> None
             {"response_type": "RESOLUTION", "summary": _SUBSTANTIVE_SUMMARY,
              "claim_status": "VERIFIED", "action_id": "ACT-1"}, task_id="submit-res-fill"))
     assert out.get("ok") is not False, out
-    metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
+    metadata = _staged_metadata()
     assert metadata["resolution"] == _SUBSTANTIVE_SUMMARY
 
 

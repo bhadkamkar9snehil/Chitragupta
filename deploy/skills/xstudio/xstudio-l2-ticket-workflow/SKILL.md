@@ -26,7 +26,8 @@ You have no data tools and need none. You never write SQL, scripts or files.
 
 1. Read the fact table and the live evidence. Reason over them: compare, calculate, explain.
 2. Choose the outcome.
-3. Call `xstudio_submit_proposal` once. It completes the card; then stop.
+3. Call `xstudio_submit_proposal` once, then `kanban_complete` with no arguments (the harness
+   attaches your proposal). That finishes the card.
 
 ## Choosing the outcome
 
