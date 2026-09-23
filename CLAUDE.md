@@ -17,6 +17,9 @@ Do **not** duplicate the lifecycle architecture here. The authoritative sources 
 - Live lifecycle: centralized Kanban state machine in `Model_Bench/l2_pipeline_runtime.py`.
 - Global SQL WIP: `1` active run.
 - Priorities: review `30`, rework `20`, new investigation `10`.
+- No-Qwen first: audited probes -> harness fact table -> Jev `direct_answer` picks the outcome -> fixed reply published. Jev never writes text; the local model runs only on NEEDS_REASONING.
+- The model never writes SQL or names columns: `xstudio_read_table(table)` lets the harness pick filter and columns.
+- Worker profiles: `l2-jev-investigator`, `l2-reviewer-primary`; `l2-investigator` hosts the cron jobs. Gemma/primary/fallback profiles are retired.
 - Reviewer creation is deferred until investigator/rework completion is normalized and reviewable.
 - Reviewer receives frozen `proposal_json`; deterministic publisher publishes that same proposal.
 - Rework cycles use `review_cycle`, not SQL `AttemptNo`; max cycles = 3.

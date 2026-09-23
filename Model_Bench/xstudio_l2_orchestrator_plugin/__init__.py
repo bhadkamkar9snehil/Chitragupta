@@ -16,7 +16,6 @@ from pathlib import Path
 _TRIGGER_TOOLS = {"kanban_complete", "kanban_block"}
 _PROFILE_SCRIPT_DIRS = [
     Path.home() / ".hermes" / "profiles" / "l2-investigator" / "scripts",
-    Path.home() / ".hermes" / "profiles" / "l2-investigator-primary" / "scripts",
 ]
 _DEBUG_DIR = Path.home() / ".hermes" / "plugin-data" / "xstudio-l2-orchestrator"
 

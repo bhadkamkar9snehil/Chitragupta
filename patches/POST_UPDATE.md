@@ -45,7 +45,6 @@ For a rebuilt profile install:
 ```bash
 source ~/.hermes/hermes-agent/venv/bin/activate
 pip install qdrant-client mem0ai ollama
-python3 Model_Bench/setup_mem0.py
 ```
 
 ## 3. Re-deploy the deterministic L2 pipeline runtime

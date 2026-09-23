@@ -110,46 +110,6 @@ class LocalModelActionDispatchTests(unittest.TestCase):
         )
 
 
-class BuildQueryFallthroughTests(unittest.TestCase):
-    """The one real cross-handler dependency: --build-query --execute must
-    reach the exact same audited _cli_query path as a direct --query call."""
-
-    def test_no_execute_flag_prints_sql_and_never_touches_client(self):
-        parser = MagicMock()
-        client = MagicMock()
-        args = _args(columns="ID,Title", where=None, order_by=None, top=None,
-                      execute=False, database=None, build_query="dbo.Foo")
-        with patch.object(orch, "build_query_mechanically",
-                          return_value={"ok": True, "sql": "SELECT ID,Title FROM dbo.Foo", "database": "XStudio_Helpdesk"}):
-            orch._cli_build_query(args, parser, client, database_explicitly_given=None)
-        client.conn.cursor.assert_not_called()
-
-    def test_execute_flag_falls_through_to_cli_query(self):
-        parser = MagicMock()
-        client = MagicMock()
-        cur = client.conn.cursor.return_value
-        cur.description = [("ID",)]
-        cur.fetchall.return_value = [(1,)]
-        args = _args(columns="ID", where=None, order_by=None, top=None,
-                      execute=True, database=None, build_query="dbo.Foo", run_id=None)
-        with patch.object(orch, "build_query_mechanically",
-                          return_value={"ok": True, "sql": "SELECT ID FROM dbo.Foo", "database": "XStudio_Helpdesk"}):
-            orch._cli_build_query(args, parser, client, database_explicitly_given=None)
-        # The fall-through must have actually reached _cli_query's real SQL path.
-        cur.execute.assert_called_once_with("SELECT ID FROM dbo.Foo")
-
-    def test_invalid_table_exits_nonzero_without_ever_reaching_query(self):
-        parser = MagicMock()
-        client = MagicMock()
-        args = _args(columns="ID", where=None, order_by=None, top=None,
-                      execute=True, database=None, build_query="dbo.NotReal")
-        with patch.object(orch, "build_query_mechanically",
-                          return_value={"ok": False, "error": "unknown table"}):
-            with self.assertRaises(SystemExit):
-                orch._cli_build_query(args, parser, client, database_explicitly_given=None)
-        client.conn.cursor.assert_not_called()
-
-
 class PublishResponseRunIdTests(unittest.TestCase):
     """run_id-from-last-claim recovery logic, unchanged by the extraction."""
 

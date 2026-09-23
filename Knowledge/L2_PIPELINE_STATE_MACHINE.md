@@ -264,7 +264,7 @@ This compiler changes only what is shown to the local model. It does not mutate 
 
 The same assessment also returns an advisory execution mode: `QWEN_FREE`, `COMPOSE_ONLY`, or `FOCUSED_REASONING`. Runtime policy independently resolves that recommendation.
 
-`QWEN_FREE` is intentionally not a generic "Jev is confident" shortcut. It is accepted only for high-confidence `L3_ESCALATION` or `NEEDS_HUMAN_ACTION` outcomes, with strong evidence quality, low remaining probe/System-2 need, and (for human action) high human-action probability. Full-ticket security screening can veto it. The live workflow binding must contain an exact terminal handoff status, and the resulting deterministic proposal must still pass the normal Jev primary review before publication. Any failure falls back to the local-model path without mutating Helpdesk state.
+`QWEN_FREE` (no-Qwen) is the target path: after the audited probes, the harness builds a fact table (fields the ticket names, recorded vs reported values, action IDs), Jev's `direct_answer` workflow picks CONFIRMED/CORRECTED/ANSWERED/NOT_FOUND/NEEDS_REASONING, and the harness renders a fixed reply with VERIFIED claims and publishes it. Jev never writes text; outcomes the facts contradict are refused. Only NEEDS_REASONING (or no audited facts) goes to the local model. Full-ticket security screening can veto it; any failure falls back to the local-model path without mutating Helpdesk state.
 
 `COMPOSE_ONLY` uses a smaller model-facing context budget and normally zero additional live reads. `FOCUSED_REASONING` gets the larger bounded context/recovery budget. The route-specific skill is loaded only when Jev's `needs_route_skill` judgment crosses deterministic policy; base lifecycle/safety skills remain attached.
 
@@ -274,7 +274,6 @@ The default profile is:
 l2-jev-investigator
 ```
 
-`l2-investigator-primary` remains a compatibility/fallback profile.
 
 ## 4. Frozen proposal contract
 

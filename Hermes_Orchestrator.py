@@ -94,7 +94,6 @@ import difflib
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -163,7 +162,6 @@ def build_query_mechanically(table: str, columns: List[str], where: Optional[str
     entry = flat.get(table_key)
     ambiguity_warning = None
     if entry and not database:
-        all_dbs_flat = _load_flat_schema(None)
         dbs_with_table = [db for db, tbls in json.loads(_SCHEMA_ALLOWLIST_PATH.read_text(encoding="utf-8")).items()
                           if any(q.split(".")[-1].lower() == table_key for q in tbls)]
         if len(dbs_with_table) > 1:
@@ -520,17 +518,6 @@ class HermesL2Client:
             "related_sql_objects": result_sets[3] if len(result_sets) > 3 else [],
         }
 
-    def find_sql_objects(self, database_name: str, search_text: str,
-                          object_type: Optional[str] = None, top_n: int = 50) -> List[Dict]:
-        """EXEC dbo.Hermes_L2_Find_SQL_Objects_Usp -- search procs/views/triggers by name or definition text."""
-        cur = self.conn.cursor()
-        cur.execute(
-            "EXEC dbo.Hermes_L2_Find_SQL_Objects_Usp "
-            "@DatabaseName = ?, @SearchText = ?, @ObjectType = ?, @TopN = ?;",
-            (database_name, search_text, object_type, top_n),
-        )
-        return _rows_as_dicts(cur)
-
     def get_sql_object_definition(self, database_name: str, schema_name: str,
                                    object_name: str) -> Optional[Dict]:
         """EXEC dbo.Hermes_L2_Get_SQL_Object_Definition_Usp -- full sys.sql_modules text for one object."""
@@ -542,17 +529,6 @@ class HermesL2Client:
         )
         rows = _rows_as_dicts(cur)
         return rows[0] if rows else None
-
-    def get_reference_documents(self, search_text: str, area: Optional[str] = None,
-                                 top_n: int = 10) -> List[Dict]:
-        """EXEC dbo.Hermes_L2_Get_Reference_Documents_Usp"""
-        cur = self.conn.cursor()
-        cur.execute(
-            "EXEC dbo.Hermes_L2_Get_Reference_Documents_Usp "
-            "@SearchText = ?, @Area = ?, @TopN = ?;",
-            (search_text, area, top_n),
-        )
-        return _rows_as_dicts(cur)
 
     # -- Ticket dispatch -------------------------------------------------
 
@@ -613,13 +589,6 @@ class HermesL2Client:
             "prior_runs": result_sets[1] if len(result_sets) > 1 else [],
         }
 
-    def get_run(self, run_id: str) -> Optional[Dict]:
-        """EXEC dbo.Hermes_L2_Get_Run_Usp"""
-        cur = self.conn.cursor()
-        cur.execute("EXEC dbo.Hermes_L2_Get_Run_Usp @RunID = ?;", (run_id,))
-        rows = _rows_as_dicts(cur)
-        return rows[0] if rows else None
-
     def get_run_actions(self, run_id: str) -> List[Dict]:
         """EXEC dbo.Hermes_L2_Get_Run_Actions_Usp -- SQL action audit trail for one run."""
         cur = self.conn.cursor()
@@ -636,16 +605,6 @@ class HermesL2Client:
             (run_id, route, self.hermes_user_id),
         )
         self._commit(cur)
-
-    def heartbeat(self, run_id: str) -> None:
-        """EXEC dbo.Hermes_L2_Heartbeat_Usp -- call periodically during long investigations."""
-        cur = self.conn.cursor()
-        cur.execute(
-            "EXEC dbo.Hermes_L2_Heartbeat_Usp @RunID = ?, @HermesUserID = ?;",
-            (run_id, self.hermes_user_id),
-        )
-        self._commit(cur)
-
 
     def queue_local_model_work(
         self,
@@ -722,28 +681,6 @@ class HermesL2Client:
         rows = _rows_as_dicts(cur)
         self._commit(cur)
         return rows[0] if rows else {}
-
-    def save_investigation_state(self, run_id: str, route: Optional[str] = None,
-                                  problem_summary: Optional[str] = None,
-                                  findings: Optional[str] = None,
-                                  root_cause: Optional[str] = None,
-                                  resolution: Optional[str] = None,
-                                  investigation_json: Optional[Any] = None,
-                                  next_eligible_on: Optional[datetime] = None) -> None:
-        """EXEC dbo.Hermes_L2_Save_Investigation_State_Usp -- checkpoint mid-investigation."""
-        cur = self.conn.cursor()
-        inv_json = json.dumps(investigation_json) if investigation_json is not None else None
-        cur.execute(
-            """
-            EXEC dbo.Hermes_L2_Save_Investigation_State_Usp
-                @RunID = ?, @Route = ?, @ProblemSummary = ?, @Findings = ?,
-                @RootCause = ?, @Resolution = ?, @InvestigationJson = ?,
-                @NextEligibleOn = ?, @HermesUserID = ?;
-            """,
-            (run_id, route, problem_summary, findings, root_cause, resolution,
-             inv_json, next_eligible_on, self.hermes_user_id),
-        )
-        self._commit(cur)
 
     def execute_sql(self, run_id: str, database_name: str, action_type: str, sql: str,
                      schema_name: Optional[str] = None, object_name: Optional[str] = None,
@@ -957,18 +894,6 @@ class HermesL2Client:
         )
         self._commit(cur)
 
-    def log_blocked_escalation(self, run_id: str, ticket_id: str, block_reason: str,
-                                findings: Optional[str] = None) -> None:
-        """EXEC dbo.Hermes_L2_Log_Blocked_Escalation_Usp -- visibility-only human-queue
-        insert, does not touch Complaint_Mst_Tbl or require an active run."""
-        cur = self.conn.cursor()
-        cur.execute(
-            "EXEC dbo.Hermes_L2_Log_Blocked_Escalation_Usp @RunID = ?, @TicketID = ?, "
-            "@BlockReason = ?, @Findings = ?, @HermesUserID = ?;",
-            (run_id, ticket_id, block_reason, findings, self.hermes_user_id),
-        )
-        self._commit(cur)
-
     def save_investigation_ledger(self, run_id: str, ledger: Any) -> None:
         """Direct UPDATE on Hermes_L2_Response_Trn_Tbl.InvestigationJson -- not a
         status/terminal-outcome change, so no SP wraps it (this column already
@@ -1023,79 +948,6 @@ class HermesL2Client:
         )
         self._commit(cur)
 
-    def create_solution(self, title: str, resolution_steps: str, problem_summary: Optional[str] = None,
-                         root_cause: Optional[str] = None, route: Optional[str] = None,
-                         tags: Optional[str] = None) -> str:
-        """EXEC dbo.Hermes_Create_Solution_Article_Usp -- returns new SolutionID"""
-        cur = self.conn.cursor()
-        cur.execute(
-            """
-            DECLARE @NewSolutionID varchar(36);
-            EXEC dbo.Hermes_Create_Solution_Article_Usp
-                @Title = ?, @ResolutionSteps = ?, @ProblemSummary = ?, @RootCause = ?,
-                @Route = ?, @Tags = ?, @HermesUserID = ?, @NewSolutionID = @NewSolutionID OUTPUT;
-            SELECT @NewSolutionID;
-            """,
-            (title, resolution_steps, problem_summary, root_cause, route, tags, self.hermes_user_id),
-        )
-        row = cur.fetchone()
-        self._commit(cur)
-        return row[0] if row else None
-
-    def link_solution(self, ticket_id: str, solution_id: str, run_id: Optional[str] = None,
-                       was_helpful: Optional[bool] = None) -> None:
-        """EXEC dbo.Hermes_Link_Solution_To_Ticket_Usp"""
-        cur = self.conn.cursor()
-        cur.execute(
-            "EXEC dbo.Hermes_Link_Solution_To_Ticket_Usp @TicketID = ?, @SolutionID = ?, "
-            "@RunID = ?, @WasHelpful = ?, @HermesUserID = ?;",
-            (ticket_id, solution_id, run_id, was_helpful, self.hermes_user_id),
-        )
-        self._commit(cur)
-
-    def get_ticket_activity(self, ticket_id: str) -> List[Dict]:
-        """EXEC dbo.Hermes_Get_Ticket_Activity_Usp -- full work-log timeline for one ticket."""
-        cur = self.conn.cursor()
-        cur.execute("EXEC dbo.Hermes_Get_Ticket_Activity_Usp @TicketID = ?;", (ticket_id,))
-        return _rows_as_dicts(cur)
-
-    def create_problem(self, title: str, root_cause_summary: Optional[str] = None,
-                        root_cause_category_id: Optional[str] = None) -> str:
-        """EXEC dbo.Hermes_Create_Problem_Usp -- returns new ProblemID"""
-        cur = self.conn.cursor()
-        cur.execute(
-            """
-            DECLARE @NewProblemID varchar(36);
-            EXEC dbo.Hermes_Create_Problem_Usp
-                @Title = ?, @RootCauseSummary = ?, @RootCauseCategoryID = ?,
-                @HermesUserID = ?, @NewProblemID = @NewProblemID OUTPUT;
-            SELECT @NewProblemID;
-            """,
-            (title, root_cause_summary, root_cause_category_id, self.hermes_user_id),
-        )
-        row = cur.fetchone()
-        self._commit(cur)
-        return row[0] if row else None
-
-    def link_problem(self, problem_id: str, ticket_id: str) -> None:
-        """EXEC dbo.Hermes_Link_Ticket_To_Problem_Usp"""
-        cur = self.conn.cursor()
-        cur.execute(
-            "EXEC dbo.Hermes_Link_Ticket_To_Problem_Usp @ProblemID = ?, @TicketID = ?, @HermesUserID = ?;",
-            (problem_id, ticket_id, self.hermes_user_id),
-        )
-        self._commit(cur)
-
-    def list_root_cause_categories(self) -> List[Dict]:
-        """Read dbo.Hermes_Root_Cause_Category_Mst_Tbl -- the controlled taxonomy."""
-        cur = self.conn.cursor()
-        cur.execute(
-            "SELECT ID, CategoryName, Description FROM dbo.Hermes_Root_Cause_Category_Mst_Tbl "
-            "WHERE IsActive = 1 AND IsDeleted = 0 ORDER BY CategoryName;"
-        )
-        return _rows_as_dicts(cur)
-
-
 _LAST_CLAIM_STATE_PATH = Path(__file__).parent / ".hermes_l2_last_claim.json"
 
 # Local, DB-untouched draft staging for the proposer/verifier gate -- see
@@ -1108,11 +960,6 @@ _DRAFTS_DIR = Path(__file__).parent / "Model_Bench" / "drafts"
 _REJECTED_DRAFTS_DIR = _DRAFTS_DIR / "rejected"
 _COMBO_AUDIT_PATH = Path(__file__).parent / "Model_Bench" / "combo_audit.jsonl"
 
-
-def _log_combo_audit(entry: Dict[str, Any]) -> None:
-    _COMBO_AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with _COMBO_AUDIT_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, default=str) + "\n")
 
 # Keywords that make a query anything other than a pure read. Checked
 # case-insensitively as whole words so this doesn't false-positive on e.g.
@@ -1423,124 +1270,12 @@ def _cli_log_activity(args: argparse.Namespace, parser: argparse.ArgumentParser,
     print(f"Logged {args.activity_type} activity for ticket {args.ticket_id}.")
 
 
-def _cli_search_solutions(args: argparse.Namespace, client: "HermesL2Client") -> None:
-    cur = client.conn.cursor()
-    cur.execute(
-        "SELECT TOP 5 ID, Title, ProblemSummary, RootCause, ResolutionSteps, UsageCount "
-        "FROM dbo.Hermes_Solution_Article_Mst_Tbl "
-        "WHERE Route = ? AND IsActive = 1 AND IsDeleted = 0 "
-        "ORDER BY UsageCount DESC",
-        (args.search_solutions,),
-    )
-    cols = [d[0] for d in cur.description]
-    rows = [dict(zip(cols, row)) for row in cur.fetchall()]
-    print(json.dumps(rows, indent=2, default=str))
-
-
-def _cli_create_solution(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
-    if not args.solution_title or not args.resolution_steps:
-        parser.error("--create-solution requires --solution-title and --resolution-steps")
-    new_id = client.create_solution(
-        title=args.solution_title, resolution_steps=args.resolution_steps,
-        problem_summary=args.problem_summary, root_cause=args.root_cause,
-        route=args.route, tags=args.tags,
-    )
-    print(f"Created solution {new_id}")
-
-
-def _cli_link_solution(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
-    if not args.ticket_id:
-        parser.error("--link-solution requires --ticket-id")
-    client.link_solution(ticket_id=args.ticket_id, solution_id=args.link_solution, run_id=args.run_id)
-    print(f"Linked ticket {args.ticket_id} to solution {args.link_solution}.")
-
-
-def _cli_get_activity(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
-    if not args.ticket_id:
-        parser.error("--get-activity requires --ticket-id")
-    print(json.dumps(client.get_ticket_activity(args.ticket_id), indent=2, default=str))
-
-
-def _cli_list_root_cause_categories(client: "HermesL2Client") -> None:
-    print(json.dumps(client.list_root_cause_categories(), indent=2, default=str))
-
-
-def _cli_create_problem(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
-    if not args.solution_title:
-        parser.error("--create-problem requires --solution-title (used as the Problem title)")
-    new_id = client.create_problem(
-        title=args.solution_title, root_cause_summary=args.root_cause,
-    )
-    print(f"Created problem {new_id}")
-
-
-def _cli_link_problem(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
-    if not args.ticket_id:
-        parser.error("--link-problem requires --ticket-id")
-    client.link_problem(problem_id=args.link_problem, ticket_id=args.ticket_id)
-    print(f"Linked ticket {args.ticket_id} to problem {args.link_problem}.")
-
-
-def _cli_find_sql_objects(args: argparse.Namespace, client: "HermesL2Client") -> None:
-    print(json.dumps(
-        client.find_sql_objects(args.target_database, args.find_sql_objects, object_type=args.object_type),
-        indent=2, default=str,
-    ))
-
-
-def _cli_get_sql_object_definition(args: argparse.Namespace, client: "HermesL2Client") -> None:
-    result = client.get_sql_object_definition(args.target_database, args.schema_name, args.get_sql_object_definition)
-    print(json.dumps(result, indent=2, default=str) if result else "null")
-
-
-def _cli_get_reference_documents(args: argparse.Namespace, client: "HermesL2Client") -> None:
-    print(json.dumps(
-        client.get_reference_documents(args.get_reference_documents, area=args.area),
-        indent=2, default=str,
-    ))
-
-
 def _cli_get_run_actions(args: argparse.Namespace, client: "HermesL2Client") -> None:
     print(json.dumps(client.get_run_actions(args.get_run_actions), indent=2, default=str))
 
 
 def _cli_get_ticket_context(args: argparse.Namespace, client: "HermesL2Client") -> None:
     print(json.dumps(client.get_ticket_context(args.get_ticket_context), indent=2, default=str))
-
-
-def _cli_build_query(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client",
-                      database_explicitly_given: Optional[str]) -> None:
-    if not args.columns:
-        parser.error("--build-query requires --columns")
-    result = build_query_mechanically(
-        table=args.build_query,
-        columns=[c.strip() for c in args.columns.split(",") if c.strip()],
-        where=args.where, order_by=args.order_by, top=args.top,
-        database=database_explicitly_given,
-    )
-    if not result["ok"]:
-        print(json.dumps(result, indent=2))
-        sys.exit(1)
-    if not args.execute:
-        print(json.dumps(result, indent=2))
-        return
-    # Fall through into the exact same audited --query path -- no separate
-    # execution code to maintain, and it gets the same write-keyword
-    # refusal, the same audit trail, and the same post-failure
-    # fuzzy-suggestion safety net for free (structurally unreachable here
-    # since every identifier was already validated, but a real, still-useful
-    # backstop against anything this validator itself missed).
-    args.query = result["sql"]
-    args.database = args.database or result["database"]
-    print(f"Executing mechanically-built query: {result['sql']}", file=sys.stderr)
-    _cli_query(args, parser, client)
-
-
-def _cli_suggest_tables(args: argparse.Namespace, database_explicitly_given: Optional[str]) -> None:
-    result = suggest_tables_mechanically(
-        args.suggest_tables, top=args.top or 8, database=database_explicitly_given,
-    )
-    print(json.dumps(result, indent=2))
 
 
 def _cli_save_ledger(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
@@ -1556,14 +1291,9 @@ def _cli_save_ledger(args: argparse.Namespace, parser: argparse.ArgumentParser, 
 
 def _cli_investigate_bundle(args: argparse.Namespace, client: "HermesL2Client") -> None:
     print(json.dumps(
-        build_investigation_bundle(client, args.investigate_bundle, top_tables=args.top or 8),
+        build_investigation_bundle(client, args.investigate_bundle, top_tables=8),
         indent=2, default=str,
     ))
-
-
-def _cli_get_ledger(args: argparse.Namespace, client: "HermesL2Client") -> None:
-    ledger = client.get_latest_ledger(ticket_id=args.get_ledger)
-    print(json.dumps({"ticket_id": args.get_ledger, "ledger": ledger}, indent=2))
 
 
 def _cli_query(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
@@ -1673,16 +1403,6 @@ def _cli_query(args: argparse.Namespace, parser: argparse.ArgumentParser, client
     print(json.dumps(result_payload, indent=2, default=str))
 
 
-def _cli_escalate_blocked(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
-    if not (args.run_id and args.ticket_id and args.block_reason):
-        parser.error("--escalate-blocked requires --run-id, --ticket-id, and --block-reason")
-    client.log_blocked_escalation(
-        run_id=args.run_id, ticket_id=args.ticket_id,
-        block_reason=args.block_reason, findings=args.findings,
-    )
-    print(json.dumps({"status": "ESCALATED", "run_id": args.run_id}, indent=2))
-
-
 def _cli_fail_run(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
     if not (args.run_id and args.error_message):
         parser.error("--fail-run requires --run-id and --error-message")
@@ -1748,113 +1468,6 @@ def _cli_publish_response(args: argparse.Namespace, parser: argparse.ArgumentPar
     print(json.dumps({"status": "PUBLISHED", "run_id": run_id}, indent=2))
 
 
-def _cli_draft_response(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
-    if not (args.response_type and args.reply_text):
-        parser.error("--draft-response requires --response-type and --reply-text")
-
-    last_claim = None
-    if _LAST_CLAIM_STATE_PATH.exists():
-        last_claim = json.loads(_LAST_CLAIM_STATE_PATH.read_text(encoding="utf-8"))
-
-    run_id = args.run_id
-    if run_id is None:
-        if last_claim is None:
-            parser.error(
-                "--run-id was omitted and no prior --poll claim was found on disk "
-                f"({_LAST_CLAIM_STATE_PATH}). Run --poll first, or pass --run-id explicitly."
-            )
-        run_id = last_claim["run_id"]
-        print(f"Using run_id from most recent --poll claim: {run_id}", file=sys.stderr)
-    elif last_claim is not None and run_id != last_claim["run_id"] and not args.force_run_id:
-        parser.error(
-            f"--run-id {run_id!r} does not match the most recently claimed run "
-            f"{last_claim['run_id']!r}. Omit --run-id to use the recorded claim "
-            f"automatically, or pass --force-run-id if this is genuinely intentional."
-        )
-
-    _DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
-    draft = {
-        "run_id": run_id,
-        "ticket_id": (last_claim or {}).get("ticket_id"),
-        "investigator_bot_label": (last_claim or {}).get("bot_label"),
-        "response_type": args.response_type,
-        "reply_text": args.reply_text,
-        "problem_summary": args.problem_summary,
-        "findings": args.findings,
-        "root_cause": args.root_cause,
-        "resolution": args.resolution,
-        "new_ticket_status": args.new_ticket_status,
-        "new_ask_status": args.new_ask_status,
-        "mirror_to_support_remarks": args.mirror_to_support_remarks,
-        "drafted_at": datetime.now(timezone.utc).isoformat(),
-    }
-    (_DRAFTS_DIR / f"{run_id}.json").write_text(json.dumps(draft, indent=2), encoding="utf-8")
-    if last_claim is not None and last_claim["run_id"] == run_id:
-        _LAST_CLAIM_STATE_PATH.unlink(missing_ok=True)
-    print(json.dumps({"status": "DRAFTED", "run_id": run_id,
-                       "note": "Not yet published -- awaiting verifier approval."}, indent=2))
-
-
-def _cli_approve_draft(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
-    run_id = args.approve_draft
-    draft_path = _DRAFTS_DIR / f"{run_id}.json"
-    if not draft_path.exists():
-        parser.error(f"No draft found for run_id {run_id!r} at {draft_path}")
-    draft = json.loads(draft_path.read_text(encoding="utf-8"))
-    client.publish_response(
-        run_id=run_id,
-        response_type=draft["response_type"],
-        reply_text=draft["reply_text"],
-        problem_summary=draft.get("problem_summary"),
-        findings=draft.get("findings"),
-        root_cause=draft.get("root_cause"),
-        resolution=draft.get("resolution"),
-        new_ticket_status=draft.get("new_ticket_status"),
-        new_ask_status=draft.get("new_ask_status"),
-        mirror_reply_to_support_remarks=bool(draft.get("mirror_to_support_remarks")),
-    )
-    draft_path.unlink()
-    _log_combo_audit({
-        "run_id": run_id,
-        "ticket_id": draft.get("ticket_id"),
-        "outcome": "APPROVED",
-        "investigator_bot_label": draft.get("investigator_bot_label"),
-        "verifier_bot_label": args.verifier_label,
-        "response_type": draft.get("response_type"),
-        "logged_at": datetime.now(timezone.utc).isoformat(),
-    })
-    print(json.dumps({"status": "PUBLISHED_FROM_DRAFT", "run_id": run_id}, indent=2))
-
-
-def _cli_reject_draft(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    if not args.rejection_reason:
-        parser.error("--reject-draft requires --rejection-reason")
-    run_id = args.reject_draft
-    draft_path = _DRAFTS_DIR / f"{run_id}.json"
-    if not draft_path.exists():
-        parser.error(f"No draft found for run_id {run_id!r} at {draft_path}")
-    draft = json.loads(draft_path.read_text(encoding="utf-8"))
-    draft["rejected_at"] = datetime.now(timezone.utc).isoformat()
-    draft["rejection_reason"] = args.rejection_reason
-    _REJECTED_DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
-    (_REJECTED_DRAFTS_DIR / f"{run_id}_{int(datetime.now(timezone.utc).timestamp())}.json").write_text(
-        json.dumps(draft, indent=2), encoding="utf-8"
-    )
-    draft_path.unlink()
-    _log_combo_audit({
-        "run_id": run_id,
-        "ticket_id": draft.get("ticket_id"),
-        "outcome": "REJECTED",
-        "investigator_bot_label": draft.get("investigator_bot_label"),
-        "verifier_bot_label": args.verifier_label,
-        "response_type": draft.get("response_type"),
-        "rejection_reason": args.rejection_reason,
-        "logged_at": datetime.now(timezone.utc).isoformat(),
-    })
-    print(json.dumps({"status": "REJECTED", "run_id": run_id,
-                       "reason": args.rejection_reason}, indent=2))
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Hermes L2 Investigation Orchestrator")
     parser.add_argument("--server", default=os.environ.get("MSSQL_MCP_SERVER"))
@@ -1906,37 +1519,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--local-model-task-id", default=None)
     parser.add_argument("--local-model-outcome", choices=["DONE", "REQUEUE"], default="DONE")
     parser.add_argument("--bot-label", default=None,
-                         help="Free-text identity of the bot/profile claiming this ticket "
-                              "(e.g. 'l2-nemo' or 'nemotron-3-nano-4b'). Recorded in the local "
-                              "claim/draft state so model_scorecard.py can attribute a run to "
-                              "the right model when multiple bots poll the same queue.")
+                         help="Profile claiming this ticket; recorded as the run's WorkerID.")
     parser.add_argument("--publish-response", action="store_true",
                          help="Write a response for an already-claimed run (--run-id). "
                               "Requires --response-type and --reply-text.")
-    parser.add_argument("--draft-response", action="store_true",
-                         help="Like --publish-response, but writes to a LOCAL draft file "
-                              "instead of the live database -- the ticket's real ProcessStatus "
-                              "is untouched. Use this instead of --publish-response when a "
-                              "verifier gate is in front of this run; a separate --approve-draft "
-                              "call does the real publish after review. Same required args as "
-                              "--publish-response.")
-    parser.add_argument("--approve-draft", default=None, metavar="RUN_ID",
-                         help="Read the local draft for RUN_ID and actually publish it via the "
-                              "real Hermes_L2_Publish_Response_Usp path, then remove the draft. "
-                              "For a verifier to call after review, not the investigating agent.")
-    parser.add_argument("--reject-draft", default=None, metavar="RUN_ID",
-                         help="Discard the local draft for RUN_ID without publishing it -- the "
-                              "ticket stays claimed/unpublished for a nudge/retry. Requires "
-                              "--rejection-reason.")
-    parser.add_argument("--rejection-reason", default=None,
-                         help="Required with --reject-draft. Recorded for audit and reused as "
-                              "the retry nudge's specific objection.")
-    parser.add_argument("--verifier-label", default=None,
-                         help="Free-text identity of the verifier bot calling --approve-draft/"
-                              "--reject-draft (e.g. 'l2-nemo'). Recorded alongside the draft's "
-                              "own investigator_bot_label in Model_Bench/combo_audit.jsonl so a "
-                              "specific investigator+verifier COMBO can be scored, not just a "
-                              "single model.")
     parser.add_argument("--run-id", default=None,
                          help="Omit to use the run_id from the most recent --poll claim "
                               "automatically (recommended -- do not hand-type a GUID). If "
@@ -1960,37 +1546,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--error-message", default=None, help="Required with --fail-run.")
     parser.add_argument("--retry-after-minutes", type=int, default=5,
                          help="With --fail-run: how soon the ticket becomes re-pollable.")
-    parser.add_argument("--escalate-blocked", action="store_true",
-                         help="EXEC Hermes_L2_Log_Blocked_Escalation_Usp -- pure visibility "
-                              "insert into the human L3 queue, does not touch "
-                              "Hermes_L2_Response_Trn_Tbl or Complaint_Mst_Tbl. Requires "
-                              "--run-id, --ticket-id, --block-reason.")
-    parser.add_argument("--block-reason", default=None, help="Required with --escalate-blocked.")
-    parser.add_argument("--build-query", default=None, metavar="TABLE",
-                         help="Mechanically construct a SELECT against TABLE, validating every "
-                              "column against Knowledge/schema_allowlist.json BEFORE building any "
-                              "SQL -- a hallucinated table/column is rejected here, with the "
-                              "closest real name, instead of only being caught after a query fails "
-                              "or (worse) never being run at all. Requires --columns. Prints the "
-                              "SQL by default; add --execute to actually run it (read-only, "
-                              "audited the same as --query).")
-    parser.add_argument("--columns", default=None,
-                         help="Comma-separated column list for --build-query.")
-    parser.add_argument("--where", default=None,
-                         help="With --build-query: raw WHERE clause text (identifiers checked "
-                              "best-effort against the real schema, values are not).")
-    parser.add_argument("--top", type=int, default=None, help="With --build-query: TOP N rows.")
-    parser.add_argument("--order-by", default=None, help="With --build-query: ORDER BY clause.")
-    parser.add_argument("--execute", action="store_true",
-                         help="With --build-query: actually run the constructed SQL (read-only, "
-                              "audited) instead of just printing it.")
-    parser.add_argument("--suggest-tables", default=None, metavar="TEXT",
-                         help="Mechanically narrow ~1200 real tables down to the ones actually "
-                              "relevant to TEXT (a ticket's own description/summary), via keyword "
-                              "overlap against real table/column names plus an optional curated "
-                              "domain index (Knowledge/table_keyword_index.json) -- no LLM, no "
-                              "embeddings. Use before --build-query/--query when you don't already "
-                              "know which table to look at. --top controls how many candidates.")
     parser.add_argument("--save-ledger", default=None, metavar="RUN_ID",
                          help="Write a structured investigation ledger (tables queried, key "
                               "values found, ruled-out hypotheses, conclusion -- whatever shape "
@@ -2013,10 +1568,6 @@ def build_parser() -> argparse.ArgumentParser:
                               "conversation, which is what actually drives token cost per ticket. "
                               "Sections degrade independently -- a failure in one returns an "
                               "'error' note for that key without losing the rest.")
-    parser.add_argument("--get-ledger", default=None, metavar="TICKET_ID",
-                         help="Print the most recent non-null InvestigationJson ledger recorded "
-                              "for this ticket (across any prior run, terminal or not), or null "
-                              "if none exists yet.")
     parser.add_argument("--reply-text", default=None)
     parser.add_argument("--problem-summary", default=None)
     parser.add_argument("--findings", default=None)
@@ -2051,57 +1602,6 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Required with --log-activity.")
     parser.add_argument("--note-text", default=None, help="Free text for --log-activity.")
     parser.add_argument("--actor-type", default="Bot", choices=["Bot", "Human", "System"])
-    parser.add_argument("--search-solutions", default=None, metavar="ROUTE",
-                         help="Print active Hermes_Solution_Article_Mst_Tbl rows for this Route "
-                              "(e.g. 'heat_execution'), ordered by UsageCount desc -- check this "
-                              "BEFORE investigating from scratch. A known fix may already exist.")
-    parser.add_argument("--create-solution", action="store_true",
-                         help="Create a new knowledge-base entry after a genuine RESOLUTION. "
-                              "Requires --solution-title and --resolution-steps; "
-                              "--problem-summary/--root-cause/--route/--tags optional. "
-                              "Prints the new SolutionID.")
-    parser.add_argument("--solution-title", default=None)
-    parser.add_argument("--resolution-steps", default=None)
-    parser.add_argument("--route", default=None)
-    parser.add_argument("--tags", default=None)
-    parser.add_argument("--link-solution", default=None, metavar="SOLUTION_ID",
-                         help="Link --ticket-id to this existing SolutionID (from --search-solutions "
-                              "or --create-solution) -- increments its UsageCount and auto-logs a "
-                              "SolutionLinked activity. Requires --ticket-id.")
-    parser.add_argument("--get-activity", action="store_true",
-                         help="Print the full work-log timeline (Hermes_Ticket_Activity_Trn_Tbl) "
-                              "for --ticket-id, as JSON. Use this to see what prior investigation "
-                              "attempts (and the reviewer) actually did -- not just the ticket's "
-                              "final remarks.")
-    parser.add_argument("--list-root-cause-categories", action="store_true",
-                         help="Print the controlled root-cause taxonomy (Hermes_Root_Cause_Category_Mst_Tbl) as JSON.")
-    parser.add_argument("--create-problem", action="store_true",
-                         help="Create a Problem record (a recurring root cause behind N tickets). "
-                              "Requires --solution-title (reused as the Problem title) and "
-                              "prints the new ProblemID. --root-cause optional.")
-    parser.add_argument("--link-problem", default=None, metavar="PROBLEM_ID",
-                         help="Link --ticket-id to this existing ProblemID.")
-    parser.add_argument("--find-sql-objects", default=None, metavar="SEARCH_TEXT",
-                         help="EXEC Hermes_L2_Find_SQL_Objects_Usp -- search procs/views/tables/"
-                              "triggers by name or definition text in --target-database (NOT "
-                              "--database, which is the connection -- this SP only exists in "
-                              "XStudio_Helpdesk and searches cross-database via its own param). "
-                              "Prefer this over guessing an object name.")
-    parser.add_argument("--object-type", default=None,
-                         help="Optional filter for --find-sql-objects (e.g. TABLE/VIEW/PROCEDURE).")
-    parser.add_argument("--target-database", default="XStudio_Xbatch",
-                         help="The database --find-sql-objects/--get-sql-object-definition should "
-                              "search -- separate from --database (the connection, which stays "
-                              "XStudio_Helpdesk since that's where these SPs are installed).")
-    parser.add_argument("--get-sql-object-definition", default=None, metavar="OBJECT_NAME",
-                         help="EXEC Hermes_L2_Get_SQL_Object_Definition_Usp -- full real definition "
-                              "text for one table/view/SP/trigger in --target-database. Use this "
-                              "instead of guessing what a view actually does.")
-    parser.add_argument("--schema-name", default="dbo", help="Schema for --get-sql-object-definition.")
-    parser.add_argument("--get-reference-documents", default=None, metavar="SEARCH_TEXT",
-                         help="EXEC Hermes_L2_Get_Reference_Documents_Usp -- search existing "
-                              "systemreferencedocuments. Optional --area filter.")
-    parser.add_argument("--area", default=None, help="Optional filter for --get-reference-documents.")
     parser.add_argument("--get-run-actions", default=None, metavar="RUN_ID",
                          help="EXEC Hermes_L2_Get_Run_Actions_Usp -- the full SQL action audit "
                               "trail for one run (yours or a prior one on the same ticket).")
@@ -2117,14 +1617,6 @@ def build_parser() -> argparse.ArgumentParser:
 def prepare_args(parser: argparse.ArgumentParser, argv: Optional[List[str]] = None) -> argparse.Namespace:
     """Parse and validate CLI arguments (shared by main() and in-process invoke())."""
     args = parser.parse_args(argv)
-    # --build-query needs to know whether --database was actually typed by
-    # the caller, to decide whether an ambiguous table name (one that
-    # exists in more than one database) deserves a warning. Captured here,
-    # before the unconditional default-fill below overwrites args.database
-    # for every other code path -- confirmed live this exact bug: the
-    # ambiguity warning could never fire because args.database was never
-    # actually None by the time --build-query's own handler ran.
-    args.database_explicitly_given = args.database
 
     if not args.server:
         parser.error("--server is required (or set MSSQL_MCP_SERVER)")
@@ -2150,30 +1642,13 @@ _OPERATIONS = (
     ("local_model_action", lambda a, p, c: _cli_local_model_action(a, p, c)),
     ("poll", lambda a, p, c: _cli_poll(a, p, c)),
     ("log_activity", lambda a, p, c: _cli_log_activity(a, p, c)),
-    ("search_solutions", lambda a, p, c: _cli_search_solutions(a, c)),
-    ("create_solution", lambda a, p, c: _cli_create_solution(a, p, c)),
-    ("link_solution", lambda a, p, c: _cli_link_solution(a, p, c)),
-    ("get_activity", lambda a, p, c: _cli_get_activity(a, p, c)),
-    ("list_root_cause_categories", lambda a, p, c: _cli_list_root_cause_categories(c)),
-    ("create_problem", lambda a, p, c: _cli_create_problem(a, p, c)),
-    ("link_problem", lambda a, p, c: _cli_link_problem(a, p, c)),
-    ("find_sql_objects", lambda a, p, c: _cli_find_sql_objects(a, c)),
-    ("get_sql_object_definition", lambda a, p, c: _cli_get_sql_object_definition(a, c)),
-    ("get_reference_documents", lambda a, p, c: _cli_get_reference_documents(a, c)),
     ("get_run_actions", lambda a, p, c: _cli_get_run_actions(a, c)),
     ("get_ticket_context", lambda a, p, c: _cli_get_ticket_context(a, c)),
-    ("build_query", lambda a, p, c: _cli_build_query(a, p, c, a.database_explicitly_given)),
-    ("suggest_tables", lambda a, p, c: _cli_suggest_tables(a, a.database_explicitly_given)),
     ("save_ledger", lambda a, p, c: _cli_save_ledger(a, p, c)),
     ("investigate_bundle", lambda a, p, c: _cli_investigate_bundle(a, c)),
-    ("get_ledger", lambda a, p, c: _cli_get_ledger(a, c)),
     ("query", lambda a, p, c: _cli_query(a, p, c)),
-    ("escalate_blocked", lambda a, p, c: _cli_escalate_blocked(a, p, c)),
     ("fail_run", lambda a, p, c: _cli_fail_run(a, p, c)),
     ("publish_response", lambda a, p, c: _cli_publish_response(a, p, c)),
-    ("draft_response", lambda a, p, c: _cli_draft_response(a, p, c)),
-    ("approve_draft", lambda a, p, c: _cli_approve_draft(a, p, c)),
-    ("reject_draft", lambda a, p, c: _cli_reject_draft(a, p)),
 )
 
 
@@ -2182,8 +1657,7 @@ def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, client: 
     for flag, handler in _OPERATIONS:
         if getattr(args, flag):
             return handler(args, parser, client)
-    parser.error("Pass one of --discover-workflow, --poll, --publish-response, "
-                  "--draft-response, --approve-draft, or --reject-draft.")
+    parser.error("Pass one operation flag, e.g. --poll, --query or --publish-response.")
 
 
 def _client_for(args: argparse.Namespace) -> "HermesL2Client":

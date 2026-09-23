@@ -21,7 +21,6 @@ Safety properties enforced here (not merely documented):
 """
 from __future__ import annotations
 
-import difflib
 import json
 import os
 import re
@@ -128,58 +127,6 @@ def _load_allowlist() -> dict[str, Any]:
     if not isinstance(data, dict):
         raise RuntimeError("schema allowlist is not a JSON object")
     return data
-
-
-def _validate_identifiers(req: dict[str, Any]) -> dict[str, Any]:
-    database = _database(req)
-    table = str(_require(req, "table")).strip()
-    raw_identifiers = req.get("identifiers") or req.get("columns")
-    if not raw_identifiers or not isinstance(raw_identifiers, list) or not any(str(x).strip() for x in raw_identifiers):
-        raise ValueError("identifiers is required for operation=validate_identifiers")
-    requested_columns = [str(x).strip() for x in raw_identifiers if str(x).strip()]
-    tables = _load_allowlist().get(database) or {}
-    if not isinstance(tables, dict):
-        raise ValueError(f"database {database!r} is absent from schema allowlist")
-
-    table_key = table.split(".")[-1].strip("[]").lower()
-    matches = [(qualified, cols) for qualified, cols in tables.items()
-               if qualified.split(".")[-1].strip("[]").lower() == table_key]
-    if not matches:
-        real_names = list(tables.keys())
-        suggestions = difflib.get_close_matches(
-            table_key, [n.split(".")[-1].lower() for n in real_names], n=5, cutoff=0.35)
-        return {
-            "ok": False,
-            "operation": "validate_identifiers",
-            "database": database,
-            "error": f"table/view {table!r} is not present in the schema allowlist",
-            "suggestions": [n for n in real_names if n.split(".")[-1].lower() in suggestions][:5],
-            "retry_same_call": False,
-        }
-
-    qualified, real_columns = matches[0]
-    real_lookup = {str(c).lower(): str(c) for c in real_columns}
-    missing: dict[str, list[str]] = {}
-    resolved: list[str] = []
-    for column in requested_columns:
-        real = real_lookup.get(column.strip("[]").lower())
-        if real:
-            resolved.append(real)
-        else:
-            missing[column] = difflib.get_close_matches(column, list(real_columns), n=5, cutoff=0.35)
-    if missing:
-        return {
-            "ok": False,
-            "operation": "validate_identifiers",
-            "database": database,
-            "table": qualified,
-            "error": "one or more columns are not present in the schema allowlist",
-            "missing": missing,
-            "resolved": resolved,
-            "retry_same_call": False,
-        }
-    return {"ok": True, "operation": "validate_identifiers", "database": database,
-            "table": qualified, "columns": resolved}
 
 
 def _client():
@@ -677,126 +624,6 @@ def _work_order_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
     }
 
 
-def _heat_candidates(value: str) -> list[str]:
-    raw = str(value).strip()
-    candidates = [raw]
-    if raw[:1].upper() == "H" and raw[1:].isdigit():
-        candidates.append(raw[1:])
-    elif raw.isdigit():
-        candidates.append(f"H{raw}")
-    return list(dict.fromkeys(candidates))
-
-
-def _resolve_heat(req: dict[str, Any], client: Any) -> dict[str, Any]:
-    database = _database(req)
-    if database != "XStudio_Xbatch":
-        raise ValueError("resolve_heat is allowlisted only for database=XStudio_Xbatch")
-    heat = str(_require(req, "heat")).strip()
-    candidates = _heat_candidates(heat)
-    escaped = ", ".join(f"N'{_escape_sql_string(value)}'" for value in candidates)
-    orchestrator = _orchestrator()
-    matches: list[dict[str, Any]] = []
-    errors: list[dict[str, str]] = []
-    for table, columns, key_columns in HEAT_RESOLUTION_SURFACES:
-        select_list = ", ".join(f"[{column}]" for column in columns)
-        key_expr = " OR ".join(
-            f"CONVERT(NVARCHAR(100), [{column}]) IN ({escaped})"
-            for column in key_columns
-        )
-        sql = f"SELECT TOP 25 {select_list} FROM [{database}].{table} WHERE {key_expr}"
-        try:
-            rows = orchestrator.run_readonly_query(
-                client, sql, database=database, run_id=req.get("run_id"))
-        except Exception as exc:  # a missing optional view must not hide other surfaces
-            errors.append({"table": table, "error": f"{type(exc).__name__}: {exc}"})
-            continue
-        if rows:
-            matches.append({
-                "object": table,
-                "key_columns": list(key_columns),
-                "rows": len(rows),
-                "sample": rows[:MAX_LIST_ITEMS],
-            })
-    return {
-        "ok": True,
-        "operation": "resolve_heat",
-        "database": database,
-        "input": heat,
-        "candidates": candidates,
-        "matches": matches,
-        "checked_surfaces": [surface[0] for surface in HEAT_RESOLUTION_SURFACES],
-        "errors": errors,
-    }
-
-
-def _resolve_columns(database: str, table: str, columns: list[str]) -> tuple[list[str], dict[str, Any]]:
-    """Map requested columns onto the table's real columns without guessing.
-
-    Known names keep their real casing; unknown names are dropped (never substituted)
-    and reported with the real list; '*' or no valid name selects the real columns
-    (max 25). A 9B model's column recall errors used to fail the whole call.
-    """
-    found = _allowed_table(database, table)
-    if not found:
-        return columns, {}
-    real = found[1]
-    by_lower = {c.lower(): c for c in real}
-    wanted = [c.strip() for c in columns if str(c).strip() and str(c).strip() != "*"]
-    kept = [by_lower[c.lower()] for c in wanted if c.lower() in by_lower]
-    ignored = [c for c in wanted if c.lower() not in by_lower]
-    note: dict[str, Any] = {}
-    if ignored:
-        note = {"columns_ignored": ignored, "real_columns": real[:60]}
-    return (kept or real[:25]), note
-
-
-# Names a small model guesses for the ticket and run records. Live: dbo.Tickets,
-# Ticket_Mst_Tbl, RunActivityLog; the schema suggester pointed at TicketScheme_Mst_Tbl.
-_KNOWN_SOURCES = (
-    (re.compile(r"ticket|complaint", re.I),
-     "The Helpdesk ticket is dbo.Complaint_Mst_Tbl (XStudio_Helpdesk); prefer xstudio_get_ticket_context."),
-    (re.compile(r"run|action|activity|audit", re.I),
-     "This run's evidence trail comes from xstudio_get_run_actions (Hermes_L2_SQL_Action_Trn_Tbl)."),
-)
-
-
-def _known_source_hint(table: str) -> dict[str, str]:
-    for pattern, hint in _KNOWN_SOURCES:
-        if pattern.search(table or ""):
-            return {"hint": hint}
-    return {}
-
-
-def _select(req: dict[str, Any], client: Any) -> dict[str, Any]:
-    database = str(_database(req))
-    table = str(_require(req, "table"))
-    columns, column_note = _resolve_columns(database, table, [str(x) for x in req.get("columns") or []])
-    run_id = str(_require(req, "run_id"))
-    built = _orchestrator().build_query_mechanically(
-        table=table,
-        columns=columns,
-        where=req.get("where"),
-        order_by=req.get("order_by"),
-        top=_top(req, 20),
-        database=database,
-    )
-    if not built.get("ok"):
-        return {"operation": "select", **built, "retry_same_call": False, **_known_source_hint(table)}
-    rows = _orchestrator().run_readonly_query(
-        client, built["sql"], database=database, run_id=run_id
-    )
-    return {
-        "ok": True,
-        "operation": "select",
-        "database": database,
-        "table": built.get("table"),
-        "sql": built.get("sql"),
-        "warning": built.get("warning") or built.get("ambiguity_warning"),
-        "rows": rows,
-        **column_note,
-    }
-
-
 def _query(req: dict[str, Any], client: Any) -> dict[str, Any]:
     database = str(_database(req))
     sql = str(_require(req, "sql")).strip()
@@ -815,36 +642,6 @@ def _query(req: dict[str, Any], client: Any) -> dict[str, Any]:
         client, sql, database=database, run_id=run_id
     )
     return {"ok": True, "operation": "query", "database": database, "rows": rows}
-
-
-def _find_objects(req: dict[str, Any], client: Any) -> dict[str, Any]:
-    database = str(_database(req))
-    rows = client.find_sql_objects(
-        database_name=database,
-        search_text=str(_require(req, "search")),
-        object_type=req.get("object_type"),
-        top_n=_top(req, 20),
-    )
-    return {"ok": True, "operation": "find_objects", "database": database, "objects": rows}
-
-
-def _get_definition(req: dict[str, Any], client: Any) -> dict[str, Any]:
-    database = str(_database(req))
-    schema = str(req.get("schema") or "dbo").strip("[]")
-    name = str(_require(req, "object_name"))
-    if "." in name:
-        parts = [part.strip().strip("[]") for part in name.split(".")]
-        if len(parts) != 2 or not all(parts):
-            raise ValueError("object_name must be an object or schema.object; specify database separately")
-        if req.get("schema") and schema.casefold() != parts[0].casefold():
-            raise ValueError("schema conflicts with qualified object_name")
-        schema, name = parts
-    result = client.get_sql_object_definition(
-        database_name=database,
-        schema_name=schema,
-        object_name=name.strip("[]"),
-    )
-    return {"ok": True, "operation": "get_definition", "database": database, "definition": result}
 
 
 def _get_ticket_context(req: dict[str, Any], client: Any) -> dict[str, Any]:
@@ -875,73 +672,25 @@ def _save_ledger(req: dict[str, Any], client: Any) -> dict[str, Any]:
 _CONNECTED_OPERATIONS = {
     "probe_table": _probe_table,
     "probe_related_table": _probe_related_table,
-    "select": _select,
     "query": _query,
-    "find_objects": _find_objects,
-    "get_definition": _get_definition,
     "get_ticket_context": _get_ticket_context,
     "get_run_actions": _get_run_actions,
     "save_ledger": _save_ledger,
-    "read_procedure": _read_procedure,
     "heat_context": _heat_context,
     "sap_api_context": _sap_api_context,
     "work_order_context": _work_order_context,
-    "resolve_heat": _resolve_heat,
 }
-
-
-_SQL_TABLE_REF = re.compile(r"\b(?:FROM|JOIN)\s+((?:\[?\w+\]?\.)?\[?\w+\]?)", re.IGNORECASE)
-
-
-def _referenced_tables(req: dict[str, Any]) -> list[str]:
-    if req.get("operation") == "select":
-        return [str(req.get("table") or "")]
-    return [m.group(1) for m in _SQL_TABLE_REF.finditer(str(req.get("sql") or ""))]
-
-
-def _route_database(req: dict[str, Any]) -> dict[str, Any]:
-    """Send a select/query to the one allowed database that actually holds its tables.
-
-    Live 2026-09-23: Xbatch tables such as EAF_PER_HEAT queried against
-    XStudio_Helpdesk failed with "Invalid object name" and cost the worker its bounded
-    call budget. Only an unambiguous single-database match is rerouted.
-    """
-    tables = [t for t in _referenced_tables(req) if t]
-    requested = req.get("database")
-    if not tables or requested not in ALLOWED_DATABASES:
-        return req
-    if all(_allowed_table(requested, t) for t in tables):
-        return req
-    homes = [db for db in sorted(ALLOWED_DATABASES)
-             if db != requested and all(_allowed_table(db, t) for t in tables)]
-    if len(homes) != 1:
-        return req
-    return {**req, "database": homes[0], "database_rerouted_from": requested}
 
 
 def dispatch(req: dict[str, Any]) -> dict[str, Any]:
     operation = str(_require(req, "operation"))
-    if operation == "validate_identifiers":
-        return _validate_identifiers(req)
-    if operation == "suggest_tables":
-        database = str(_database(req))
-        result = _orchestrator().suggest_tables_mechanically(
-            str(_require(req, "search")), top=_top(req, 8), database=database
-        )
-        return {"operation": operation, **result}
-
     handler = _CONNECTED_OPERATIONS.get(operation)
     if handler is None:
         raise ValueError(f"unsupported operation: {operation}")
 
-    if operation in ("select", "query"):
-        req = _route_database(req)
     client = _client()
     try:
-        result = handler(req, client)
-        if req.get("database_rerouted_from"):
-            result = {**result, "database_rerouted_from": req["database_rerouted_from"]}
-        return result
+        return handler(req, client)
     finally:
         try:
             client.close()

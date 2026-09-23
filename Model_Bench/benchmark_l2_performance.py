@@ -108,6 +108,9 @@ def outcome_summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
             key = r["ResponseType"] or "UNKNOWN"
             types[key] = types.get(key, 0) + 1
     durations = [r["DurationSeconds"] for r in runs if r["ProcessStatus"] == "COMPLETED" and r["DurationSeconds"]]
+    # A published run that never entered the local-model queue was answered by Jev + harness.
+    no_qwen = [r for r in runs if r["ProcessStatus"] in ("COMPLETED", "WAITING_USER") and not r["LocalModelPurpose"]]
+    no_qwen_secs = [r["DurationSeconds"] for r in no_qwen if r["DurationSeconds"]]
     return {
         "runs": len(runs),
         "published": sum(types.values()),
@@ -116,6 +119,8 @@ def outcome_summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "response_types": types,
         "canned_incomplete_replies": sum(r["CannedIncomplete"] for r in runs),
         "avg_claim_to_publish_min": round(sum(durations) / len(durations) / 60, 1) if durations else None,
+        "answered_without_qwen": len(no_qwen),
+        "avg_no_qwen_seconds": round(sum(no_qwen_secs) / len(no_qwen_secs)) if no_qwen_secs else None,
     }
 
 
@@ -291,7 +296,9 @@ def print_markdown(report: dict[str, Any], limit: int) -> None:
     print(f"## Outcomes\n- runs {o['runs']} | published {o['published']} | failed {o['failed']} | active {o['active']}")
     print(f"- response types: {o['response_types']}")
     print(f"- canned 'Evidence status: INCOMPLETE' replies: {o['canned_incomplete_replies']}")
-    print(f"- avg claim-to-publish: {o['avg_claim_to_publish_min']} min\n")
+    print(f"- avg claim-to-publish: {o['avg_claim_to_publish_min']} min")
+    print(f"- answered without Qwen: {o['answered_without_qwen']} of {o['published']} "
+          f"(avg {o['avg_no_qwen_seconds']} s claim-to-publish)\n")
     print("## Runs")
     for r in report["runs"][:limit]:
         print(f"- {r['TicketNo']}: {r['ProcessStatus']} {r['ResponseType'] or ''} "

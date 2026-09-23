@@ -72,8 +72,8 @@ DEFAULT_ELIGIBLE_STATUS = "Enter"
 
 INVESTIGATOR_PROFILE = os.environ.get("L2_INVESTIGATOR_PROFILE", "l2-jev-investigator")
 REVIEWER_PROFILE = os.environ.get("L2_REVIEWER_PROFILE", "l2-reviewer-primary")
-REVIEWER_PROFILES = {REVIEWER_PROFILE, "l2-reviewer-primary", "l2-reviewer-fallback"}
-INVESTIGATOR_PROFILES = {INVESTIGATOR_PROFILE, "l2-jev-investigator", "l2-investigator-primary", "l2-investigator"}
+REVIEWER_PROFILES = {REVIEWER_PROFILE, "l2-reviewer-primary"}
+INVESTIGATOR_PROFILES = {INVESTIGATOR_PROFILE, "l2-jev-investigator"}
 
 # Finish work before starting work. With max_in_progress=1 this is the scheduling
 # policy that prevents reviewer/rework starvation.
@@ -1181,12 +1181,20 @@ def _jev_direct_answer(
          "fact_table": direct_answer.compact_for_jev(table)},
         ticket_id=ticket_id, run_id=run_id, audit_stage="JEV_DIRECT_ANSWER",
     )
-    result = call.get("result") if call.get("ok") else {}
-    outcome, confidence = _choice_answer(result or {}, "outcome", "NEEDS_REASONING")
-    answers = _noul_answer(result or {}, "facts_answer_question", 0.0)
-    record.update(outcome=outcome, confidence=confidence, facts_answer_question=answers)
-    if outcome == "NEEDS_REASONING" or min(confidence, answers) < DIRECT_ANSWER_MIN_CONFIDENCE:
-        return None, {**record, "reason": "Jev did not choose a confident direct outcome"}
+    result = (call.get("result") if call.get("ok") else {}) or {}
+    # Jev decides answerable-or-not; CONFIRMED/CORRECTED/ANSWERED are all answers, and
+    # a probability split between them (live: 0.59 ANSWERED / 0.4 CONFIRMED on a work
+    # order whose two fields matched) is not doubt. The facts pick which template.
+    probabilities = ((result.get("answers") or {}).get("outcome") or {}).get("probabilities") or {}
+    answerable = sum(float(probabilities.get(k) or 0.0) for k in ("CONFIRMED", "CORRECTED", "ANSWERED"))
+    not_found = float(probabilities.get("NOT_FOUND") or 0.0)
+    answers = _noul_answer(result, "facts_answer_question", 0.0)
+    outcome = direct_answer.outcome_from_facts(table) if answerable >= not_found else "NOT_FOUND"
+    record.update(outcome=outcome, answerable=round(answerable, 3), not_found=round(not_found, 3),
+                  facts_answer_question=answers)
+    if max(answerable, not_found) < DIRECT_ANSWER_MIN_CONFIDENCE or (
+            outcome != "NOT_FOUND" and answers < DIRECT_ANSWER_MIN_CONFIDENCE):
+        return None, {**record, "reason": "Jev did not judge the facts sufficient"}
     proposal = direct_answer.proposal_for(outcome, table, run_id=str(run_id), ticket_id=ticket_id,
                                           ticket=ticket)
     if proposal is None:

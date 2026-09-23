@@ -24,7 +24,7 @@ VALUE_CHARS = int(os.environ.get("L2_CALLTRACE_VALUE_CHARS", "400"))
 # Substrings of the file paths that belong to this project (repo and deployed copies).
 _OWN = ("l2_pipeline_runtime", "Hermes_Orchestrator", "xstudio_l2_tool_bridge", "ticket_scout",
         "/jev/", "\\jev\\", "xstudio-l2-tools", "xstudio_l2_tools_plugin", "l2_gbrain",
-        "jev_post_resolution_curation", "l2_calltrace_probe")
+        "jev_post_resolution_curation")
 
 # A frame that stops anywhere but a return instruction is unwinding an exception.
 _RETURN_OPS = {dis.opmap[name] for name in ("RETURN_VALUE", "RETURN_CONST", "YIELD_VALUE")
@@ -42,7 +42,7 @@ _installed = False
 
 
 def _own(filename: str) -> bool:
-    return "l2_calltrace.py" not in filename and any(part in filename for part in _OWN)
+    return Path(filename).name != "l2_calltrace.py" and any(part in filename for part in _OWN)
 
 
 def _short(value: object) -> str:
@@ -111,11 +111,14 @@ def _trace(frame, event, arg):
     _write({**_base(code, seen), "event": "call", "depth": depth, "args": _args(frame)})
     frame.f_trace_lines = False  # only call/return/exception events, never per line
     started = time.perf_counter()
-    raised: list[BaseException] = []
+    # Only the type name and message are kept: holding the exception object keeps its
+    # traceback (and every local in it, e.g. a failed pyodbc cursor) alive, which left the
+    # connection "busy with results" and stalled claims for ~50 minutes on 2026-09-23.
+    raised: list[tuple[str, str]] = []
 
     def _local_trace(frame, event, arg):
         if event == "exception":
-            raised[:] = [arg[1]]  # (type, value, traceback); the latest one wins
+            raised[:] = [(arg[0].__name__, _short(str(arg[1])))]  # latest wins; no object refs
             return _local_trace
         if event != "return":
             return _local_trace
@@ -125,8 +128,8 @@ def _trace(frame, event, arg):
         # An unwinding frame reports "return" with None after its "exception" event.
         unwinding = arg is None and raised and code.co_code[frame.f_lasti] not in _RETURN_OPS
         if unwinding:
-            exc = raised[0]
-            record.update(event="exception", error_type=type(exc).__name__, error=_short(str(exc)))
+            error_type, error = raised[0]
+            record.update(event="exception", error_type=error_type, error=error)
         else:
             record.update(event="return", value=_short(arg))
         _write(record)

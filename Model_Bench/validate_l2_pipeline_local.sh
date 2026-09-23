@@ -7,12 +7,12 @@ export PATH="$HOME/.local/bin:$HOME/.hermes/hermes-agent/venv/bin:$PATH"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-if [[ -z "${MSSQL_MCP_SERVER:-}" && -f "$HOME/.hermes/profiles/l2-investigator-primary/.env" ]]; then
+if [[ -z "${MSSQL_MCP_SERVER:-}" && -f "$HOME/.hermes/profiles/l2-jev-investigator/.env" ]]; then
   set -a
   # The profile .env is edited from Windows and carries CRLF; a raw source made
   # MSSQL_MCP_SERVER "10.2.6.204\r", and every WSL SQL login timed out.
   # shellcheck disable=SC1090
-  source <(tr -d '\r' < "$HOME/.hermes/profiles/l2-investigator-primary/.env")
+  source <(tr -d '\r' < "$HOME/.hermes/profiles/l2-jev-investigator/.env")
   set +a
 fi
 
@@ -81,7 +81,6 @@ PY_FILES=(
   Model_Bench/jev/investigation_assessment.py
   Model_Bench/jev/reviewer.py
   Model_Bench/jev/audit.py
-  Model_Bench/model_scorecard.py
   Model_Bench/test_jev_fabric.py
   Model_Bench/direct_answer.py
   Model_Bench/jev/direct_answer.py
@@ -134,6 +133,12 @@ run_fast_checks() {
   section "TypeSafe Jev fabric contract tests"
   timed "Jev fabric tests" python3 Model_Bench/test_jev_fabric.py
   timed "No-Qwen direct answer tests" python3 Model_Bench/test_direct_answer.py
+  timed "Call trace tests" python3 Model_Bench/test_l2_calltrace.py
+
+  section "Bridge, orchestrator, scout, trace and knowledge tests"
+  for t in test_xstudio_l2_tool_bridge test_hermes_orchestrator_cli_handlers test_ticket_scout            test_l2_orchestrator_plugin test_l2_trace_plugin test_jev_post_resolution_curation            test_xbatch_world test_xstudio_semantic_atlas test_helpdesk_sql_contract; do
+    timed "$t" env PYTHONPATH="$ROOT" python3 "Model_Bench/$t.py"
+  done
 
   section "Knowledge/skill validation"
   timed "knowledge manifest" python3 Model_Bench/validate_knowledge_manifest.py

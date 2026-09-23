@@ -14,14 +14,12 @@ export PATH="$HOME/.local/bin:$PATH"
 # named `xstudio_*` tools in the `xstudio_l2` toolset, and the retired shell paths are blocked.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ACTIVE_PROFILES=(l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
-INVESTIGATOR_PROFILES=(l2-investigator l2-investigator-primary)
-REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
 HERMES_PYTHON="$HOME/.hermes/hermes-agent/venv/bin/python"
 SCRIPTS_DIR="$HOME/.hermes/profiles/l2-investigator/scripts"
-ACTIVE_PROFILES=(l2-jev-investigator l2-investigator l2-investigator-primary l2-reviewer-primary l2-reviewer-fallback)
-INVESTIGATOR_PROFILES=(l2-jev-investigator l2-investigator l2-investigator-primary)
-REVIEWER_PROFILES=(l2-reviewer-primary l2-reviewer-fallback)
+# l2-investigator runs no worker sessions; its gateway hosts the scout/audit cron jobs.
+ACTIVE_PROFILES=(l2-jev-investigator l2-investigator l2-reviewer-primary)
+INVESTIGATOR_PROFILES=(l2-jev-investigator l2-investigator)
+REVIEWER_PROFILES=(l2-reviewer-primary)
 RETIRED_DEPLOYED_SCRIPTS=(dispatch_l2_review.py kanban_forward_bridge.py nudge_unpublished_runs.py)
 RETIRED_PLUGIN_DIRS=(xstudio-l2-jev)
 
@@ -87,20 +85,6 @@ for retired_script in "${RETIRED_SCRIPTS[@]}"; do
   done
 done
 
-for f in \
-  l2_pipeline_runtime.py \
-  ticket_scout.py \
-  reconcile_l2_pipeline.py \
-  audit_kanban_completions.py \
-  run_coalesced.py \
-  drain_and_summarize.py \
-  l2_gbrain.py \
-  l2_calltrace.py \
-  direct_answer.py
- do
-  cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
- done
-
 for profile in "${ACTIVE_PROFILES[@]}"; do
   scripts_dir="$HOME/.hermes/profiles/$profile/scripts"
   mkdir -p "$scripts_dir"
@@ -113,6 +97,7 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
     run_coalesced.py \
     drain_and_summarize.py \
     l2_calltrace.py \
+    l2_gbrain.py \
     direct_answer.py
   do
     cp "$ROOT/Model_Bench/$f" "$scripts_dir/$f"
@@ -256,7 +241,7 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
     # worker searched, found the tool, said it would use it, then completed with
     # "database access unavailable" without ever calling it.
     python3 "$ROOT/Model_Bench/patch_tool_search_off.py" "$config"
-    if [[ "$profile" == "l2-investigator-primary" || "$profile" == "l2-reviewer-primary" || "$profile" == "l2-jev-investigator" ]]; then
+    if [[ "$profile" == "l2-reviewer-primary" || "$profile" == "l2-jev-investigator" ]]; then
       python3 "$ROOT/Model_Bench/patch_l2_worker_budget.py" "$config"
     fi
   else

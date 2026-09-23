@@ -34,26 +34,9 @@ BRIDGE_PATH = os.environ.get(
     "L2_XSTUDIO_BRIDGE",
     "/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Model_Bench/xstudio_l2_tool_bridge.py",
 )
-TOOL_NAME = "xstudio_l2"
 TOOLSET = "xstudio_l2"
 # Investigator-only completion tool; reviewer profiles leave this toolset off.
 SUBMIT_TOOLSET = "l2_submit"
-# Model-composed SQL and schema exploration. The 9B worker named tables/columns/WHERE
-# clauses itself and most of those calls failed; workers read through
-# xstudio_read_table (harness-chosen filter and columns) instead. No worker profile
-# enables this toolset; it stays registered for harness diagnostics.
-EXPLORE_TOOLSET = "xstudio_explore"
-EXPLORE_TOOLS = frozenset({
-    "xstudio_select", "xstudio_query", "xstudio_suggest_tables", "xstudio_find_objects",
-    "xstudio_get_definition", "xstudio_validate_identifiers", "xstudio_read_procedure",
-    "xstudio_resolve_heat",
-})
-
-
-def _toolset_for(name: str) -> str:
-    if name == "xstudio_submit_proposal":
-        return SUBMIT_TOOLSET
-    return EXPLORE_TOOLSET if name in EXPLORE_TOOLS else TOOLSET
 
 _DATABASE_ENUM = [
     "XStudio_Helpdesk", "XStudio_Xbatch", "XStudio_Configuration_Xbatch",
@@ -74,56 +57,10 @@ def _tool_schema(description: str, properties: dict[str, Any], required: tuple[s
 
 _DATABASE = {"type": "string", "enum": _DATABASE_ENUM}
 _STRING = {"type": "string"}
-_INTEGER = {"type": "integer", "minimum": 1, "maximum": 100}
-_COLUMNS = {"type": "array", "items": {"type": "string"}}
-_OBJECT_TYPE = {"type": "string", "enum": ["TABLE", "VIEW", "PROCEDURE", "TRIGGER"]}
-
 # These are deliberately small model-facing schemas. The bridge still receives
 # the old operation vocabulary internally, but the model never has to choose an
 # operation or fill an unrelated union of arguments.
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
-    "xstudio_select": _tool_schema(
-        "Read rows from one allowlisted XStudio table or view. columns is optional: omit it to get "
-        "the real columns; unknown names are ignored and the real column list is returned.",
-        {"database": _DATABASE, "table": _STRING, "columns": _COLUMNS,
-         "where": _STRING, "order_by": _STRING, "top": _INTEGER},
-        ("database", "table"),
-    ),
-    "xstudio_query": _tool_schema(
-        "Run one read-only SQL query against an explicitly selected XStudio database.",
-        {"database": _DATABASE, "sql": _STRING}, ("database", "sql"),
-    ),
-    "xstudio_suggest_tables": _tool_schema(
-        "Find likely real tables or views for a symptom in an explicit database.",
-        {"database": _DATABASE, "search": _STRING, "top": _INTEGER},
-        ("database", "search"),
-    ),
-    "xstudio_find_objects": _tool_schema(
-        "Find real SQL objects in an explicit XStudio database.",
-        {"database": _DATABASE, "search": _STRING, "object_type": _OBJECT_TYPE,
-         "schema": _STRING, "top": _INTEGER},
-        ("database", "search"),
-    ),
-    "xstudio_get_definition": _tool_schema(
-        "Read one real table, view, procedure, or trigger definition.",
-        {"database": _DATABASE, "object_name": _STRING, "schema": _STRING},
-        ("database", "object_name"),
-    ),
-    "xstudio_validate_identifiers": _tool_schema(
-        "Validate a table and optional column identifiers against the schema allowlist.",
-        {"database": _DATABASE, "table": _STRING, "identifiers": _COLUMNS},
-        ("database", "table"),
-    ),
-    "xstudio_read_procedure": _tool_schema(
-        "Run only the explicitly allowlisted read-only diagnostic procedure.",
-        {"database": _DATABASE, "run_id": _STRING, "procedure": _STRING,
-         "parameters": {"type": "object"}},
-        ("database", "procedure", "parameters"),
-    ),
-    "xstudio_resolve_heat": _tool_schema(
-        "Resolve a heat identifier across curated XStudio_Xbatch genealogy surfaces.",
-        {"heat": _STRING, "database": _DATABASE}, ("heat",),
-    ),
     "xstudio_get_ticket_context": _tool_schema(
         "Refresh the current Helpdesk ticket row from live SQL.",
         {"ticket_id": _STRING}, (),
@@ -181,14 +118,6 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
 _VALID_RESPONSE_TYPES = {"UPDATE", "QUESTION", "RESOLUTION", "L3_ESCALATION", "NEEDS_HUMAN_ACTION"}
 
 TOOL_OPERATIONS: dict[str, str] = {
-    "xstudio_select": "select",
-    "xstudio_query": "query",
-    "xstudio_suggest_tables": "suggest_tables",
-    "xstudio_find_objects": "find_objects",
-    "xstudio_get_definition": "get_definition",
-    "xstudio_validate_identifiers": "validate_identifiers",
-    "xstudio_read_procedure": "read_procedure",
-    "xstudio_resolve_heat": "resolve_heat",
     "xstudio_get_ticket_context": "get_ticket_context",
     "xstudio_get_run_actions": "get_run_actions",
     "xstudio_save_ledger": "save_ledger",
@@ -202,14 +131,6 @@ _REQUIRED_FIELDS_BY_TOOL = {
     for name, schema in TOOL_SCHEMAS.items()
 }
 _EFFECTIVE_REQUIRED_FIELDS_BY_TOOL: dict[str, tuple[str, ...]] = {
-    "xstudio_select": ("database", "table"),
-    "xstudio_query": ("database", "sql"),
-    "xstudio_suggest_tables": ("database", "search"),
-    "xstudio_find_objects": ("database", "search"),
-    "xstudio_get_definition": ("database", "object_name"),
-    "xstudio_validate_identifiers": ("database", "table"),
-    "xstudio_read_procedure": ("database", "run_id", "procedure", "parameters"),
-    "xstudio_resolve_heat": ("database", "heat"),
     "xstudio_get_ticket_context": ("ticket_id",),
     "xstudio_get_run_actions": ("run_id",),
     "xstudio_save_ledger": ("run_id", "ledger"),
@@ -226,7 +147,6 @@ _CONTEXT_FIELD_RE = {
         r"contract_repaired_from_unstructured[`\"']?\s*:\s*(true)\b", re.IGNORECASE
     ),
     "review_cycle": re.compile(r"review_cycle\s*[:=]\s*(\d+)", re.IGNORECASE),
-    "valid_tables": re.compile(r"(?:current\s+)?valid_tables\s*[:=]\s*(.+)", re.IGNORECASE),
 }
 
 # Bounded so a single session cannot spend the 65.6K context on transport
@@ -272,54 +192,9 @@ _BLOCK_MESSAGE = (
     "L2 execution guard: database/runtime transport is harness-owned. "
     "Do not invoke Hermes_Orchestrator.py, Windows Python, sqlcmd, pyodbc, pip, "
     "or install packages from terminal -- that path is retired and blocked. "
-    "Use the named xstudio_select/xstudio_query/xstudio_* tools in the xstudio_l2 toolset instead. "
+    "Use the named xstudio_* tools in the xstudio_l2 toolset instead. "
     "Do not retry this command with wrappers, timeouts, or a different shell."
 )
-
-_REQUIRED_FIELDS_BY_OPERATION: dict[str, tuple[str, ...]] = {
-    "select": ("database", "table"),
-    "query": ("database", "sql"),
-    "suggest_tables": ("database", "search"),
-    "find_objects": ("database", "search"),
-    "get_definition": ("database", "object_name"),
-    "validate_identifiers": ("database", "table"),
-    "read_procedure": ("database", "run_id", "procedure", "parameters"),
-    "get_ticket_context": ("ticket_id",),
-    "get_run_actions": ("run_id",),
-    "save_ledger": ("run_id", "ledger"),
-    "heat_context": ("database", "run_id", "heat"),
-    "sap_api_context": ("database", "run_id", "api_type"),
-    "work_order_context": ("database", "run_id", "work_order"),
-    "resolve_heat": ("database", "heat"),
-}
-
-
-def _shape_error(args: dict[str, Any]) -> str | None:
-    """Return a deterministic operation-specific argument error, if any.
-
-    This runs in the pre-tool hook so malformed calls do not consume the
-    bounded live-query budget or open the SQL transport. The bridge remains
-    defensive and validates the same fields again at its trust boundary.
-    """
-    operation = args.get("operation")
-    if not operation:
-        return "operation is required"
-    required = _REQUIRED_FIELDS_BY_OPERATION.get(str(operation))
-    if required is None:
-        return f"unsupported operation={operation!r}"
-    missing = [key for key in required if args.get(key) is None or args.get(key) == "" or args.get(key) == []]
-    if missing:
-        return (
-            f"operation={operation!r} requires: {', '.join(required)}; "
-            f"missing: {', '.join(missing)}"
-        )
-    if operation == "select" and not isinstance(args.get("columns"), list):
-        return "operation='select' requires columns as an array of column names"
-    if operation == "read_procedure" and not isinstance(args.get("parameters"), dict):
-        return "operation='read_procedure' requires parameters as an object"
-    if operation == "save_ledger" and not isinstance(args.get("ledger"), dict):
-        return "operation='save_ledger' requires ledger as an object"
-    return None
 
 _lock = threading.Lock()
 _session_calls: dict[str, int] = defaultdict(int)
@@ -364,54 +239,6 @@ def _context_for(session: str, kwargs: dict[str, Any] | None = None) -> dict[str
     return values
 
 
-_VALID_TABLE_ENTRY_RE = re.compile(r"([^,\[\]]+?)(?:\[([^\]]*)\])?\s*(?:,|$)")
-
-
-def _parse_valid_tables(raw: str) -> dict[str, set[str] | None]:
-    """'db1.tbl1[colA,colB], db2.tbl2' -> {'tbl1': {'cola','colb'}, 'db1.tbl1': {...},
-    'tbl2': None, 'db2.tbl2': None} (lowercase keys; None means no column list
-    was recorded for that table, so columns are not restricted for it).
-
-    Both the bare table name and the fully-qualified form are accepted as keys
-    since the model may supply either in its own `table` argument.
-    """
-    allowed: dict[str, set[str] | None] = {}
-    for match in _VALID_TABLE_ENTRY_RE.finditer(raw):
-        name = match.group(1).strip().strip(".")
-        if not name:
-            continue
-        cols_raw = match.group(2)
-        columns = {c.strip().lower() for c in cols_raw.split(",") if c.strip()} if cols_raw else None
-        for key in ({name.lower(), name.rsplit(".", 1)[-1].lower()} if "." in name else {name.lower()}):
-            allowed[key] = columns
-    return allowed
-
-
-def _table_not_in_valid_tables(session: str, effective_args: dict[str, Any]) -> str | None:
-    """None if the call's table is one Jev's evidence plan selected (or no plan
-    restriction applies); otherwise a message naming the allowed tables.
-    """
-    with _lock:
-        raw = _session_context.get(session, {}).get("valid_tables")
-    if not raw:
-        return None
-    allowed = _parse_valid_tables(raw)
-    if not allowed:
-        return None
-    table = str(effective_args.get("table") or "").strip()
-    if not table:
-        return None
-    bare = table.rsplit(".", 1)[-1].lower()
-    if table.lower() not in allowed and bare not in allowed:
-        return (
-            f"'{table}' is not one of the tables Jev's evidence plan selected for this ticket "
-            f"(valid_tables: {raw})."
-        )
-
-    # Columns are resolved against the live schema by the bridge (one owner).
-    return None
-
-
 def _repair_args(tool_name: str, args: dict[str, Any], session: str,
                  kwargs: dict[str, Any] | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     """Apply only safe, deterministic repairs; return (effective, changed-fields)."""
@@ -437,15 +264,8 @@ def _shape_error_for_tool(tool_name: str, args: dict[str, Any]) -> str | None:
     missing = [key for key in required if args.get(key) is None or args.get(key) == "" or args.get(key) == []]
     if missing:
         return f"tool={tool_name!r} requires: {', '.join(required)}; missing: {', '.join(missing)}"
-    if tool_name == "xstudio_select" and args.get("columns") is not None and not isinstance(args.get("columns"), list):
-        return "xstudio_select columns must be an array of column names (or omit it for all real columns)"
-    if tool_name == "xstudio_read_procedure" and not isinstance(args.get("parameters"), dict):
-        return "xstudio_read_procedure requires parameters as an object"
     if tool_name == "xstudio_save_ledger" and not isinstance(args.get("ledger"), dict):
         return "xstudio_save_ledger requires ledger as an object"
-    if tool_name == "xstudio_validate_identifiers" and args.get("identifiers") is not None \
-            and not isinstance(args.get("identifiers"), list):
-        return "xstudio_validate_identifiers requires identifiers as an array when supplied"
     return None
 
 
@@ -527,12 +347,6 @@ def _named_tool_handler(tool_name: str, params: dict[str, Any], **kwargs: Any) -
         return json.dumps({"ok": False, "error": shape_error, "retry_same_call": False})
     effective["operation"] = TOOL_OPERATIONS[tool_name]
     return _invoke_bridge(effective)
-
-
-def _legacy_tool_handler(params: dict[str, Any], **kwargs: Any) -> str:
-    """Compatibility-only adapter; the legacy tool is intentionally not registered."""
-    del kwargs
-    return _invoke_bridge(params)
 
 
 def _outcome_field_error(response_type: str, params: dict[str, Any]) -> Optional[str]:
@@ -936,10 +750,6 @@ def _resolve_typed_tool_args(
 ) -> tuple[Optional[str], dict[str, Any], dict[str, Any]]:
     """Shape/compatibility resolution: one owner for "is this call well-formed,
     and what are its effective (possibly repaired) arguments"."""
-    if tool_name == TOOL_NAME:
-        # Keep the old guard for compatibility with pre-migration callers, but
-        # never expose/register this polymorphic surface to the model.
-        return _shape_error(args), args, {}
     effective_args, repairs = _repair_args(tool_name, args, session, kwargs)
     return _shape_error_for_tool(tool_name, effective_args), effective_args, repairs
 
@@ -1024,7 +834,7 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
     if tool_name == "xstudio_submit_proposal":
         return None
 
-    if tool_name not in TOOL_OPERATIONS and tool_name != TOOL_NAME:
+    if tool_name not in TOOL_OPERATIONS:
         return None
 
     shape_error, effective_args, repairs = _resolve_typed_tool_args(tool_name, args, session, kwargs)
@@ -1040,18 +850,6 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
                 f"the investigation budget. RETRY_WITH: {json.dumps({'tool': tool_name, 'required': retry_fields})}"
             ),
         }
-
-    if tool_name in ("xstudio_select", "xstudio_validate_identifiers"):
-        table_error = _table_not_in_valid_tables(session, effective_args)
-        if table_error:
-            return {
-                "action": "block",
-                "message": (
-                    f"{table_error} This call was not sent to SQL and did not consume the "
-                    "investigation budget. Use one of the listed valid_tables, or call "
-                    "find_objects/suggest_tables first if genuinely none of them fit."
-                ),
-            }
 
     budget_error = _budget_guard(session, tool_name, effective_args)
     if budget_error:
@@ -1081,7 +879,7 @@ def _post_tool_call(tool_name: str, args: dict[str, Any] | None = None,
                 with _lock:
                     _session_context[session]["kanban_task_id"] = kanban_task_id
         return
-    if tool_name not in TOOL_OPERATIONS and tool_name != TOOL_NAME:
+    if tool_name not in TOOL_OPERATIONS:
         return
     parsed = _parse_result(result)
     if parsed.get("ok") is not False and "error" not in parsed:
@@ -1133,164 +931,17 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str]:
     )
     return {
         "context": (
-            "L2 EXECUTION CONTRACT: use only the named xstudio_* tools in the xstudio_l2 toolset for XStudio/Helpdesk SQL, "
-            "schema discovery, run evidence, ticket refresh, and ledger work. "
-            "Each tool has a small required schema; never invent an operation field. "
+            "L2 EXECUTION CONTRACT: live evidence comes only from the named xstudio_* tools; the "
+            "harness chooses databases, filters and columns. Never write SQL, scripts or files. "
             f"{completion_contract}"
-            "UPDATE retries automatically and cannot obtain a user's answer. "
-            "Incomplete UPDATE requires next_investigation_step naming a concrete new evidence check. "
-            "RESOLUTION closes the ticket: require COMPLETE evidence, VERIFIED claims with action_id, "
-            "and resolution describing an observed successful outcome. A diagnosis or proposed fix is not resolution. "
-            f"Compact investigation state:{{known_context:{ids or ' none'}, live_calls_used:{used}, "
-            f"live_calls_remaining:{max(0, MAX_TOOL_CALLS - used)}}}. "
-            "Any raw Python/sqlcmd/pyodbc/pip command shown in older task text is legacy and "
-            "is blocked by the harness. Do not install dependencies. After two identical tool "
-            "failures, change the evidence path instead of retrying. Jev planning/review is "
-            "harness-owned; xstudio_l2 returns deterministic live evidence only. Do not attempt "
-            "to call TypeSafe/Jev directly or recreate semantic routing inside this tool.\n"
-            "DATABASE ROUTING & OPERATION CONTRACTS:\n"
-            "- Target 'XStudio_Xbatch' for ALL production/plant process evidence (heats, EAF, CCM, billets, work orders, SAP postings). Plant/EAF evidence lives in XStudio_Xbatch, NOT XStudio_Helpdesk.\n"
-            "- Target 'XStudio_Helpdesk' for Helpdesk tickets, Hermes runs, workflow status, and activity timeline.\n"
-            "- Target 'XStudio_Configuration_Xbatch' for configuration metadata.\n"
-            "- Every SQL/schema operation REQUIRES 'database' and its operation-specific parameters (e.g. select: database+table+columns; query: database+sql; suggest_tables/find_objects: database+search; get_definition: database+object_name; validate_identifiers: database+table+identifiers)."
+            "UPDATE needs next_investigation_step; RESOLUTION needs resolution and VERIFIED claims "
+            "with action_id. "
+            f"State: known_context={ids or 'none'}, live_calls_used={used}, "
+            f"live_calls_remaining={max(0, MAX_TOOL_CALLS - used)}. "
+            "After two identical tool failures, change the evidence path."
         )
     }
 
-
-_SCHEMA = {
-    "name": TOOL_NAME,
-    "description": (
-        "Typed XStudio L2 investigation interface for database, schema, ticket, run, and ledger operations. "
-        "Use this instead of terminal/Python/sqlcmd. "
-        "DATABASE ROUTING: "
-        "- 'XStudio_Xbatch': All production and plant process evidence (heats, EAF, CCM, billets, work orders, SAP process data). "
-        "- 'XStudio_Helpdesk': Helpdesk tickets, Hermes runs, workflow status, activity timeline. "
-        "- 'XStudio_Configuration_Xbatch': XStudio configuration metadata. "
-        "Every SQL/schema operation REQUIRES 'database' and its operation-specific parameters."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "operation": {
-                "type": "string",
-                "enum": [
-                    "select", "query", "probe_table", "suggest_tables", "find_objects",
-                    "get_definition", "validate_identifiers", "read_procedure",
-                    "get_ticket_context", "get_run_actions", "save_ledger"
-                ],
-                "description": (
-                    "Operation to execute. Required fields per operation:\n"
-                    "- 'select': requires [database, table, columns, run_id]\n"
-                    "- 'query': requires [database, sql, run_id]\n"
-                    "- 'probe_table': requires [database, table, ticket, run_id]\n"
-                    "- 'suggest_tables': requires [database, search]\n"
-                    "- 'find_objects': requires [database, search]\n"
-                    "- 'get_definition': requires [database, object_name]\n"
-                    "- 'validate_identifiers': requires [database, table, identifiers]\n"
-                    "- 'read_procedure': requires [database, run_id, procedure, parameters]\n"
-                    "- 'get_ticket_context': requires [ticket_id]\n"
-                    "- 'get_run_actions': requires [run_id]\n"
-                    "- 'save_ledger': requires [run_id, ledger]"
-                )
-            },
-            "database": {
-                "type": "string",
-                "enum": [
-                    "XStudio_Helpdesk", "XStudio_Xbatch", "XStudio_Configuration_Xbatch"
-                ],
-                "description": (
-                    "Target database. REQUIRED for select, query, probe_table, suggest_tables, "
-                    "find_objects, get_definition, validate_identifiers, read_procedure.\n"
-                    "ROUTING:\n"
-                    "* 'XStudio_Xbatch': Production/plant process evidence, heats, EAF, CCM, billets, work orders, SAP process data.\n"
-                    "* 'XStudio_Helpdesk': Helpdesk tickets, Hermes runs, Helpdesk workflow status, activity timeline.\n"
-                    "* 'XStudio_Configuration_Xbatch': XStudio configuration metadata.\n"
-                    "Do NOT query XStudio_Helpdesk for plant/EAF/heat data."
-                )
-            },
-            "table": {
-                "type": "string",
-                "description": "Target table or view name (e.g. 'dbo.EAF_PER_HEAT'). REQUIRED for: select, probe_table, validate_identifiers."
-            },
-            "columns": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "List of real column names to project. REQUIRED for: select. (Must be real columns; use find_objects or validate_identifiers first; do NOT pass wildcards or subqueries)."
-            },
-            "sql": {
-                "type": "string",
-                "description": "Read-only SELECT query string. REQUIRED for: query. (Write/DDL/EXEC statements are strictly blocked)."
-            },
-            "search": {
-                "type": "string",
-                "description": "Search keyword for table or object discovery. REQUIRED for: suggest_tables, find_objects."
-            },
-            "object_name": {
-                "type": "string",
-                "description": "Name of the SQL object to inspect. REQUIRED for: get_definition."
-            },
-            "schema": {
-                "type": "string",
-                "description": "Schema name for get_definition (defaults to 'dbo')."
-            },
-            "object_type": {
-                "type": "string",
-                "enum": ["TABLE", "VIEW", "PROCEDURE", "TRIGGER"],
-                "description": "Optional filter for find_objects."
-            },
-            "identifiers": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "List of column names to validate against allowlist. REQUIRED for: validate_identifiers."
-            },
-            "procedure": {
-                "type": "string",
-                "description": "Allowlisted diagnostic procedure name ('XMES_Get_API_Transaction_Summary'). REQUIRED for: read_procedure."
-            },
-            "parameters": {
-                "type": "object",
-                "description": "Parameter object matching procedure allowlist contract (e.g. {'APIType': '...'}). REQUIRED for: read_procedure."
-            },
-            "run_id": {
-                "type": "string",
-                "description": "Active Hermes run UUID (given at the top of this task's body). REQUIRED for: select, query, probe_table, get_run_actions, save_ledger, read_procedure -- every read that returns evidence must be attributable in the run's own action audit trail."
-            },
-            "ticket_id": {
-                "type": "string",
-                "description": "Helpdesk ticket UUID. REQUIRED for: get_ticket_context."
-            },
-            "ticket": {
-                "type": "object",
-                "description": "Ticket context object containing fields like HeatNo/Description. REQUIRED for: probe_table."
-            },
-            "matched_columns": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Optional column names for probe_table."
-            },
-            "ledger": {
-                "type": "object",
-                "description": "Structured investigation ledger object to persist. REQUIRED for: save_ledger."
-            },
-            "where": {
-                "type": "string",
-                "description": "Optional WHERE clause condition for select (e.g. \"[HeatNo] = N'1604015'\")."
-            },
-            "order_by": {
-                "type": "string",
-                "description": "Optional ORDER BY clause for select."
-            },
-            "top": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 100,
-                "description": "Optional maximum rows to return (default 20, max 100)."
-            }
-        },
-        "required": ["operation"],
-        "additionalProperties": False
-    }
-}
 
 def register(ctx: Any) -> None:
     sys.path.insert(0, str(Path(BRIDGE_PATH).parent))  # l2_calltrace lives beside the bridge
@@ -1304,7 +955,7 @@ def register(ctx: Any) -> None:
         # same toolset preserves the existing profile enablement boundary.
         ctx.register_tool(
             name=name,
-            toolset=_toolset_for(name),
+            toolset=SUBMIT_TOOLSET if name == "xstudio_submit_proposal" else TOOLSET,
             schema=schema,
             handler=TOOL_HANDLERS[name],
             description=schema["description"],

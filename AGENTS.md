@@ -125,10 +125,10 @@ Ticket Scout / reconcile
 - Queued local-model work is valid active-run state even when no Kanban card exists yet. Do not classify it as an orphan.
 - Review priority `30` > rework `20` > new investigation `10` determines the single-Qwen queue order.
 - Jev recommends one execution depth in the same investigation-assessment call: `QWEN_FREE`, `COMPOSE_ONLY`, or `FOCUSED_REASONING`. Deterministic code owns the final gate.
-- `QWEN_FREE` is intentionally narrow: only high-confidence L3/human-action handoffs may skip Qwen, and only when current evidence is strong, no further probe/reasoning is needed, full-ticket trust screening is low-risk, the exact workflow handoff status is bound, and Jev primary review approves the frozen deterministic proposal.
+- `QWEN_FREE` (no-Qwen) is the target path: after the audited probes, the harness builds a fact table (fields the ticket names, recorded vs reported values, action IDs), Jev's `direct_answer` workflow picks CONFIRMED/CORRECTED/ANSWERED/NOT_FOUND/NEEDS_REASONING, and the harness renders a fixed reply with VERIFIED claims and publishes it. Jev never writes text; outcomes the facts contradict are refused. Only NEEDS_REASONING (or no audited facts) goes to the local model.
 - `COMPOSE_ONLY` uses a smaller context budget and normally no additional live read; `FOCUSED_REASONING` receives the larger bounded context/recovery budget.
 - The route-specific domain skill is loaded only when the same Jev assessment says it materially helps the next System-2 step.
-- Every normalized local-model proposal gets one Jev primary semantic review. A Qwen-free deterministic handoff is also Jev-primary-reviewed before publication. A local reviewer card is created only for `LOCAL_REVIEW`, Jev unavailability/uncertainty, or genuine deep reasoning.
+- Every normalized local-model proposal gets one Jev primary semantic review. A no-Qwen direct answer is not reviewed a second time: Jev already chose its outcome on the same audited facts. A local reviewer card is created only for `LOCAL_REVIEW`, Jev unavailability/uncertainty, or genuine deep reasoning.
 - Any local reviewer receives a frozen `proposal_json`. The proposal reviewed is the proposal published.
 - Investigator never calls `--publish-response`.
 - Jev/local reviewers never publish; deterministic lifecycle code owns publication.
@@ -263,14 +263,14 @@ Never fabricate a table, view, column, SP, ticket status, or identifier.
 Preferred investigation path, all through the named `xstudio_*` tools in the `xstudio_l2` toolset (see §8a):
 
 - use the dispatch-time investigation bundle first;
-- `xstudio_select` when the table/entity is known (identifiers are schema-validated);
-- `xstudio_suggest_tables` for deterministic narrowing;
-- `xstudio_find_objects` / `xstudio_get_definition` for live metadata when necessary;
-- `xstudio_query` only for read-only SQL, with `database` specified explicitly;
-- `xstudio_read_procedure` only for the explicitly allowlisted diagnostics;
-- `xstudio_resolve_heat` for deterministic, read-only mapping of a ticket heat identifier
-  (for example `H99328`) across curated XStudio_Xbatch heat/genealogy surfaces;
+- `xstudio_read_table(table)` for one more table: the harness filters by the ticket's own
+  identifier (billet, material document, work order, heat) and chooses the columns;
+- `xstudio_heat_context` / `xstudio_work_order_context` / `xstudio_sap_api_context` for fixed
+  cross-table evidence of one identifier;
 - persist meaningful per-ticket state with `xstudio_save_ledger`.
+
+The model never writes SQL or names columns. Model-composed select/query and schema
+exploration tools were removed on 2026-09-23 (most of those calls failed).
 
 Do not put per-ticket facts into shared mem0.
 
@@ -397,7 +397,7 @@ Rules:
 
 Active Jev state on the run row is stored in JevTriageJson, JevInvestigationJson, JevReviewJson, JevTraceJson, and JevKBCurationJson, plus ReviewMode, JevReviewDecision, JevReviewConfidence, JevRiskScore, LocalReviewRequired, JevModel, and JevReviewedOn.
 
-The default investigator profile is l2-jev-investigator. l2-investigator-primary remains available as a compatibility/fallback profile. l2-reviewer-primary and l2-reviewer-fallback are deep-review exception paths rather than mandatory steps.
+The investigator profile is l2-jev-investigator. l2-reviewer-primary is the deep-review exception path, not a mandatory step.
 
 TYPESAFE_API_KEY must come from the process/service environment visible to Windows Python. Never commit an API key or add a repository credential fallback. Never echo credentials or copy them into prompts/cards/trace JSON.
 ## 10. SQL write discipline
@@ -420,14 +420,12 @@ Active role names:
 
 ```text
 l2-jev-investigator
-l2-investigator-primary
 l2-reviewer-primary
-l2-reviewer-fallback
 ```
 
-`l2-investigator` remains the dispatcher/host profile and compatibility location for scripts.
+`l2-investigator` runs no worker sessions; its gateway hosts the scheduled jobs (ticket scout, completion audit) and its `scripts/` directory.
 
-Old model-based role names such as `l2-eval-investigator`, `l2-gemma-verifier`, and `l2-qwen-verifier` are historical only.
+`l2-investigator-primary`, `l2-reviewer-fallback`, `l2-gemma` and `l2-gemma-verifier` were retired on 2026-09-23 (archived under `~/.hermes/retired_profiles_2026-09-23/`). Old model-based role names are historical only.
 
 Do not hardcode the current LM Studio model into architecture documentation. The loaded model can change. Verify it live at the configured LM Studio endpoint before diagnosing model mismatch.
 
@@ -509,9 +507,9 @@ a ticket — that bypasses the scout's WIP/lifecycle gate.
 
 `deploy/` is the reproducible mirror of artifacts that otherwise live under `~/.hermes/profiles/...`.
 
-After changing profile SOUL/config/skills/plugins or the cron schedule, refresh the mirror with `Model_Bench/mirror_wsl_artifacts.sh` and inspect the diff before committing. The mirror covers the L2 plugins — `xstudio-l2-orchestrator`, `xstudio-l2-tools`, and `xstudio-l2-trace` — so a fresh install cannot come up without the typed investigation and trace boundaries. Jev network work is harness-owned and remains out-of-band from the trace hook.
+After changing profile SOUL/config/skills/plugins or the cron schedule, update the matching file under `deploy/` and inspect the diff before committing. The mirror covers the L2 plugins — `xstudio-l2-orchestrator`, `xstudio-l2-tools`, and `xstudio-l2-trace` — so a fresh install cannot come up without the typed investigation and trace boundaries. Jev network work is harness-owned and remains out-of-band from the trace hook.
 
-`Model_Bench/deploy_l2_pipeline_runtime.sh` installs the lifecycle scripts, three plugins, SOULs, skills, the workflow-binding fallback, and the profile-config entries, then restarts the four active gateways unless `--no-restart` is passed. It is idempotent. Config edits are applied by `Model_Bench/patch_profile_config.py`, which is deliberately a targeted text editor rather than a YAML round-trip: the live configs carry explanatory comments (Security/Tirith, fallback-model providers) that a load-and-dump silently destroys.
+`Model_Bench/deploy_l2_pipeline_runtime.sh` installs the lifecycle scripts, three plugins, SOULs, skills, the workflow-binding fallback, and the profile-config entries, then restarts the active worker gateways unless `--no-restart` is passed. It is idempotent. Config edits are applied by `Model_Bench/patch_profile_config.py`, which is deliberately a targeted text editor rather than a YAML round-trip: the live configs carry explanatory comments (Security/Tirith, fallback-model providers) that a load-and-dump silently destroys.
 
 ## 16a. Ponytail audit standard
 

@@ -33,27 +33,6 @@ bridge = _load("xstudio_l2_tool_bridge_test", ROOT / "xstudio_l2_tool_bridge.py"
 patcher = _load("patch_profile_config_test", ROOT / "patch_profile_config.py")
 
 
-def test_definition_accepts_discovered_qualified_names_and_rejects_schema_conflicts() -> None:
-    client = mock.Mock()
-    client.get_sql_object_definition.return_value = {}
-    with mock.patch.object(bridge, "_client", return_value=client):
-        for name in ("dbo.LRF_Per_Heat", "[dbo].[LRF_Per_Heat]", "LRF_Per_Heat"):
-            result = bridge.dispatch({"operation": "get_definition", "database": "XStudio_Xbatch",
-                                      "object_name": name})
-            assert result["ok"], result
-            client.get_sql_object_definition.assert_called_with(
-                database_name="XStudio_Xbatch", schema_name="dbo", object_name="LRF_Per_Heat")
-        client.get_sql_object_definition.reset_mock()
-        try:
-            bridge.dispatch({"operation": "get_definition", "database": "XStudio_Xbatch",
-                             "object_name": "dbo.LRF_Per_Heat", "schema": "other"})
-        except ValueError as exc:
-            assert "conflicts" in str(exc)
-        else:
-            raise AssertionError("conflicting schemas must be rejected")
-        client.get_sql_object_definition.assert_not_called()
-
-
 def setup_function() -> None:
     with plugin._lock:
         plugin._session_calls.clear()
@@ -117,34 +96,8 @@ def test_terminal_guard_leaves_benign_inspection_available() -> None:
         assert plugin._pre_tool_call("terminal", {"command": command}, task_id="s") is None, command
 
 
-def test_typed_tool_guard_rejects_operation_without_required_fields_before_budget() -> None:
-    blocked = plugin._pre_tool_call(plugin.TOOL_NAME, {
-        "operation": "select", "table": "dbo.CCM_Per_Heat", "columns": ["HeatID"]
-    }, task_id="shape")
-    assert blocked and blocked["action"] == "block"
-    assert "database" in blocked["message"]
-    with plugin._lock:
-        assert plugin._session_calls["shape"] == 0
-
-
-def test_typed_tool_guard_requires_operation_specific_arguments() -> None:
-    blocked = plugin._pre_tool_call(plugin.TOOL_NAME, {
-        "operation": "get_definition", "database": "XStudio_Xbatch"
-    }, task_id="shape-definition")
-    assert blocked and blocked["action"] == "block"
-    assert "object_name" in blocked["message"]
-
-
 def test_named_tool_schemas_have_small_required_contracts() -> None:
     expected = {
-        "xstudio_select": {"database", "table"},  # columns optional: bridge resolves
-        "xstudio_query": {"database", "sql"},
-        "xstudio_suggest_tables": {"database", "search"},
-        "xstudio_find_objects": {"database", "search"},
-        "xstudio_get_definition": {"database", "object_name"},
-        "xstudio_validate_identifiers": {"database", "table"},
-        "xstudio_read_procedure": {"database", "procedure", "parameters"},
-        "xstudio_resolve_heat": {"heat"},
         "xstudio_get_ticket_context": set(),
         "xstudio_get_run_actions": set(),
         "xstudio_save_ledger": {"ledger"},
@@ -160,12 +113,8 @@ def test_named_tool_schemas_have_small_required_contracts() -> None:
         assert set(schema["required"]) == required
         assert schema["additionalProperties"] is False
         assert "operation" not in schema["properties"]
-    # Effective required fields after repair must guarantee SQL safety:
-    assert plugin._EFFECTIVE_REQUIRED_FIELDS_BY_TOOL["xstudio_resolve_heat"] == ("database", "heat")
-    assert plugin._EFFECTIVE_REQUIRED_FIELDS_BY_TOOL["xstudio_get_ticket_context"] == ("ticket_id",)
-    assert plugin._EFFECTIVE_REQUIRED_FIELDS_BY_TOOL["xstudio_get_run_actions"] == ("run_id",)
+    assert plugin._EFFECTIVE_REQUIRED_FIELDS_BY_TOOL["xstudio_read_table"] == ("database", "run_id", "ticket_id", "table")
     assert plugin._EFFECTIVE_REQUIRED_FIELDS_BY_TOOL["xstudio_save_ledger"] == ("run_id", "ledger")
-    assert plugin._EFFECTIVE_REQUIRED_FIELDS_BY_TOOL["xstudio_read_procedure"] == ("database", "run_id", "procedure", "parameters")
 
 
 def test_register_exposes_named_tools_and_not_legacy_polymorphic_tool() -> None:
@@ -189,47 +138,17 @@ def test_repairable_context_is_injected_before_budget() -> None:
         task_id="task-context",
         user_message="Current run_id: RUN-1\nCurrent ticket_id: TICKET-1",
     )
-    # 1. resolve_heat defaults database to XStudio_Xbatch and injects run_id:
-    modified = plugin._pre_tool_call(
-        "xstudio_resolve_heat", {"heat": "H99328"}, task_id="task-context"
-    )
+    # read_table defaults database to XStudio_Xbatch and injects run_id + ticket_id.
+    modified = plugin._pre_tool_call("xstudio_read_table", {"table": "dbo.LRF_Per_Heat"}, task_id="task-context")
     assert modified and modified["action"] == "modify"
     assert modified["args"]["database"] == "XStudio_Xbatch"
-    assert modified["args"]["run_id"] == "RUN-1"
-
-    # 2. get_ticket_context injects ticket_id:
+    assert modified["args"]["run_id"] == "RUN-1" and modified["args"]["ticket_id"] == "TICKET-1"
     mod_tc = plugin._pre_tool_call("xstudio_get_ticket_context", {}, task_id="task-context")
-    assert mod_tc and mod_tc["action"] == "modify"
-    assert mod_tc["args"]["ticket_id"] == "TICKET-1"
-
-    # 3. get_run_actions injects run_id:
+    assert mod_tc and mod_tc["args"]["ticket_id"] == "TICKET-1"
     mod_ra = plugin._pre_tool_call("xstudio_get_run_actions", {}, task_id="task-context")
-    assert mod_ra and mod_ra["action"] == "modify"
-    assert mod_ra["args"]["run_id"] == "RUN-1"
-
-    # 4. save_ledger injects run_id:
+    assert mod_ra and mod_ra["args"]["run_id"] == "RUN-1"
     mod_sl = plugin._pre_tool_call("xstudio_save_ledger", {"ledger": {"ok": True}}, task_id="task-context")
-    assert mod_sl and mod_sl["action"] == "modify"
-    assert mod_sl["args"]["run_id"] == "RUN-1"
-
-    # 5. read_procedure injects run_id:
-    mod_rp = plugin._pre_tool_call("xstudio_read_procedure", {
-        "database": "XStudio_Configuration_Xbatch",
-        "procedure": "XMES_Get_API_Transaction_Summary",
-        "parameters": {"APIType": "UsageDecision"},
-    }, task_id="task-context")
-    assert mod_rp and mod_rp["action"] == "modify"
-    assert mod_rp["args"]["run_id"] == "RUN-1"
-
-
-def test_ambiguous_missing_database_is_rejected_before_budget() -> None:
-    blocked = plugin._pre_tool_call(
-        "xstudio_suggest_tables", {"search": "SAP posting pending"}, task_id="ambiguous"
-    )
-    assert blocked and blocked["action"] == "block"
-    assert "database" in blocked["message"]
-    with plugin._lock:
-        assert plugin._session_calls["ambiguous"] == 0
+    assert mod_sl and mod_sl["args"]["run_id"] == "RUN-1"
 
 
 def test_named_handler_injects_operation_without_exposing_it() -> None:
@@ -239,21 +158,18 @@ def test_named_handler_injects_operation_without_exposing_it() -> None:
         captured.update(args)
         return '{"ok":true}'
 
+    plugin._pre_llm_call(task_id="task-1", user_message="Current run_id: R1\nCurrent ticket_id: T1")
     with mock.patch.object(plugin, "_invoke_bridge", side_effect=fake_invoke):
-        result = plugin.TOOL_HANDLERS["xstudio_query"](
-            {"database": "XStudio_Xbatch", "sql": "SELECT 1"}, task_id="task-1"
-        )
+        result = plugin.TOOL_HANDLERS["xstudio_read_table"]({"table": "dbo.EAF_PER_HEAT"}, task_id="task-1")
     assert json.loads(result)["ok"] is True
-    assert captured["operation"] == "query"
-    assert "operation" not in {"database": "XStudio_Xbatch", "sql": "SELECT 1"}
+    assert captured["operation"] == "probe_table"
+    assert captured["database"] == "XStudio_Xbatch" and captured["ticket_id"] == "T1"
 
 
 def test_plugin_manifest_declares_registered_toolset() -> None:
     manifest = (ROOT / "xstudio_l2_tools_plugin" / "plugin.yaml").read_text(encoding="utf-8")
-    assert "provides_tools:" in manifest
-    assert "  - xstudio_select" in manifest
-    assert "  - xstudio_save_ledger" in manifest
-    assert "  - xstudio_l2\n" not in manifest
+    declared = {line.strip()[2:] for line in manifest.splitlines() if line.startswith("  - xstudio_")}
+    assert declared == set(plugin.TOOL_SCHEMAS)
 
 
 def test_terminal_guard_inspects_alternate_argument_keys() -> None:
@@ -557,89 +473,24 @@ def test_database_must_be_explicitly_allowlisted() -> None:
         raise AssertionError("master must not be an allowed database")
 
 
-def test_tool_schema_describes_database_routing_and_operation_contracts() -> None:
-    schema_str = json.dumps(plugin._SCHEMA)
-    assert "oneOf" not in schema_str, "oneOf causes HTTP 400 with LM Studio; must remain flat"
-    assert "anyOf" not in schema_str, "anyOf causes HTTP 400 with LM Studio; must remain flat"
-
-    props = plugin._SCHEMA["parameters"]["properties"]
-    assert "operation" in props
-    op_desc = props["operation"]["description"]
-    for op in (
-        "select", "query", "probe_table", "suggest_tables", "find_objects",
-        "get_definition", "validate_identifiers", "read_procedure",
-        "get_ticket_context", "get_run_actions", "save_ledger"
-    ):
-        assert op in op_desc, f"operation {op} missing from schema description"
-
-    db_desc = props["database"]["description"]
-    assert "XStudio_Xbatch" in db_desc
-    assert "XStudio_Helpdesk" in db_desc
-    assert "XStudio_Configuration_Xbatch" in db_desc
-
-    context = plugin._pre_llm_call()["context"]
-    assert "DATABASE ROUTING" in context
-    assert "XStudio_Xbatch" in context
-    assert "XStudio_Helpdesk" in context
-
-
 def test_operations_reject_missing_database_before_sql() -> None:
     fake_client = mock.MagicMock()
-    db_ops = [
-        ("select", {"table": "dbo.EAF_PER_HEAT", "columns": ["HeatNo"]}),
-        ("query", {"sql": "SELECT 1"}),
-        ("suggest_tables", {"search": "EAF"}),
-        ("find_objects", {"search": "EAF"}),
-        ("get_definition", {"object_name": "EAF_PER_HEAT"}),
-        ("validate_identifiers", {"table": "dbo.EAF_PER_HEAT", "identifiers": ["HeatNo"]}),
-        ("probe_table", {"table": "dbo.EAF_PER_HEAT", "ticket": {"HeatNo": "123"}}),
-        ("read_procedure", {"run_id": "r1", "procedure": "XMES_Get_API_Transaction_Summary", "parameters": {"APIType": "UD"}}),
-    ]
-    for op, payload in db_ops:
-        req = dict(payload, operation=op)
-        handler = bridge._CONNECTED_OPERATIONS.get(op)
-        if handler:
-            try:
-                handler(req, fake_client)
-            except ValueError as exc:
-                assert "database is required" in str(exc), f"op={op} did not mention database in error: {exc}"
-            else:
-                raise AssertionError(f"op={op} unexpectedly succeeded without database")
-        elif op == "validate_identifiers":
-            try:
-                bridge._validate_identifiers(req)
-            except ValueError as exc:
-                assert "database is required" in str(exc)
-            else:
-                raise AssertionError(f"op={op} unexpectedly succeeded without database")
-        elif op == "suggest_tables":
-            try:
-                bridge._database(req)
-            except ValueError as exc:
-                assert "database is required" in str(exc)
-            else:
-                raise AssertionError(f"op={op} unexpectedly succeeded without database")
+    for op, payload in (("query", {"sql": "SELECT 1"}),
+                        ("probe_table", {"table": "dbo.EAF_PER_HEAT", "ticket": {"HeatNo": "123"}})):
+        try:
+            bridge._CONNECTED_OPERATIONS[op](dict(payload, operation=op), fake_client)
+        except ValueError as exc:
+            assert "database is required" in str(exc), f"op={op}: {exc}"
+        else:
+            raise AssertionError(f"op={op} unexpectedly succeeded without database")
 
 
 def test_operations_reject_missing_required_arguments_before_sql() -> None:
     fake_client = mock.MagicMock()
     cases = [
-        ("select", {"database": "XStudio_Xbatch"}, "table is required"),
-        # columns are optional: the bridge resolves them against the live schema.
-        ("select", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "run_id is required"),
-        ("select", {"database": "XStudio_Xbatch", "table": "dbo.T", "columns": ["ID"]}, "run_id is required"),
         ("query", {"database": "XStudio_Xbatch"}, "sql is required"),
         ("query", {"database": "XStudio_Xbatch", "sql": ""}, "sql is required"),
         ("query", {"database": "XStudio_Xbatch", "sql": "SELECT 1"}, "run_id is required"),
-        ("suggest_tables", {"database": "XStudio_Xbatch"}, "search is required"),
-        ("find_objects", {"database": "XStudio_Xbatch"}, "search is required"),
-        ("get_definition", {"database": "XStudio_Xbatch"}, "object_name is required"),
-        ("validate_identifiers", {"database": "XStudio_Xbatch"}, "table is required"),
-        ("validate_identifiers", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "identifiers is required"),
-        ("validate_identifiers", {"database": "XStudio_Xbatch", "table": "dbo.T", "identifiers": []}, "identifiers is required"),
-        ("read_procedure", {"database": "XStudio_Xbatch"}, "run_id is required"),
-        ("read_procedure", {"database": "XStudio_Xbatch", "run_id": "r1"}, "procedure is required"),
-        ("read_procedure", {"database": "XStudio_Xbatch", "run_id": "r1", "procedure": "P"}, "parameters is required"),
         ("get_ticket_context", {}, "ticket_id is required"),
         ("get_run_actions", {}, "run_id is required"),
         ("save_ledger", {}, "run_id is required"),
@@ -648,17 +499,8 @@ def test_operations_reject_missing_required_arguments_before_sql() -> None:
         ("probe_table", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "ticket_id is required"),
     ]
     for op, payload, err in cases:
-        req = dict(payload, operation=op)
-        handler = bridge._CONNECTED_OPERATIONS.get(op)
         try:
-            if handler:
-                handler(req, fake_client)
-            elif op == "validate_identifiers":
-                bridge._validate_identifiers(req)
-            elif op == "suggest_tables":
-                bridge._require(req, "search")
-            else:
-                raise ValueError(f"unknown op: {op}")
+            bridge._CONNECTED_OPERATIONS[op](dict(payload, operation=op), fake_client)
         except ValueError as exc:
             assert err in str(exc), f"op={op} expected {err!r} in {exc!r}"
         else:
@@ -695,33 +537,6 @@ def test_oversized_result_is_replaced_with_a_narrowing_instruction() -> None:
     assert "narrow" in bounded["message"].lower() or "refine" in bounded["message"].lower()
 
 
-def test_resolve_heat_checks_known_numeric_and_prefixed_surfaces() -> None:
-    class Client:
-        def close(self):
-            pass
-
-    class Orchestrator:
-        @staticmethod
-        def run_readonly_query(client, sql, *, database, run_id):
-            return next(Orchestrator.rows)
-
-    Orchestrator.rows = iter([
-             [{"HeatNo": "H99328", "StrandNo": 1}], [], [], []
-    ])
-    with mock.patch.object(bridge, "_client", return_value=Client()), \
-         mock.patch.object(bridge, "_orchestrator", return_value=Orchestrator), \
-         mock.patch.object(Orchestrator, "run_readonly_query", wraps=Orchestrator.run_readonly_query) as run:
-        result = bridge.dispatch({
-            "operation": "resolve_heat", "database": "XStudio_Xbatch",
-            "heat": "H99328", "run_id": "run-1",
-        })
-    assert result["ok"] is True
-    assert result["input"] == "H99328"
-    assert result["matches"][0]["rows"] == 1
-    assert run.call_count == len(bridge.HEAT_RESOLUTION_SURFACES)
-    assert all("99328" in call.args[1] for call in run.call_args_list)
-
-
 def test_long_strings_are_truncated_with_a_marker() -> None:
     compact = bridge._compact({"definition": "y" * (bridge.MAX_STRING_CHARS + 100)})
     assert compact["definition"].endswith("chars]")
@@ -732,50 +547,32 @@ def test_long_strings_are_truncated_with_a_marker() -> None:
 # --------------------------------------------------------------------------
 
 def test_repeated_identical_failure_is_blocked_and_different_call_is_not() -> None:
-    # 1. Test named model-facing path
-    named_args = {"database": "XStudio_Xbatch", "table": "dbo.SAP_Posting_Tbl", "columns": ["ID"]}
+    plugin._pre_llm_call(task_id="session-named", user_message="Current run_id: R\nCurrent ticket_id: T")
+    args = {"table": "dbo.SAP_Posting_Tbl"}
     for _ in range(plugin.MAX_IDENTICAL_FAILURES):
-        assert plugin._pre_tool_call("xstudio_select", named_args, task_id="session-named") is None
-        plugin._post_tool_call("xstudio_select", named_args, '{"ok":false,"error":"same failure"}',
+        plugin._pre_tool_call("xstudio_read_table", args, task_id="session-named")
+        plugin._post_tool_call("xstudio_read_table", args, '{"ok":false,"error":"same failure"}',
                                task_id="session-named")
-    blocked = plugin._pre_tool_call("xstudio_select", named_args, task_id="session-named")
+    blocked = plugin._pre_tool_call("xstudio_read_table", args, task_id="session-named")
     assert blocked and blocked["action"] == "block" and "Repeated-failure" in blocked["message"]
-    # A genuinely different named call must still be allowed.
-    assert plugin._pre_tool_call("xstudio_select", dict(named_args, columns=["ID", "Status"]),
-                                 task_id="session-named") is None
-
-    # 2. Test legacy compatibility path
-    args = {"operation": "select", "database": "XStudio_Xbatch",
-            "table": "dbo.SAP_Posting_Tbl", "columns": ["ID"], "run_id": "run-1"}
-    for _ in range(plugin.MAX_IDENTICAL_FAILURES):
-        assert plugin._pre_tool_call(plugin.TOOL_NAME, args, task_id="session-a") is None
-        plugin._post_tool_call(plugin.TOOL_NAME, args, '{"ok":false,"error":"same failure"}',
-                               task_id="session-a")
-    blocked_legacy = plugin._pre_tool_call(plugin.TOOL_NAME, args, task_id="session-a")
-    assert blocked_legacy and blocked_legacy["action"] == "block" and "Repeated-failure" in blocked_legacy["message"]
+    # A genuinely different call must still be allowed.
+    other = plugin._pre_tool_call("xstudio_read_table", {"table": "dbo.LRF_Per_Heat"}, task_id="session-named")
+    assert other is None or other["action"] != "block"
 
 
 def test_repaired_call_fingerprint_matches_post_tool_call_with_original_args() -> None:
-    """Repaired/defaulted args must produce the exact same fingerprint in pre and post hooks.
-
-    When Qwen calls xstudio_resolve_heat without database, _pre_tool_call modifies
-    the args. Even if Hermes passes the original unmodified args to _post_tool_call,
-    _post_tool_call must apply _repair_args so the failure counter matches.
-    """
+    """Repaired args must fingerprint the same in pre and post hooks, or repeats escape the breaker."""
     plugin._pre_llm_call(
         task_id="session-repair-fp",
         user_message="Current run_id: RUN-RP\nCurrent ticket_id: TICKET-RP",
     )
     original_args = {"heat": "H99328"}
     for _ in range(plugin.MAX_IDENTICAL_FAILURES):
-        res = plugin._pre_tool_call("xstudio_resolve_heat", original_args, task_id="session-repair-fp")
+        res = plugin._pre_tool_call("xstudio_heat_context", original_args, task_id="session-repair-fp")
         assert res and res["action"] == "modify"
-        # Hermes hook delivers original unmodified args to post_tool_call:
-        plugin._post_tool_call("xstudio_resolve_heat", original_args, '{"ok":false,"error":"timeout"}',
+        plugin._post_tool_call("xstudio_heat_context", original_args, '{"ok":false,"error":"timeout"}',
                                task_id="session-repair-fp")
-
-    # The next attempt must be blocked by the repeated failure breaker:
-    blocked = plugin._pre_tool_call("xstudio_resolve_heat", original_args, task_id="session-repair-fp")
+    blocked = plugin._pre_tool_call("xstudio_heat_context", original_args, task_id="session-repair-fp")
     assert blocked and blocked["action"] == "block" and "Repeated-failure" in blocked["message"]
 
 
@@ -821,21 +618,25 @@ def test_successful_calls_never_trip_the_failure_breaker() -> None:
 
 
 def test_failure_breaker_is_scoped_per_session() -> None:
-    args = {"database": "XStudio_Xbatch", "table": "dbo.X", "columns": ["ID"]}
+    for session in ("session-x", "session-y"):
+        plugin._pre_llm_call(task_id=session, user_message="Current run_id: R" + chr(10) + "Current ticket_id: T")
+    args = {"table": "dbo.EAF_PER_HEAT"}
     for _ in range(plugin.MAX_IDENTICAL_FAILURES):
-        plugin._pre_tool_call("xstudio_select", args, task_id="session-x")
-        plugin._post_tool_call("xstudio_select", args, '{"ok":false}', task_id="session-x")
-    assert plugin._pre_tool_call("xstudio_select", args, task_id="session-x")["action"] == "block"
-    assert plugin._pre_tool_call("xstudio_select", args, task_id="session-y") is None
+        plugin._pre_tool_call("xstudio_read_table", args, task_id="session-x")
+        plugin._post_tool_call("xstudio_read_table", args, '{"ok":false}', task_id="session-x")
+    assert plugin._pre_tool_call("xstudio_read_table", args, task_id="session-x")["action"] == "block"
+    assert plugin._pre_tool_call("xstudio_read_table", args, task_id="session-y")["action"] != "block"
 
 
 def test_session_budget_blocks_excess_tool_calls() -> None:
     old = plugin.MAX_TOOL_CALLS
     plugin.MAX_TOOL_CALLS = 2
+    plugin._pre_llm_call(task_id="b", user_message="Current run_id: R" + chr(10) + "Current ticket_id: T")
     try:
-        assert plugin._pre_tool_call("xstudio_query", {"database": "XStudio_Xbatch", "sql": "SELECT 1"}, task_id="b") is None
-        assert plugin._pre_tool_call("xstudio_query", {"database": "XStudio_Xbatch", "sql": "SELECT 2"}, task_id="b") is None
-        blocked = plugin._pre_tool_call("xstudio_query", {"database": "XStudio_Xbatch", "sql": "SELECT 3"}, task_id="b")
+        for table in ("dbo.A", "dbo.B"):
+            first = plugin._pre_tool_call("xstudio_read_table", {"table": table}, task_id="b")
+            assert first is None or first["action"] != "block"
+        blocked = plugin._pre_tool_call("xstudio_read_table", {"table": "dbo.C"}, task_id="b")
         assert blocked and blocked["action"] == "block" and "budget" in blocked["message"]
     finally:
         plugin.MAX_TOOL_CALLS = old
@@ -852,21 +653,6 @@ def _seed_valid_tables(session: str, tables_line: str) -> None:
         json.dumps({"task": {"body": f"run_id: R\nticket_id: T\n{tables_line}\n"}}),
         task_id=session,
     )
-
-
-def test_select_against_a_non_evidence_plan_table_is_blocked_before_sql() -> None:
-    session = "stall-guard-1"
-    _seed_valid_tables(
-        session, "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data, XStudio_Xbatch.dbo.Power_Consumption_LogSheet"
-    )
-    blocked = plugin._pre_tool_call(
-        "xstudio_select",
-        {"database": "XStudio_Xbatch", "table": "dbo.SomeGuessedTable", "columns": ["ID"]},
-        task_id=session,
-    )
-    assert blocked and blocked["action"] == "block"
-    assert "not one of the tables Jev's evidence plan selected" in blocked["message"]
-    assert "did not consume the investigation budget" in blocked["message"]
 
 
 def test_select_against_an_evidence_plan_table_is_allowed_bare_or_qualified() -> None:
@@ -936,30 +722,6 @@ def test_table_with_no_recorded_columns_does_not_restrict_columns() -> None:
     assert result is None or result["action"] != "block"
 
 
-def test_blocked_select_call_does_not_consume_investigation_budget() -> None:
-    session = "stall-guard-4"
-    _seed_valid_tables(session, "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data")
-    old = plugin.MAX_TOOL_CALLS
-    plugin.MAX_TOOL_CALLS = 1
-    try:
-        for _ in range(3):
-            blocked = plugin._pre_tool_call(
-                "xstudio_select",
-                {"database": "XStudio_Xbatch", "table": "dbo.Wrong", "columns": ["ID"]},
-                task_id=session,
-            )
-            assert blocked["action"] == "block"
-        # Budget was never touched by the rejected calls -- a real one still fits.
-        real = plugin._pre_tool_call(
-            "xstudio_select",
-            {"database": "XStudio_Xbatch", "table": "dbo.EAF_SMS_Data", "columns": ["ID"]},
-            task_id=session,
-        )
-        assert real is None or real["action"] != "block"
-    finally:
-        plugin.MAX_TOOL_CALLS = old
-
-
 def test_session_cleanup_releases_counters() -> None:
     plugin._pre_llm_call(task_id="tidy", user_message="Current run_id: RUN-TIDY")
     plugin._pre_tool_call("xstudio_get_run_actions", {}, task_id="tidy")
@@ -972,8 +734,7 @@ def test_session_cleanup_releases_counters() -> None:
 
 def test_execution_contract_is_injected_before_each_llm_turn() -> None:
     context = plugin._pre_llm_call()["context"]
-    assert "xstudio_l2" in context
-    assert "blocked" in context.lower()
+    assert "xstudio_" in context and "Never write SQL" in context
 
 
 # --------------------------------------------------------------------------

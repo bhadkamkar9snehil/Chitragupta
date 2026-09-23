@@ -8,14 +8,6 @@ provides_hooks:
   - post_tool_call
   - pre_llm_call
 provides_tools:
-  - xstudio_select
-  - xstudio_query
-  - xstudio_suggest_tables
-  - xstudio_find_objects
-  - xstudio_get_definition
-  - xstudio_validate_identifiers
-  - xstudio_read_procedure
-  - xstudio_resolve_heat
   - xstudio_get_ticket_context
   - xstudio_get_run_actions
   - xstudio_save_ledger

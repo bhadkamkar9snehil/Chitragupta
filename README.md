@@ -179,7 +179,6 @@ Most of the old context-understanding burden is completed before this profile se
 
 If the package is already sufficient, its scope is `COMPOSE_ONLY`; normally it should turn evidence into a concise structured proposal, not rediscover the schema. If evidence remains incomplete, it gets a small focused-read budget.
 
-`l2-investigator-primary` remains available as a compatibility/fallback profile.
 
 ### Jev primary reviewer
 
@@ -187,7 +186,7 @@ Jev is the default semantic reviewer of the frozen proposal. Deterministic thres
 
 ### Local deep reviewer
 
-Profiles: `l2-reviewer-primary` and `l2-reviewer-fallback`.
+Profile: `l2-reviewer-primary`.
 
 They are invoked only for `LOCAL_REVIEW`, Jev unavailability/low-confidence safety-gate failure, contradictory evidence, or genuinely deep reasoning. They verify the smallest disputed live fact rather than replaying the whole investigation.
 
@@ -311,7 +310,7 @@ Before the profile starts, the runtime already:
 
 The current ticket and gathered live-SQL evidence cannot be attention-omitted; a Jev-selected known solution is likewise pinned to at least a compact representation. Lower-value history, KB alternatives and discovery backlog can be summarized or omitted, with recovery hints retained.
 
-The same assessment now also recommends the next execution depth. Deterministic policy can accept **QWEN_FREE** only for a deliberately narrow handoff class (L3 escalation or authorized-human-action), at high confidence, with strong current evidence, low need for more probing/System-2 reasoning, low full-ticket trust risk, an exact bound workflow status, and a second Jev primary-review approval of the frozen deterministic proposal. Resolution and ordinary support prose do not become Qwen-free merely because Jev is confident.
+`QWEN_FREE` (no-Qwen) is the target path: after the audited probes, the harness builds a fact table (fields the ticket names, recorded vs reported values, action IDs), Jev's `direct_answer` workflow picks CONFIRMED/CORRECTED/ANSWERED/NOT_FOUND/NEEDS_REASONING, and the harness renders a fixed reply with VERIFIED claims and publishes it. Jev never writes text; outcomes the facts contradict are refused. Only NEEDS_REASONING (or no audited facts) goes to the local model.
 
 If Qwen is still useful, **COMPOSE_ONLY** gets a smaller context budget and normally zero additional live reads; **FOCUSED_REASONING** gets the larger bounded recovery budget. The route-specific domain skill is attached only when the same Jev assessment says it materially helps the next System-2 step. This follows the TypeSafe-founder design idea that explicit dynamic context/skills should replace loading every possible tool/schema/skill up front.
 

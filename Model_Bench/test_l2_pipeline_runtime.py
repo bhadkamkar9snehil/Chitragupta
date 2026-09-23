@@ -798,14 +798,18 @@ class PipelineContractTests(unittest.TestCase):
         review.assert_not_called()
         publish.assert_not_called()
 
-    def _direct(self, outcome, confidence=0.9, row=None):
+    def _direct(self, outcome, confidence=0.9, row=None, facts_answer=0.95):
         ticket = {"BriefDetails": "LRF Arcing time inquiry", "Description": "ArcingTime of 21.0000 min"}
         probes = [{"probe": {"ok": True, "probe_possible": True, "table": "dbo.LRF_Per_Heat",
                              "action_id": "A1", "identifier": {"column": "HeatID", "value": "1604007"},
                              "rows": [row or {"ArcingTime": "21.0000"}]}}]
+        rest = (1 - confidence) / 4
+        probabilities = {k: rest for k in ("CONFIRMED", "CORRECTED", "ANSWERED", "NOT_FOUND", "NEEDS_REASONING")}
+        probabilities[outcome] = confidence
         jev = {"ok": True, "result": {"answers": {
-            "outcome": {"type": "choice", "choice": outcome, "confidence": confidence},
-            "facts_answer_question": {"type": "noul", "noul": confidence}}}}
+            "outcome": {"type": "choice", "choice": outcome, "confidence": confidence,
+                        "probabilities": probabilities},
+            "facts_answer_question": {"type": "noul", "noul": facts_answer}}}}
         with patch.object(mod, "_run_jev_workflow", return_value=jev) as call:
             proposal, record = mod._jev_direct_answer(ticket=ticket, probes=probes, run_id="r1", ticket_id="t1")
         self.assertEqual(call.call_args.args[0], "direct_answer")
@@ -819,10 +823,17 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(record["outcome"], "CONFIRMED")
 
     def test_unsure_or_reasoning_outcome_falls_back_to_qwen(self):
-        self.assertIsNone(self._direct("CONFIRMED", confidence=0.5)[0])
+        self.assertIsNone(self._direct("CONFIRMED", confidence=0.3)[0])
         self.assertIsNone(self._direct("NEEDS_REASONING")[0])
-        # Jev's outcome must agree with the facts: a mismatch cannot be CONFIRMED.
-        self.assertIsNone(self._direct("CONFIRMED", row={"ArcingTime": "22"})[0])
+
+    def test_split_between_answer_outcomes_is_not_doubt_and_facts_pick_the_template(self):
+        # Live Ticket_346: 0.59 ANSWERED, rest mostly CONFIRMED, both fields matched.
+        proposal, record = self._direct("ANSWERED", confidence=0.6)
+        self.assertEqual(record["outcome"], "CONFIRMED")
+        self.assertIn("match what you reported", proposal["reply_text"])
+        mismatch, record = self._direct("CONFIRMED", row={"ArcingTime": "22"})
+        self.assertEqual(record["outcome"], "CORRECTED")
+        self.assertIn("differ from what was reported", mismatch["reply_text"])
 
     def test_direct_answer_publishes_without_a_second_review(self):
         proposal = {"run_id": "r1", "ticket_id": "t1", "response_type": "RESOLUTION",

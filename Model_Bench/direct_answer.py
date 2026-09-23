@@ -22,7 +22,6 @@ _VALUE = r"(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?|-?\d+(?:\.\d+)?(?::
 # "PowerONTime (24.0000)", "Carbon=0.07"); never free prose like "inquiry for Heat".
 _GAP = r"\s*\(?\s*(?:(?:=|:|of|is|was|as|shows|recorded as|value of)\s*)?\(?\s*"
 _GENERIC = {"modifiedon", "createdon", "reportdate", "entrydatetime", "date"}
-OUTCOMES = ("CONFIRMED", "CORRECTED", "ANSWERED", "NOT_FOUND", "NEEDS_REASONING")
 
 
 def _norm(text: Any) -> str:
@@ -131,6 +130,15 @@ def build_facts(ticket: dict[str, Any], probes: list[dict[str, Any]]) -> dict[st
         "mismatches": sum(1 for f in compared if not f["matches"]),
         "any_rows": any(s["rows"] for s in searched),
     }
+
+
+def outcome_from_facts(table: dict[str, Any]) -> str:
+    """Which answer template the facts support; Jev only judges whether they answer the ticket."""
+    if not table["any_rows"]:
+        return "NOT_FOUND"
+    if table["mismatches"]:
+        return "CORRECTED"
+    return "CONFIRMED" if table["compared"] else "ANSWERED"
 
 
 def _fmt(value: Any) -> str:
