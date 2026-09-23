@@ -1,376 +1,233 @@
 #!/usr/bin/env python3
-"""L2 Helpdesk Performance & Benchmark Evaluator.
+"""L2 Helpdesk performance and live-health report: the one diagnostic for "what is happening".
 
-Assesses end-to-end performance across:
-1. Compute & Tokens (prompt, completion, total, turns, tool calls)
-2. Timings (investigation, rework, review, total end-to-end duration)
-3. Resolution Quality (resolution, questions, updates, escalations, review approvals/rejections)
+Everything comes from SQL (runs, trace, frozen work packages), so it answers the same
+questions from Windows or WSL without ad hoc scripts:
+1. Outcomes: published / failed / active, response types, canned "INCOMPLETE" replies
+2. Compute & timing per completed run (tokens, tool calls, claim-to-publish)
+3. Tool health: calls and failures per tool, top failure causes
+4. Small-model waste: blocked script writes, spill-file reads, completions after submit
+5. Worker card sizes by purpose (spill risk above ~39K chars for a 65K-token model)
+6. Lifecycle invariants from AGENTS.md (each must be 0)
+
+    python Model_Bench/benchmark_l2_performance.py --since "2026-09-23 13:05"
+    python Model_Bench/benchmark_l2_performance.py --hours 6 --json
 """
 
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import os
+import re
 import sys
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta
+from typing import Any
 
-try:
-    import pyodbc
-except ImportError:
-    pyodbc = None
+import pyodbc
 
 DEFAULT_SERVER = os.environ.get("MSSQL_MCP_SERVER") or "10.2.6.204"
 DEFAULT_DATABASE = "XStudio_Helpdesk"
 DEFAULT_USER = os.environ.get("MSSQL_MCP_USER") or "sa"
+# Hermes spills a tool result above 15% of the model window (65,792 tokens * 4 chars).
+SPILL_THRESHOLD_CHARS = int(65_792 * 4 * 0.15)
+FAILED_RESULT = "(ResultJson LIKE '%\"ok\": false%' OR ResultJson LIKE '%\"error\"%' OR Status = 'error')"
+
+INVARIANTS = {
+    "RESOLUTION published but ticket not Closed":
+        """SELECT COUNT(*) FROM dbo.Hermes_L2_Response_Trn_Tbl r JOIN dbo.Complaint_Mst_Tbl c ON c.ID = r.TicketID
+           WHERE r.IsDeleted = 0 AND c.IsDeleted = 0 AND r.ProcessStatus = 'COMPLETED'
+             AND r.ResponseType = 'RESOLUTION' AND c.Status <> 'Closed'""",
+    "RESOLUTION without IsResolved=1":
+        """SELECT COUNT(*) FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE IsDeleted = 0
+           AND ProcessStatus = 'COMPLETED' AND ResponseType = 'RESOLUTION' AND ISNULL(IsResolved, 0) = 0""",
+    "L3/NEEDS_HUMAN_ACTION published without L3 queue row":
+        """SELECT COUNT(*) FROM dbo.Hermes_L2_Response_Trn_Tbl r WHERE r.IsDeleted = 0 AND r.ProcessStatus = 'COMPLETED'
+           AND r.ResponseType IN ('L3_ESCALATION', 'NEEDS_HUMAN_ACTION')
+           AND NOT EXISTS (SELECT 1 FROM dbo.Hermes_L3_Escalation_Trn_Tbl e WHERE e.RunID = r.ID AND e.IsDeleted = 0)""",
+    "More than one RUNNING local-model task":
+        """SELECT CASE WHEN COUNT(*) > 1 THEN COUNT(*) ELSE 0 END FROM dbo.Hermes_L2_Response_Trn_Tbl
+           WHERE IsActive = 1 AND LocalModelState = 'RUNNING'""",
+    "Active run in a terminal ProcessStatus":
+        """SELECT COUNT(*) FROM dbo.Hermes_L2_Response_Trn_Tbl
+           WHERE IsActive = 1 AND IsDeleted = 0 AND ProcessStatus IN ('COMPLETED', 'FAILED')""",
+    "Active run whose ticket is missing/deleted":
+        """SELECT COUNT(*) FROM dbo.Hermes_L2_Response_Trn_Tbl r LEFT JOIN dbo.Complaint_Mst_Tbl c ON c.ID = r.TicketID
+           WHERE r.IsActive = 1 AND r.IsDeleted = 0 AND (c.ID IS NULL OR c.IsDeleted = 1)""",
+    "More than one active run per ticket":
+        """SELECT COUNT(*) FROM (SELECT TicketID FROM dbo.Hermes_L2_Response_Trn_Tbl
+           WHERE IsActive = 1 AND IsDeleted = 0 GROUP BY TicketID HAVING COUNT(*) > 1) x""",
+    "Published run with empty ReplyText":
+        """SELECT COUNT(*) FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE IsDeleted = 0
+           AND ProcessStatus IN ('COMPLETED', 'WAITING_USER') AND NULLIF(LTRIM(RTRIM(ReplyText)), '') IS NULL""",
+    "Published UPDATE with NULL NextEligibleOn":
+        """SELECT COUNT(*) FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE IsDeleted = 0
+           AND ProcessStatus = 'COMPLETED' AND ResponseType = 'UPDATE' AND NextEligibleOn IS NULL""",
+    "Closed ticket with an active Hermes run":
+        """SELECT COUNT(*) FROM dbo.Hermes_L2_Response_Trn_Tbl r JOIN dbo.Complaint_Mst_Tbl c ON c.ID = r.TicketID
+           WHERE r.IsActive = 1 AND r.IsDeleted = 0 AND c.Status = 'Closed'""",
+}
 
 
-def get_db_connection(
-    server: str = DEFAULT_SERVER,
-    database: str = DEFAULT_DATABASE,
-    user: str = DEFAULT_USER,
-    password: Optional[str] = None,
-):
+def get_db_connection(server: str, database: str, user: str, password: str | None):
     password = password or os.environ.get("MSSQL_MCP_PASSWORD")
     if not password:
-        raise RuntimeError(
-            "No SQL password supplied. Pass --password or set MSSQL_MCP_PASSWORD -- "
-            "this script must never hardcode a credential default."
-        )
-    if not pyodbc:
-        return None
-    cs = (
+        raise RuntimeError("No SQL password supplied. Pass --password or set MSSQL_MCP_PASSWORD.")
+    return pyodbc.connect(
         f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={server};DATABASE={database};"
-        f"UID={user};PWD={password};TrustServerCertificate=yes;Connection Timeout=15;"
-    )
-    return pyodbc.connect(cs)
-
-
-def collect_kanban_task_data(tasks_dir: Path) -> Dict[str, List[Dict[str, Any]]]:
-    """Load kanban tasks and group by run_id."""
-    run_tasks: Dict[str, List[Dict[str, Any]]] = {}
-    if not tasks_dir.exists():
-        return run_tasks
-
-    for p in tasks_dir.glob("*.json"):
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                d = json.load(f)
-                t = d.get("task", {})
-                body = t.get("body", "")
-                run_id = ""
-                for line in body.splitlines():
-                    if line.startswith("run_id:"):
-                        run_id = line.split(":", 1)[1].strip()
-                        break
-                if not run_id:
-                    # check runs metadata
-                    for r in d.get("runs", []):
-                        m = r.get("metadata") or {}
-                        if isinstance(m, dict) and m.get("run_id"):
-                            run_id = m["run_id"]
-                            break
-                if run_id:
-                    t_info = {
-                        "id": t.get("id"),
-                        "title": t.get("title"),
-                        "status": t.get("status"),
-                        "assignee": t.get("assignee"),
-                        "priority": t.get("priority"),
-                        "created_at": t.get("created_at"),
-                        "started_at": t.get("started_at"),
-                        "completed_at": t.get("completed_at"),
-                        "duration_s": (
-                            (t.get("completed_at") - t.get("started_at"))
-                            if t.get("completed_at") and t.get("started_at")
-                            else None
-                        ),
-                        "result": t.get("result"),
-                        "events": d.get("events", []),
-                    }
-                    run_tasks.setdefault(run_id, []).append(t_info)
-        except Exception:
-            continue
-
-    # Sort tasks in each run by created_at
-    for run_id in run_tasks:
-        run_tasks[run_id].sort(key=lambda x: x.get("created_at") or 0)
-
-    return run_tasks
-
-
-def collect_sql_runs_and_telemetry(conn) -> Dict[str, Any]:
-    """Query SQL for runs, tickets, and trace telemetry."""
-    cur = conn.cursor()
-
-    # 1. Fetch runs from Hermes_L2_Response_Trn_Tbl with ticket info
-    query_runs = """
-    SELECT 
-        r.ID AS RunID,
-        r.TicketID,
-        c.TicketNo,
-        c.BriefDetails,
-        c.ProblemCategory,
-        c.Status AS TicketStatus,
-        r.ProcessStatus,
-        r.ResponseType,
-        r.IsResolved,
-        r.ClaimedOn,
-        r.CompletedOn,
-        DATEDIFF(SECOND, r.ClaimedOn, r.CompletedOn) AS DurationSeconds,
-        r.AttemptNo,
-        r.ReplyText,
-        r.ProblemSummary,
-        r.RootCause,
-        r.Resolution
-    FROM dbo.Hermes_L2_Response_Trn_Tbl r
-    JOIN dbo.Complaint_Mst_Tbl c ON c.ID = r.TicketID
-    WHERE r.IsDeleted = 0
-    ORDER BY r.ClaimedOn DESC
-    """
-    cur.execute(query_runs)
-    columns = [col[0] for col in cur.description]
-    runs = [dict(zip(columns, row)) for row in cur.fetchall()]
-
-    # 2. Fetch trace metrics grouped by RunID
-    query_traces = """
-    SELECT 
-        RunID,
-        COUNT(*) AS TotalTraceEvents,
-        COUNT(DISTINCT TurnID) AS TotalTurns,
-        COUNT(CASE WHEN ToolName IS NOT NULL THEN 1 END) AS TotalToolCalls,
-        COUNT(DISTINCT ToolName) AS DistinctTools
-    FROM dbo.Hermes_Agent_Trace_Trn_Tbl
-    WHERE RunID IS NOT NULL
-    GROUP BY RunID
-    """
-    cur.execute(query_traces)
-    trace_cols = [col[0] for col in cur.description]
-    trace_stats = {
-        row[0]: dict(zip(trace_cols, row)) for row in cur.fetchall()
-    }
-
-    # 3. Aggregate UsageJson tokens per RunID
-    query_usage = """
-    SELECT RunID, TaskID, UsageJson
-    FROM dbo.Hermes_Agent_Trace_Trn_Tbl
-    WHERE RunID IS NOT NULL AND UsageJson IS NOT NULL
-    """
-    cur.execute(query_usage)
-    run_tokens: Dict[str, Dict[str, int]] = {}
-    for r_id, t_id, u_json in cur.fetchall():
-        if not u_json:
-            continue
-        try:
-            u = json.loads(u_json)
-            prompt = u.get("prompt_tokens") or u.get("input_tokens") or 0
-            completion = u.get("output_tokens") or 0
-            total = u.get("total_tokens") or (prompt + completion)
-            if r_id not in run_tokens:
-                run_tokens[r_id] = {
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": 0,
-                    "model_calls": 0,
-                }
-            run_tokens[r_id]["prompt_tokens"] += prompt
-            run_tokens[r_id]["completion_tokens"] += completion
-            run_tokens[r_id]["total_tokens"] += total
-            if prompt > 0 or completion > 0:
-                run_tokens[r_id]["model_calls"] += 1
-        except Exception:
-            pass
-
-    return {
-        "runs": runs,
-        "trace_stats": trace_stats,
-        "run_tokens": run_tokens,
-    }
-
-
-def generate_benchmark_report(
-    runs: List[Dict[str, Any]],
-    trace_stats: Dict[str, Dict[str, Any]],
-    run_tokens: Dict[str, Dict[str, int]],
-    kanban_runs: Dict[str, List[Dict[str, Any]]],
-) -> Dict[str, Any]:
-    """Aggregate high-level benchmark statistics."""
-    total_runs = len(runs)
-    completed_runs = [r for r in runs if r.get("ProcessStatus") == "COMPLETED"]
-    investigating_runs = [r for r in runs if r.get("ProcessStatus") == "INVESTIGATING"]
-
-    response_type_counts: Dict[str, int] = {}
-    for r in completed_runs:
-        rt = r.get("ResponseType") or "UNKNOWN"
-        response_type_counts[rt] = response_type_counts.get(rt, 0) + 1
-
-    durations = [
-        r["DurationSeconds"]
-        for r in completed_runs
-        if r.get("DurationSeconds") is not None and r["DurationSeconds"] > 0
-    ]
-    avg_duration = sum(durations) / len(durations) if durations else 0.0
-    min_duration = min(durations) if durations else 0
-    max_duration = max(durations) if durations else 0
-
-    # Token stats
-    all_totals = [
-        run_tokens[r["RunID"]]["total_tokens"]
-        for r in completed_runs
-        if r["RunID"] in run_tokens and run_tokens[r["RunID"]]["total_tokens"] > 0
-    ]
-    avg_tokens = sum(all_totals) / len(all_totals) if all_totals else 0.0
-
-    # Tool stats
-    all_tool_calls = [
-        trace_stats[r["RunID"]]["TotalToolCalls"]
-        for r in completed_runs
-        if r["RunID"] in trace_stats
-    ]
-    avg_tool_calls = (
-        sum(all_tool_calls) / len(all_tool_calls) if all_tool_calls else 0.0
+        f"UID={user};PWD={password};TrustServerCertificate=yes;Connection Timeout=60;"
     )
 
+
+def _rows(cur, sql: str, *params) -> list[dict[str, Any]]:
+    cur.execute(sql, *params)
+    cols = [c[0] for c in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def collect_runs(cur, since: datetime) -> list[dict[str, Any]]:
+    return _rows(cur, """
+        SELECT r.ID AS RunID, c.TicketNo, r.ProcessStatus, r.ResponseType, r.IsActive,
+               r.LocalModelPurpose, r.LocalModelState, r.CreatedOn,
+               DATEDIFF(SECOND, r.ClaimedOn, r.CompletedOn) AS DurationSeconds,
+               CASE WHEN r.ReplyText LIKE 'Evidence status: INCOMPLETE%' THEN 1 ELSE 0 END AS CannedIncomplete
+        FROM dbo.Hermes_L2_Response_Trn_Tbl r JOIN dbo.Complaint_Mst_Tbl c ON c.ID = r.TicketID
+        WHERE r.IsDeleted = 0 AND (r.CreatedOn >= ? OR r.ModifiedOn >= ? OR r.IsActive = 1)
+        ORDER BY r.ModifiedOn DESC""", since, since)
+
+
+def outcome_summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    types: dict[str, int] = {}
+    for r in runs:
+        if r["ProcessStatus"] in ("COMPLETED", "WAITING_USER"):
+            key = r["ResponseType"] or "UNKNOWN"
+            types[key] = types.get(key, 0) + 1
+    durations = [r["DurationSeconds"] for r in runs if r["ProcessStatus"] == "COMPLETED" and r["DurationSeconds"]]
     return {
-        "total_runs": total_runs,
-        "completed_runs_count": len(completed_runs),
-        "investigating_runs_count": len(investigating_runs),
-        "response_types": response_type_counts,
-        "timing": {
-            "avg_duration_seconds": round(avg_duration, 1),
-            "min_duration_seconds": min_duration,
-            "max_duration_seconds": max_duration,
-        },
-        "compute": {
-            "avg_tokens_per_ticket": round(avg_tokens, 1),
-            "avg_tool_calls_per_ticket": round(avg_tool_calls, 1),
-        },
+        "runs": len(runs),
+        "published": sum(types.values()),
+        "failed": sum(1 for r in runs if r["ProcessStatus"] == "FAILED"),
+        "active": sum(1 for r in runs if r["IsActive"]),
+        "response_types": types,
+        "canned_incomplete_replies": sum(r["CannedIncomplete"] for r in runs),
+        "avg_claim_to_publish_min": round(sum(durations) / len(durations) / 60, 1) if durations else None,
     }
 
 
-def print_markdown_scorecard(
-    summary: Dict[str, Any],
-    runs: List[Dict[str, Any]],
-    trace_stats: Dict[str, Dict[str, Any]],
-    run_tokens: Dict[str, Dict[str, int]],
-    kanban_runs: Dict[str, List[Dict[str, Any]]],
-    limit: int = 20,
-):
-    """Print readable benchmark scorecard in markdown."""
-    print("# Chitragupta L2 / Jev Performance & Lifecycle Benchmark")
-    print(f"Generated at: {datetime.now().isoformat()}\n")
-
-    print("## 1. Executive Performance Summary")
-    print(f"- **Total Lifecycle Runs Evaluated**: {summary['total_runs']}")
-    print(f"- **Completed Runs**: {summary['completed_runs_count']}")
-    print(f"- **Currently Investigating**: {summary['investigating_runs_count']}")
-    print(f"- **Average Duration (Claim to Publish)**: {summary['timing']['avg_duration_seconds']}s ({round(summary['timing']['avg_duration_seconds']/60, 2)}m)")
-    print(f"- **Min / Max Duration**: {summary['timing']['min_duration_seconds']}s / {summary['timing']['max_duration_seconds']}s")
-    print(f"- **Average Tokens per Ticket**: {summary['compute']['avg_tokens_per_ticket']:,.0f}")
-    print(f"- **Average Tool Calls per Ticket**: {summary['compute']['avg_tool_calls_per_ticket']:.1f}\n")
-
-    print("### Outcomes Breakdown")
-    for rt, cnt in summary["response_types"].items():
-        pct = (cnt / summary["completed_runs_count"] * 100) if summary["completed_runs_count"] else 0
-        print(f"- **{rt}**: {cnt} ({pct:.1f}%)")
-    print()
-
-    print(f"## 2. Recent Ticket Runs (Top {limit})")
-    print("| Ticket | Run ID | Status | Outcome | Duration | Tokens | Turns | Tool Calls | Stages / Reworks |")
-    print("| :--- | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- |")
-
-    for r in runs[:limit]:
-        rid = r["RunID"]
-        t_no = r["TicketNo"] or "N/A"
-        status = r["ProcessStatus"]
-        outcome = r["ResponseType"] or "N/A"
-        dur = f"{r['DurationSeconds']}s" if r.get("DurationSeconds") is not None else "Active"
-
-        tokens = run_tokens.get(rid, {})
-        tot_tok = f"{tokens.get('total_tokens', 0):,}" if tokens.get("total_tokens") else "N/A"
-
-        tr = trace_stats.get(rid, {})
-        turns = tr.get("TotalTurns", "N/A")
-        tools = tr.get("TotalToolCalls", "N/A")
-
-        ktasks = kanban_runs.get(rid, [])
-        stages = " -> ".join([t["title"].split(":")[0] for t in ktasks]) if ktasks else "N/A"
-
-        print(f"| **{t_no}** | `{rid[:8]}...` | {status} | `{outcome}` | {dur} | {tot_tok} | {turns} | {tools} | {stages} |")
-
-    print("\n## 3. Findings & Efficiency Insights")
-    print("1. **Typed Tool Safety**: All database interactions are routed through `xstudio_*` typed tools without falling back to shell interpreters.")
-    print("2. **Reviewer Independent Verification**: Reviewers independently execute live queries against `XStudio_Xbatch` and mathematically verify discrepancies before approving or rejecting.")
-    print("3. **Bounded Review/Rework Loops**: Rejection at cycle 0/1 automatically feeds verbatim objections into focused rework cards without context blowout.")
+def _normalise_error(text: str) -> str:
+    text = re.sub(r"[0-9A-F]{8}-[0-9A-F-]{27}", "<id>", text or "", flags=re.I)
+    text = re.sub(r"t_[0-9a-f]{8}", "<task>", text)
+    text = re.sub(r"/[\w./-]*spillover/[\w.-]+", "<spill-file>", text)
+    return re.sub(r"\s+", " ", text)[:150]
 
 
-def main():
-    parser = argparse.ArgumentParser(description="L2 Benchmark & Performance Evaluator")
+def tool_health(cur, since: datetime) -> dict[str, Any]:
+    per_tool = _rows(cur, f"""
+        SELECT ToolName, COUNT(*) AS Calls, SUM(CASE WHEN {FAILED_RESULT} THEN 1 ELSE 0 END) AS Failed
+        FROM dbo.Hermes_Agent_Trace_Trn_Tbl WHERE EventType = 'post_tool_call' AND EventOn >= ?
+        GROUP BY ToolName ORDER BY Calls DESC""", since)
+    causes: dict[str, int] = {}
+    for row in _rows(cur, f"""SELECT ToolName, LEFT(ResultJson, 400) AS R FROM dbo.Hermes_Agent_Trace_Trn_Tbl
+                             WHERE EventType = 'post_tool_call' AND EventOn >= ? AND {FAILED_RESULT}""", since):
+        key = f"{row['ToolName']}: {_normalise_error(str(row['R']).replace(chr(92), ''))}"
+        causes[key] = causes.get(key, 0) + 1
+    top = sorted(causes.items(), key=lambda kv: -kv[1])[:12]
+    return {"per_tool": per_tool, "top_failure_causes": [{"cause": k, "count": v} for k, v in top]}
+
+
+def waste_signals(cur, since: datetime) -> dict[str, int]:
+    return _rows(cur, """
+        SELECT
+          SUM(CASE WHEN ToolName IN ('write_file', 'patch') AND ResultJson LIKE '%Scripts cannot run%' THEN 1 ELSE 0 END)
+              AS BlockedScriptWrites,
+          SUM(CASE WHEN ToolName = 'read_file' AND ArgsJson LIKE '%spillover%' THEN 1 ELSE 0 END) AS SpillFileReads,
+          SUM(CASE WHEN ToolName = 'kanban_complete' AND ResultJson LIKE '%Already done%' THEN 1 ELSE 0 END)
+              AS CompletionsAfterSubmit,
+          SUM(CASE WHEN ToolName = 'xstudio_submit_proposal' AND ResultJson LIKE '%Reviewers judge the frozen%' THEN 1 ELSE 0 END)
+              AS ReviewerSubmitAttempts,
+          COUNT(DISTINCT SessionID) AS Sessions
+        FROM dbo.Hermes_Agent_Trace_Trn_Tbl
+        WHERE EventOn >= ? AND EventType IN ('pre_tool_call', 'post_tool_call')""", since)[0]
+
+
+def card_sizes(cur, since: datetime) -> list[dict[str, Any]]:
+    """Frozen work-package size per purpose; the card body is the bulk of it."""
+    return _rows(cur, f"""
+        SELECT LocalModelPurpose AS Purpose, COUNT(*) AS Cards,
+               AVG(LEN(PendingLocalModelJson)) AS AvgChars, MAX(LEN(PendingLocalModelJson)) AS MaxChars,
+               SUM(CASE WHEN LEN(PendingLocalModelJson) > {SPILL_THRESHOLD_CHARS} THEN 1 ELSE 0 END) AS OverSpill
+        FROM dbo.Hermes_L2_Response_Trn_Tbl
+        WHERE PendingLocalModelJson IS NOT NULL AND LocalModelQueuedOn >= ?
+        GROUP BY LocalModelPurpose""", since)
+
+
+def invariants(cur) -> dict[str, int]:
+    return {label: cur.execute(sql).fetchone()[0] for label, sql in INVARIANTS.items()}
+
+
+def build_report(cur, since: datetime) -> dict[str, Any]:
+    runs = collect_runs(cur, since)
+    return {
+        "window_since": since.isoformat(sep=" ", timespec="minutes"),
+        "outcomes": outcome_summary(runs),
+        "runs": [{k: v for k, v in r.items() if k != "CannedIncomplete"} for r in runs],
+        "tool_health": tool_health(cur, since),
+        "waste": waste_signals(cur, since),
+        "card_sizes": card_sizes(cur, since),
+        "spill_threshold_chars": SPILL_THRESHOLD_CHARS,
+        "invariants": invariants(cur),
+    }
+
+
+def print_markdown(report: dict[str, Any], limit: int) -> None:
+    o = report["outcomes"]
+    print(f"# Chitragupta L2 health since {report['window_since']} (server-local IST)\n")
+    print(f"## Outcomes\n- runs {o['runs']} | published {o['published']} | failed {o['failed']} | active {o['active']}")
+    print(f"- response types: {o['response_types']}")
+    print(f"- canned 'Evidence status: INCOMPLETE' replies: {o['canned_incomplete_replies']}")
+    print(f"- avg claim-to-publish: {o['avg_claim_to_publish_min']} min\n")
+    print("## Runs")
+    for r in report["runs"][:limit]:
+        print(f"- {r['TicketNo']}: {r['ProcessStatus']} {r['ResponseType'] or ''} "
+              f"[{r['LocalModelPurpose'] or '-'}/{r['LocalModelState'] or '-'}]")
+    print("\n## Tool health")
+    for t in report["tool_health"]["per_tool"]:
+        print(f"- {t['ToolName']}: {t['Calls']} calls, {t['Failed']} failed")
+    print("\nTop failure causes:")
+    for c in report["tool_health"]["top_failure_causes"]:
+        print(f"- {c['count']:>3}  {c['cause']}")
+    print(f"\n## Small-model waste\n- {report['waste']}")
+    print(f"\n## Worker card sizes (spill above {report['spill_threshold_chars']:,} chars)")
+    for c in report["card_sizes"]:
+        print(f"- {c['Purpose']}: {c['Cards']} cards, avg {c['AvgChars']:,}, max {c['MaxChars']:,}, over spill {c['OverSpill']}")
+    print("\n## Lifecycle invariants (must be 0)")
+    for label, value in report["invariants"].items():
+        print(f"- {'OK ' if value == 0 else 'BAD'} {value:>3}  {label}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--server", default=DEFAULT_SERVER)
     parser.add_argument("--database", default=DEFAULT_DATABASE)
     parser.add_argument("--user", default=DEFAULT_USER)
     parser.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))
-    parser.add_argument("--tasks-dir", default=r"\\wsl$\Ubuntu\home\snehil\.hermes\kanban\tasks")
+    parser.add_argument("--since", help="server-local (IST) time, e.g. '2026-09-23 13:05'")
+    parser.add_argument("--hours", type=float, default=6.0, help="window when --since is not given")
     parser.add_argument("--limit", type=int, default=25)
-    parser.add_argument("--json", action="store_true", help="Output JSON instead of markdown")
+    parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
-
-    # Normalize tasks dir for Windows or WSL
-    td = Path(args.tasks_dir)
-    if not td.exists():
-        for candidate in [
-            Path(r"\\wsl.localhost\Ubuntu\home\snehil\.hermes\kanban\tasks"),
-            Path(r"\\wsl$\Ubuntu\home\snehil\.hermes\kanban\tasks"),
-            Path("/home/snehil/.hermes/kanban/tasks"),
-        ]:
-            if candidate.exists():
-                td = candidate
-                break
-
+    since = datetime.fromisoformat(args.since) if args.since else datetime.now() - timedelta(hours=args.hours)
     conn = get_db_connection(args.server, args.database, args.user, args.password)
-    if not conn:
-        print("Error: pyodbc could not establish connection to SQL Server", file=sys.stderr)
-        sys.exit(1)
-
     try:
-        sql_data = collect_sql_runs_and_telemetry(conn)
-        kanban_runs = collect_kanban_task_data(td)
-        summary = generate_benchmark_report(
-            sql_data["runs"],
-            sql_data["trace_stats"],
-            sql_data["run_tokens"],
-            kanban_runs,
-        )
-
-        if args.json:
-            out = {
-                "summary": summary,
-                "runs": sql_data["runs"][: args.limit],
-                "trace_stats": {
-                    k: sql_data["trace_stats"][k]
-                    for k in list(sql_data["trace_stats"].keys())[: args.limit]
-                },
-                "run_tokens": {
-                    k: sql_data["run_tokens"][k]
-                    for k in list(sql_data["run_tokens"].keys())[: args.limit]
-                },
-            }
-            print(json.dumps(out, indent=2, default=str))
-        else:
-            print_markdown_scorecard(
-                summary,
-                sql_data["runs"],
-                sql_data["trace_stats"],
-                sql_data["run_tokens"],
-                kanban_runs,
-                limit=args.limit,
-            )
+        report = build_report(conn.cursor(), since)
     finally:
         conn.close()
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+    else:
+        print_markdown(report, args.limit)
+    return 1 if any(report["invariants"].values()) else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
