@@ -31,7 +31,9 @@ DEFAULT_DATABASE = "XStudio_Helpdesk"
 DEFAULT_USER = os.environ.get("MSSQL_MCP_USER") or "sa"
 # Hermes spills a tool result above 15% of the model window (65,792 tokens * 4 chars).
 SPILL_THRESHOLD_CHARS = int(65_792 * 4 * 0.15)
-FAILED_RESULT = "(ResultJson LIKE '%\"ok\": false%' OR ResultJson LIKE '%\"error\"%' OR Status = 'error')"
+# Trace results are stored as JSON-encoded strings, so keys appear both plain and escaped.
+FAILED_RESULT = ("(ResultJson LIKE '%\"ok\": false%' OR ResultJson LIKE '%\\\"ok\\\": false%' "
+                 "OR ResultJson LIKE '%\"error\"%' OR ResultJson LIKE '%\\\"error\\\"%' OR Status = 'error')")
 
 INVARIANTS = {
     "RESOLUTION published but ticket not Closed":

@@ -678,6 +678,23 @@ def _expand_star(database: str, table: str, columns: list[str]) -> list[str]:
     return found[1][:25] if found else columns
 
 
+# Names a small model guesses for the ticket and run records. Live: dbo.Tickets,
+# Ticket_Mst_Tbl, RunActivityLog; the schema suggester pointed at TicketScheme_Mst_Tbl.
+_KNOWN_SOURCES = (
+    (re.compile(r"ticket|complaint", re.I),
+     "The Helpdesk ticket is dbo.Complaint_Mst_Tbl (XStudio_Helpdesk); prefer xstudio_get_ticket_context."),
+    (re.compile(r"run|action|activity|audit", re.I),
+     "This run's evidence trail comes from xstudio_get_run_actions (Hermes_L2_SQL_Action_Trn_Tbl)."),
+)
+
+
+def _known_source_hint(table: str) -> dict[str, str]:
+    for pattern, hint in _KNOWN_SOURCES:
+        if pattern.search(table or ""):
+            return {"hint": hint}
+    return {}
+
+
 def _select(req: dict[str, Any], client: Any) -> dict[str, Any]:
     database = str(_database(req))
     table = str(_require(req, "table"))
@@ -692,7 +709,7 @@ def _select(req: dict[str, Any], client: Any) -> dict[str, Any]:
         database=database,
     )
     if not built.get("ok"):
-        return {"operation": "select", **built, "retry_same_call": False}
+        return {"operation": "select", **built, "retry_same_call": False, **_known_source_hint(table)}
     rows = _orchestrator().run_readonly_query(
         client, built["sql"], database=database, run_id=run_id
     )

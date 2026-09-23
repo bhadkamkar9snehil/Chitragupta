@@ -52,6 +52,7 @@ Validate locally against the real environment; do not use GitHub Actions as proo
 ```bash
 bash Model_Bench/validate_l2_pipeline_local.sh
 python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
+python Model_Bench/benchmark_l2_performance.py --hours 2   # live health; extend it, do not write ad hoc scripts
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 ```
 

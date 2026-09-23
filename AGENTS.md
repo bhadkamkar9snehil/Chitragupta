@@ -486,6 +486,10 @@ bash Model_Bench/validate_l2_pipeline_local.sh --full
 # Re-run only the live integration after the fast gate already passed.
 bash Model_Bench/validate_l2_pipeline_local.sh --live-only
 
+# Live health (the one diagnostic: outcomes, tool failures, small-model waste,
+# card sizes vs spill threshold, lifecycle invariants). Exit 1 if an invariant breaks.
+python Model_Bench/benchmark_l2_performance.py --since "YYYY-MM-DD HH:MM"
+
 bash Model_Bench/deploy_l2_pipeline_runtime.sh --no-restart
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py reconcile --dry-run

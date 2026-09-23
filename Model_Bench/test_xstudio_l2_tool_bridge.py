@@ -108,5 +108,12 @@ class StarColumnTests(unittest.TestCase):
             self.assertEqual(bridge._expand_star("XStudio_Xbatch", "LRF_Per_Heat", ["HeatID"]), ["HeatID"])
 
 
+class KnownSourceHintTests(unittest.TestCase):
+    def test_guessed_ticket_and_run_tables_point_to_real_sources(self):
+        self.assertIn("Complaint_Mst_Tbl", bridge._known_source_hint("dbo.Tickets")["hint"])
+        self.assertIn("xstudio_get_run_actions", bridge._known_source_hint("RunActivityLog")["hint"])
+        self.assertEqual(bridge._known_source_hint("dbo.LRF_Per_Heat"), {})
+
+
 if __name__ == "__main__":
     unittest.main()
