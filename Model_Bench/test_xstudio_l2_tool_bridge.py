@@ -71,5 +71,18 @@ class ProbeRelatedTableTests(unittest.TestCase):
         self.assertIn("probe_related_table", bridge._CONNECTED_OPERATIONS)
 
 
+class ClosestTableTests(unittest.TestCase):
+    ALLOWLIST = {"XStudio_Xbatch": {"dbo.XMES_CCM_Billet_Genealogy_Trn_Tbl": ["HeatNo"],
+                                    "dbo.EAF_PER_HEAT": ["HeatID"], "dbo.LRF_Per_Heat": ["HeatID"]}}
+
+    def test_unknown_table_names_the_closest_real_ones(self):
+        # Live 2026-09-23 reviewer guesses.
+        with patch.object(bridge, "_load_allowlist", return_value=self.ALLOWLIST):
+            result = bridge._probe_table({"database": "XStudio_Xbatch", "table": "CCM_Billet_Genealogy_Trn_Tbl",
+                                          "ticket": {"HeatNo": "1"}, "run_id": "r"}, MagicMock())
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["did_you_mean"][0], "XMES_CCM_Billet_Genealogy_Trn_Tbl")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -181,6 +181,16 @@ def _allowed_table(database: str, table: str) -> tuple[str, list[str]] | None:
     return None
 
 
+def _closest_tables(database: str, table: str, limit: int = 5) -> list[str]:
+    """Real allowlisted tables whose names are closest to a guessed one."""
+    import difflib
+    names = [q.split(".")[-1].strip("[]") for q in (_load_allowlist().get(database) or {})]
+    guess = table.split(".")[-1].strip("[]")
+    lowered = {n.lower(): n for n in names}
+    matches = difflib.get_close_matches(guess.lower(), list(lowered), n=limit, cutoff=0.5)
+    return [lowered[m] for m in matches]
+
+
 def _ticket_scalar_map(ticket: dict[str, Any]) -> dict[str, str]:
     scalars: dict[str, str] = {}
     for key, value in _flatten_scalars(ticket):
@@ -291,10 +301,13 @@ def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
 
     resolved = _allowed_table(database, table)
     if resolved is None:
+        # Live 2026-09-23: reviewers guessed Heat_Master, CCM_Billet_Genealogy_Trn_Tbl, ... and spent
+        # their call budget on misses. Name the real tables closest to the guess.
         return {
             "ok": False,
             "operation": "probe_table",
             "error": f"table/view {table!r} is not present in the schema allowlist",
+            "did_you_mean": _closest_tables(database, table),
             "retry_same_call": False,
         }
     qualified, real_columns = resolved
