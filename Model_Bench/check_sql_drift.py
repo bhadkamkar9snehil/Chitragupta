@@ -24,6 +24,7 @@ SOURCES = (
     "10_helpdesk_discovery.sql", "20_ticket_dispatch.sql", "25_ticket_dispatch_hardening.sql",
     "30_context_and_live_discovery.sql", "40_investigation_runtime.sql",
     "50_response_and_workflow.sql", "55_update_retry_hardening.sql", "60_metrics_and_reporting.sql",
+    "65_xbatch_diagnostics.sql",
 )
 _HEADER = re.compile(r"CREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC|FUNCTION|VIEW)\s+(?:dbo\.)?\[?(\w+)\]?", re.I)
 
