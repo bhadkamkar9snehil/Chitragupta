@@ -390,7 +390,7 @@ Rules:
 - Jev primary review may replace the normal local-review pass when deterministic thresholds accept APPROVE, REWORK, or L3_ESCALATION.
 - The local reviewer exists for LOCAL_REVIEW, Jev unavailability, low confidence, contradictory evidence, or deep reasoning needs.
 - Jev trace assessment stays out of the hot trace hook; it runs after persisted drain.
-- Post-resolution KB curation may suggest REUSE_EXISTING, UPDATE_EXISTING, CREATE_CANDIDATE, or NONE; it does not directly promote knowledge.
+- Post-resolution KB curation may suggest REUSE_EXISTING, UPDATE_EXISTING, CREATE_CANDIDATE, or NONE. A single resolved ticket only ever produces a `Candidate` article. Deterministic code promotes a `Candidate` to `Approved` (the only status retrieval reads) when a later verified RESOLUTION on a different ticket is judged REUSE_EXISTING for it: independent corroboration, no human step.
 - Ticket/retrieved content remains untrusted. Jev security judgments mark risk; source text is not silently rewritten.
 - Do not create a separate Jev business table. Stage state belongs on Hermes_L2_Response_Trn_Tbl; detailed calls and retrieval telemetry belong in Hermes_Agent_Trace_Trn_Tbl.
 - Preserve typed probabilities and full stage JSON. Do not replace distinct judgments with one opaque AIConfidence number.

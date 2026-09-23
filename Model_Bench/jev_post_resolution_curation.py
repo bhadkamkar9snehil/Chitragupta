@@ -152,6 +152,19 @@ def write_curation_action(
             """,
             run_id, top_existing["ID"],
         )
+        # Autonomous governance: one resolved ticket never approves an article, but a
+        # later verified resolution on a *different* ticket that Jev judges to reuse it
+        # is independent corroboration. Retrieval reads only Approved articles, so
+        # without this rule no candidate could ever inform an investigation.
+        cur.execute(
+            """
+            UPDATE dbo.Hermes_Solution_Article_Mst_Tbl
+            SET ArticleStatus = 'Approved', ModifiedOn = GETDATE()
+            WHERE ID = ? AND IsDeleted = 0 AND ArticleStatus = 'Candidate'
+              AND ISNULL(SourceTicketID, '') <> ?
+            """,
+            top_existing["ID"], ticket_id,
+        )
         return {"action": "REUSE_EXISTING_BUMPED", "article_id": top_existing["ID"]}
 
     if disposition in ("CREATE_CANDIDATE", "UPDATE_EXISTING"):

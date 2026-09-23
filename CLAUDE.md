@@ -28,7 +28,7 @@ Do **not** duplicate the lifecycle architecture here. The authoritative sources 
 - Interpreter/driver/dependency mechanics are harness code and config, never mem0.
 - Reviewer completion audit is read-only.
 - Live-verified Helpdesk binding: eligible `Enter`, resolved `Closed`, waiting-user AskStatus `Ask`; L3/human-action ticket statuses remain unbound until proven live.
-- A `RESOLUTION` does not automatically create a KB article.
+- A `RESOLUTION` does not automatically create an approved KB article: curation writes a `Candidate`, promoted to `Approved` only when a verified resolution on a different ticket reuses it.
 - The generated SQL full-install bundle includes the `25` and `55` hardening sources.
 - `.gitattributes` forces LF on `*.sh` and `*.sql` because Windows CRLF conversion broke WSL scripts and install reproducibility.
 

@@ -99,6 +99,12 @@ class WriteCurationActionTests(unittest.TestCase):
         self.assertNotIn("ResolutionSteps", sql)
         self.assertNotIn("RootCause", sql)
         self.assertEqual(params, (BASE_RUN["RunID"], "ART-OLD"))
+        # Corroboration promotion: guarded to Candidate rows from a different source ticket.
+        promote_sql, promote_params = cur.calls[1]
+        self.assertIn("ArticleStatus = 'Approved'", promote_sql)
+        self.assertIn("ArticleStatus = 'Candidate'", promote_sql)
+        self.assertIn("SourceTicketID", promote_sql)
+        self.assertEqual(promote_params, ("ART-OLD", BASE_RUN["TicketID"]))
 
     def test_reuse_existing_without_a_candidate_is_a_noop(self):
         cur = FakeCursor()
