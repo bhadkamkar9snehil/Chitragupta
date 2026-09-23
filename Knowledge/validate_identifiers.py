@@ -3,8 +3,8 @@
 live-exported schema in schema_allowlist.json before trusting it in any
 SQL or ticket-response text.
 
-Ground truth source: Reference Documents/*_Schema.md (SchemaExporter.py
-output), indexed by Model_Bench/build_schema_allowlist.py. Regenerate the
+Ground truth source: live INFORMATION_SCHEMA tables and views, written by
+Model_Bench/build_schema_allowlist.py. Regenerate the
 index after any schema change: `python Model_Bench/build_schema_allowlist.py`.
 
 Usage:

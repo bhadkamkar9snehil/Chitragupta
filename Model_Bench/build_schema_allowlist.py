@@ -1,75 +1,60 @@
 #!/usr/bin/env python3
-"""Build a machine-checkable table/column allowlist from the real, live-exported
-schema docs in `Reference Documents/`.
+"""Regenerate Knowledge/schema_allowlist.json from the live databases (read-only).
 
-This is the ground truth this project already has (SchemaExporter.py output,
-per the xstudio-db-export skill) -- this script just makes it queryable
-instead of something an agent has to read and remember. Output feeds
-validate_identifiers.py.
+The allowlist backs identifier validation in the typed xstudio_l2 tools and the
+orchestrator's "did you mean" column suggestions. It needs only real object and
+column names, so it reads INFORMATION_SCHEMA directly for every table and view.
+
+This replaces two writers that drifted: a parser of the 2026-09-05 markdown schema
+exports (tables only) and add_views_to_allowlist.py (views patched in). By
+2026-09-23 the file was missing every Jev*/LocalModel* column and whole tables such
+as Hermes_Agent_Trace_Trn_Tbl. Rerun after any schema deployment.
 
 Usage:
-    python build_schema_allowlist.py
+    python Model_Bench/build_schema_allowlist.py
 """
+from __future__ import annotations
+
 import json
-import re
+import os
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
-REF_DIR = ROOT / "Reference Documents"
-OUT_PATH = ROOT / "Knowledge" / "schema_allowlist.json"
+import pyodbc
 
-SOURCES = {
-    "XStudio_Helpdesk": REF_DIR / "XStudio_Helpdesk_Schema.md",
-    "XStudio_Xbatch": REF_DIR / "XStudio_Xbatch_Schema.md",
-}
-
-TABLE_HEADER_RE = re.compile(r"^## (dbo\.\S+)\s*$", re.MULTILINE)
-SCHEMA_ROW_RE = re.compile(r"^\|\s*([A-Za-z_][A-Za-z0-9_]*)\s*\|.*\|$", re.MULTILINE)
-
-
-def parse_schema_file(path: Path) -> dict:
-    text = path.read_text(encoding="utf-8", errors="replace")
-    tables = {}
-    headers = list(TABLE_HEADER_RE.finditer(text))
-    for i, m in enumerate(headers):
-        table_name = m.group(1)
-        start = m.end()
-        end = headers[i + 1].start() if i + 1 < len(headers) else len(text)
-        block = text[start:end]
-        schema_idx = block.find("### Schema")
-        if schema_idx == -1:
-            continue
-        schema_block = block[schema_idx:]
-        # Stop at the next ### section (Top 10 Records, Bottom 10 Records)
-        next_section = schema_block.find("\n### ", 1)
-        if next_section != -1:
-            schema_block = schema_block[:next_section]
-        columns = []
-        for row_m in SCHEMA_ROW_RE.finditer(schema_block):
-            col = row_m.group(1)
-            if col in ("Column", "---"):
-                continue
-            columns.append(col)
-        if columns:
-            tables[table_name] = columns
-    return tables
+OUT_PATH = Path(__file__).resolve().parent.parent / "Knowledge" / "schema_allowlist.json"
+DATABASES = ("XStudio_Helpdesk", "XStudio_Xbatch")
+COLUMNS_SQL = """
+SELECT c.TABLE_SCHEMA, c.TABLE_NAME, c.COLUMN_NAME
+FROM INFORMATION_SCHEMA.COLUMNS c
+JOIN INFORMATION_SCHEMA.TABLES t
+  ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
+WHERE t.TABLE_TYPE IN ('BASE TABLE', 'VIEW')
+ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME, c.ORDINAL_POSITION
+"""
 
 
-def main():
-    allowlist = {}
-    for db_name, path in SOURCES.items():
-        if not path.exists():
-            print(f"WARNING: {path} not found, skipping {db_name}")
-            continue
-        tables = parse_schema_file(path)
-        allowlist[db_name] = tables
-        print(f"{db_name}: {len(tables)} tables parsed from {path.name}")
+def live_objects(database: str) -> dict[str, list[str]]:
+    conn = pyodbc.connect(
+        "DRIVER={ODBC Driver 18 for SQL Server};"
+        f"SERVER={os.environ.get('MSSQL_MCP_SERVER', '10.2.6.204')};DATABASE={database};"
+        f"UID={os.environ.get('MSSQL_MCP_USER', 'sa')};PWD={os.environ['MSSQL_MCP_PASSWORD']};"
+        "TrustServerCertificate=yes;Connection Timeout=60"
+    )
+    try:
+        objects: dict[str, list[str]] = {}
+        for schema, table, column in conn.cursor().execute(COLUMNS_SQL).fetchall():
+            objects.setdefault(f"{schema}.{table}", []).append(column)
+        return objects
+    finally:
+        conn.close()
 
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUT_PATH.write_text(json.dumps(allowlist, indent=2), encoding="utf-8")
-    total_tables = sum(len(t) for t in allowlist.values())
-    total_cols = sum(len(cols) for t in allowlist.values() for cols in t.values())
-    print(f"Wrote {OUT_PATH} -- {total_tables} tables, {total_cols} columns total")
+
+def main() -> None:
+    allowlist = {database: live_objects(database) for database in DATABASES}
+    OUT_PATH.write_text(json.dumps(allowlist, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    for database, objects in allowlist.items():
+        print(f"{database}: {len(objects)} tables/views")
+    print(f"Wrote {OUT_PATH}")
 
 
 if __name__ == "__main__":
