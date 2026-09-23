@@ -143,6 +143,12 @@ def write_curation_action(
             return {"action": "NONE", "reason": "REUSE_EXISTING but no existing candidate to link"}
 
         article_id = str(top_existing["ID"])
+        # Establish an explicit outer SQL transaction before entering the link SP.
+        # That SP self-manages a transaction for standalone callers, but curation
+        # also performs Candidate promotion/supersession; all of those writes must
+        # commit or roll back together under main()'s conn.commit().
+        cur.execute("IF @@TRANCOUNT = 0 BEGIN TRANSACTION;")
+
         # One owner for reuse bookkeeping: the existing SP owns the durable
         # ticket/run/article link, UsageCount and SolutionLinked activity. It is
         # idempotent for the same TicketID/SolutionID/RunID tuple.
