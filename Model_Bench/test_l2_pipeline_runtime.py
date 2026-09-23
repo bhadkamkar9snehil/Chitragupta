@@ -299,6 +299,18 @@ class PipelineContractTests(unittest.TestCase):
                      "claim C1: [VERIFIED] action_ids=A-7", "reason=EVIDENCE_GAP"):
             self.assertIn(text, digest)
 
+    def test_card_run_action_keeps_identity_and_bounds_result_rows(self):
+        rows = [{"HeatNo": "1604014", "BilletNo": f"B{i}", "Pad": "x" * 200} for i in range(25)]
+        action = {"ID": "A-1", "ActionNo": 12, "ActionType": "READ", "DatabaseName": "XStudio_Xbatch",
+                  "SqlText": "SELECT " + "c," * 400, "AfterJson": json.dumps(rows), "Status": "SUCCESS",
+                  "RowsAffected": 25, "CreatedBy": None}
+        compact = mod.compact_run_action(action)
+        self.assertEqual((compact["ID"], compact["ActionNo"], compact["Status"]), ("A-1", 12, "SUCCESS"))
+        self.assertLessEqual(len(compact["ResultPreview"]), 1200)
+        self.assertLessEqual(len(compact["SqlText"]), 300)
+        self.assertNotIn("AfterJson", compact)
+        self.assertLess(len(json.dumps(compact)), 2200)
+
     def test_review_cap_publishes_a_real_l3_handoff_not_a_failed_run(self):
         with patch.object(mod, "run_orchestrator") as invoke, \
                 patch.object(mod, "_post_publish_activity") as activity:

@@ -2037,7 +2037,33 @@ def _run_evidence_snapshot(args: argparse.Namespace, run_id: str) -> list[Any]:
         actions = run_orchestrator(args, ["--get-run-actions", run_id], timeout=45)
     except RuntimeError:
         return []
-    return actions[-25:] if isinstance(actions, list) else []
+    return [compact_run_action(a) for a in actions[-25:]] if isinstance(actions, list) else []
+
+
+_ACTION_CARD_FIELDS = ("ID", "ActionNo", "ActionType", "DatabaseName", "ObjectName", "OperationName",
+                       "Purpose", "ParametersJson", "Status", "RowsAffected", "ErrorMessage")
+
+
+def compact_run_action(action: Any) -> Any:
+    """Card view of one SQL action: identity, SQL and a bounded result preview.
+
+    Full AfterJson (~6 KB per 25-row read) made review cards 40 KB for a 9B model;
+    the complete rows stay in Hermes_L2_SQL_Action_Trn_Tbl and xstudio_get_run_actions.
+    """
+    if not isinstance(action, dict):
+        return action
+    out = {k: action[k] for k in _ACTION_CARD_FIELDS if action.get(k) not in (None, "")}
+    out["SqlText"] = str(action.get("SqlText") or "")[:300]
+    rows = action.get("AfterJson")
+    if isinstance(rows, str):
+        try:
+            rows = json.loads(rows)
+        except ValueError:
+            pass
+    preview = rows[:3] if isinstance(rows, list) else rows
+    if preview not in (None, ""):
+        out["ResultPreview"] = json.dumps(preview, default=str, separators=(",", ":"))[:1200]
+    return out
 
 
 def _load_context_receipt(receipt_path: str | None) -> dict[str, Any] | None:
