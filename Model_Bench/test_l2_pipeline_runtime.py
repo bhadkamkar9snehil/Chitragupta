@@ -306,10 +306,10 @@ class PipelineContractTests(unittest.TestCase):
                   "RowsAffected": 25, "CreatedBy": None}
         compact = mod.compact_run_action(action)
         self.assertEqual((compact["ID"], compact["ActionNo"], compact["Status"]), ("A-1", 12, "SUCCESS"))
-        self.assertLessEqual(len(compact["ResultPreview"]), 1200)
+        self.assertLessEqual(len(compact["ResultPreview"]), 500)
         self.assertLessEqual(len(compact["SqlText"]), 300)
         self.assertNotIn("AfterJson", compact)
-        self.assertLess(len(json.dumps(compact)), 2200)
+        self.assertLess(len(json.dumps(compact)), 1400)
 
     def test_review_cap_publishes_a_real_l3_handoff_not_a_failed_run(self):
         with patch.object(mod, "run_orchestrator") as invoke, \

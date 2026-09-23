@@ -2037,7 +2037,9 @@ def _run_evidence_snapshot(args: argparse.Namespace, run_id: str) -> list[Any]:
         actions = run_orchestrator(args, ["--get-run-actions", run_id], timeout=45)
     except RuntimeError:
         return []
-    return [compact_run_action(a) for a in actions[-25:]] if isinstance(actions, list) else []
+    # Last 15 compact actions keep kanban_show under Hermes's spill threshold for a
+    # 65K-token model (15% of window ~ 39K chars); spilled cards made Qwen write parsers.
+    return [compact_run_action(a) for a in actions[-15:]] if isinstance(actions, list) else []
 
 
 _ACTION_CARD_FIELDS = ("ID", "ActionNo", "ActionType", "DatabaseName", "ObjectName", "OperationName",
@@ -2060,9 +2062,9 @@ def compact_run_action(action: Any) -> Any:
             rows = json.loads(rows)
         except ValueError:
             pass
-    preview = rows[:3] if isinstance(rows, list) else rows
+    preview = rows[:2] if isinstance(rows, list) else rows
     if preview not in (None, ""):
-        out["ResultPreview"] = json.dumps(preview, default=str, separators=(",", ":"))[:1200]
+        out["ResultPreview"] = json.dumps(preview, default=str, separators=(",", ":"))[:500]
     return out
 
 
