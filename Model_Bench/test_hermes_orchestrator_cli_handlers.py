@@ -258,6 +258,21 @@ class ClientWriteSurfacesDeferredErrorsTests(unittest.TestCase):
         self._client(cursor).publish_response(run_id="RUN-1", response_type="UPDATE", reply_text="x")
 
 
+class ConnectRetryTests(unittest.TestCase):
+    def test_transient_connect_failure_is_retried_once(self):
+        err = orch.pyodbc.OperationalError("08001", "prelogin timeout")
+        with patch.object(orch.pyodbc, "connect", side_effect=[err, "conn"]) as connect,                 patch.object(orch.time, "sleep"):
+            self.assertEqual(orch.HermesL2Client._connect("s", "d", "u", "p", "drv"), "conn")
+        self.assertEqual(connect.call_count, 2)
+
+    def test_auth_failure_is_not_retried(self):
+        err = orch.pyodbc.InterfaceError("28000", "login failed")
+        with patch.object(orch.pyodbc, "connect", side_effect=err) as connect:
+            with self.assertRaises(orch.pyodbc.InterfaceError):
+                orch.HermesL2Client._connect("s", "d", "u", "p", "drv")
+        self.assertEqual(connect.call_count, 1)
+
+
 class MainDispatchOrderTests(unittest.TestCase):
     """main()'s own body must still route to exactly the right handler."""
 

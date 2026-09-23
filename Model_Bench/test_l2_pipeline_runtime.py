@@ -358,15 +358,6 @@ class PipelineContractTests(unittest.TestCase):
             mod.INVESTIGATOR_PROFILES | mod.REVIEWER_PROFILES,
         )
 
-    def test_historical_done_cards_do_not_trigger_per_card_sql_checks(self):
-        historical = {"id": "old", "status": "done", "assignee": mod.INVESTIGATOR_PROFILE,
-                      "body": "run_id: old-run\nticket_id: old-ticket"}
-        with patch.object(mod, "list_tasks", return_value=[historical]), \
-                patch.object(mod, "query_active_runs", return_value=[{"ID": "active-run"}]), \
-                patch.object(mod, "safe_query_active_run") as active_check:
-            self.assertEqual(mod.ensure_missing_reviewers(mod.default_args()), 0)
-        active_check.assert_not_called()
-
     def test_deterministic_route_extracts_heat_from_ticket_entities(self):
         ticket = {"ProblemCategory": "SAP_INTEGRATION", "SourceSystem": "Xbatch",
                   "ExtractedEntitiesJson": json.dumps({"HeatNo": "H1602522"})}
@@ -1725,12 +1716,6 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(res_inv["QueueStatus"], "BACKPRESSURE")
         self.assertEqual(res_rev["QueueStatus"], "QUEUED")
 
-    def test_l3_exists_propagates_database_failure(self):
-        args = mod.default_args()
-        with patch.object(mod, "run_orchestrator", side_effect=RuntimeError("SQL Server connection timeout")):
-            with self.assertRaises(RuntimeError):
-                mod._l3_exists(args, "r-fail")
-
     def test_incomplete_investigator_evidence_is_marked_without_claiming_verification(self):
         proposal = {
             "response_type": "UPDATE",
@@ -2034,35 +2019,6 @@ class PipelineContractTests(unittest.TestCase):
         body = queue.call_args.kwargs["spec"]["body"]
         self.assertIn("claims_contract_version", body)
         self.assertIn("VERIFIED", body)
-
-    def test_missing_reviewer_receives_recipe_evidence_matrix(self):
-        proposal = {
-            "run_id": "r", "ticket_id": "t", "response_type": "UPDATE",
-            "reply_text": "EAF state verified from the current row.",
-            "claims": [{"id": "C1", "claim": "EAF row exists", "status": "VERIFIED",
-                        "material": True, "evidence": [{"action_id": "A1"}]}],
-        }
-        source = {
-            "id": "inv-1", "status": "done", "assignee": mod.INVESTIGATOR_PROFILE,
-            "body": "run_id: r\nticket_id: t\nticket_no: T1\nreview_cycle: 0",
-        }
-        actions = [{"ID": "A1", "RunID": "r", "TicketID": "t",
-                    "OperationName": "l2_heat_eaf", "ObjectName": "EAF_PER_HEAT"}]
-        with patch.object(mod, "list_tasks", return_value=[source]), \
-                patch.object(mod, "query_active_runs", return_value=[{"ID": "r"}]), \
-                patch.object(mod, "get_runs", return_value=[{"status": "done", "metadata": proposal}]), \
-                patch.object(mod, "_ticket_for_route", return_value={
-                    "BriefDetails": "heat H99328 EAF state", "ExtractedEntitiesJson": '{"HeatNo":"H99328"}'
-                }), \
-                patch.object(mod, "get_run_actions", return_value=actions), \
-                patch.object(mod, "_dispatch_route_context", return_value="\nreview live context\n"), \
-                patch.object(mod, "create_reviewer_card", return_value="rev-1") as create:
-            self.assertEqual(1, mod.ensure_missing_reviewers(mod.default_args()))
-        verification = create.call_args.kwargs["verification_context"]
-        self.assertIn("Reviewer evidence matrix", verification)
-        self.assertIn('"status": "REFERENCED"', verification)
-        self.assertIn('"evidence_categories": ["heat_process_state"]', verification)
-
 
 class ValidTablesRenderingTests(unittest.TestCase):
     def test_query_instructions_renders_table_with_bracketed_columns(self):

@@ -44,9 +44,9 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 try:
-    from Model_Bench.xbatch_world import build_evidence_matrix, load_world, select_recipes, world_context
+    from Model_Bench.xbatch_world import load_world, select_recipes, world_context
 except ImportError:  # deployed scripts live beside xbatch_world.py
-    from xbatch_world import build_evidence_matrix, load_world, select_recipes, world_context
+    from xbatch_world import load_world, select_recipes, world_context
 
 
 def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
@@ -976,16 +976,6 @@ def _query_published_state(args: argparse.Namespace, run_id: str) -> list[dict[s
     )
     rows = run_orchestrator(args, ["--query", sql])
     return rows if isinstance(rows, list) else []
-
-
-def _l3_exists(args: argparse.Namespace, run_id: str) -> bool:
-    safe = run_id.replace("'", "''")
-    sql = (
-        "SELECT TOP 1 ID FROM dbo.Hermes_L3_Escalation_Trn_Tbl "
-        f"WHERE RunID = '{safe}' AND IsDeleted = 0"
-    )
-    rows = run_orchestrator(args, ["--query", sql])
-    return bool(rows)
 
 
 def _prior_update_continuations(args: argparse.Namespace, run_id: str) -> int:
@@ -2391,59 +2381,6 @@ def create_reviewer_card(
         return status.lower()
     return None
 
-
-def _review_evidence_context(args: argparse.Namespace, proposal: dict[str, Any],
-                             ticket: dict[str, Any]) -> str:
-    """Package recipe expectations against the frozen proposal's action refs."""
-    try:
-        world = load_world()
-        selection = select_recipes(ticket, world)
-        actions = get_run_actions(args, str(proposal["run_id"]))
-        matrix = build_evidence_matrix(proposal, selection["primary"], actions)
-        return (
-            "\n--- Reviewer evidence matrix ---\n"
-            "This matrix maps frozen claims to current-run action references and recipe evidence categories. "
-            "It is an audit aid; validate whether the cited rows actually support each claim.\n"
-            + json.dumps(matrix, default=str) + "\n"
-        )
-    except (OSError, RuntimeError, ValueError, KeyError, json.JSONDecodeError) as exc:
-        return f"\n--- Reviewer evidence matrix ---\nUnavailable: {type(exc).__name__}: {exc}\n"
-
-
-def ensure_missing_reviewers(
-    args: argparse.Namespace,
-    *,
-    dry_run: bool = False,
-    active_run_ids: Optional[set[str]] = None,
-) -> int:
-    tasks = list_tasks()
-    active = active_run_ids if active_run_ids is not None else {
-        str(row["ID"]) for row in query_active_runs(args)
-    }
-    created = 0
-    for task in tasks:
-        if task.get("status") != "done" or (task.get("assignee") or "") not in INVESTIGATOR_PROFILES:
-            continue
-        run_id = task_run_id(task)
-        if not run_id or run_id not in active:            continue
-        if _source_has_reviewer(tasks, task["id"]) or _source_has_rework(tasks, task["id"]):
-            continue
-        proposal = _completion_metadata(task)
-        if not _proposal_complete(proposal):
-            continue
-        verification_context = ""
-        if not dry_run:
-            route_ticket = _ticket_for_route(args, str(proposal.get("ticket_id") or task_ticket_id(task) or ""))
-            verification_context = _dispatch_route_context(
-                str(proposal.get("run_id") or run_id),
-                str(proposal.get("ticket_id") or task_ticket_id(task) or ""),
-                route_ticket, evidence_role="reviewer",
-            ).replace("Deterministic live route/context", "Independent reviewer live verification context")
-            verification_context += _review_evidence_context(args, proposal, route_ticket)
-        if create_reviewer_card(source_task=task, proposal=proposal or {},
-                                verification_context=verification_context, dry_run=dry_run):
-            created += 1
-    return created
 
 def _jev_primary_review(
     args: argparse.Namespace,

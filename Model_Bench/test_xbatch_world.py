@@ -4,7 +4,6 @@ import unittest
 from pathlib import Path
 
 from Model_Bench.xbatch_world import (
-    build_evidence_matrix,
     load_world,
     select_recipes,
     validate_recipes,
@@ -63,24 +62,6 @@ class XBatchWorldTests(unittest.TestCase):
         selection = select_recipes({"BriefDetails": "unclassified application behaviour"}, self.world)
         self.assertEqual("discover", selection["primary"]["route"])
         self.assertEqual({}, selection["identifiers"])
-
-    def test_evidence_matrix_maps_claim_refs_to_recorded_actions(self):
-        recipe = next(item for item in self.world["recipes"] if item["route"] == "heat_execution")
-        proposal = {"claims": [{"claim": "EAF row exists", "evidence_refs": ["A1"]}]}
-        matrix = build_evidence_matrix(proposal, recipe, [{"ID": "A1", "OperationName": "l2_heat_eaf", "ObjectName": "EAF_PER_HEAT"}])
-        self.assertEqual("REFERENCED", matrix["claims"][0]["status"])
-        self.assertEqual(["heat_process_state"], matrix["claims"][0]["evidence_categories"])
-
-    def test_evidence_matrix_reads_frozen_proposal_evidence_shape(self):
-        recipe = next(item for item in self.world["recipes"] if item["route"] == "heat_execution")
-        proposal = {"claims": [{"id": "C1", "claim": "LRF row exists", "status": "VERIFIED",
-                                 "evidence": [{"action_id": "A2"}]}]}
-        matrix = build_evidence_matrix(
-            proposal, recipe,
-            [{"ID": "A2", "OperationName": "l2_heat_lrf", "ObjectName": "LRF_Per_Heat"}],
-        )
-        self.assertEqual("REFERENCED", matrix["claims"][0]["status"])
-        self.assertEqual(["heat_process_state"], matrix["claims"][0]["evidence_categories"])
 
     def test_deployed_module_can_resolve_profile_local_knowledge_bundle(self):
         with tempfile.TemporaryDirectory() as directory:

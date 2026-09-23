@@ -186,6 +186,15 @@ def largest_card_sections(cur, since: datetime) -> dict[str, Any]:
             "sections": [{"section": b.strip().splitlines()[0][:70], "chars": len(b)} for b in ranked]}
 
 
+def failure_reasons(cur, since: datetime) -> list[dict[str, Any]]:
+    """Why runs ended FAILED in the window (first line of ErrorMessage, grouped)."""
+    return _rows(cur, """
+        SELECT LEFT(ISNULL(ErrorMessage, '(none)'), 90) AS Reason, COUNT(*) AS Runs
+        FROM dbo.Hermes_L2_Response_Trn_Tbl
+        WHERE IsDeleted = 0 AND ProcessStatus = 'FAILED' AND ModifiedOn >= ?
+        GROUP BY LEFT(ISNULL(ErrorMessage, '(none)'), 90) ORDER BY Runs DESC""", since)
+
+
 def invariants(cur) -> dict[str, int]:
     return {label: cur.execute(sql).fetchone()[0] for label, sql in INVARIANTS.items()}
 
@@ -198,6 +207,7 @@ def build_report(cur, since: datetime) -> dict[str, Any]:
         "runs": [{k: v for k, v in r.items() if k != "CannedIncomplete"} for r in runs],
         "tool_health": tool_health(cur, since),
         "waste": waste_signals(cur, since),
+        "failure_reasons": failure_reasons(cur, since),
         "card_sizes": card_sizes(cur, since),
         "largest_card": largest_card_sections(cur, since),
         "spill_threshold_chars": SPILL_THRESHOLD_CHARS,
@@ -216,6 +226,10 @@ def print_markdown(report: dict[str, Any], limit: int) -> None:
     for r in report["runs"][:limit]:
         print(f"- {r['TicketNo']}: {r['ProcessStatus']} {r['ResponseType'] or ''} "
               f"[{r['LocalModelPurpose'] or '-'}/{r['LocalModelState'] or '-'}]")
+    if report["failure_reasons"]:
+        print("\nFailed-run reasons:")
+        for f in report["failure_reasons"]:
+            print(f"- {f['Runs']:>3}  {f['Reason']}")
     print("\n## Tool health")
     for t in report["tool_health"]["per_tool"]:
         print(f"- {t['ToolName']}: {t['Calls']} calls, {t['Failed']} failed")

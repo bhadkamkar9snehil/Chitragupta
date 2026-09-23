@@ -96,6 +96,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -469,7 +470,15 @@ class HermesL2Client:
                 f"DRIVER={{{driver}}};SERVER={server};DATABASE={database};"
                 f"Trusted_Connection=yes;TrustServerCertificate=yes;"
             )
-        return pyodbc.connect(cs, timeout=15)
+        # Every CLI call opens its own connection, so a transient prelogin/TCP timeout
+        # failed a whole run (live 2026-09-23 10:47, "Could not queue local-model
+        # investigation"). Retry connectivity errors once; auth errors are
+        # InterfaceError and still fail immediately.
+        try:
+            return pyodbc.connect(cs, timeout=30)
+        except pyodbc.OperationalError:
+            time.sleep(3)
+            return pyodbc.connect(cs, timeout=30)
 
     def _commit(self, cur: "pyodbc.Cursor") -> None:
         """Drain every remaining result set, then commit.

@@ -170,34 +170,3 @@ def world_context(selection: dict[str, Any], world: dict[str, Any] | None = None
         context["relationships"] = []
     return context
 
-
-def build_evidence_matrix(proposal: dict[str, Any], recipe: dict[str, Any],
-                          actions: list[dict[str, Any]]) -> dict[str, Any]:
-    action_map = {str(row.get("ID") or row.get("action_id")): row for row in actions}
-    categories = recipe.get("required_evidence") or []
-    rows = []
-    for claim in proposal.get("claims") or []:
-        refs = [str(value) for value in (claim.get("evidence_refs") or [])]
-        refs.extend(
-            str(item["action_id"])
-            for item in (claim.get("evidence") or [])
-            if isinstance(item, dict) and item.get("action_id")
-        )
-        refs = list(dict.fromkeys(refs))
-        matched_actions = [action_map[ref] for ref in refs if ref in action_map]
-        matched_categories = []
-        for category in categories:
-            objects = {str(value).casefold() for value in category.get("objects", [])}
-            operations = {str(value).casefold() for value in category.get("operations", [])}
-            if any(
-                str(action.get("ObjectName") or action.get("object_name") or "").casefold() in objects
-                or str(action.get("OperationName") or action.get("operation") or "").casefold() in operations
-                for action in matched_actions
-            ):
-                matched_categories.append(category["category"])
-        status = "REFERENCED" if matched_actions else ("MISSING_REFERENCE" if not refs else "UNKNOWN_REFERENCE")
-        rows.append({
-            "claim": claim.get("claim") or claim.get("text"), "status": status,
-            "evidence_refs": refs, "evidence_categories": matched_categories,
-        })
-    return {"recipe_id": recipe["recipe_id"], "claims": rows, "review_checks": recipe.get("review_checks", [])}
