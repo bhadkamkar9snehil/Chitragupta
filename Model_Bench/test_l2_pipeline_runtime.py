@@ -318,6 +318,23 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(ref["claim_ids"], ["C1"])
         self.assertLess(len(json.dumps(ref)), 300)
 
+    def _signals(self, p, ev, over, fit, deep, risk, act=0.05):
+        return {"p_approve": p, "evidence": ev, "overclaim": over, "response_fit": fit,
+                "deep_reasoning": deep, "risk": risk, "action_claim": act, "action_audit": 1.0}
+
+    def test_direct_approval_tiers_match_live_calibration_cases(self):
+        """Signal vectors are real 2026-09-23 Jev reviews the local reviewer confirmed."""
+        allowed = mod.direct_approval_allowed
+        self.assertTrue(allowed("RESOLUTION", self._signals(0.92, 0.94, 0.36, 0.90, 0.18, 0.40)))  # Ticket_319
+        self.assertFalse(allowed("RESOLUTION", self._signals(0.54, 0.79, 0.37, 0.82, 0.27, 0.80)))  # Ticket_316
+        self.assertTrue(allowed("UPDATE", self._signals(0.88, 0.95, 0.29, 0.78, 0.20, 0.60)))  # Ticket_251
+        self.assertFalse(allowed("UPDATE", self._signals(0.46, 0.81, 0.36, 0.60, 0.68, 1.88)))  # Ticket_289
+
+    def test_escalations_and_unaudited_actions_never_publish_directly(self):
+        strong = self._signals(0.99, 0.99, 0.0, 0.99, 0.0, 0.0)
+        self.assertFalse(mod.direct_approval_allowed("L3_ESCALATION", strong))
+        self.assertFalse(mod.direct_approval_allowed("UPDATE", {**strong, "action_claim": 0.9, "action_audit": 0.2}))
+
     def test_review_cap_publishes_a_real_l3_handoff_not_a_failed_run(self):
         with patch.object(mod, "run_orchestrator") as invoke, \
                 patch.object(mod, "_post_publish_activity") as activity:

@@ -2382,6 +2382,35 @@ def create_reviewer_card(
     return None
 
 
+# Direct-publication tiers for a Jev APPROVE. Calibrated 2026-09-23 on 72h of live
+# reviews: 0 of 24 Jev approvals passed the old gates (raw decision confidence >= 0.82
+# is not a calibrated probability), yet the local Qwen reviewer confirmed all 22 that
+# completed, each confirmation costing ~5.5 min of the single slot. Non-terminal
+# outcomes use the lighter tier; a closing RESOLUTION keeps a stricter one, and the
+# deterministic pre-publish gates (verified claims with action_ids, COMPLETE evidence,
+# resolution text) still apply to both. Every bound is env-overridable.
+DIRECT_APPROVAL_TIERS = {
+    "NON_TERMINAL": {"p_approve": 0.60, "evidence": 0.75, "overclaim": 0.40, "response_fit": 0.70,
+                     "risk": 1.00, "deep_reasoning": 1.00},
+    "RESOLUTION": {"p_approve": 0.65, "evidence": 0.80, "overclaim": 0.40, "response_fit": 0.80,
+                   "risk": 0.90, "deep_reasoning": 0.30},
+}
+_UPPER_BOUNDED = ("overclaim", "risk", "deep_reasoning")
+
+
+def direct_approval_allowed(response_type: str, signals: dict[str, float]) -> bool:
+    """Whether a Jev APPROVE may publish without a local reviewer."""
+    tier_name = "RESOLUTION" if response_type == "RESOLUTION" else "NON_TERMINAL"
+    if response_type not in ("RESOLUTION", "UPDATE", "QUESTION"):
+        return False  # L3/NEEDS_HUMAN_ACTION handoffs keep their own path
+    for key, default in DIRECT_APPROVAL_TIERS[tier_name].items():
+        bound = float(os.environ.get(f"CHITRAGUPTA_JEV_{tier_name}_{key.upper()}", default))
+        value = signals.get(key, 0.0)
+        if (value > bound) if key in _UPPER_BOUNDED else (value < bound):
+            return False
+    return signals.get("action_claim", 0.0) < 0.50 or signals.get("action_audit", 0.0) >= 0.80
+
+
 def _jev_primary_review(
     args: argparse.Namespace,
     proposal: dict[str, Any],
@@ -2405,29 +2434,21 @@ def _jev_primary_review(
     except (TypeError, ValueError):
         confidence = 0.0
 
-    approve_threshold = float(os.environ.get("CHITRAGUPTA_JEV_DIRECT_APPROVAL_CONFIDENCE", "0.82"))
     rework_threshold = float(os.environ.get("CHITRAGUPTA_JEV_DIRECT_REWORK_CONFIDENCE", "0.88"))
-    evidence = _noul_answer(result, "evidence_supports_core_claim", 0.0)
-    overclaim = _noul_answer(result, "reply_overstates_evidence", 1.0)
-    action_claim = _noul_answer(result, "reply_claims_action_was_performed", 0.0)
-    action_audit = _noul_answer(result, "audit_shows_claimed_action", 0.0 if action_claim >= 0.5 else 1.0)
-    root_established = _noul_answer(result, "root_cause_established", 0.0)
-    response_fit = _noul_answer(result, "response_type_fit", 0.0)
-    deep_reasoning = _noul_answer(result, "needs_deep_local_reasoning", 1.0)
-    risk = _score_answer(result, "publication_risk", 3.0)
+    signals = {
+        "p_approve": float(((decision_answer.get("probabilities") or {}).get("APPROVE")) or 0.0),
+        "evidence": _noul_answer(result, "evidence_supports_core_claim", 0.0),
+        "overclaim": _noul_answer(result, "reply_overstates_evidence", 1.0),
+        "action_claim": _noul_answer(result, "reply_claims_action_was_performed", 0.0),
+        "root_cause_established": _noul_answer(result, "root_cause_established", 0.0),
+        "response_fit": _noul_answer(result, "response_type_fit", 0.0),
+        "deep_reasoning": _noul_answer(result, "needs_deep_local_reasoning", 1.0),
+        "risk": _score_answer(result, "publication_risk", 3.0),
+    }
+    signals["action_audit"] = _noul_answer(
+        result, "audit_shows_claimed_action", 0.0 if signals["action_claim"] >= 0.5 else 1.0)
     response_type = str(proposal.get("response_type") or "").upper()
-
-    safe_approve = (
-        decision == "APPROVE"
-        and confidence >= approve_threshold
-        and evidence >= 0.80
-        and overclaim <= 0.20
-        and response_fit >= 0.80
-        and deep_reasoning <= 0.30
-        and risk <= 0.85
-        and (action_claim < 0.50 or action_audit >= 0.80)
-        and (response_type != "RESOLUTION" or root_established >= 0.72)
-    )
+    safe_approve = decision == "APPROVE" and direct_approval_allowed(response_type, signals)
 
     action = "LOCAL_REVIEW"
     if safe_approve:
@@ -2456,16 +2477,7 @@ def _jev_primary_review(
         "reason_code": reason_code,
         "reason": reasons.get(reason_code, reasons["OTHER"]),
         "result": result,
-        "safety": {
-            "evidence_support": evidence,
-            "overclaim": overclaim,
-            "action_claim": action_claim,
-            "action_audit": action_audit,
-            "root_cause_established": root_established,
-            "response_type_fit": response_fit,
-            "needs_deep_local_reasoning": deep_reasoning,
-            "publication_risk": risk,
-        },
+        "safety": signals,
     }
 
 

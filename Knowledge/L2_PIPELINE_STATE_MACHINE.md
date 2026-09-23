@@ -302,6 +302,8 @@ No reviewer or publisher should reconstruct a different proposal from free-form 
 
 ## 5. Jev primary review
 
+Direct publication of a Jev APPROVE is decided by `direct_approval_allowed()` (risk-tiered on P(APPROVE), evidence, overclaim, response-type fit, publication risk; RESOLUTION additionally requires low deep-reasoning need). Calibrated 2026-09-23: under the previous raw-confidence gate 0 of 24 approvals published directly although the local reviewer confirmed all 22 that completed.
+
 Jev primary review is a bounded System One workflow, not a free-form reviewer agent.
 
 Its main decision is:

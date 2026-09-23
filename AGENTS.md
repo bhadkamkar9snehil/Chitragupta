@@ -387,7 +387,7 @@ Rules:
 - Omitted chunks must remain named with recovery hints so focused reasoning can fetch them only when needed.
 - probe_table may automatically read only when a strong ticket identifier maps to a real allowlisted column. No identifier means no broad automatic probe.
 - Structural SQL safety, procedure allowlists, workflow binding, WIP, publication, and mutations remain deterministic.
-- Jev primary review may replace the normal local-review pass when deterministic thresholds accept APPROVE, REWORK, or L3_ESCALATION.
+- Jev primary review may replace the normal local-review pass when deterministic thresholds accept APPROVE, REWORK, or L3_ESCALATION. APPROVE uses risk tiers in `direct_approval_allowed()` keyed on Jev's P(APPROVE), not its raw decision confidence (uncalibrated): a lighter tier for non-terminal UPDATE/QUESTION, a stricter one for a closing RESOLUTION; the deterministic pre-publish gates still apply. The live health report shows how many approvals each gate blocks.
 - The local reviewer exists for LOCAL_REVIEW, Jev unavailability, low confidence, contradictory evidence, or deep reasoning needs.
 - Jev trace assessment stays out of the hot trace hook; it runs after persisted drain.
 - Post-resolution KB curation may suggest REUSE_EXISTING, UPDATE_EXISTING, CREATE_CANDIDATE, or NONE. A single resolved ticket only ever produces a `Candidate` article. Deterministic code promotes a `Candidate` to `Approved` (the only status retrieval reads) when a later verified RESOLUTION on a different ticket is judged REUSE_EXISTING for it: independent corroboration, no human step.

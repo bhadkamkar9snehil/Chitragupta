@@ -26,6 +26,9 @@ from typing import Any
 
 import pyodbc
 
+import l2_pipeline_runtime as runtime
+from l2_pipeline_runtime import direct_approval_allowed
+
 DEFAULT_SERVER = os.environ.get("MSSQL_MCP_SERVER") or "10.2.6.204"
 DEFAULT_DATABASE = "XStudio_Helpdesk"
 DEFAULT_USER = os.environ.get("MSSQL_MCP_USER") or "sa"
@@ -195,6 +198,47 @@ def failure_reasons(cur, since: datetime) -> list[dict[str, Any]]:
         GROUP BY LEFT(ISNULL(ErrorMessage, '(none)'), 90) ORDER BY Runs DESC""", since)
 
 
+def _review_signals(answers: dict) -> dict[str, float]:
+    """Same signal names the runtime's direct_approval_allowed() reads."""
+    noul = lambda key, default: float((answers.get(key) or {}).get("noul", default))
+    action_claim = noul("reply_claims_action_was_performed", 0.0)
+    return {
+        "p_approve": float(((answers.get("decision") or {}).get("probabilities") or {}).get("APPROVE") or 0),
+        "evidence": noul("evidence_supports_core_claim", 0.0),
+        "overclaim": noul("reply_overstates_evidence", 1.0),
+        "response_fit": noul("response_type_fit", 0.0),
+        "deep_reasoning": noul("needs_deep_local_reasoning", 1.0),
+        "risk": float((answers.get("publication_risk") or {}).get("score", 3)),
+        "action_claim": action_claim,
+        "action_audit": noul("audit_shows_claimed_action", 0.0 if action_claim >= 0.5 else 1.0),
+    }
+
+
+def jev_review_gates(cur, since: datetime) -> dict[str, Any]:
+    """Where Jev APPROVE decisions would be downgraded to a local Qwen review, and by which gate,
+    under the runtime's current direct_approval_allowed() policy (one owner for the rule)."""
+    rows = _rows(cur, """SELECT JevReviewJson, ResponseType, PendingLocalModelJson FROM dbo.Hermes_L2_Response_Trn_Tbl
+                         WHERE JevReviewJson IS NOT NULL AND JevReviewedOn >= ?""", since)
+    approvals, direct, blocked = 0, 0, {}
+    for row in rows:
+        review = (json.loads(row["JevReviewJson"]).get("PRIMARY_REVIEW") or {})
+        answers = review.get("answers") or {}
+        if (answers.get("decision") or {}).get("choice") != "APPROVE":
+            continue
+        approvals += 1
+        signals = _review_signals(answers)
+        if direct_approval_allowed(str(row["ResponseType"] or "").upper(), signals):
+            direct += 1
+            continue
+        tier = runtime.DIRECT_APPROVAL_TIERS["RESOLUTION" if row["ResponseType"] == "RESOLUTION" else "NON_TERMINAL"]
+        for key, bound in tier.items():
+            value = signals.get(key, 0.0)
+            if (value > bound) if key in runtime._UPPER_BOUNDED else (value < bound):
+                blocked[key] = blocked.get(key, 0) + 1
+    return {"jev_approvals": approvals, "direct_publish": direct,
+            "blocked_by_gate": dict(sorted(blocked.items(), key=lambda kv: -kv[1]))}
+
+
 def invariants(cur) -> dict[str, int]:
     return {label: cur.execute(sql).fetchone()[0] for label, sql in INVARIANTS.items()}
 
@@ -208,6 +252,7 @@ def build_report(cur, since: datetime) -> dict[str, Any]:
         "tool_health": tool_health(cur, since),
         "waste": waste_signals(cur, since),
         "failure_reasons": failure_reasons(cur, since),
+        "jev_review_gates": jev_review_gates(cur, since),
         "card_sizes": card_sizes(cur, since),
         "largest_card": largest_card_sections(cur, since),
         "spill_threshold_chars": SPILL_THRESHOLD_CHARS,
@@ -230,6 +275,11 @@ def print_markdown(report: dict[str, Any], limit: int) -> None:
         print("\nFailed-run reasons:")
         for f in report["failure_reasons"]:
             print(f"- {f['Runs']:>3}  {f['Reason']}")
+    g = report["jev_review_gates"]
+    print(f"\n## Jev primary review (current policy)\n- APPROVE decisions {g['jev_approvals']}, "
+          f"eligible for direct publish {g['direct_publish']} (rest cost a local Qwen review)")
+    for name, n in g["blocked_by_gate"].items():
+        print(f"- blocked by {name}: {n}")
     print("\n## Tool health")
     for t in report["tool_health"]["per_tool"]:
         print(f"- {t['ToolName']}: {t['Calls']} calls, {t['Failed']} failed")
