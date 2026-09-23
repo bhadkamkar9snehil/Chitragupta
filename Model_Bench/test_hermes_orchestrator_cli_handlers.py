@@ -215,6 +215,49 @@ class PollDoesNotSweepStaleRunsTests(unittest.TestCase):
         self.assertFalse(hasattr(orch.HermesL2Client, "recover_stale_runs"))
 
 
+class ClientWriteSurfacesDeferredErrorsTests(unittest.TestCase):
+    """2026-09-23: --publish-response printed PUBLISHED 20 times while SQL never changed."""
+
+    def _client(self, cursor):
+        client = object.__new__(orch.HermesL2Client)
+        client.conn = MagicMock()
+        client.conn.cursor.return_value = cursor
+        client.hermes_user_id = None
+        return client
+
+    def test_commit_drains_every_result_set_before_committing(self):
+        events = []
+        cursor = MagicMock()
+        cursor.nextset.side_effect = lambda: events.append("nextset") or len(events) < 2
+        client = self._client(cursor)
+        client.conn.commit.side_effect = lambda: events.append("commit")
+        client._commit(cursor)
+        self.assertEqual(events, ["nextset", "nextset", "commit"])
+
+    def test_commit_propagates_error_hidden_in_a_later_result_set(self):
+        cursor = MagicMock()
+        cursor.nextset.side_effect = RuntimeError("Hermes run changed before response publication.")
+        client = self._client(cursor)
+        with self.assertRaises(RuntimeError):
+            client._commit(cursor)
+        client.conn.commit.assert_not_called()
+
+    def test_publish_response_fails_when_row_was_not_published(self):
+        cursor = MagicMock()
+        cursor.nextset.return_value = False
+        cursor.fetchone.return_value = ("INVESTIGATING", None)
+        client = self._client(cursor)
+        with self.assertRaises(RuntimeError) as ctx:
+            client.publish_response(run_id="RUN-1", response_type="UPDATE", reply_text="x")
+        self.assertIn("without publishing run RUN-1", str(ctx.exception))
+
+    def test_publish_response_accepts_published_row(self):
+        cursor = MagicMock()
+        cursor.nextset.return_value = False
+        cursor.fetchone.return_value = ("COMPLETED", "reply")
+        self._client(cursor).publish_response(run_id="RUN-1", response_type="UPDATE", reply_text="x")
+
+
 class MainDispatchOrderTests(unittest.TestCase):
     """main()'s own body must still route to exactly the right handler."""
 

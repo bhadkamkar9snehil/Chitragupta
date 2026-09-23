@@ -8,8 +8,10 @@ cd "$ROOT"
 
 if [[ -z "${MSSQL_MCP_SERVER:-}" && -f "$HOME/.hermes/profiles/l2-investigator-primary/.env" ]]; then
   set -a
+  # The profile .env is edited from Windows and carries CRLF; a raw source made
+  # MSSQL_MCP_SERVER "10.2.6.204\r", and every WSL SQL login timed out.
   # shellcheck disable=SC1090
-  source "$HOME/.hermes/profiles/l2-investigator-primary/.env"
+  source <(tr -d '\r' < "$HOME/.hermes/profiles/l2-investigator-primary/.env")
   set +a
 fi
 

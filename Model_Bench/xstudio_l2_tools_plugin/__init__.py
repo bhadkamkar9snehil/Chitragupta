@@ -27,6 +27,7 @@ import subprocess
 import sys
 import threading
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Optional
 
 BRIDGE_PATH = os.environ.get(
@@ -662,7 +663,7 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
     """
     session = _session_key(kwargs.get("task_id", ""))
     context = _context_for(session, kwargs)
-    params = dict(params or {})
+    params = _recover_leaked_parameters(dict(params or {}))
     if context.get("pipeline_stage", "").lower() == "review":
         return json.dumps({"ok": False, "error": "Reviewers judge the frozen proposal: use kanban_complete to approve or kanban_block to reject. Do not submit a replacement proposal.", "retry_same_call": False})
 
@@ -675,7 +676,10 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
     claim_status = fields["claim_status"]
     evidence_status = metadata["evidence_status"]
 
-    task_id = str(context.get("kanban_task_id") or kwargs.get("task_id") or "")
+    # Hermes scopes a dispatcher worker to HERMES_KANBAN_TASK and refuses any
+    # other target; a remembered kanban_show id can be a prior task the worker
+    # only inspected (live 2026-09-22: "refusing to mutate t_0f7bffa4").
+    task_id = str(os.environ.get("HERMES_KANBAN_TASK") or context.get("kanban_task_id") or kwargs.get("task_id") or "")
     if not task_id:
         return json.dumps({
             "ok": False,
@@ -690,8 +694,10 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
         "--metadata", json.dumps(metadata, separators=(",", ":"), default=str),
     ]
     try:
+        # Explicit cwd: an inherited, since-deleted worker cwd made `hermes`
+        # fail with "getcwd() failed" and lost a VERIFIED RESOLUTION (2026-09-22).
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30,
+            cmd, capture_output=True, text=True, timeout=30, cwd=str(Path.home()),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return json.dumps({
@@ -797,6 +803,39 @@ def _kanban_completion_metadata_guard(args: dict[str, Any], context: dict[str, A
     return None
 
 
+_LEAKED_TOOL_MARKUP = re.compile(r"</?(?:parameter|function|result|summary|tool_call)\b[^>]*>", re.I)
+_LEAKED_PARAMETER = re.compile(r"<parameter=(\w+)>\s*(.*?)\s*(?=</parameter>|<parameter=|</?function|$)", re.I | re.S)
+
+
+def _recover_leaked_parameters(args: dict[str, Any]) -> dict[str, Any]:
+    """Split Qwen tool-call markup that leaked into a string argument.
+
+    Qwen's native format is <parameter=name>value</parameter>. It sometimes
+    serializes later arguments inside the first string, so the markup reached
+    customer ReplyText (6 live rows) and an argument it did choose, such as
+    claim_status=VERIFIED, was silently lost. Each string is cut at the first
+    markup tag; a leaked name=value pair fills that argument only if it is empty.
+    """
+    repaired = dict(args)
+    recovered: dict[str, str] = {}
+    for key, value in args.items():
+        if not isinstance(value, str):
+            continue
+        match = _LEAKED_TOOL_MARKUP.search(value) or re.search(r"<parameter=", value, re.I)
+        if not match:
+            continue
+        tail = value[match.start():]
+        repaired[key] = value[:match.start()].rstrip()
+        for name, leaked in _LEAKED_PARAMETER.findall(tail):
+            leaked = _LEAKED_TOOL_MARKUP.sub("", leaked).strip()
+            if leaked and name not in recovered:
+                recovered[name] = leaked
+    for name, value in recovered.items():
+        if repaired.get(name) in (None, ""):
+            repaired[name] = value
+    return repaired
+
+
 def _kanban_contract_guard(tool_name: str, args: dict[str, Any], context: dict[str, Any]) -> dict[str, str] | None:
     """Every kanban_complete/kanban_block/terminal special case, self-contained."""
     if tool_name == "kanban_complete":
@@ -875,6 +914,15 @@ def _budget_guard(session: str, tool_name: str, effective_args: dict[str, Any]) 
     return None
 
 
+def _completion_guard(tool_name: str, args: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] | None:
+    """Repair leaked tool-call markup, then apply the completion contract to the repaired args."""
+    repaired = args if tool_name == "terminal" else _recover_leaked_parameters(args)
+    result = _kanban_contract_guard(tool_name, repaired, context)
+    if repaired == args or (result and result.get("action") == "block"):
+        return result
+    return {"action": "modify", "args": {**repaired, **((result or {}).get("args") or {})}}
+
+
 def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
                    task_id: str = "", **kwargs: Any) -> dict[str, str] | None:
     args = args or {}
@@ -882,7 +930,7 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
     context = _context_for(session, kwargs)
 
     if tool_name in ("kanban_complete", "kanban_block", "terminal"):
-        return _kanban_contract_guard(tool_name, args, context)
+        return _completion_guard(tool_name, args, context)
 
     # xstudio_submit_proposal does its own validation in _submit_proposal_handler
     # and is not a bridge/SQL tool, so it must not consume the investigation budget.
@@ -935,7 +983,10 @@ def _post_tool_call(tool_name: str, args: dict[str, Any] | None = None,
     if tool_name == "kanban_show":
         parsed = _parse_result(result)
         task = parsed.get("task") if isinstance(parsed, dict) else None
-        if isinstance(task, dict):
+        own_task = os.environ.get("HERMES_KANBAN_TASK")
+        # Only the worker's own card defines its identity; inspecting a prior
+        # attempt's card must not retarget run/ticket/task for this session.
+        if isinstance(task, dict) and (not own_task or str(task.get("id") or "") == own_task):
             session = _session_key(task_id, **kwargs)
             _remember_context(session, task.get("body"))
             kanban_task_id = str(task.get("id") or "").strip()

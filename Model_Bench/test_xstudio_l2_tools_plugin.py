@@ -1264,6 +1264,61 @@ def test_submit_proposal_uses_kanban_task_id_learned_from_show() -> None:
     assert mock_run.call_args[0][0][3] == "t_real_kanban_task"
 
 
+def test_submit_proposal_targets_own_worker_task_not_inspected_prior_card() -> None:
+    """Live 2026-09-22: a rework worker ran kanban_show on the prior attempt's card,
+    the handler then completed that card and Hermes refused the mutation."""
+    session_id = "rework-session"
+    show = lambda tid, run: plugin._post_tool_call(
+        "kanban_show",
+        result={"task": {"id": tid, "body": f"run_id: {run}\nticket_id: TICKET-R\npipeline_stage: rework"}},
+        task_id=session_id, session_id=session_id,
+    )
+    with mock.patch.dict(plugin.os.environ, {"HERMES_KANBAN_TASK": "t_own_rework"}):
+        show("t_own_rework", "RUN-OWN")
+        show("t_prior_attempt", "RUN-PRIOR")
+        with mock.patch.object(plugin.subprocess, "run") as mock_run:
+            mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+            result = json.loads(plugin._submit_proposal_handler(
+                {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+                task_id=session_id, session_id=session_id,
+            ))
+    assert result["ok"] is True
+    cmd = mock_run.call_args[0][0]
+    assert cmd[3] == "t_own_rework"
+    assert json.loads(cmd[cmd.index("--metadata") + 1])["run_id"] == "RUN-OWN"
+
+
+def test_submit_proposal_runs_hermes_from_a_stable_cwd() -> None:
+    """Live 2026-09-22: an inherited deleted cwd made `hermes` die with getcwd()."""
+    _setup_investigator_context(task_id="submit-cwd")
+    with mock.patch.object(plugin.subprocess, "run") as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        plugin._submit_proposal_handler(
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY}, task_id="submit-cwd",
+        )
+    assert mock_run.call_args.kwargs["cwd"] == str(plugin.Path.home())
+
+
+def test_leaked_qwen_parameter_markup_is_cut_and_swallowed_args_recovered() -> None:
+    """Live rows 869E3F60/57D485A8: later arguments leaked inside summary."""
+    leaked = {"summary": "Verified the reading.</parameter>\n<parameter=response_type>\nRESOLUTION\n"
+                         "</parameter>\n<parameter=claim_status>\nVERIFIED\n</parameter>"}
+    repaired = plugin._recover_leaked_parameters(leaked)
+    assert repaired == {"summary": "Verified the reading.", "response_type": "RESOLUTION", "claim_status": "VERIFIED"}
+    # An argument the model set explicitly is never overridden by leaked text.
+    kept = plugin._recover_leaked_parameters({"summary": "x</result>\n<parameter=response_type>RESOLUTION", "response_type": "UPDATE"})
+    assert kept["response_type"] == "UPDATE" and kept["summary"] == "x"
+    assert plugin._recover_leaked_parameters({"summary": "a<b and <resultset>"}) == {"summary": "a<b and <resultset>"}
+
+
+def test_kanban_complete_strips_leaked_markup_before_it_reaches_reply_text() -> None:
+    """Live row F2DB9885 published '</result>\n<parameter=summary>' to the customer."""
+    summary = "RESOLUTION: LRF arc time verified for Heat 1604013\n</result>\n<parameter=summary>\nVerified records"
+    decision = plugin._pre_tool_call("kanban_complete", {"summary": summary}, task_id="leak-review")
+    assert decision["action"] == "modify"
+    assert "<" not in decision["args"]["summary"]
+
+
 def test_submit_proposal_does_not_consume_xstudio_tool_budget() -> None:
     _setup_investigator_context(task_id="submit-budget")
     # Fill up the budget to MAX_TOOL_CALLS - 1

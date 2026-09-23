@@ -471,6 +471,18 @@ class HermesL2Client:
             )
         return pyodbc.connect(cs, timeout=15)
 
+    def _commit(self, cur: "pyodbc.Cursor") -> None:
+        """Drain every remaining result set, then commit.
+
+        pyodbc raises a procedure error only when the client reaches the result
+        set that carries it; an error after an earlier result/row-count message
+        is otherwise lost and the caller reports success. Live 2026-09-23: approved
+        proposals were "PUBLISHED" by the CLI 20 times with no SQL change.
+        """
+        while cur.nextset():
+            pass
+        self.conn.commit()
+
     def close(self) -> None:
         self.conn.close()
 
@@ -572,7 +584,7 @@ class HermesL2Client:
             ),
         )
         row = _last_result_row(cur)
-        self.conn.commit()
+        self._commit(cur)
         return row["RunID"] if row else None
 
     def get_ticket_context(self, ticket_id: str, history_rows: int = 10) -> Dict:
@@ -614,7 +626,7 @@ class HermesL2Client:
             "EXEC dbo.Hermes_L2_Start_Investigation_Usp @RunID = ?, @Route = ?, @HermesUserID = ?;",
             (run_id, route, self.hermes_user_id),
         )
-        self.conn.commit()
+        self._commit(cur)
 
     def heartbeat(self, run_id: str) -> None:
         """EXEC dbo.Hermes_L2_Heartbeat_Usp -- call periodically during long investigations."""
@@ -623,7 +635,7 @@ class HermesL2Client:
             "EXEC dbo.Hermes_L2_Heartbeat_Usp @RunID = ?, @HermesUserID = ?;",
             (run_id, self.hermes_user_id),
         )
-        self.conn.commit()
+        self._commit(cur)
 
 
     def queue_local_model_work(
@@ -657,7 +669,7 @@ class HermesL2Client:
             ),
         )
         rows = _rows_as_dicts(cur)
-        self.conn.commit()
+        self._commit(cur)
         return rows[0] if rows else {}
 
     def try_acquire_local_model_work(self) -> Dict[str, Any]:
@@ -668,7 +680,7 @@ class HermesL2Client:
             (self.hermes_user_id,),
         )
         rows = _rows_as_dicts(cur)
-        self.conn.commit()
+        self._commit(cur)
         return rows[0] if rows else {"AcquireStatus": "EMPTY"}
 
     def bind_local_model_task(self, run_id: str, work_key: str, task_id: str) -> Dict[str, Any]:
@@ -681,7 +693,7 @@ class HermesL2Client:
             (run_id, work_key, task_id, self.hermes_user_id),
         )
         rows = _rows_as_dicts(cur)
-        self.conn.commit()
+        self._commit(cur)
         return rows[0] if rows else {}
 
     def finish_local_model_work(
@@ -699,7 +711,7 @@ class HermesL2Client:
             (run_id, task_id, outcome, self.hermes_user_id),
         )
         rows = _rows_as_dicts(cur)
-        self.conn.commit()
+        self._commit(cur)
         return rows[0] if rows else {}
 
     def save_investigation_state(self, run_id: str, route: Optional[str] = None,
@@ -722,7 +734,7 @@ class HermesL2Client:
             (run_id, route, problem_summary, findings, root_cause, resolution,
              inv_json, next_eligible_on, self.hermes_user_id),
         )
-        self.conn.commit()
+        self._commit(cur)
 
     def execute_sql(self, run_id: str, database_name: str, action_type: str, sql: str,
                      schema_name: Optional[str] = None, object_name: Optional[str] = None,
@@ -759,7 +771,7 @@ class HermesL2Client:
              use_transaction, self.hermes_user_id),
         )
         row = _last_result_row(cur)
-        self.conn.commit()
+        self._commit(cur)
         return row["ActionID"] if row else None
 
     def update_sql_action_evidence(self, action_id: str, before_json: Optional[Any] = None,
@@ -774,7 +786,7 @@ class HermesL2Client:
              json.dumps(after_json, default=str) if after_json is not None else None,
              self.hermes_user_id),
         )
-        self.conn.commit()
+        self._commit(cur)
 
     def execute_readonly_sql_with_rows(
         self,
@@ -822,7 +834,7 @@ class HermesL2Client:
                     rows = current
             if not cur.nextset():
                 break
-        self.conn.commit()
+        self._commit(cur)
         if not action_id:
             raise RuntimeError("Hermes_L2_Execute_SQL_Usp returned no action ID")
         return action_id, rows
@@ -858,7 +870,19 @@ class HermesL2Client:
              mirror_reply_to_support_remarks, mirror_question_to_ask_remarks,
              self.hermes_user_id),
         )
-        self.conn.commit()
+        self._commit(cur)
+        # Verify on this connection: a publish that reports success without the
+        # published state is the exact failure this CLI used to hide behind rc=0.
+        cur.execute(
+            "SELECT ProcessStatus, ReplyText FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE ID = ?;",
+            (run_id,),
+        )
+        row = cur.fetchone()
+        if not row or row[0] not in ("COMPLETED", "WAITING_USER") or not (row[1] or "").strip():
+            raise RuntimeError(
+                f"Hermes_L2_Publish_Response_Usp returned without publishing run {run_id}: "
+                f"ProcessStatus={row[0] if row else None!r}"
+            )
 
     def ask_question(self, run_id: str, question: str, new_ticket_status: str,
                       new_ask_status: str, mirror_to_ask_remarks: bool = True) -> None:
@@ -873,7 +897,7 @@ class HermesL2Client:
             (run_id, question, new_ticket_status, new_ask_status,
              mirror_to_ask_remarks, self.hermes_user_id),
         )
-        self.conn.commit()
+        self._commit(cur)
 
     def resolve_ticket(self, run_id: str, reply_text: str, resolution: str,
                         resolved_ticket_status: str, problem_summary: Optional[str] = None,
@@ -893,7 +917,7 @@ class HermesL2Client:
             (run_id, reply_text, resolution, resolved_ticket_status, problem_summary,
              findings, root_cause, inv_json, mirror_to_support_remarks, self.hermes_user_id),
         )
-        self.conn.commit()
+        self._commit(cur)
 
     def escalate_l3(self, run_id: str, reply_text: str, l3_ticket_status: str,
                      problem_summary: Optional[str] = None, findings: Optional[str] = None,
@@ -912,7 +936,7 @@ class HermesL2Client:
             (run_id, reply_text, l3_ticket_status, problem_summary, findings, root_cause,
              inv_json, mirror_to_support_remarks, self.hermes_user_id),
         )
-        self.conn.commit()
+        self._commit(cur)
 
     def fail_run(self, run_id: str, error_message: str, retry_after_minutes: int = 5) -> None:
         """EXEC dbo.Hermes_L2_Fail_Run_Usp"""
@@ -922,7 +946,7 @@ class HermesL2Client:
             "@RetryAfterMinutes = ?, @HermesUserID = ?;",
             (run_id, error_message, retry_after_minutes, self.hermes_user_id),
         )
-        self.conn.commit()
+        self._commit(cur)
 
     def log_blocked_escalation(self, run_id: str, ticket_id: str, block_reason: str,
                                 findings: Optional[str] = None) -> None:
@@ -934,7 +958,7 @@ class HermesL2Client:
             "@BlockReason = ?, @Findings = ?, @HermesUserID = ?;",
             (run_id, ticket_id, block_reason, findings, self.hermes_user_id),
         )
-        self.conn.commit()
+        self._commit(cur)
 
     def save_investigation_ledger(self, run_id: str, ledger: Any) -> None:
         """Direct UPDATE on Hermes_L2_Response_Trn_Tbl.InvestigationJson -- not a
@@ -951,7 +975,7 @@ class HermesL2Client:
             "WHERE ID = ? AND IsDeleted = 0;",
             (json.dumps(ledger), run_id),
         )
-        self.conn.commit()
+        self._commit(cur)
 
     def get_latest_ledger(self, ticket_id: str) -> Optional[Any]:
         """Most recent non-null InvestigationJson for this ticket, across any
@@ -988,7 +1012,7 @@ class HermesL2Client:
             (ticket_id, activity_type, actor_type, actor_name, note_text, old_value,
              new_value, is_customer_visible, run_id, self.hermes_user_id),
         )
-        self.conn.commit()
+        self._commit(cur)
 
     def create_solution(self, title: str, resolution_steps: str, problem_summary: Optional[str] = None,
                          root_cause: Optional[str] = None, route: Optional[str] = None,
@@ -1006,7 +1030,7 @@ class HermesL2Client:
             (title, resolution_steps, problem_summary, root_cause, route, tags, self.hermes_user_id),
         )
         row = cur.fetchone()
-        self.conn.commit()
+        self._commit(cur)
         return row[0] if row else None
 
     def link_solution(self, ticket_id: str, solution_id: str, run_id: Optional[str] = None,
@@ -1018,7 +1042,7 @@ class HermesL2Client:
             "@RunID = ?, @WasHelpful = ?, @HermesUserID = ?;",
             (ticket_id, solution_id, run_id, was_helpful, self.hermes_user_id),
         )
-        self.conn.commit()
+        self._commit(cur)
 
     def get_ticket_activity(self, ticket_id: str) -> List[Dict]:
         """EXEC dbo.Hermes_Get_Ticket_Activity_Usp -- full work-log timeline for one ticket."""
@@ -1041,7 +1065,7 @@ class HermesL2Client:
             (title, root_cause_summary, root_cause_category_id, self.hermes_user_id),
         )
         row = cur.fetchone()
-        self.conn.commit()
+        self._commit(cur)
         return row[0] if row else None
 
     def link_problem(self, problem_id: str, ticket_id: str) -> None:
@@ -1051,7 +1075,7 @@ class HermesL2Client:
             "EXEC dbo.Hermes_Link_Ticket_To_Problem_Usp @ProblemID = ?, @TicketID = ?, @HermesUserID = ?;",
             (problem_id, ticket_id, self.hermes_user_id),
         )
-        self.conn.commit()
+        self._commit(cur)
 
     def list_root_cause_categories(self) -> List[Dict]:
         """Read dbo.Hermes_Root_Cause_Category_Mst_Tbl -- the controlled taxonomy."""
