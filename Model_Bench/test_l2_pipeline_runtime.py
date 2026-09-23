@@ -2169,6 +2169,8 @@ class PublicationActivityReconciliationTests(unittest.TestCase):
         query_args = invoke.call_args_list[0].args[1]
         self.assertEqual(query_args[0], "--query")
         self.assertIn("NOT EXISTS", query_args[1])
+        self.assertIn("a.NoteText", query_args[1])
+        self.assertIn("r.ReplyText", query_args[1])
         log_args = invoke.call_args_list[1].args[1]
         self.assertEqual(log_args[0], "--log-activity")
         self.assertEqual(log_args[log_args.index("--activity-type") + 1], "Resolution")
