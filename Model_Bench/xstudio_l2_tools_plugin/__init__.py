@@ -405,6 +405,11 @@ def _validate_submit_proposal_inputs(
             "retry_same_call": False,
         }), None
 
+    # A verified, evidence-cited RESOLUTION already states its outcome in the summary; 7 of 17
+    # live RESOLUTIONs were bounced only for leaving `resolution` empty. Unverified ones are not filled.
+    if (response_type == "RESOLUTION" and not str(params.get("resolution") or "").strip()
+            and str(params.get("claim_status") or "").upper() == "VERIFIED" and params.get("action_id")):
+        params["resolution"] = summary
     field_error = _outcome_field_error(response_type, params)
     if field_error:
         return json.dumps({"ok": False, "error": field_error, "retry_same_call": False}), None
@@ -417,8 +422,8 @@ def _validate_submit_proposal_inputs(
     if claim_status == "VERIFIED" and not action_id:
         return json.dumps({
             "ok": False,
-            "error": "VERIFIED claims require action_id — a current-run Hermes action ID. "
-                     "Use xstudio_get_run_actions to find one, or set claim_status to INFERRED/UNVERIFIED.",
+            "error": "VERIFIED claims require action_id: copy it from the fact_table or live_probe row "
+                     "the claim relies on, or set claim_status to INFERRED/UNVERIFIED.",
             "retry_same_call": False,
         }), None
 

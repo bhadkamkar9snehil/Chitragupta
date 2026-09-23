@@ -895,15 +895,6 @@ _NEXT_STEP = {"next_investigation_step": "Read SAP posting rows for Inspection L
 _OUTCOME = {"resolution": "Confirmed no UsageDecision transaction exists; requester informed."}
 
 
-def test_submit_proposal_rejects_resolution_without_verified_outcome() -> None:
-    """9 of 10 live RESOLUTIONs closed tickets with an empty Resolution field."""
-    _setup_investigator_context(task_id="submit-no-outcome")
-    result = json.loads(plugin._submit_proposal_handler(
-        {"response_type": "RESOLUTION", "summary": _SUBSTANTIVE_SUMMARY,
-         "claim_status": "VERIFIED", "action_id": "A-1"}, task_id="submit-no-outcome"))
-    assert result["ok"] is False and "resolution" in result["error"]
-
-
 def test_submit_proposal_rejects_incomplete_update_without_next_step() -> None:
     _setup_investigator_context(task_id="submit-no-step")
     result = json.loads(plugin._submit_proposal_handler(
@@ -1384,6 +1375,25 @@ def test_read_table_probe_picks_the_columns_the_ticket_names_not_sync_plumbing()
     chem = ["HeatNo", "C", "Si", "Mn", "SampleType", "Grade", "DbSyncStatus"]
     cols = bridge._probe_columns("HeatNo", chem, [], "chemistry shows Carbon=0.07 and Silicon=0.003")
     assert {"C", "Si", "SampleType", "Grade"} <= set(cols) and "Mn" not in cols
+
+
+def test_verified_resolution_without_resolution_field_uses_the_summary() -> None:
+    _setup_investigator_context(task_id="submit-res-fill")
+    with mock.patch.object(plugin.subprocess, "run") as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        out = json.loads(plugin._submit_proposal_handler(
+            {"response_type": "RESOLUTION", "summary": _SUBSTANTIVE_SUMMARY,
+             "claim_status": "VERIFIED", "action_id": "ACT-1"}, task_id="submit-res-fill"))
+    assert out.get("ok") is not False, out
+    metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
+    assert metadata["resolution"] == _SUBSTANTIVE_SUMMARY
+
+
+def test_unverified_resolution_without_resolution_field_is_still_rejected() -> None:
+    _setup_investigator_context(task_id="submit-res-unverified")
+    out = json.loads(plugin._submit_proposal_handler(
+        {"response_type": "RESOLUTION", "summary": _SUBSTANTIVE_SUMMARY}, task_id="submit-res-unverified"))
+    assert out["ok"] is False and "RESOLUTION requires resolution" in out["error"]
 
 
 def main() -> int:
