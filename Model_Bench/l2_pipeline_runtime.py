@@ -3071,6 +3071,7 @@ WHERE r.IsDeleted = 0
             WHEN r.ResponseType IN ('L3_ESCALATION', 'NEEDS_HUMAN_ACTION') THEN 'Escalation'
             ELSE 'Note'
         END
+        AND ISNULL(a.NoteText, '') = LEFT(ISNULL(r.ReplyText, ''), 3900)
   )
 ORDER BY r.ModifiedOn DESC;
 """.strip()
