@@ -1083,12 +1083,14 @@ class PipelineContractTests(unittest.TestCase):
             "assignee": mod.INVESTIGATOR_PROFILE,
             "body": "run_id: old-run\nticket_id: old-ticket",
         }]
-        with patch.object(mod, "list_tasks", return_value=historical) as tasks, \
+        with patch.object(mod, "reconcile_missing_publication_activities", return_value=0) as activity, \
+             patch.object(mod, "list_tasks", return_value=historical) as tasks, \
              patch.object(mod, "query_active_runs", return_value=[]) as active, \
              patch.object(mod, "latest_done_run") as latest, \
              patch.object(mod, "_publish_frozen_proposal") as publish:
             result = mod.reconcile(mod.default_args(), dry_run=True)
 
+        activity.assert_called_once()
         tasks.assert_called()
         active.assert_called()
         latest.assert_not_called()
