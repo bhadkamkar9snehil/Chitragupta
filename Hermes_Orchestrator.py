@@ -2247,6 +2247,30 @@ def _rollback_cached_client(key: tuple, client: "HermesL2Client") -> None:
         _discard_cached_client(key, client)
 
 
+def _invoke_retry_safe(args: argparse.Namespace) -> bool:
+    """Only deterministic read operations may be replayed after connection loss.
+
+    A write may have committed on SQL Server even when the client lost the response;
+    replaying it can duplicate claims, notes, articles, or other mutations.
+    """
+    return any((
+        bool(getattr(args, "discover_workflow", False)),
+        getattr(args, "query", None) is not None,
+        getattr(args, "build_query", None) is not None,  # execution is read-only SELECT
+        getattr(args, "suggest_tables", None) is not None,
+        getattr(args, "search_solutions", None) is not None,
+        getattr(args, "get_activity", None) is not None,
+        bool(getattr(args, "list_root_cause_categories", False)),
+        getattr(args, "find_sql_objects", None) is not None,
+        getattr(args, "get_sql_object_definition", None) is not None,
+        bool(getattr(args, "get_reference_documents", False)),
+        getattr(args, "get_run_actions", None) is not None,
+        getattr(args, "get_ticket_context", None) is not None,
+        getattr(args, "investigate_bundle", None) is not None,
+        getattr(args, "get_ledger", None) is not None,
+    ))
+
+
 def invoke(argv: List[str], stdin_text: Optional[str] = None) -> str:
     """Run one CLI operation in-process on a reused connection; return its stdout.
 
@@ -2265,6 +2289,7 @@ def invoke(argv: List[str], stdin_text: Optional[str] = None) -> str:
     except SystemExit as exc:
         raise ValueError(err.getvalue().strip() or f"invalid arguments (exit {exc.code})") from None
     key = (args.server, args.database, args.username, args.hermes_user_id)
+    retry_safe = _invoke_retry_safe(args)
     for attempt in (1, 2):
         client = _CLIENTS.get(key) or _CLIENTS.setdefault(key, _client_for(args))
         out = io.StringIO()
@@ -2282,7 +2307,7 @@ def invoke(argv: List[str], stdin_text: Optional[str] = None) -> str:
             raise ValueError(err.getvalue().strip() or f"operation failed (exit {exc.code})") from None
         except pyodbc.OperationalError:
             _discard_cached_client(key, client)
-            if attempt == 2:
+            if attempt == 2 or not retry_safe:
                 raise
         except Exception:
             _rollback_cached_client(key, client)
