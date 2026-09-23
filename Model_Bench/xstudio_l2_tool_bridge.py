@@ -791,6 +791,35 @@ _CONNECTED_OPERATIONS = {
 }
 
 
+_SQL_TABLE_REF = re.compile(r"\b(?:FROM|JOIN)\s+((?:\[?\w+\]?\.)?\[?\w+\]?)", re.IGNORECASE)
+
+
+def _referenced_tables(req: dict[str, Any]) -> list[str]:
+    if req.get("operation") == "select":
+        return [str(req.get("table") or "")]
+    return [m.group(1) for m in _SQL_TABLE_REF.finditer(str(req.get("sql") or ""))]
+
+
+def _route_database(req: dict[str, Any]) -> dict[str, Any]:
+    """Send a select/query to the one allowed database that actually holds its tables.
+
+    Live 2026-09-23: Xbatch tables such as EAF_PER_HEAT queried against
+    XStudio_Helpdesk failed with "Invalid object name" and cost the worker its bounded
+    call budget. Only an unambiguous single-database match is rerouted.
+    """
+    tables = [t for t in _referenced_tables(req) if t]
+    requested = req.get("database")
+    if not tables or requested not in ALLOWED_DATABASES:
+        return req
+    if all(_allowed_table(requested, t) for t in tables):
+        return req
+    homes = [db for db in sorted(ALLOWED_DATABASES)
+             if db != requested and all(_allowed_table(db, t) for t in tables)]
+    if len(homes) != 1:
+        return req
+    return {**req, "database": homes[0], "database_rerouted_from": requested}
+
+
 def dispatch(req: dict[str, Any]) -> dict[str, Any]:
     operation = str(_require(req, "operation"))
     if operation == "validate_identifiers":
@@ -806,9 +835,14 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
     if handler is None:
         raise ValueError(f"unsupported operation: {operation}")
 
+    if operation in ("select", "query"):
+        req = _route_database(req)
     client = _client()
     try:
-        return handler(req, client)
+        result = handler(req, client)
+        if req.get("database_rerouted_from"):
+            result = {**result, "database_rerouted_from": req["database_rerouted_from"]}
+        return result
     finally:
         try:
             client.close()

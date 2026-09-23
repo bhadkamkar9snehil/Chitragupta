@@ -738,7 +738,8 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
         "claim_status": claim_status,
         "message": (
             f"Proposal submitted as {response_type} with {claim_status} claim. "
-            "The deterministic reconciler will create a reviewer and handle publication."
+            "This task is now complete: stop here and do not call kanban_complete "
+            "(the card is already closed). The reconciler handles review and publication."
         ),
     })
 
@@ -973,6 +974,28 @@ def _completion_guard(tool_name: str, args: dict[str, Any], context: dict[str, A
     return {"action": "modify", "args": {**repaired, **((result or {}).get("args") or {})}}
 
 
+_SCRIPT_SUFFIXES = (".py", ".sh", ".ps1", ".bash")
+
+
+def _script_authoring_guard(args: dict[str, Any], context: dict[str, Any]) -> dict[str, str] | None:
+    """L2 workers cannot execute interpreters, so authoring a script is pure waste.
+
+    Live 2026-09-23: 321 write_file calls in one morning, mostly parse_task.py /
+    parse_proposal.py written to decode a spilled card, never runnable.
+    """
+    path = str(args.get("path") or args.get("file_path") or "").lower()
+    if not context.get("pipeline_stage") or not path.endswith(_SCRIPT_SUFFIXES):
+        return None
+    return {
+        "action": "block",
+        "message": (
+            "Scripts cannot run in an L2 session. The card already states the facts you need: "
+            "run_id/ticket_id/pipeline_stage lines and, for reviews, the PROPOSAL DIGEST. "
+            "Use the xstudio_* tools for evidence, then complete."
+        ),
+    }
+
+
 def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
                    task_id: str = "", **kwargs: Any) -> dict[str, str] | None:
     args = args or {}
@@ -981,6 +1004,8 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
 
     if tool_name in ("kanban_complete", "kanban_block", "terminal"):
         return _completion_guard(tool_name, args, context)
+    if tool_name in ("write_file", "patch"):
+        return _script_authoring_guard(args, context)
 
     # xstudio_submit_proposal does its own validation in _submit_proposal_handler
     # and is not a bridge/SQL tool, so it must not consume the investigation budget.

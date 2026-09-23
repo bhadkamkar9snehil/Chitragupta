@@ -1483,6 +1483,17 @@ def test_reviewer_completion_does_not_require_investigator_proposal_metadata() -
     assert metadata["review_notes"] == "Approved after independent live verification."
 
 
+def test_l2_worker_cannot_author_unrunnable_scripts() -> None:
+    """Live: 321 write_file calls writing parse_proposal.py that could never execute."""
+    plugin._pre_llm_call(task_id="script-guard",
+                         user_message="run_id: RUN-S\nticket_id: TICKET-S\npipeline_stage: review")
+    blocked = plugin._pre_tool_call("write_file", {"path": "/tmp/parse_proposal.py", "content": "x"},
+                                    task_id="script-guard")
+    assert blocked and blocked["action"] == "block" and "PROPOSAL DIGEST" in blocked["message"]
+    notes = plugin._pre_tool_call("write_file", {"path": "/tmp/notes.md", "content": "x"}, task_id="script-guard")
+    assert notes is None
+
+
 def test_reviewer_rejection_summary_is_recorded_as_rejected() -> None:
     """Mirrors l2_pipeline_runtime.is_reviewer_rejection so the record never contradicts it."""
     plugin._pre_llm_call(task_id="reviewer-reject",

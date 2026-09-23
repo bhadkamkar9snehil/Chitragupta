@@ -279,6 +279,26 @@ class PipelineContractTests(unittest.TestCase):
         self.assertIn("continuation budget (3 updates", reply)
         self.assertNotIn("review/rework", reply)
 
+    def test_embedded_jev_review_drops_the_raw_result_payload(self):
+        """The raw payload made reviewer cards spill to a file (321 script writes)."""
+        full = {"action": "LOCAL_REVIEW", "jev_decision": "APPROVE", "decision_confidence": 0.5,
+                "reason_code": "RESPONSE_TYPE", "reason": "type mismatch", "safety": {"overclaim": 0.3},
+                "result": {"answers": {"x": {"probabilities": {"a": 1}}}}}
+        compact = mod._compact_jev_review(full)
+        self.assertNotIn("result", compact)
+        self.assertEqual(compact["reason_code"], "RESPONSE_TYPE")
+
+    def test_reviewer_digest_states_type_claims_and_action_ids_in_plain_text(self):
+        proposal = {"response_type": "RESOLUTION", "evidence_status": "COMPLETE", "reply_text": "Arc time verified.",
+                    "resolution": "Matches operator log.",
+                    "claims": [{"id": "C1", "status": "VERIFIED", "claim": "ArcingTime=20", "evidence": [{"action_id": "A-7"}]}],
+                    "jev_primary_review": {"jev_decision": "APPROVE", "action": "LOCAL_REVIEW",
+                                           "reason_code": "EVIDENCE_GAP", "reason": "check C1"}}
+        digest = mod.render_proposal_digest(proposal)
+        for text in ("response_type: RESOLUTION", "resolution: Matches operator log.",
+                     "claim C1: [VERIFIED] action_ids=A-7", "reason=EVIDENCE_GAP"):
+            self.assertIn(text, digest)
+
     def test_review_cap_publishes_a_real_l3_handoff_not_a_failed_run(self):
         with patch.object(mod, "run_orchestrator") as invoke, \
                 patch.object(mod, "_post_publish_activity") as activity:

@@ -67,5 +67,38 @@ class ProbeRelatedTableTests(unittest.TestCase):
         self.assertIn("probe_related_table", bridge._CONNECTED_OPERATIONS)
 
 
+class DatabaseRoutingTests(unittest.TestCase):
+    """Live 2026-09-23: Xbatch tables queried against XStudio_Helpdesk failed and burned budget."""
+
+    ALLOWLIST = {
+        "XStudio_Helpdesk": {"dbo.Complaint_Mst_Tbl": ["ID"]},
+        "XStudio_Xbatch": {"dbo.EAF_PER_HEAT": ["HeatID"], "dbo.LRF_Per_Heat": ["HeatID"]},
+        "XStudio_Configuration_Xbatch": {},
+    }
+
+    def _route(self, req):
+        with patch.object(bridge, "_load_allowlist", return_value=self.ALLOWLIST):
+            return bridge._route_database(req)
+
+    def test_select_on_other_database_table_is_rerouted(self):
+        routed = self._route({"operation": "select", "database": "XStudio_Helpdesk", "table": "dbo.EAF_PER_HEAT"})
+        self.assertEqual(routed["database"], "XStudio_Xbatch")
+        self.assertEqual(routed["database_rerouted_from"], "XStudio_Helpdesk")
+
+    def test_query_joins_are_routed_only_when_every_table_lives_there(self):
+        routed = self._route({"operation": "query", "database": "XStudio_Helpdesk",
+                              "sql": "SELECT * FROM dbo.EAF_PER_HEAT e JOIN [dbo].[LRF_Per_Heat] l ON l.HeatID=e.HeatID"})
+        self.assertEqual(routed["database"], "XStudio_Xbatch")
+        mixed = {"operation": "query", "database": "XStudio_Helpdesk",
+                 "sql": "SELECT * FROM EAF_PER_HEAT JOIN Complaint_Mst_Tbl ON 1=1"}
+        self.assertEqual(self._route(mixed), mixed)
+
+    def test_correct_or_unknown_database_is_left_alone(self):
+        ok = {"operation": "select", "database": "XStudio_Xbatch", "table": "EAF_PER_HEAT"}
+        self.assertEqual(self._route(ok), ok)
+        unknown = {"operation": "select", "database": "XStudio_Helpdesk", "table": "NoSuchTable"}
+        self.assertEqual(self._route(unknown), unknown)
+
+
 if __name__ == "__main__":
     unittest.main()

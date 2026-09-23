@@ -2213,6 +2213,44 @@ def normalize_investigator_completions(
     return repaired
 
 
+_JEV_REVIEW_CARD_KEYS = ("action", "jev_decision", "decision_confidence", "reason_code", "reason", "safety")
+
+
+def _compact_jev_review(review: dict[str, Any]) -> dict[str, Any]:
+    """Jev review as carried inside a frozen proposal.
+
+    The raw result (every probability distribution and legend) is already persisted
+    in JevReviewJson; embedding it made reviewer cards so large that Hermes spilled
+    them to a file and Qwen wrote Python parsers it cannot run (321 write_file calls
+    in one morning).
+    """
+    return {key: review[key] for key in _JEV_REVIEW_CARD_KEYS if key in review}
+
+
+def render_proposal_digest(proposal: dict[str, Any]) -> str:
+    """Plain-text view of a frozen proposal for a small local reviewer model."""
+    lines = [
+        "PROPOSAL DIGEST (same content as proposal_json below; read this, do not parse the JSON):",
+        f"- response_type: {proposal.get('response_type')}",
+        f"- evidence_status: {proposal.get('evidence_status') or 'unspecified'}",
+        f"- reply_text: {str(proposal.get('reply_text') or '')[:1500]}",
+    ]
+    for key in ("resolution", "root_cause", "next_investigation_step", "requester_question"):
+        if proposal.get(key):
+            lines.append(f"- {key}: {str(proposal[key])[:800]}")
+    for claim in proposal.get("claims") or []:
+        if isinstance(claim, dict):
+            evidence = [e for e in claim.get("evidence") or [] if isinstance(e, dict)]
+            actions = ", ".join(str(e.get("action_id")) for e in evidence) or "none"
+            lines.append(f"- claim {claim.get('id')}: [{claim.get('status')}] action_ids={actions}: "
+                         f"{str(claim.get('claim') or '')[:600]}")
+    review = proposal.get("jev_primary_review") or {}
+    if review:
+        lines.append(f"- jev_review: decision={review.get('jev_decision')} action={review.get('action')} "
+                     f"reason={review.get('reason_code')}: {review.get('reason') or ''}")
+    return "\n".join(lines) + "\n\n"
+
+
 def create_reviewer_card(
     args: argparse.Namespace,
     *,
@@ -2252,11 +2290,13 @@ def create_reviewer_card(
         f"claims_contract_version: {proposal.get('claims_contract_version') or body_field(source_task.get('body'), 'claims_contract_version') or 'legacy'}\n"
         "pipeline_stage: review\n"
         + header
+        + render_proposal_digest(proposal)
         + f"proposal_json: {proposal_json}\n\n"
         + (rendered_context + "\n" if rendered_context else "")
         + "This local review exists because Jev primary review selected LOCAL_REVIEW, was unavailable, "
         "or failed deterministic confidence/safety gates. Do not repeat the whole investigation. "
-        "Inspect the Jev primary-review result embedded in proposal_json, identify the exact disputed "
+        "Use the PROPOSAL DIGEST; never write or run scripts to parse the card. "
+        "Inspect the Jev primary-review result, identify the exact disputed "
         "or underdetermined claim, and verify only the smallest sufficient live evidence set. "
         "Approve with kanban_complete; reject with kanban_block. The deterministic reconciler owns "
         "publication/rework. Reject a VERIFIED material claim if its action_id is not in this "
@@ -2462,7 +2502,7 @@ def _apply_primary_review(
     dry_run: bool,
     tasks: list[dict[str, Any]] | None = None,
 ) -> None:
-    proposal["jev_primary_review"] = review
+    proposal["jev_primary_review"] = _compact_jev_review(review)
     action = str(review.get("action") or "LOCAL_REVIEW")
 
     if action == "APPROVE":
