@@ -301,6 +301,13 @@ def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
 
     resolved = _allowed_table(database, table)
     if resolved is None:
+        # Live 2026-09-24: MES_SAP_Production_Trn_Tbl was refused because the caller named
+        # XStudio_Helpdesk. A table that lives in exactly one other allowed database is read there.
+        homes = [db for db in sorted(ALLOWED_DATABASES) if db != database and _allowed_table(db, table)]
+        if len(homes) == 1:
+            database = homes[0]
+            resolved = _allowed_table(database, table)
+    if resolved is None:
         # Live 2026-09-23: reviewers guessed Heat_Master, CCM_Billet_Genealogy_Trn_Tbl, ... and spent
         # their call budget on misses. Name the real tables closest to the guess.
         return {

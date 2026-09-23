@@ -71,6 +71,22 @@ class ProbeRelatedTableTests(unittest.TestCase):
         self.assertIn("probe_related_table", bridge._CONNECTED_OPERATIONS)
 
 
+class ProbeDatabaseTests(unittest.TestCase):
+    def test_table_named_under_the_wrong_database_is_read_where_it_lives(self):
+        allowlist = {"XStudio_Helpdesk": {"dbo.Complaint_Mst_Tbl": ["ID"]},
+                     "XStudio_Xbatch": {"dbo.MES_SAP_Production_Trn_Tbl": ["HeatNo", "Batch"]}}
+        orch = MagicMock()
+        orch.build_query_mechanically.return_value = {"ok": True, "sql": "SELECT 1"}
+        client = MagicMock()
+        client.execute_readonly_sql_with_rows.return_value = ("ACT-1", [])
+        with patch.object(bridge, "_load_allowlist", return_value=allowlist), \
+             patch.object(bridge, "_orchestrator", return_value=orch):
+            result = bridge._probe_table({"database": "XStudio_Helpdesk", "table": "MES_SAP_Production_Trn_Tbl",
+                                          "ticket": {"HeatNo": "1604014"}, "run_id": "r"}, client)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["database"], "XStudio_Xbatch")
+
+
 class ClosestTableTests(unittest.TestCase):
     ALLOWLIST = {"XStudio_Xbatch": {"dbo.XMES_CCM_Billet_Genealogy_Trn_Tbl": ["HeatNo"],
                                     "dbo.EAF_PER_HEAT": ["HeatID"], "dbo.LRF_Per_Heat": ["HeatID"]}}
