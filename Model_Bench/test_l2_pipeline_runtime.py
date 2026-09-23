@@ -2177,6 +2177,7 @@ class PublicationActivityReconciliationTests(unittest.TestCase):
         self.assertEqual(log_args[0], "--log-activity")
         self.assertEqual(log_args[log_args.index("--activity-type") + 1], "Resolution")
         self.assertEqual(log_args[log_args.index("--run-id") + 1], "RUN-1")
+        self.assertIn("--deduplicate-exact", log_args)
 
     def test_dry_run_reports_missing_activity_without_writing(self):
         row = {
