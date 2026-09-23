@@ -1494,6 +1494,28 @@ def test_l2_worker_cannot_author_unrunnable_scripts() -> None:
     assert notes is None
 
 
+def test_kanban_complete_after_successful_submit_says_stop_not_resubmit() -> None:
+    """Live 13:07: the guard told a worker to resubmit an already-closed card."""
+    _setup_investigator_context(task_id="submitted-then-complete")
+    with mock.patch.dict(plugin.os.environ, {"HERMES_KANBAN_TASK": "t_done_card"}),             mock.patch.object(plugin.subprocess, "run") as run:
+        run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        plugin._submit_proposal_handler({"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
+                                        task_id="submitted-then-complete")
+        blocked = plugin._pre_tool_call("kanban_complete", {"summary": "done"}, task_id="submitted-then-complete")
+    assert blocked["action"] == "block" and "Already done" in blocked["message"]
+    assert "xstudio_submit_proposal now" not in blocked["message"]
+
+
+def test_empty_reviewer_approval_still_gets_summary_and_record() -> None:
+    """Live 13:15: kanban_complete({}) from a reviewer failed in Hermes for lack of a summary."""
+    plugin._pre_llm_call(task_id="empty-review",
+                         user_message="run_id: RUN-E\nticket_id: TICKET-E\npipeline_stage: review")
+    result = plugin._pre_tool_call("kanban_complete", {}, task_id="empty-review")
+    assert result["action"] == "modify"
+    assert result["args"]["summary"]
+    assert result["args"]["metadata"]["review_decision"] == "APPROVED"
+
+
 def test_reviewer_rejection_summary_is_recorded_as_rejected() -> None:
     """Mirrors l2_pipeline_runtime.is_reviewer_rejection so the record never contradicts it."""
     plugin._pre_llm_call(task_id="reviewer-reject",

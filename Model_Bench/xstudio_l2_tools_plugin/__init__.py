@@ -730,6 +730,8 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
             "retry_same_call": False,
         })
 
+    with _lock:
+        _submitted_tasks.add(task_id)
     return json.dumps({
         "ok": True,
         "submitted": True,
@@ -776,6 +778,8 @@ _SUBMIT_REDIRECT = (
     "resolution for RESOLUTION, next_investigation_step for an incomplete UPDATE, "
     "requester_question for QUESTION. The harness builds the structured proposal."
 )
+# Cards already closed by a successful xstudio_submit_proposal (worker task ids).
+_submitted_tasks: set[str] = set()
 # Empty investigator completions already redirected once, keyed by worker task/run.
 _redirected_empty_completions: set[str] = set()
 
@@ -893,17 +897,23 @@ def _kanban_contract_guard(tool_name: str, args: dict[str, Any], context: dict[s
         result = _kanban_review_contract_guard(context)
         if result is not None:
             return result
+        with _lock:
+            already_submitted = os.environ.get("HERMES_KANBAN_TASK", "") in _submitted_tasks
+        if already_submitted:
+            # Live: after a successful submit the model called kanban_complete and was
+            # told to submit again, looping on an already-closed card.
+            return {"action": "block", "message": (
+                "Already done: xstudio_submit_proposal completed this card. Do not call any more tools; "
+                "end the session now.")}
         result = _kanban_completion_metadata_guard(args, context) or _review_completion_metadata(args, context)
-        if result is not None:
+        if result is not None and result.get("action") == "block":
             return result
-        # A small model can select the right terminal Kanban action yet serialize
-        # an empty object. Preserve that decision without paying for another model
-        # turn; structured metadata and the SQL evidence trail remain authoritative.
-        if not (args.get("summary") or args.get("result")):
-            return {"action": "modify", "args": {
-                "summary": "Task completed; use the structured task metadata and persisted evidence trail for details."
-            }}
-        return None
+        repaired = {**args, **((result or {}).get("args") or {})}
+        # A small model can select the right terminal Kanban action yet serialize an
+        # empty object; Hermes then rejects it ("provide at least one of: summary").
+        if not (repaired.get("summary") or repaired.get("result")):
+            repaired["summary"] = "Task completed; use the structured task metadata and persisted evidence trail for details."
+        return None if repaired == args else {"action": "modify", "args": repaired}
 
     if tool_name == "kanban_block" and not (args.get("reason") or args.get("summary")):
         return {"action": "modify", "args": {
