@@ -197,6 +197,24 @@ class PublishResponseRunIdTests(unittest.TestCase):
         self.assertEqual(client.publish_response.call_args.kwargs["run_id"], "run-B")
 
 
+class PollDoesNotSweepStaleRunsTests(unittest.TestCase):
+    """2026-09-23: --poll ran a blind wall-clock stale sweep before every claim.
+    It could not see queued local-model work (no Kanban card by design) or a done
+    reviewer awaiting publication, so it force-FAILED 11 legitimate runs in one
+    morning. l2_pipeline_runtime.recover_orphan_runs is the only §6 authority."""
+
+    def test_poll_and_claim_never_invokes_a_stale_sweep(self):
+        client = MagicMock()
+        client.get_candidate_tickets.return_value = []
+        result = orch.poll_and_claim(client, "Enter")
+        self.assertEqual(result["status"], "NO_TICKETS")
+        client.recover_stale_runs.assert_not_called()
+        self.assertNotIn("stale_runs_recovered", result)
+
+    def test_client_has_no_stale_sweep_method(self):
+        self.assertFalse(hasattr(orch.HermesL2Client, "recover_stale_runs"))
+
+
 class MainDispatchOrderTests(unittest.TestCase):
     """main()'s own body must still route to exactly the right handler."""
 

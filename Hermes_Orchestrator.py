@@ -40,7 +40,7 @@ WHAT THIS GIVES HERMES
 
     - A real SQL connection (env-var credentials, TrustServerCertificate,
       matching every other script in this project).
-    - Ticket dispatch: recover stale runs, list candidates, atomically claim
+    - Ticket dispatch: list candidates, atomically claim
       one (dbo.Hermes_L2_Claim_Ticket_Usp uses sp_getapplock + UPDLOCK).
     - Full ticket context (dbo.Complaint_Mst_Tbl row + prior Hermes runs).
     - Live discovery: search stored procedures/views/triggers by name or by
@@ -534,60 +534,6 @@ class HermesL2Client:
         return _rows_as_dicts(cur)
 
     # -- Ticket dispatch -------------------------------------------------
-
-    def _find_stale_run_candidates(self, stale_minutes: int) -> List[str]:
-        """Read-only mirror of Hermes_L2_Recover_Stale_Runs_Usp's own WHERE
-        clause, used only to decide which run_ids to check against Kanban
-        before actually recovering anything -- see recover_stale_runs."""
-        cur = self.conn.cursor()
-        cur.execute(
-            "SELECT ID FROM dbo.Hermes_L2_Response_Trn_Tbl "
-            "WHERE IsActive = 1 AND IsDeleted = 0 "
-            "AND ISNULL(HeartbeatOn, ClaimedOn) < DATEADD(MINUTE, -?, GETDATE());",
-            (stale_minutes,),
-        )
-        return [str(r[0]) for r in cur.fetchall()]
-
-    def recover_stale_runs(self, stale_minutes: int = 60) -> int:
-        """EXEC dbo.Hermes_L2_Recover_Stale_Runs_Usp -- run first in every cycle.
-
-        Kanban-aware as of 2026-09-04: this SP is pure T-SQL with no
-        visibility into Kanban, so a run whose kanban task is still
-        legitimately queued (ready/blocked/running -- just backed up
-        behind other work, not abandoned) used to get yanked purely on
-        wall-clock elapsed time. Confirmed live: one ticket accumulated 22
-        consecutive forced-FAILED-and-reclaimed cycles this way while its
-        kanban task was never actually abandoned, just waiting behind a
-        max_in_progress:1 dispatcher and, separately, a board that wasn't
-        being dispatched at all. Before recovering anything, find the
-        stale-looking candidates, ask Kanban which of them still have a
-        genuinely non-terminal task tracking them, and exclude those from
-        the SP's sweep -- they get left alone regardless of how long
-        they've been claimed. A run with NO live kanban task at all (the
-        case this SP genuinely exists for: the kanban card itself was
-        never created, or Kanban has fully forgotten about it) is still
-        recovered exactly as before."""
-        candidates = self._find_stale_run_candidates(stale_minutes)
-        exclude_run_ids = None
-        if candidates:
-            live_run_ids = _find_live_kanban_run_ids()
-            if live_run_ids is not None:
-                protected = [c for c in candidates if c in live_run_ids]
-                if protected:
-                    exclude_run_ids = ",".join(protected)
-            # live_run_ids is None only on a Kanban-check failure -- fail
-            # open to the prior blind-timeout behavior for this sweep
-            # rather than silently never recovering anything.
-
-        cur = self.conn.cursor()
-        cur.execute(
-            "EXEC dbo.Hermes_L2_Recover_Stale_Runs_Usp "
-            "@StaleMinutes = ?, @HermesUserID = ?, @ExcludeRunIDs = ?;",
-            (stale_minutes, self.hermes_user_id, exclude_run_ids),
-        )
-        row = cur.fetchone()
-        self.conn.commit()
-        return row.RecoveredRunCount if row else 0
 
     def get_candidate_tickets(self, eligible_status_csv: str, batch_size: int = 20) -> List[Dict]:
         """EXEC dbo.Hermes_L2_Get_Candidate_Tickets_Usp"""
@@ -1117,54 +1063,6 @@ class HermesL2Client:
         return _rows_as_dicts(cur)
 
 
-# Statuses that mean "Kanban still owns this task, leave it alone" -- see
-# _find_live_kanban_run_ids and recover_stale_runs. Deliberately excludes
-# 'done' and 'archived': a task that reached a terminal state without ever
-# publishing is exactly the case that SHOULD still be recovered (same
-# correction applied to Model_Bench/enforce_publish_safety_net.py's
-# find_live_kanban_run_ids the same day, for the same confirmed bug).
-_NON_TERMINAL_KANBAN_STATUSES = {"ready", "blocked", "triage", "running", "review", "scheduled"}
-
-
-def _find_live_kanban_run_ids() -> Optional[set]:
-    """run_ids that still have a genuinely non-terminal kanban task
-    tracking them, across every board -- checked before
-    Hermes_L2_Recover_Stale_Runs_Usp would otherwise force-fail a claim on
-    wall-clock time alone. This script always runs as the Windows Python
-    interpreter (invoked via WSL interop by its cron wrappers, or directly
-    from PowerShell) and never has `hermes` on its own PATH, so the call
-    is always wrapped through `wsl -d Ubuntu`, matching every other script
-    in this project that needs to reach the kanban CLI from here.
-
-    Returns None on any failure (hermes/wsl unavailable, bad JSON) so the
-    caller can fail OPEN to the prior blind-timeout behavior for that
-    sweep rather than silently never recovering anything.
-    """
-    live_run_ids: set = set()
-    for board_args in (["kanban", "list", "--json"], ["kanban", "--board", "l2-review", "list", "--json"]):
-        try:
-            result = subprocess.run(
-                ["wsl", "-d", "Ubuntu", "--", "bash", "-lc", "hermes " + " ".join(board_args)],
-                capture_output=True, text=True, timeout=30,
-            )
-            if result.returncode != 0:
-                return None
-            tasks = json.loads(result.stdout)
-        except Exception:
-            return None
-
-        for t in tasks:
-            if t.get("status") not in _NON_TERMINAL_KANBAN_STATUSES:
-                continue
-            body = t.get("body") or ""
-            for line in body.splitlines():
-                line = line.strip()
-                if line.startswith("run_id:"):
-                    live_run_ids.add(line.split(":", 1)[1].strip())
-                    break
-    return live_run_ids
-
-
 _LAST_CLAIM_STATE_PATH = Path(__file__).parent / ".hermes_l2_last_claim.json"
 
 # Local, DB-untouched draft staging for the proposer/verifier gate -- see
@@ -1326,7 +1224,7 @@ def poll_and_claim(
     ticket_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Deterministic, safe half of a cycle: recover stale runs, find candidates,
+    Deterministic, safe half of a cycle: find candidates,
     atomically claim ONE, load its full context (including any structured L1
     fields), and stop -- no investigation, no write beyond the claim itself.
 
@@ -1338,8 +1236,10 @@ def poll_and_claim(
     goes through the audited Hermes_L2_Publish_Response_Usp path rather than
     a raw UPDATE.
     """
+    # Stale/orphan recovery is owned by l2_pipeline_runtime.reconcile(), which
+    # runs before every scout claim and honours queued local-model work and
+    # every Kanban stage (AGENTS.md §6). Do not add a second sweep here.
     result: Dict[str, Any] = {"status": "STARTED"}
-    result["stale_runs_recovered"] = client.recover_stale_runs()
 
     candidates = client.get_candidate_tickets(
         eligible_status_csv, batch_size=500 if ticket_id else 20,

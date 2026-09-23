@@ -129,18 +129,27 @@ def main() -> int:
             return 0
 
         # --- run loop, holding run.lock ------------------------------------
-        runs = 0
+        # The owner reports the last run's failure. Swallowing it hid a
+        # drain that failed every tick for 27h (2026-09-22/23) behind rc=0.
+        runs, rc = 0, 0
         while runs < MAX_CONSECUTIVE_RUNS:
             runs += 1
             try:
-                subprocess.run(
+                done = subprocess.run(
                     [python, str(target)],
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    errors="replace",
                     timeout=RUN_TIMEOUT_SECONDS,
                 )
-            except (subprocess.TimeoutExpired, Exception):
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                print(f"run_coalesced: {script} did not complete: {type(exc).__name__}: {exc}", file=sys.stderr)
+                rc = 1
                 break  # hung or unlaunchable: stop supervising, release below
+            rc = done.returncode
+            if rc:
+                print(f"run_coalesced: {script} exited {rc}: {(done.stderr or '').strip()[-600:]}", file=sys.stderr)
 
             # Decide whether to loop again, atomically w.r.t. new triggers.
             _acquire(state_fh, blocking=True)
@@ -152,14 +161,14 @@ def main() -> int:
             # state.lock. This is the step that makes the handoff race-free.
             fcntl.flock(run_fh.fileno(), fcntl.LOCK_UN)
             fcntl.flock(state_fh.fileno(), fcntl.LOCK_UN)
-            return 0
+            return rc
 
         # Hit the ceiling (or a hung run): release explicitly and let cron
         # cover whatever is still outstanding.
         _acquire(state_fh, blocking=True)
         fcntl.flock(run_fh.fileno(), fcntl.LOCK_UN)
         fcntl.flock(state_fh.fileno(), fcntl.LOCK_UN)
-    return 0
+        return rc
 
 
 if __name__ == "__main__":

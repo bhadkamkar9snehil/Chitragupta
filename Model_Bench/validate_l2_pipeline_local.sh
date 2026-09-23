@@ -65,6 +65,8 @@ PY_FILES=(
   Model_Bench/jev_post_resolution_curation.py
   Model_Bench/generate_readable_trace_summary.py
   Model_Bench/drain_and_summarize.py
+  Model_Bench/check_sql_drift.py
+  Model_Bench/run_coalesced.py
   Model_Bench/jev/__init__.py
   Model_Bench/jev/policy.py
   Model_Bench/jev/client.py
@@ -156,6 +158,9 @@ run_live_checks() {
     exit 1
   fi
   echo "PASS: no known retired lifecycle scripts remain in the live scripts directory"
+
+  section "Live SQL definitions match numbered sources (read-only)"
+  timed "sql drift" python3 Model_Bench/check_sql_drift.py
 
   section "Live workflow discovery (read-only)"
   timed "workflow discovery" python3 Model_Bench/configure_helpdesk_workflow.py

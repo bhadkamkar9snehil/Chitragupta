@@ -38,7 +38,7 @@ Worker access to these capabilities is normally through typed `xstudio_l2` opera
 | Procedure | Purpose | Authority |
 |---|---|---|
 | `Hermes_L2_Claim_Ticket_Usp` | Atomically claim one eligible ticket and create its active run. | Deterministic scout/runtime |
-| `Hermes_L2_Recover_Stale_Runs_Usp` | Recover genuinely abandoned active runs. | Deterministic reconciler/operator |
+| `Hermes_L2_Recover_Stale_Runs_Usp` | Blind wall-clock recovery; manual operator use only. The pipeline never calls it — `l2_pipeline_runtime.recover_orphan_runs` owns §6 orphan recovery. | Operator only |
 | `Hermes_L2_Start_Investigation_Usp` | Move a claimed run into investigation state. | Harness |
 | `Hermes_L2_Save_Investigation_State_Usp` | Persist structured investigation state/heartbeat. | Harness |
 | `Hermes_L2_Heartbeat_Usp` | Refresh active-run heartbeat. | Harness |

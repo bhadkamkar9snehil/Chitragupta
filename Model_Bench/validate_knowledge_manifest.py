@@ -71,8 +71,9 @@ def _validate_gbrain_contract(manifest: dict, errors: list[str]) -> None:
         return
     if cfg["source_id"] != "xstudio-knowledge":
         errors.append("gbrain source_id must be xstudio-knowledge")
-    if not 1 <= int(cfg["return_limit"]) <= 3:
-        errors.append("gbrain return_limit must be 1..3")
+    # Bounded context: 5 was set with the 2026-09-22 0.70->0.50 score recalibration.
+    if not 1 <= int(cfg["return_limit"]) <= 5:
+        errors.append("gbrain return_limit must be 1..5")
     if int(cfg["candidate_limit"]) < int(cfg["return_limit"]):
         errors.append("gbrain candidate_limit must cover return_limit")
     if not 0 <= float(cfg["min_retrieval_score"]) <= 1:
