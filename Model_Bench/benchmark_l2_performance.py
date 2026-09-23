@@ -268,6 +268,21 @@ def jev_review_gates(cur, since: datetime) -> dict[str, Any]:
             "blocked_by_gate": dict(sorted(blocked.items(), key=lambda kv: -kv[1]))}
 
 
+def claim_health(cur) -> dict[str, Any]:
+    """Is the scout claiming? Waiting eligible tickets with no active run and no recent claim = stall."""
+    row = _rows(cur, """
+        SELECT (SELECT COUNT(*) FROM dbo.Complaint_Mst_Tbl c
+                WHERE ISNULL(c.IsDeleted, 0) = 0 AND c.Status = 'Enter'
+                  AND NOT EXISTS (SELECT 1 FROM dbo.Hermes_L2_Response_Trn_Tbl r
+                                  WHERE r.TicketID = c.ID AND r.IsDeleted = 0
+                                    AND (r.IsActive = 1 OR r.ProcessStatus IN ('COMPLETED', 'WAITING_USER')
+                                         AND (r.NextEligibleOn IS NULL OR r.NextEligibleOn > GETDATE())))) AS Waiting,
+               (SELECT COUNT(*) FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE IsActive = 1 AND IsDeleted = 0) AS Active,
+               DATEDIFF(MINUTE, (SELECT MAX(ClaimedOn) FROM dbo.Hermes_L2_Response_Trn_Tbl), GETDATE()) AS MinutesSinceClaim""")[0]
+    row["Stalled"] = bool(row["Waiting"] and not row["Active"] and (row["MinutesSinceClaim"] or 0) >= 10)
+    return row
+
+
 def invariants(cur) -> dict[str, int]:
     return {label: cur.execute(sql).fetchone()[0] for label, sql in INVARIANTS.items()}
 
@@ -286,6 +301,7 @@ def build_report(cur, since: datetime) -> dict[str, Any]:
         "model_input": model_input(cur, since),
         "largest_card": largest_card_sections(cur, since),
         "spill_threshold_chars": SPILL_THRESHOLD_CHARS,
+        "claim_health": claim_health(cur),
         "invariants": invariants(cur),
     }
 
@@ -333,6 +349,9 @@ def print_markdown(report: dict[str, Any], limit: int) -> None:
             print(f"- context compiler: {card['context_compiler']}")
         for sec in card["sections"]:
             print(f"- {sec['chars']:>7,}  {sec['section']}")
+    h = report["claim_health"]
+    print(f"\n## Claim health\n- {'STALLED' if h['Stalled'] else 'OK'}: {h['Waiting']} waiting, "
+          f"{h['Active']} active, last claim {h['MinutesSinceClaim']} min ago")
     print("\n## Lifecycle invariants (must be 0)")
     for label, value in report["invariants"].items():
         print(f"- {'OK ' if value == 0 else 'BAD'} {value:>3}  {label}")

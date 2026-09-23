@@ -264,6 +264,15 @@ if [[ "${1:-}" != "--no-restart" ]]; then
   done
 fi
 
+# Post-deploy preflight: the exact dependency gate the scout runs before every claim.
+# Twice on 2026-09-23 a deploy passed every test yet stopped all claims; this catches it.
+if ! (set -a; source <(tr -d '\r' < "$HOME/.hermes/profiles/l2-jev-investigator/.env"); set +a
+      "$HERMES_PYTHON" "$HOME/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py" preflight); then
+  echo "FATAL: post-deploy preflight failed -- the scout would pause all claims. Fix before leaving it." >&2
+  exit 1
+fi
+echo "Post-deploy preflight OK: the scout can claim."
+
 echo
 echo "Deployed deterministic L2 lifecycle + typed XStudio investigation harness."
 echo "Typed tools: named xstudio_* tools in xstudio_l2. SQL transport runs natively in WSL behind the harness."

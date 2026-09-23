@@ -4335,7 +4335,8 @@ def pipeline_status(args: argparse.Namespace) -> dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("mode", choices=["scout", "reconcile", "repair", "publish", "reject", "recover", "audit", "status"])
+    p.add_argument("mode", choices=["scout", "reconcile", "repair", "publish", "reject", "recover", "audit",
+                                   "status", "preflight"])
     p.add_argument("--server", default=os.environ.get("MSSQL_MCP_SERVER") or DEFAULT_SERVER)
     p.add_argument("--database", default=DEFAULT_DATABASE)
     p.add_argument("--username", default=os.environ.get("MSSQL_MCP_USER") or DEFAULT_USER)
@@ -4410,6 +4411,11 @@ def _cli_owned(argv: Optional[list[str]] = None) -> int:
             result = {"orphans_recovered": recover_orphan_runs(
                 args, dry_run=args.dry_run, stale_after_minutes=args.stale_after_minutes,
             )}
+        elif args.mode == "preflight":
+            # The scout's own gate, run by deploy right after restart: a deploy that would
+            # stop claims fails loudly instead of stalling silently (twice on 2026-09-23).
+            check_worker_dependencies()
+            result = {"preflight": "ok"}
         elif args.mode == "audit":
             result = {
                 "review_sql_divergences": audit_done_reviewers(args, dry_run=args.dry_run),
