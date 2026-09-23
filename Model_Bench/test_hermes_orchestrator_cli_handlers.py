@@ -242,6 +242,24 @@ class ClientWriteSurfacesDeferredErrorsTests(unittest.TestCase):
             client._commit(cursor)
         client.conn.commit.assert_not_called()
 
+    def test_log_activity_passes_exact_deduplication_to_sql_owner(self):
+        cursor = MagicMock()
+        cursor.nextset.return_value = False
+        client = self._client(cursor)
+
+        client.log_activity(
+            ticket_id="TICKET-1",
+            activity_type="Resolution",
+            note_text="Published reply",
+            run_id="RUN-1",
+            deduplicate_exact=True,
+        )
+
+        sql, params = cursor.execute.call_args.args
+        self.assertIn("@DeduplicateExact = ?", sql)
+        self.assertIs(params[-1], True)
+        client.conn.commit.assert_called_once()
+
     def test_publish_response_fails_when_row_was_not_published(self):
         cursor = MagicMock()
         cursor.nextset.return_value = False
