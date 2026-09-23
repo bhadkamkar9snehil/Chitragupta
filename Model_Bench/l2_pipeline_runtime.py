@@ -3033,6 +3033,7 @@ def _post_publish_activity(
             "--log-activity", "--ticket-id", ticket_id, "--run-id", run_id,
             "--activity-type", activity_type, "--actor-type", "Bot",
             "--note-text", str(metadata.get("reply_text") or "")[:3900],
+            "--deduplicate-exact",
         ])
         return True
     except RuntimeError as exc:
