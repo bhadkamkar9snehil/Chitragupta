@@ -140,32 +140,66 @@ def write_curation_action(
 
     if disposition == "REUSE_EXISTING":
         if not top_existing or not top_existing.get("ID"):
-            return {"action": "NONE", "reason": "REUSE_EXISTING but no existing candidate to bump"}
+            return {"action": "NONE", "reason": "REUSE_EXISTING but no existing candidate to link"}
+
+        article_id = str(top_existing["ID"])
+        # One owner for reuse bookkeeping: the existing SP owns the durable
+        # ticket/run/article link, UsageCount and SolutionLinked activity. It is
+        # idempotent for the same TicketID/SolutionID/RunID tuple.
         cur.execute(
             """
+            EXEC dbo.Hermes_Link_Solution_To_Ticket_Usp
+                @TicketID = ?,
+                @SolutionID = ?,
+                @RunID = ?,
+                @WasHelpful = 1,
+                @HermesUserID = NULL;
+            """,
+            ticket_id, article_id, run_id,
+        )
+        nextset = getattr(cur, "nextset", None)
+        if callable(nextset):
+            while nextset():
+                pass
+
+        # Autonomous governance: one resolved ticket never approves its own article.
+        # A later verified resolution on a different ticket may promote a Candidate.
+        # If that Candidate is a replacement revision, retire its predecessor in the
+        # same SQL statement/outer transaction so both versions are never Approved.
+        cur.execute(
+            """
+            SET NOCOUNT ON;
+            DECLARE @promoted TABLE
+            (
+                ID varchar(36) NOT NULL,
+                SupersedesSolutionID varchar(36) NULL
+            );
+
             UPDATE dbo.Hermes_Solution_Article_Mst_Tbl
-            SET UsageCount = ISNULL(UsageCount, 0) + 1,
-                LastVerifiedOn = GETDATE(),
-                LastVerifiedRunID = ?,
+            SET ArticleStatus = 'Approved',
+                ApprovedOn = COALESCE(ApprovedOn, GETDATE()),
                 ModifiedOn = GETDATE()
-            WHERE ID = ? AND IsDeleted = 0
+            OUTPUT INSERTED.ID, INSERTED.SupersedesSolutionID
+                INTO @promoted(ID, SupersedesSolutionID)
+            WHERE ID = ?
+              AND IsDeleted = 0
+              AND ArticleStatus = 'Candidate'
+              AND ISNULL(SourceTicketID, '') <> ?;
+
+            UPDATE previous
+            SET previous.ArticleStatus = 'Superseded',
+                previous.IsActive = 0,
+                previous.SupersededBySolutionID = promoted.ID,
+                previous.ModifiedOn = GETDATE()
+            FROM dbo.Hermes_Solution_Article_Mst_Tbl AS previous
+            INNER JOIN @promoted AS promoted
+                ON promoted.SupersedesSolutionID = previous.ID
+            WHERE previous.IsDeleted = 0
+              AND previous.ArticleStatus IN ('Approved', 'Candidate');
             """,
-            run_id, top_existing["ID"],
+            article_id, ticket_id,
         )
-        # Autonomous governance: one resolved ticket never approves an article, but a
-        # later verified resolution on a *different* ticket that Jev judges to reuse it
-        # is independent corroboration. Retrieval reads only Approved articles, so
-        # without this rule no candidate could ever inform an investigation.
-        cur.execute(
-            """
-            UPDATE dbo.Hermes_Solution_Article_Mst_Tbl
-            SET ArticleStatus = 'Approved', ModifiedOn = GETDATE()
-            WHERE ID = ? AND IsDeleted = 0 AND ArticleStatus = 'Candidate'
-              AND ISNULL(SourceTicketID, '') <> ?
-            """,
-            top_existing["ID"], ticket_id,
-        )
-        return {"action": "REUSE_EXISTING_BUMPED", "article_id": top_existing["ID"]}
+        return {"action": "REUSE_EXISTING_LINKED", "article_id": article_id}
 
     if disposition in ("CREATE_CANDIDATE", "UPDATE_EXISTING"):
         # The verified outcome is what makes an article reusable. Verification-type
@@ -203,11 +237,9 @@ def write_curation_action(
             # provenance lives in SourceRunID/SourceTicketID.
             "KnownIssue" if root_cause else "HowTo",
         ).fetchone()[0]
-        if supersedes:
-            cur.execute(
-                "UPDATE dbo.Hermes_Solution_Article_Mst_Tbl SET SupersededBySolutionID = ? WHERE ID = ?",
-                new_id, supersedes,
-            )
+        # A replacement Candidate is only a proposal for a newer revision. Keep the
+        # predecessor Approved until this Candidate earns independent corroboration;
+        # promotion above performs the Approved -> Superseded handoff atomically.
         return {"action": f"{disposition}_WRITTEN", "article_id": str(new_id), "supersedes": supersedes}
 
     return {"action": "NONE", "reason": "disposition NONE or unrecognized"}
