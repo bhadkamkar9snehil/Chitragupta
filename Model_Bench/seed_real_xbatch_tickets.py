@@ -412,7 +412,7 @@ def _insert_human_ticket(cur, new_id: str, ticket_no: str, t: dict, offset_minut
             ID, AreaID, CreatedBy, CreatedOn, ModifiedOn, IsDeleted, IsSystem, Source, ComplaintTypeID,
             Description, BriefDetails, Status, TicketNo, Priority, FirstLastName, ContactNo, EmailID,
             messages, AskStatus, SourceSystem
-        ) VALUES (?, ?, NULL, DATEADD(MINUTE, ?, GETDATE()), DATEADD(MINUTE, ?, GETDATE()), 0, 0, 'T-SQL', ?,
+        ) VALUES (?, ?, NULL, DATEADD(MINUTE, -?, GETDATE()), DATEADD(MINUTE, -?, GETDATE()), 0, 0, 'T-SQL', ?,
                   ?, ?, 'Enter', ?, ?, ?, ?, ?, 'Enter', 'Enter', 'Xbatch')
         """,
         new_id, t["AreaID"], offset_minutes, offset_minutes, t["ComplaintTypeID"],
@@ -475,7 +475,7 @@ def main():
             new_id = str(uuid.uuid4()).upper()
             new_ticket_no = f"Ticket_{ticket_no}"
             entities_json = json.dumps(t.get("ExtractedEntitiesJson"))
-            # Stagger creation time so this batch doesn't look like a single-instant
+            # Stagger creation time into the past (never the future) so this batch does not look like a single-instant
             # synthetic dump the way the prior seed run did (all 56 within 7 seconds).
             offset_minutes = created * 7
 
@@ -498,7 +498,7 @@ def main():
                         ProblemCategory, SourceSystem, ConversationSummary, SuspectedCause,
                         ExtractedEntitiesJson
                     ) VALUES (
-                        ?, ?, NULL, DATEADD(MINUTE, ?, GETDATE()), DATEADD(MINUTE, ?, GETDATE()), 0, 0,
+                        ?, ?, NULL, DATEADD(MINUTE, -?, GETDATE()), DATEADD(MINUTE, -?, GETDATE()), 0, 0,
                         'T-SQL', ?, ?, ?, 'Enter', ?,
                         ?, 'Real Plant Ticket Test', '90000010', 'planttest@example.com', 'Enter', 'Enter',
                         ?, ?, ?, ?,
