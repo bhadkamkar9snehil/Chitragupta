@@ -3013,25 +3013,99 @@ def process_rejections(
             processed += 1
     return processed
 
-def _post_publish_activity(args: argparse.Namespace, run_id: str, ticket_id: str, metadata: dict[str, Any]) -> None:
-    response_type = str(metadata.get("response_type") or "UPDATE").upper()
-    activity_type = {
+def _publication_activity_type(response_type: Any) -> str:
+    return {
         "RESOLUTION": "Resolution",
         "L3_ESCALATION": "Escalation",
         "NEEDS_HUMAN_ACTION": "Escalation",
         "QUESTION": "Note",
         "UPDATE": "Note",
-    }.get(response_type, "Note")
+    }.get(str(response_type or "UPDATE").upper(), "Note")
+
+
+def _post_publish_activity(
+    args: argparse.Namespace, run_id: str, ticket_id: str, metadata: dict[str, Any],
+) -> bool:
+    """Fast-path publication activity write; reconciliation is the durability backstop."""
+    activity_type = _publication_activity_type(metadata.get("response_type"))
     try:
         run_orchestrator(args, [
             "--log-activity", "--ticket-id", ticket_id, "--run-id", run_id,
             "--activity-type", activity_type, "--actor-type", "Bot",
             "--note-text", str(metadata.get("reply_text") or "")[:3900],
         ])
+        return True
     except RuntimeError as exc:
         print(f"WARNING: activity log failed for {run_id}: {exc}")
+        return False
     # No automatic solution-article creation here. A resolved incident is episodic
     # history; KB promotion/dedupe is governed by Knowledge/KB_IMPLEMENTATION_PLAN.md.
+
+
+def reconcile_missing_publication_activities(
+    args: argparse.Namespace, *, dry_run: bool = False, limit: int = 50,
+) -> int:
+    """Repair published runs whose human-readable publication activity is missing.
+
+    Publication is authoritative in Hermes_L2_Response_Trn_Tbl; activity is a
+    secondary human-readable projection. A transient activity failure must not
+    make publication fail, but it also must not remain missing forever. The normal
+    reconcile tick is the single repair owner -- no second daemon or retry queue.
+    """
+    bounded = max(1, min(int(limit), 200))
+    sql = f"""
+SELECT TOP {bounded}
+    r.ID AS RunID, r.TicketID, r.ResponseType, r.ReplyText
+FROM dbo.Hermes_L2_Response_Trn_Tbl AS r
+WHERE r.IsDeleted = 0
+  AND r.ProcessStatus IN ('COMPLETED', 'WAITING_USER')
+  AND NULLIF(LTRIM(RTRIM(r.ReplyText)), '') IS NOT NULL
+  AND NOT EXISTS
+  (
+      SELECT 1
+      FROM dbo.Hermes_Ticket_Activity_Trn_Tbl AS a
+      WHERE a.IsDeleted = 0
+        AND a.RunID = r.ID
+        AND a.ActivityType = CASE
+            WHEN r.ResponseType = 'RESOLUTION' THEN 'Resolution'
+            WHEN r.ResponseType IN ('L3_ESCALATION', 'NEEDS_HUMAN_ACTION') THEN 'Escalation'
+            ELSE 'Note'
+        END
+  )
+ORDER BY r.ModifiedOn DESC;
+""".strip()
+    try:
+        rows = run_orchestrator(args, ["--query", sql])
+    except RuntimeError as exc:
+        print(f"WARNING: publication activity reconciliation query failed: {exc}")
+        return 0
+    if not isinstance(rows, list):
+        return 0
+
+    repaired = 0
+    for row in rows:
+        run_id = str(row.get("RunID") or "")
+        ticket_id = str(row.get("TicketID") or "")
+        if not run_id or not ticket_id:
+            continue
+        if dry_run:
+            print(
+                f"[DRY RUN] repair publication activity run={run_id} "
+                f"type={_publication_activity_type(row.get('ResponseType'))}"
+            )
+            repaired += 1
+            continue
+        if _post_publish_activity(
+            args,
+            run_id,
+            ticket_id,
+            {
+                "response_type": row.get("ResponseType"),
+                "reply_text": row.get("ReplyText"),
+            },
+        ):
+            repaired += 1
+    return repaired
 
 
 def publication_ledger(proposal: dict[str, Any], reviewer_task: dict[str, Any]) -> dict[str, Any]:
@@ -3357,6 +3431,7 @@ def audit_done_reviewers(args: argparse.Namespace, *, dry_run: bool = False) -> 
 
 def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, Any]:
     """Reconcile one live snapshot and admit at most one shared local-Qwen task."""
+    publication_activities = reconcile_missing_publication_activities(args, dry_run=dry_run)
     failed_workers = recover_failed_workers(args, dry_run=dry_run)
     tasks = list_tasks()
     active_runs = query_active_runs(args)
@@ -3364,6 +3439,7 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
 
     if not active_run_ids:
         return {
+            "publication_activities_repaired": publication_activities,
             "failed_workers_reworked": failed_workers,
             "normalized": 0,
             "unreviewable_reworked": 0,
@@ -3453,6 +3529,7 @@ def reconcile(args: argparse.Namespace, *, dry_run: bool = False) -> dict[str, A
     )
     dispatch = _dispatch_next_local_model_task(args, dry_run=dry_run, tasks=tasks)
     return {
+        "publication_activities_repaired": publication_activities,
         "failed_workers_reworked": failed_workers,
         "normalized": normalized,
         "unreviewable_reworked": unreviewable,
