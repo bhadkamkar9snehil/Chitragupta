@@ -2893,6 +2893,78 @@ def publication_ledger(proposal: dict[str, Any], reviewer_task: dict[str, Any]) 
     }
 
 
+def _publish_preflight(args: argparse.Namespace, run_id: str, ticket_id: str, proposal: dict[str, Any]) -> str | None:
+    """Outcome that makes publication unnecessary or impossible, else None."""
+    if not run_id or not ticket_id or not _proposal_complete(proposal):
+        return "invalid_proposal"
+    state = _query_published_state(args, run_id)
+    if state and state[0].get("ProcessStatus") in ("COMPLETED", "WAITING_USER") and state[0].get("ReplyText"):
+        return "already_published"
+    if not safe_query_active_run(run_id, args):
+        return "inactive"
+    return None
+
+
+def _continuation_cap_outcome(
+    args: argparse.Namespace, run_id: str, ticket_id: str, proposal: dict[str, Any], dry_run: bool,
+) -> str | None:
+    """Escalate an UPDATE that would exceed MAX_UPDATE_CONTINUATIONS; None when publishable."""
+    if str(proposal["response_type"]).upper() != "UPDATE":
+        return None
+    prior = _prior_update_continuations(args, run_id)
+    if prior < MAX_UPDATE_CONTINUATIONS:
+        return None
+    reason = (
+        f"{prior} published UPDATE continuations on this ticket without new requester input; "
+        f"latest finding: {str(proposal.get('reply_text') or '')[:1200]}"
+    )
+    return "escalated" if _escalate_run(
+        args, run_id=run_id, ticket_id=ticket_id, reason=reason, cycle=0, dry_run=dry_run,
+        budget=f"continuation budget ({prior} updates with no new requester input)",
+    ) else "failed"
+
+
+_PUBLISH_OPTIONAL_FIELDS = (
+    ("problem_summary", "--problem-summary"),
+    ("findings", "--findings"),
+    ("root_cause", "--root-cause"),
+    ("resolution", "--resolution"),
+)
+
+
+def _publish_command(proposal: dict[str, Any], workflow_args: list[str], ledger: dict[str, Any] | None) -> list[str]:
+    response_type = str(proposal["response_type"]).upper()
+    cmd = [
+        "--publish-response", "--run-id", str(proposal["run_id"]), "--force-run-id",
+        "--response-type", response_type,
+        "--reply-text", str(proposal["reply_text"]),
+        "--approval-status", "APPROVED",
+        "--mirror-to-support-remarks",
+        *workflow_args,
+    ]
+    if ledger:
+        cmd += ["--ledger", json.dumps(ledger, separators=(",", ":"), default=str)]
+    if response_type == "QUESTION":
+        cmd.append("--mirror-to-ask-remarks")
+    for key, flag in _PUBLISH_OPTIONAL_FIELDS:
+        if proposal.get(key):
+            cmd += [flag, str(proposal[key])]
+    return cmd
+
+
+def _publish_postcondition_error(rows: list[dict[str, Any]], expected_status: str | None) -> str | None:
+    """SQL/Helpdesk truth after publication (AGENTS.md section 5); None when satisfied."""
+    if not rows:
+        return "publish returned success but no SQL row found"
+    row = rows[0]
+    if row.get("ProcessStatus") not in ("COMPLETED", "WAITING_USER") or not str(row.get("ReplyText") or "").strip():
+        return f"publish postcondition failed: {row}"
+    if expected_status and row.get("TicketStatus") != expected_status:
+        return (f"Helpdesk status postcondition failed: expected {expected_status!r}, "
+                f"got {row.get('TicketStatus')!r}")
+    return None
+
+
 def _publish_frozen_proposal(
     args: argparse.Namespace,
     proposal: dict[str, Any],
@@ -2904,79 +2976,29 @@ def _publish_frozen_proposal(
     """One deterministic publication path shared by Jev and local review."""
     run_id = str(proposal.get("run_id") or "")
     ticket_id = str(proposal.get("ticket_id") or "")
-    if not run_id or not ticket_id or not _proposal_complete(proposal):
-        return "invalid_proposal"
-
-    state = _query_published_state(args, run_id)
-    if state and state[0].get("ProcessStatus") in ("COMPLETED", "WAITING_USER") and state[0].get("ReplyText"):
-        return "already_published"
-    if not safe_query_active_run(run_id, args):
-        return "inactive"
-    response_type = str(proposal["response_type"]).upper()
-    if response_type == "UPDATE":
-        prior = _prior_update_continuations(args, run_id)
-        if prior >= MAX_UPDATE_CONTINUATIONS:
-            reason = (
-                f"{prior} published UPDATE continuations on this ticket without new requester input; "
-                f"latest finding: {str(proposal.get('reply_text') or '')[:1200]}"
-            )
-            return "escalated" if _escalate_run(
-                args, run_id=run_id, ticket_id=ticket_id, reason=reason, cycle=0, dry_run=dry_run,
-                budget=f"continuation budget ({prior} updates with no new requester input)",
-            ) else "failed"
-    binding = load_workflow_binding()
+    skip = _publish_preflight(args, run_id, ticket_id, proposal)
+    if skip:
+        return skip
+    capped = _continuation_cap_outcome(args, run_id, ticket_id, proposal, dry_run)
+    if capped:
+        return capped
     try:
-        workflow_args, expected_status = _status_args_for_response(binding, proposal)
+        workflow_args, expected_status = _status_args_for_response(load_workflow_binding(), proposal)
     except RuntimeError as exc:
         print(f"PUBLISH BLOCKED for run {run_id}: {exc}")
         return "blocked_configuration"
-
-    cmd = [
-        "--publish-response", "--run-id", run_id, "--force-run-id",
-        "--response-type", response_type,
-        "--reply-text", str(proposal["reply_text"]),
-        "--approval-status", "APPROVED",
-        "--mirror-to-support-remarks",
-        *workflow_args,
-    ]
-    if ledger:
-        cmd += ["--ledger", json.dumps(ledger, separators=(",", ":"), default=str)]
-    if response_type == "QUESTION":
-        cmd.append("--mirror-to-ask-remarks")
-    for key, flag in (
-        ("problem_summary", "--problem-summary"),
-        ("findings", "--findings"),
-        ("root_cause", "--root-cause"),
-        ("resolution", "--resolution"),
-    ):
-        if proposal.get(key):
-            cmd += [flag, str(proposal[key])]
-
     if dry_run:
-        print(f"[DRY RUN] publish {source} run={run_id} type={response_type} status={expected_status}")
+        print(f"[DRY RUN] publish {source} run={run_id} type={proposal['response_type']} status={expected_status}")
         return "published"
-
     try:
-        run_orchestrator(args, cmd, timeout=90)
+        run_orchestrator(args, _publish_command(proposal, workflow_args, ledger), timeout=90)
     except RuntimeError as exc:
         print(f"WARNING: publish failed for run {run_id}: {exc}")
         return "failed"
-
-    verify = _query_published_state(args, run_id)
-    if not verify:
-        print(f"WARNING: publish returned success but no SQL row found for {run_id}")
+    error = _publish_postcondition_error(_query_published_state(args, run_id), expected_status)
+    if error:
+        print(f"WARNING: {error} for {run_id}")
         return "failed"
-    row = verify[0]
-    if row.get("ProcessStatus") not in ("COMPLETED", "WAITING_USER") or not str(row.get("ReplyText") or "").strip():
-        print(f"WARNING: publish postcondition failed for {run_id}: {row}")
-        return "failed"
-    if expected_status and row.get("TicketStatus") != expected_status:
-        print(
-            f"WARNING: Helpdesk status postcondition failed for {run_id}: "
-            f"expected {expected_status!r}, got {row.get('TicketStatus')!r}"
-        )
-        return "failed"
-
     _post_publish_activity(args, run_id, ticket_id, proposal)
     return "published"
 
