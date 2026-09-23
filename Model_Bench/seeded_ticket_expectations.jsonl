@@ -1,0 +1,15 @@
+{"ticket_no": "Ticket_362", "ticket_id": "F794EEED-F56B-434D-9F64-6D1AB0CFE08C", "case": "MATCH", "expected": "CONFIRMED", "facts": {"ArcingTime": "25"}}
+{"ticket_no": "Ticket_363", "ticket_id": "515E5F89-0B25-47A7-999C-B6CADB793420", "case": "MISMATCH", "expected": "CORRECTED", "facts": {"ArcingTime": "22"}}
+{"ticket_no": "Ticket_364", "ticket_id": "17BABB39-D3BE-419A-9B2F-39E1A0FC062D", "case": "MISSING_ID", "expected": "QUESTION", "facts": {}}
+{"ticket_no": "Ticket_365", "ticket_id": "404ED519-D456-453C-AD07-10F5069A5EF3", "case": "MISMATCH", "expected": "CORRECTED", "facts": {"PowerOnTime": "47:21"}}
+{"ticket_no": "Ticket_366", "ticket_id": "4B842CB5-CE40-4B6F-B7C5-C3DE89471AFF", "case": "MISSING_ID", "expected": "CORRECTED", "facts": {"PowerOnTime": "47:35"}}
+{"ticket_no": "Ticket_367", "ticket_id": "C72913D6-55E1-4F4B-A384-27FA32327492", "case": "MATCH", "expected": "CONFIRMED", "facts": {"PowerOnTime": "49:55"}}
+{"ticket_no": "Ticket_368", "ticket_id": "B74CD6C2-DF93-4DDD-8136-E83105DD5C85", "case": "MISSING_ID", "expected": "QUESTION", "facts": {}}
+{"ticket_no": "Ticket_369", "ticket_id": "34815D20-A5AF-4F75-8329-F33BAF52EDC5", "case": "MATCH", "expected": "CONFIRMED", "facts": {"CutStartTime": "2026-07-08 19:50:05.583000"}}
+{"ticket_no": "Ticket_370", "ticket_id": "3012B317-5212-4B16-9E3A-685318D2E397", "case": "VAGUE", "expected": "CONFIRMED", "facts": {"CutStartTime": "2026-07-08 19:48:27.403000"}}
+{"ticket_no": "Ticket_371", "ticket_id": "90C142FC-2FFA-442C-89CF-952C1F75D3D8", "case": "MATCH", "expected": "CONFIRMED", "facts": {"Quantity": "65000", "Status": "Running"}}
+{"ticket_no": "Ticket_372", "ticket_id": "E75DA31A-538B-45E4-B944-50C97E2F85A2", "case": "VAGUE", "expected": "CORRECTED", "facts": {"Quantity": "65000", "Status": "Running"}}
+{"ticket_no": "Ticket_373", "ticket_id": "5DDF5592-CA97-49AA-923D-747B48D25D71", "case": "MATCH", "expected": "CONFIRMED", "facts": {"Quantity": "100", "Status": "RM ProductionOrder Created"}}
+{"ticket_no": "Ticket_374", "ticket_id": "354CDF79-0312-4370-A9C4-C9F0D6D46545", "case": "MATCH", "expected": "ANSWERED", "facts": {"MaterialDocument": "5003509957"}}
+{"ticket_no": "Ticket_375", "ticket_id": "3E5C0455-9FE6-4BA0-8DA7-295C9F31E9F3", "case": "MATCH", "expected": "ANSWERED", "facts": {"MaterialDocument": "5003509956"}}
+{"ticket_no": "Ticket_376", "ticket_id": "DB86ACD1-6D7E-4016-BA87-4F6ED543B228", "case": "MATCH", "expected": "ANSWERED", "facts": {"MaterialDocument": "5003509954"}}

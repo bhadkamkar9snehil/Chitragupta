@@ -169,7 +169,7 @@ def generate_tickets(entities: dict, offset: int = 0) -> list[dict]:
         heat_no = s["HeatNo"]
         wo = s["WorkOrder"]
         mat_doc = s["MaterialDoc"]
-        lot = s["InspectionLot"] or "N/A"
+
         tickets.append({
             "AreaID": AREA_COMMON,
             "ComplaintTypeID": COMPLAINT_TYPE_BUG if idx % 2 == 0 else COMPLAINT_TYPE_CLARIFICATION,
@@ -298,6 +298,126 @@ def generate_tickets(entities: dict, offset: int = 0) -> list[dict]:
     return tickets
 
 
+REQUESTERS = [
+    ("Krishna Penta", "98805104", "krishna.penta@jindalshadeed.com"),
+    ("Ahmed Al Balushi", "91234567", "ahmed.balushi@jindalshadeed.com"),
+    ("Fatima Al Hinai", "92345678", "fatima.hinai@jindalshadeed.com"),
+    ("Ravi Shankar", "93456789", "ravi.shankar@jindalshadeed.com"),
+    ("Salim Al Rawahi", "94567890", "salim.rawahi@jindalshadeed.com"),
+]
+# Where the expected outcome of each human-style ticket is recorded. Never written to the
+# ticket itself, so the pipeline cannot read the answer.
+EXPECTATIONS_PATH = Path(__file__).resolve().parent / "seeded_ticket_expectations.jsonl"
+
+
+def _nudge(value: str, rng) -> str:
+    """A plausible misremembered number: same format, a small but real difference."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return value
+    step = rng.choice([-3, -2, 2, 3])
+    return str(int(number) + step) if number == int(number) else f"{number + step / 100:.4f}"
+
+
+def _human_case(i: int) -> str:
+    """Rotate cases so every category gets a correct report, a wrong one, and a vague one."""
+    return ("MATCH", "MISMATCH", "MISSING_ID", "MATCH", "VAGUE")[i % 5]
+
+
+def generate_human_tickets(entities: dict, offset: int = 0, seed: int = 7) -> list[dict]:
+    """Tickets written the way plant users write them (see Dummy_L2_Tickets.xlsx): symptom first,
+    the screen or report they looked at, abbreviations, no table/column names, and none of the
+    L1-extracted fields (category, suspected cause, entities) a raw ticket would not have.
+    """
+    import random
+    rng = random.Random(seed + offset)
+    out: list[dict] = []
+    end = offset + 3
+
+    def add(area, kind, brief, text, case, expect, facts):
+        who = rng.choice(REQUESTERS)
+        out.append({"AreaID": area, "ComplaintTypeID": kind, "Priority": PRIORITY_HIGH,
+                    "BriefDetails": brief, "Description": text, "Requester": who,
+                    "Expectation": {"case": case, "expected": expect, "facts": facts}})
+
+    for i, h in enumerate(entities.get("lrf_heats", [])[offset:end]):
+        case = _human_case(i)
+        arc = h["ArcingTime"].split(".")[0]
+        said = arc if case == "MATCH" else _nudge(arc, rng)
+        if case == "MISSING_ID":
+            add(AREA_LRF, COMPLAINT_TYPE_CLARIFICATION, "LRF arc time looks off",
+                f"arcing time on the LRF shift report for one of last night's heats shows {said} min, "
+                "operator says it ran longer. can someone check?", case, "QUESTION", {})
+        else:
+            add(AREA_LRF, COMPLAINT_TYPE_BUG, f"Arc time ht {h['HeatID']} not matching",
+                f"LRF report says arcing {said} min for heat {h['HeatID']}. We noted power on at "
+                f"{h['PowerONTime'].split('.')[0]} and off at {h['PowerOFFTime'].split('.')[0]}. "
+                "Which one is correct? Quality is asking.",
+                case, "CONFIRMED" if case == "MATCH" else "CORRECTED", {"ArcingTime": arc})
+
+    for i, h in enumerate(entities.get("eaf_heats", [])[offset:end]):
+        case = _human_case(i + 1)
+        pon = h["PowerOnTime"]
+        said = pon if case == "MATCH" else _nudge(pon.split(":")[0], rng) + ":" + pon.split(":")[-1]
+        if case == "VAGUE":
+            add(AREA_EAF, COMPLAINT_TYPE_BUG, "Power on times wrong in EAF report",
+                "EAF heat report power on times look wrong since morning shift, some heats are too "
+                "high. Kindly check.", case, "L3_ESCALATION", {})
+        else:
+            add(AREA_EAF, COMPLAINT_TYPE_CLARIFICATION, f"Power on time for {h['HeatID']}?",
+                f"Hi, for heat {h['HeatID']} the energy dashboard shows high consumption. Shift log "
+                f"has power on {said}. Is that what the system recorded?",
+                case, "CONFIRMED" if case == "MATCH" else "CORRECTED", {"PowerOnTime": pon})
+
+    for i, b in enumerate(entities.get("ccm_billets", [])[offset:end]):
+        case = _human_case(i + 2)
+        if case == "MISSING_ID":
+            add(AREA_CCM, COMPLAINT_TYPE_BUG, "Billet missing in genealogy",
+                f"one billet from strand {b['StrandNo']} is not showing in the genealogy screen, yard "
+                "can see it physically. Please check urgently.", case, "QUESTION", {})
+        else:
+            add(AREA_CCM, COMPLAINT_TYPE_BUG, f"Billet {b['BilletNo']} genealogy",
+                f"Yard says billet {b['BilletNo']} was cut around {str(b['CutStartTime'])[:16]} but "
+                "the torch timing doesnt look right to them. Can you confirm the cut time the system has?",
+                case, "CONFIRMED", {"CutStartTime": str(b["CutStartTime"])})
+
+    for i, w in enumerate(entities.get("work_orders", [])[offset:end]):
+        case = _human_case(i + 3)
+        qty = str(w["Quantity"]).split(".")[0]
+        said = qty if case == "MATCH" else _nudge(qty, rng)
+        add(AREA_COMMON, COMPLAINT_TYPE_CLARIFICATION, f"WO {w['WorkOrderNumber']} status??",
+            f"Planning screen shows WO {w['WorkOrderNumber']} with {said} t. Is this order still open "
+            "or closed? Need to plan the next campaign.",
+            case, "CONFIRMED" if case == "MATCH" else "CORRECTED", {"Quantity": qty, "Status": w["Status"]})
+
+    for i, s in enumerate(entities.get("sap_postings", [])[offset:end]):
+        add(AREA_COMMON, COMPLAINT_TYPE_BUG, f"SAP posting not reflecting - heat {s['HeatNo']} / doc {s['MaterialDoc'][-4:]}",
+            f"Finance says production for heat {s['HeatNo']} is not showing in SAP stock. Mat doc on our "
+            f"side is {s['MaterialDoc']}. Did it post or not?",
+            "MATCH", "ANSWERED", {"MaterialDocument": s["MaterialDoc"]})
+    return out
+
+
+def _insert_human_ticket(cur, new_id: str, ticket_no: str, t: dict, offset_minutes: int) -> None:
+    """A raw user ticket: only what the requester typed; L1-extracted fields stay NULL."""
+    name, phone, email = t["Requester"]
+    cur.execute(
+        """
+        INSERT INTO Complaint_Mst_Tbl (
+            ID, AreaID, CreatedBy, CreatedOn, ModifiedOn, IsDeleted, IsSystem, Source, ComplaintTypeID,
+            Description, BriefDetails, Status, TicketNo, Priority, FirstLastName, ContactNo, EmailID,
+            messages, AskStatus, SourceSystem
+        ) VALUES (?, ?, NULL, DATEADD(MINUTE, ?, GETDATE()), DATEADD(MINUTE, ?, GETDATE()), 0, 0, 'T-SQL', ?,
+                  ?, ?, 'Enter', ?, ?, ?, ?, ?, 'Enter', 'Enter', 'Xbatch')
+        """,
+        new_id, t["AreaID"], offset_minutes, offset_minutes, t["ComplaintTypeID"],
+        t["Description"], t["BriefDetails"], ticket_no, t["Priority"], name, phone, email,
+    )
+    with EXPECTATIONS_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"ticket_no": ticket_no, "ticket_id": new_id, **t["Expectation"]}) + "\n")
+
+
 def next_ticket_no(cur) -> int:
     cur.execute("SELECT MAX(CAST(REPLACE(TicketNo,'Ticket_','') AS INT)) FROM Complaint_Mst_Tbl WHERE TicketNo LIKE 'Ticket_%'")
     return (cur.fetchone()[0] or 0) + 1
@@ -316,6 +436,8 @@ def main():
     ap.add_argument("--username", default="sa")
     ap.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--style", choices=["template", "human"], default="template",
+                    help="human: tickets written the way plant users write them, with expected outcomes recorded aside.")
     ap.add_argument("--offset", type=int, default=0,
                      help="Skip the first N real entities per category (each entity list "
                           "fetches TOP 10) so a re-run produces different real tickets instead "
@@ -330,8 +452,9 @@ def main():
     finally:
         conn_xbatch.close()
 
-    tickets = generate_tickets(entities, offset=args.offset)
-    print(f"Generated {len(tickets)} tickets across 8 categories using real plant entities.")
+    human = args.style == "human"
+    tickets = generate_human_tickets(entities, offset=args.offset) if human else generate_tickets(entities, offset=args.offset)
+    print(f"Generated {len(tickets)} {args.style}-style tickets using real plant entities.")
 
     conn_hd = build_connection(args.server, args.database, args.username, args.password)
     try:
@@ -347,12 +470,20 @@ def main():
 
             new_id = str(uuid.uuid4()).upper()
             new_ticket_no = f"Ticket_{ticket_no}"
-            entities_json = json.dumps(t["ExtractedEntitiesJson"])
+            entities_json = json.dumps(t.get("ExtractedEntitiesJson"))
             # Stagger creation time so this batch doesn't look like a single-instant
             # synthetic dump the way the prior seed run did (all 56 within 7 seconds).
             offset_minutes = created * 7
 
             print(f"{'[DRY RUN] ' if args.dry_run else ''}Creating {new_ticket_no} (Priority={t['Priority']}): {t['BriefDetails']}")
+            if human:
+                if args.dry_run:
+                    print(f"    {t['Description']}\n    expect {t['Expectation']['expected']}")
+                else:
+                    _insert_human_ticket(cur, new_id, new_ticket_no, t, offset_minutes)
+                ticket_no += 1
+                created += 1
+                continue
             if not args.dry_run:
                 cur.execute(
                     """
