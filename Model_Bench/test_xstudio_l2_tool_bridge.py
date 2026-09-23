@@ -100,5 +100,13 @@ class DatabaseRoutingTests(unittest.TestCase):
         self.assertEqual(self._route(unknown), unknown)
 
 
+class StarColumnTests(unittest.TestCase):
+    def test_star_expands_to_real_columns(self):
+        allow = {"XStudio_Xbatch": {"dbo.LRF_Per_Heat": ["ID", "HeatID", "ArcingTime"]}}
+        with patch.object(bridge, "_load_allowlist", return_value=allow):
+            self.assertEqual(bridge._expand_star("XStudio_Xbatch", "LRF_Per_Heat", ["*"]), ["ID", "HeatID", "ArcingTime"])
+            self.assertEqual(bridge._expand_star("XStudio_Xbatch", "LRF_Per_Heat", ["HeatID"]), ["HeatID"])
+
+
 if __name__ == "__main__":
     unittest.main()

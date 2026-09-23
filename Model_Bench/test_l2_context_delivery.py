@@ -141,6 +141,20 @@ class ContextDeliveryTests(unittest.TestCase):
         self.assertIn("current_run_evidence", refs)
         self.assertIn("REVIEWER-REJECTED", rendered)
 
+    def test_stage_can_drop_route_documents_for_review(self):
+        """Live review cards reached ~55 KB of whole route documents."""
+        data = self._retrieval()
+        policy = {**self.policy, "review": {**self.policy["review"], "route_canonical_documents": 0}}
+        with mock.patch.object(mod.kb, "retrieve", return_value=data):
+            envelope, _ = mod.assemble_stage_context(
+                ticket=self.ticket, run_id="run-1", ticket_id="ticket-1", ticket_no="HD-1",
+                stage="review", review_cycle=0, policy=policy, vault=self.vault, manifest={},
+                proposal={"response_type": "UPDATE", "reply_text": "x"},
+                current_run_evidence=[{"operation": "select", "ok": True}],
+            )
+        self.assertFalse([d for d in envelope["canonical_documents"] if d.get("reason") != "always_load"])
+        self.assertIn("frozen_proposal", [v["source_type"] for v in envelope["prior_ticket_evidence"]])
+
     def test_rework_preserves_original_context_identity_and_rejection_as_negative(self):
         original = {"context_sha256": "a"*64, "query_sha256": "b"*64, "route": "sap_posting",
                     "retrieval": {"retrieval_degraded": False}}

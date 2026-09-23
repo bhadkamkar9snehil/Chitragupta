@@ -18,6 +18,7 @@
     ]
   },
   "review": {
+    "route_canonical_documents": 0,
     "facts": 3,
     "solutions": 2,
     "approved_cases": 1,
@@ -51,6 +52,7 @@
     "Counts are hard upper bounds, not targets.",
     "Always-load canonical documents are retained; route-specific canonical documents are limited separately.",
     "If the rendered context exceeds the total budget, complete lower-priority items are dropped. No item is cut in half.",
-    "Raw sessions, unverified candidates, and unqualified/all-source GBrain search are forbidden from automatic context."
+    "Raw sessions, unverified candidates, and unqualified/all-source GBrain search are forbidden from automatic context.",
+    "review.route_canonical_documents=0: reviewers judge the frozen proposal against evidence; whole route documents made 9B-model review cards ~55 KB (2026-09-23)."
   ]
 }

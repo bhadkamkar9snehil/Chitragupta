@@ -42,7 +42,9 @@ def assemble_stage_context(
     routes = retrieval.get("route_candidates") or [{"route": "discover", "reasons": ["no deterministic route signal"]}]
     canonical = _split_canonical(
         _successful_canonical(retrieval.get("canonical_documents") or []),
-        int(policy["route_canonical_documents"]),
+        # A stage may override the global count; reviewers judge a frozen proposal
+        # against evidence and do not need whole route documents (live cards: ~55 KB).
+        int(policy[stage].get("route_canonical_documents", policy["route_canonical_documents"])),
     )
 
     selected = {

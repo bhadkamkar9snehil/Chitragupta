@@ -156,6 +156,9 @@ def validate_context_policy(policy: Any) -> list[str]:
             value = cfg.get(key)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0 or value > 10:
                 errors.append(f"{stage}.{key} must be an integer between 0 and 10")
+        stage_docs = cfg.get("route_canonical_documents", 0)
+        if not isinstance(stage_docs, int) or isinstance(stage_docs, bool) or not 0 <= stage_docs <= 10:
+            errors.append(f"{stage}.route_canonical_documents must be an integer between 0 and 10")
         drop = cfg.get("drop_order")
         if drop is not None and (
             not isinstance(drop, list) or not all(isinstance(v, str) and v for v in drop)

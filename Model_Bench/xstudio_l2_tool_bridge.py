@@ -669,10 +669,19 @@ def _resolve_heat(req: dict[str, Any], client: Any) -> dict[str, Any]:
     }
 
 
+def _expand_star(database: str, table: str, columns: list[str]) -> list[str]:
+    """columns=['*'] means "show me the row": use the real columns (bounded) instead of
+    rejecting a clear intent (live: 4 failed calls in one hour)."""
+    if [c.strip() for c in columns] != ["*"]:
+        return columns
+    found = _allowed_table(database, table)
+    return found[1][:25] if found else columns
+
+
 def _select(req: dict[str, Any], client: Any) -> dict[str, Any]:
     database = str(_database(req))
     table = str(_require(req, "table"))
-    columns = [str(x) for x in _require(req, "columns")]
+    columns = _expand_star(database, table, [str(x) for x in _require(req, "columns")])
     run_id = str(_require(req, "run_id"))
     built = _orchestrator().build_query_mechanically(
         table=table,
