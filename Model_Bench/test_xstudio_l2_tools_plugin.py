@@ -1414,8 +1414,7 @@ def test_investigator_completion_without_proposal_metadata_is_blocked_for_same_t
     )
     assert result and result["action"] == "block"
     assert "response_type" in result["message"]
-    assert "claims" in result["message"]
-    assert "retry kanban_complete" in result["message"]
+    assert "xstudio_submit_proposal" in result["message"]
 
 
 def test_substantive_investigator_summary_is_packaged_without_another_model_turn() -> None:
@@ -1429,11 +1428,11 @@ def test_substantive_investigator_summary_is_packaged_without_another_model_turn
         "The available evidence does not yet prove that the successful transaction belongs "
         "to the reported heat and work-order pair, so independent review is required."
     )
-    result = plugin._pre_tool_call(
-        "kanban_complete",
-        {"summary": summary, "result": "Investigation complete", "metadata": {}},
-        task_id="investigator-summary-package",
-    )
+    args = {"summary": summary, "result": "Investigation complete", "metadata": {}}
+    first = plugin._pre_tool_call("kanban_complete", args, task_id="investigator-summary-package")
+    # First empty completion is redirected to the flat submit tool, not silently packaged.
+    assert first and first["action"] == "block" and "xstudio_submit_proposal" in first["message"]
+    result = plugin._pre_tool_call("kanban_complete", args, task_id="investigator-summary-package")
     assert result and result["action"] == "modify"
     metadata = result["args"]["metadata"]
     assert metadata["run_id"] == "RUN-2"
@@ -1476,7 +1475,22 @@ def test_reviewer_completion_does_not_require_investigator_proposal_metadata() -
         {"summary": "Approved after independent live verification."},
         task_id="reviewer-completion",
     )
-    assert result is None
+    # No investigator contract is demanded; the harness records the review itself.
+    assert result and result["action"] == "modify"
+    metadata = result["args"]["metadata"]
+    assert metadata["review_decision"] == "APPROVED"
+    assert metadata["run_id"] == "RUN-1" and metadata["ticket_id"] == "TICKET-1"
+    assert metadata["review_notes"] == "Approved after independent live verification."
+
+
+def test_reviewer_rejection_summary_is_recorded_as_rejected() -> None:
+    """Mirrors l2_pipeline_runtime.is_reviewer_rejection so the record never contradicts it."""
+    plugin._pre_llm_call(task_id="reviewer-reject",
+                         user_message="run_id: RUN-9\nticket_id: TICKET-9\npipeline_stage: review\nreview_cycle: 1")
+    result = plugin._pre_tool_call("kanban_complete", {"summary": "Rejected: claim C1 cites no action."},
+                                   task_id="reviewer-reject")
+    assert result["args"]["metadata"]["review_decision"] == "REJECTED"
+    assert result["args"]["metadata"]["review_cycle"] == "1"
 
 
 def test_reviewer_cannot_approve_runtime_repaired_unstructured_proposal() -> None:

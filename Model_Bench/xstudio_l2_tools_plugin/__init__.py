@@ -198,6 +198,7 @@ _CONTEXT_FIELD_RE = {
     "contract_repaired_from_unstructured": re.compile(
         r"contract_repaired_from_unstructured[`\"']?\s*:\s*(true)\b", re.IGNORECASE
     ),
+    "review_cycle": re.compile(r"review_cycle\s*[:=]\s*(\d+)", re.IGNORECASE),
     "valid_tables": re.compile(r"(?:current\s+)?valid_tables\s*[:=]\s*(.+)", re.IGNORECASE),
 }
 
@@ -767,56 +768,89 @@ def _kanban_review_contract_guard(context: dict[str, Any]) -> dict[str, str] | N
     return None
 
 
-def _kanban_completion_metadata_guard(args: dict[str, Any], context: dict[str, Any]) -> dict[str, str] | None:
-    if context.get("pipeline_stage", "").lower() not in {"investigation", "rework"}:
-        return None
-    metadata = dict(args.get("metadata") or {}) if isinstance(args.get("metadata"), dict) else {}
-    for field in ("run_id", "ticket_id"):
-        if not metadata.get(field) and context.get(field):
-            metadata[field] = context[field]
-    metadata.setdefault("claims_contract_version", 1)
-    missing = [field for field in ("run_id", "ticket_id", "response_type", "reply_text", "claims")
-               if metadata.get(field) in (None, "", [])]
-    summary = str(args.get("summary") or "").strip()
-    if (len(summary) >= MIN_SUBSTANTIVE_COMPLETION_CHARS
-            and metadata.get("run_id") and metadata.get("ticket_id")
-            and all(metadata.get(field) in (None, "", [])
-                    for field in ("response_type", "reply_text", "claims"))):
-        # Small local models reliably produce a useful flat summary but can loop
-        # forever when asked to serialize the nested proposal contract. Package
-        # that summary as an explicitly incomplete UPDATE. The independent
-        # reviewer still owns truth, and no statement is promoted to VERIFIED.
-        metadata.update({
+_SUBMIT_REDIRECT = (
+    "Do not complete with kanban_complete. Call xstudio_submit_proposal now with flat fields: "
+    "response_type (RESOLUTION / UPDATE / QUESTION / L3_ESCALATION / NEEDS_HUMAN_ACTION), summary, "
+    "claim_status plus action_id for verified facts (xstudio_get_run_actions lists them), "
+    "resolution for RESOLUTION, next_investigation_step for an incomplete UPDATE, "
+    "requester_question for QUESTION. The harness builds the structured proposal."
+)
+# Empty investigator completions already redirected once, keyed by worker task/run.
+_redirected_empty_completions: set[str] = set()
+
+
+def _packaged_summary_metadata(metadata: dict[str, Any], summary: str) -> dict[str, Any]:
+    """Last-resort packaging of a flat summary as an explicitly incomplete UPDATE."""
+    return {**metadata,
             "response_type": "UPDATE",
             "reply_text": (
                 "Evidence status: INCOMPLETE. The investigation produced findings "
                 "that require independent review before any cause or resolution is "
                 "treated as verified."
             ),
-            "claims": [{
-                "id": "summary-1",
-                "claim": summary,
-                "material": True,
-                "status": "UNVERIFIED",
-                "evidence": [],
-            }],
+            "claims": [{"id": "summary-1", "claim": summary, "material": True,
+                        "status": "UNVERIFIED", "evidence": []}],
             "contract_packaged_from_summary": True,
             "evidence_status": "INCOMPLETE",
-            "investigator_notes": summary,
-        })
-        return {"action": "modify", "args": {"metadata": metadata}}
-    if missing:
-        return {
-            "action": "block",
-            "message": (
-                "L2 completion contract: metadata is missing " + ", ".join(missing) + ". "
-                "Stay in this turn and retry kanban_complete with metadata containing run_id, ticket_id, "
-                "response_type, reply_text, claims_contract_version=1, and a non-empty claims array. "
-                "Each claim needs id, claim, material, status, and evidence; VERIFIED material claims "
-                "must cite current-run action_id values."
-            ),
-        }
-    return None
+            "investigator_notes": summary}
+
+
+def _metadata_with_identity(args: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    """Model-supplied metadata with harness-known run/ticket identity filled in."""
+    raw = args.get("metadata")
+    metadata = dict(raw) if isinstance(raw, dict) else {}
+    for field in ("run_id", "ticket_id"):
+        if not metadata.get(field) and context.get(field):
+            metadata[field] = context[field]
+    return metadata
+
+
+def _kanban_completion_metadata_guard(args: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] | None:
+    if context.get("pipeline_stage", "").lower() not in {"investigation", "rework"}:
+        return None
+    metadata = _metadata_with_identity(args, context)
+    metadata.setdefault("claims_contract_version", 1)
+    missing = [field for field in ("run_id", "ticket_id", "response_type", "reply_text", "claims")
+               if metadata.get(field) in (None, "", [])]
+    if not missing:
+        return None
+    # Qwen reliably fills the flat submit tool but not this nested contract. An empty
+    # completion first gets one exact redirect: packaging it straight away turned real
+    # verified findings into canned "INCOMPLETE" UPDATEs (55 of 132 live UPDATE rows).
+    key = os.environ.get("HERMES_KANBAN_TASK") or str(metadata.get("run_id") or "")
+    with _lock:
+        first_attempt = key not in _redirected_empty_completions
+        _redirected_empty_completions.add(key)
+    if first_attempt:
+        return {"action": "block", "message": "L2 completion contract: metadata is missing "
+                + ", ".join(missing) + ". " + _SUBMIT_REDIRECT}
+    summary = str(args.get("summary") or "").strip()
+    if len(summary) >= MIN_SUBSTANTIVE_COMPLETION_CHARS and metadata.get("run_id") and metadata.get("ticket_id"):
+        # Second empty attempt: preserve the finding rather than let a small model loop.
+        return {"action": "modify", "args": {"metadata": _packaged_summary_metadata(metadata, summary)}}
+    return {"action": "block", "message": "L2 completion contract: " + _SUBMIT_REDIRECT}
+
+
+def _review_completion_metadata(args: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] | None:
+    """Deterministic audit record for a reviewer approval; the model supplies only its notes."""
+    if context.get("pipeline_stage", "").lower() != "review":
+        return None
+    metadata = dict(args["metadata"]) if isinstance(args.get("metadata"), dict) else {}
+    notes = str(args.get("summary") or args.get("result") or "").strip()
+    lowered = notes.lower()
+    # Same rule as l2_pipeline_runtime.is_reviewer_rejection.
+    rejected = lowered.startswith("reject") or "rejected frozen proposal" in lowered
+    record = {
+        "review_decision": "REJECTED" if rejected else "APPROVED",
+        "run_id": context.get("run_id"),
+        "ticket_id": context.get("ticket_id"),
+        "review_cycle": context.get("review_cycle"),
+        "reviewed_by": "local_reviewer",
+        "review_notes": notes[:2000],
+        "recorded_by": "xstudio-l2-tools",
+    }
+    merged = {**{k: v for k, v in record.items() if v not in (None, "")}, **metadata}
+    return None if merged == metadata else {"action": "modify", "args": {"metadata": merged}}
 
 
 _LEAKED_TOOL_MARKUP = re.compile(r"</?(?:parameter|function|result|summary|tool_call)\b[^>]*>", re.I)
@@ -858,7 +892,7 @@ def _kanban_contract_guard(tool_name: str, args: dict[str, Any], context: dict[s
         result = _kanban_review_contract_guard(context)
         if result is not None:
             return result
-        result = _kanban_completion_metadata_guard(args, context)
+        result = _kanban_completion_metadata_guard(args, context) or _review_completion_metadata(args, context)
         if result is not None:
             return result
         # A small model can select the right terminal Kanban action yet serialize
