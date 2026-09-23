@@ -2466,6 +2466,15 @@ def _apply_primary_review(
     action = str(review.get("action") or "LOCAL_REVIEW")
 
     if action == "APPROVE":
+        # A Jev approval replaces the local reviewer, never the deterministic gates.
+        gate_reason = pre_publish_gate_reason(args, proposal, run_id=run_id, ticket_id=ticket_id)
+        if gate_reason:
+            created = create_rework_card(
+                args, source_task=task, reason=gate_reason,
+                investigation_task_id=task["id"], dry_run=dry_run, tasks=tasks,
+            )
+            counts["reworked"] += int(bool(created))
+            return
         outcome = _publish_frozen_proposal(
             args,
             proposal,
@@ -2893,6 +2902,39 @@ def publication_ledger(proposal: dict[str, Any], reviewer_task: dict[str, Any]) 
     }
 
 
+def pre_publish_gate_reason(
+    args: argparse.Namespace, proposal: dict[str, Any], *, run_id: str, ticket_id: str,
+) -> str | None:
+    """Deterministic structural gates every approved proposal must pass before publication.
+
+    Owned once and applied to both approval paths. Until 2026-09-23 only the local-review
+    path ran them, so Jev direct approvals closed tickets as RESOLUTION with no recorded
+    Resolution (9 of 10 live RESOLUTION rows).
+    """
+    outcome_issues = resolution_issues(proposal) + continuation_issues(proposal)
+    if outcome_issues:
+        return (
+            "Pre-publish outcome gate: " + "; ".join(outcome_issues)
+            + ". Use QUESTION for missing requester facts, NEEDS_HUMAN_ACTION for a known unexecuted fix, "
+              "or UPDATE for concrete further investigation."
+        )
+    if proposal.get("contract_repaired_from_unstructured") is True:
+        return (
+            "Pre-publish proposal gate: the frozen proposal was repaired from an unstructured "
+            "investigator completion and cannot be approved. Re-package the findings with the "
+            "full claim/evidence contract and submit them through a fresh review cycle."
+        )
+    claims = proposal.get("claims")
+    if proposal.get("claims_contract_version") == CLAIMS_CONTRACT_VERSION or claims is not None:
+        valid, issues = validate_claims_contract(
+            claims, run_id=run_id, ticket_id=ticket_id, actions=get_run_actions(args, run_id),
+        )
+        if not valid:
+            return ("Pre-publish claim/evidence gate: " + "; ".join(issues[:5])
+                    + ". Fix the material claim evidence references and resubmit.")
+    return None
+
+
 def _publish_preflight(args: argparse.Namespace, run_id: str, ticket_id: str, proposal: dict[str, Any]) -> str | None:
     """Outcome that makes publication unnecessary or impossible, else None."""
     if not run_id or not ticket_id or not _proposal_complete(proposal):
@@ -3052,55 +3094,15 @@ def process_approvals(
                     counts["rework_created"] += 1
                 continue
 
-            outcome_issues = resolution_issues(proposal) + continuation_issues(proposal)
-            if outcome_issues:
+            gate_reason = pre_publish_gate_reason(args, proposal, run_id=run_id, ticket_id=ticket_id)
+            if gate_reason:
                 if create_rework_card(
-                    args, source_task=task,
-                    reason="Pre-publish outcome gate: " + "; ".join(outcome_issues)
-                           + ". Use QUESTION for missing requester facts, NEEDS_HUMAN_ACTION for a known unexecuted fix, or UPDATE for concrete further investigation.",
+                    args, source_task=task, reason=gate_reason,
                     investigation_task_id=body_field(task.get("body"), "investigation_task_id"),
                     dry_run=dry_run,
                 ):
                     counts["rework_created"] += 1
                 continue
-
-            if proposal.get("contract_repaired_from_unstructured") is True:
-                reason = (
-                    "Pre-publish proposal gate: the frozen proposal was repaired from an unstructured "
-                    "investigator completion and cannot be approved. Re-package the findings with the "
-                    "full claim/evidence contract and submit them through a fresh review cycle."
-                )
-                source_id = body_field(task.get("body"), "investigation_task_id")
-                if create_rework_card(
-                    args, source_task=task, reason=reason,
-                    investigation_task_id=source_id, dry_run=dry_run,
-                ):
-                    counts["rework_created"] += 1
-                continue
-
-            # Structural claim/evidence gate. If the proposal carries a claims array,
-            # every material VERIFIED claim must have an evidence reference. This is a
-            # deterministic structural check, not semantic judgment (that stays with the
-            # reviewer). Legacy proposals without claims pass through normally.
-            proposal_claims = proposal.get("claims") if proposal else None
-            claims_required = proposal.get("claims_contract_version") == CLAIMS_CONTRACT_VERSION if proposal else False
-            if claims_required or proposal_claims is not None:
-                claims_valid, claims_issues = validate_claims_contract(
-                    proposal_claims, run_id=run_id, ticket_id=ticket_id,
-                    actions=get_run_actions(args, run_id),
-                )
-                if not claims_valid:
-                    reason = (
-                        "Pre-publish claim/evidence gate: " + "; ".join(claims_issues[:5])
-                        + ". Fix the material claim evidence references and resubmit."
-                    )
-                    source_id = body_field(task.get("body"), "investigation_task_id")
-                    if create_rework_card(
-                        args, source_task=task, reason=reason,
-                        investigation_task_id=source_id, dry_run=dry_run,
-                    ):
-                        counts["rework_created"] += 1
-                    continue
 
             outcome = _publish_frozen_proposal(
                 args,

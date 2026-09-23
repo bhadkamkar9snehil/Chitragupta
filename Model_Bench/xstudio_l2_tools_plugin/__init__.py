@@ -146,8 +146,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             ]},
             "action_id": _STRING,
             "problem_summary": _STRING,
-            "root_cause": _STRING,
-            "resolution": _STRING,
+            "root_cause": {"type": "string", "description": "The established cause, when one was found. Feeds the governed knowledge base."},
+            "resolution": {"type": "string", "description": "Required for RESOLUTION: the observed, verified outcome that answers or fixes the request. A diagnosis or proposed fix is not a resolution."},
         },
         ("response_type", "summary"),
     ),
@@ -518,6 +518,18 @@ def _legacy_tool_handler(params: dict[str, Any], **kwargs: Any) -> str:
     return _invoke_bridge(params)
 
 
+def _outcome_field_error(response_type: str, params: dict[str, Any]) -> Optional[str]:
+    """Fields the deterministic publisher will require, checked while the worker can still add them."""
+    if response_type == "RESOLUTION" and not str(params.get("resolution") or "").strip():
+        return ("RESOLUTION requires resolution: state the observed, verified outcome. "
+                "If you only diagnosed the problem, submit UPDATE or NEEDS_HUMAN_ACTION instead.")
+    incomplete = str(params.get("evidence_status") or "").upper() != "COMPLETE"
+    if response_type == "UPDATE" and incomplete and not str(params.get("next_investigation_step") or "").strip():
+        return ("An incomplete UPDATE requires next_investigation_step naming a concrete new evidence check. "
+                "If only the requester can unblock progress, use requester_question instead.")
+    return None
+
+
 def _validate_submit_proposal_inputs(
     params: dict[str, Any], context: dict[str, Any],
 ) -> tuple[Optional[str], Optional[dict[str, Any]]]:
@@ -561,6 +573,10 @@ def _validate_submit_proposal_inputs(
             "error": "QUESTION requires requester_question: ask for the specific missing fact in customer-facing language.",
             "retry_same_call": False,
         }), None
+
+    field_error = _outcome_field_error(response_type, params)
+    if field_error:
+        return json.dumps({"ok": False, "error": field_error, "retry_same_call": False}), None
 
     claim_status = str(params.get("claim_status") or "UNVERIFIED").upper().strip()
     if claim_status not in {"VERIFIED", "INFERRED", "UNVERIFIED", "CONTRADICTED"}:

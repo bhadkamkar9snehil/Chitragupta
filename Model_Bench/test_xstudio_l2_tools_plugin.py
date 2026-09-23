@@ -1124,12 +1124,32 @@ _SUBSTANTIVE_SUMMARY = (
 )
 
 
+_NEXT_STEP = {"next_investigation_step": "Read SAP posting rows for Inspection Lot 49900000002."}
+_OUTCOME = {"resolution": "Confirmed no UsageDecision transaction exists; requester informed."}
+
+
+def test_submit_proposal_rejects_resolution_without_verified_outcome() -> None:
+    """9 of 10 live RESOLUTIONs closed tickets with an empty Resolution field."""
+    _setup_investigator_context(task_id="submit-no-outcome")
+    result = json.loads(plugin._submit_proposal_handler(
+        {"response_type": "RESOLUTION", "summary": _SUBSTANTIVE_SUMMARY,
+         "claim_status": "VERIFIED", "action_id": "A-1"}, task_id="submit-no-outcome"))
+    assert result["ok"] is False and "resolution" in result["error"]
+
+
+def test_submit_proposal_rejects_incomplete_update_without_next_step() -> None:
+    _setup_investigator_context(task_id="submit-no-step")
+    result = json.loads(plugin._submit_proposal_handler(
+        {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY}, task_id="submit-no-step"))
+    assert result["ok"] is False and "next_investigation_step" in result["error"]
+
+
 def test_submit_proposal_assembles_complete_metadata_from_flat_args() -> None:
     _setup_investigator_context()
     with mock.patch.object(plugin.subprocess, "run") as mock_run:
         mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
         result = plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
             task_id="submit-test",
         )
     parsed = json.loads(result)
@@ -1178,7 +1198,7 @@ def test_submit_proposal_requires_response_type_and_summary() -> None:
 def test_submit_proposal_requires_action_id_for_verified_claims() -> None:
     _setup_investigator_context(task_id="submit-verified")
     result = json.loads(plugin._submit_proposal_handler(
-        {"response_type": "RESOLUTION", "summary": _SUBSTANTIVE_SUMMARY,
+        {"response_type": "RESOLUTION", "summary": _SUBSTANTIVE_SUMMARY, **_OUTCOME,
          "claim_status": "VERIFIED"},
         task_id="submit-verified",
     ))
@@ -1191,7 +1211,7 @@ def test_submit_proposal_verified_claim_with_action_id_passes() -> None:
     with mock.patch.object(plugin.subprocess, "run") as mock_run:
         mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
         result = json.loads(plugin._submit_proposal_handler(
-            {"response_type": "RESOLUTION", "summary": _SUBSTANTIVE_SUMMARY,
+            {"response_type": "RESOLUTION", "summary": _SUBSTANTIVE_SUMMARY, **_OUTCOME,
              "claim_status": "VERIFIED", "action_id": "ACTION-123"},
             task_id="submit-verified-ok",
         ))
@@ -1207,7 +1227,7 @@ def test_submit_proposal_generates_reply_text_when_absent() -> None:
     with mock.patch.object(plugin.subprocess, "run") as mock_run:
         mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
         plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
             task_id="submit-reply",
         )
     metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
@@ -1220,7 +1240,7 @@ def test_submit_proposal_uses_explicit_reply_text_when_provided() -> None:
     with mock.patch.object(plugin.subprocess, "run") as mock_run:
         mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
         plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY,
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP,
              "reply_text": "Custom user-facing message."},
             task_id="submit-reply-explicit",
         )
@@ -1234,7 +1254,7 @@ def test_submit_proposal_injects_run_and_ticket_from_context() -> None:
     with mock.patch.object(plugin.subprocess, "run") as mock_run:
         mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
         plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
             task_id="submit-ctx",
         )
     metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
@@ -1256,7 +1276,7 @@ def test_submit_proposal_uses_kanban_task_id_learned_from_show() -> None:
     with mock.patch.object(plugin.subprocess, "run") as mock_run:
         mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
         result = json.loads(plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
             task_id=session_id,
             session_id=session_id,
         ))
@@ -1279,7 +1299,7 @@ def test_submit_proposal_targets_own_worker_task_not_inspected_prior_card() -> N
         with mock.patch.object(plugin.subprocess, "run") as mock_run:
             mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
             result = json.loads(plugin._submit_proposal_handler(
-                {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+                {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
                 task_id=session_id, session_id=session_id,
             ))
     assert result["ok"] is True
@@ -1294,7 +1314,7 @@ def test_submit_proposal_runs_hermes_from_a_stable_cwd() -> None:
     with mock.patch.object(plugin.subprocess, "run") as mock_run:
         mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
         plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY}, task_id="submit-cwd",
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP}, task_id="submit-cwd",
         )
     assert mock_run.call_args.kwargs["cwd"] == str(plugin.Path.home())
 
@@ -1327,7 +1347,7 @@ def test_submit_proposal_does_not_consume_xstudio_tool_budget() -> None:
     # The pre_tool_call should not block xstudio_submit_proposal
     result = plugin._pre_tool_call(
         "xstudio_submit_proposal",
-        {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+        {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
         task_id="submit-budget",
     )
     assert result is None  # passes through without consuming budget
@@ -1341,7 +1361,7 @@ def test_submit_proposal_sets_incomplete_evidence_for_update() -> None:
     with mock.patch.object(plugin.subprocess, "run") as mock_run:
         mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
         result = json.loads(plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY,
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP,
              "claim_status": "INFERRED"},
             task_id="submit-evidence",
         ))
@@ -1353,7 +1373,7 @@ def test_submit_proposal_includes_optional_fields_in_metadata() -> None:
     with mock.patch.object(plugin.subprocess, "run") as mock_run:
         mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
         plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY,
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP,
              "problem_summary": "SAP posting missing",
              "root_cause": "Heat not in MES",
              "resolution": "Manual data entry required"},
@@ -1368,7 +1388,7 @@ def test_submit_proposal_includes_optional_fields_in_metadata() -> None:
 def test_submit_proposal_rejects_when_context_missing() -> None:
     # Don't set up context
     result = json.loads(plugin._submit_proposal_handler(
-        {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY},
+        {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP},
         task_id="submit-no-context",
     ))
     assert result["ok"] is False
@@ -1436,7 +1456,7 @@ def test_submit_proposal_cannot_mark_unverified_claim_complete() -> None:
     with mock.patch.object(plugin.subprocess, "run") as mock_run:
         mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
         plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY,
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP,
              "claim_status": "UNVERIFIED", "evidence_status": "COMPLETE"},
             task_id="submit-unverified-complete",
         )
@@ -1490,7 +1510,7 @@ def test_requester_question_produces_question_with_customer_text() -> None:
     with mock.patch.object(plugin.subprocess, "run") as run:
         run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
         result = json.loads(plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY,
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP,
              "requester_question": question}, task_id="submit-question"))
     assert result["response_type"] == "QUESTION"
     command = run.call_args[0][0]
@@ -1517,7 +1537,7 @@ def test_reviewer_cannot_submit_replacement_proposal() -> None:
     assert "When completing the investigation" not in result["context"]
     with mock.patch.object(plugin.subprocess, "run") as run:
         response = json.loads(plugin._submit_proposal_handler(
-            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY}, task_id="review-role"))
+            {"response_type": "UPDATE", "summary": _SUBSTANTIVE_SUMMARY, **_NEXT_STEP}, task_id="review-role"))
     assert response["ok"] is False
     run.assert_not_called()
 

@@ -71,7 +71,10 @@ def pending_resolutions(cur, top: int = 20) -> list[dict[str, Any]]:
         WHERE r.IsDeleted = 0
           AND r.ResponseType = 'RESOLUTION'
           AND r.CompletedOn IS NOT NULL
-          AND NULLIF(LTRIM(RTRIM(r.RootCause)), '') IS NOT NULL
+          -- Assess every verified outcome; Jev decides reusability (NONE is valid).
+          -- Creating a new article still requires a RootCause (write_curation_action).
+          -- Filtering on RootCause here excluded all 10 live RESOLUTIONs.
+          AND NULLIF(LTRIM(RTRIM(r.Resolution)), '') IS NOT NULL
           AND JSON_VALUE(r.JevKBCurationJson, '$.POST_RESOLUTION_KB.stage') IS NULL
         ORDER BY r.CompletedOn ASC;
         """,
