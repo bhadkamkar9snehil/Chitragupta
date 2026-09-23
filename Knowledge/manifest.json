@@ -23,9 +23,7 @@
       "PRODUCTION_STATE", "SAP_INTEGRATION", "DATA_LOOKUP", "PERFORMANCE", "WORK_ORDER"
     ]
   },
-  "always_load": [
-    "L2_PIPELINE_STATE_MACHINE.md"
-  ],
+  "always_load": [],
   "skills": [
     {
       "name": "xstudio-l2-ticket-workflow",
