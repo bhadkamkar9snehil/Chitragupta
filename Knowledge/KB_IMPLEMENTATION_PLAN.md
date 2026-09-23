@@ -64,7 +64,7 @@ CREATE_CANDIDATE
 NONE
 ```
 
-Promotion (2026-09-23): a `Candidate` becomes `Approved` only when a later verified RESOLUTION on a different ticket is judged `REUSE_EXISTING` for it (independent corroboration). Retrieval reads only `Approved`, so this is what lets the KB grow without a human reviewer.
+Promotion (2026-09-23): a `Candidate` becomes `Approved` only when a later verified RESOLUTION on a different ticket is judged `REUSE_EXISTING` for it (independent corroboration). Retrieval reads only `Approved`, so this is what lets the KB grow without a human reviewer. If the Candidate is an `UPDATE_EXISTING` replacement, its predecessor remains `Approved` while the replacement is only a Candidate; the successful promotion atomically makes the replacement `Approved` and the predecessor `Superseded`/inactive.
 
 `RESOLUTION -> CREATE NEW ARTICLE` is explicitly rejected as the permanent model.
 
@@ -929,16 +929,17 @@ EXISTING       CREATE_CANDIDATE
 
 ### 21.1 REUSE_EXISTING
 
-- link existing article to the ticket/run;
+- link the existing article to the ticket/run through `Hermes_Link_Solution_To_Ticket_Usp`, the single owner for the durable link, usage count and `SolutionLinked` activity;
+- the link operation must be idempotent for the same ticket/solution/run tuple;
 - do not create a duplicate;
-- create reuse outcome record;
-- increment derived success only after outcome is known.
+- record the successful verified reuse as `WasHelpful = 1`;
+- Candidate promotion remains governed by the independent-ticket corroboration rule above.
 
 ### 21.2 UPDATE_EXISTING
 
 Used when the existing reusable pattern is correct but this resolution contributes verified new applicability/diagnostic/verification information.
 
-Updates should create a new revision/history trail rather than silently overwriting provenance.
+Updates create a new `Candidate` revision with `SupersedesSolutionID`; they do **not** retire or mutate the current Approved predecessor while the replacement is unapproved. When the replacement earns promotion, that same transaction changes the replacement to `Approved` and its predecessor to `Superseded` with `SupersededBySolutionID`, preserving an uninterrupted single production-retrievable revision.
 
 ### 21.3 CREATE_CANDIDATE
 
