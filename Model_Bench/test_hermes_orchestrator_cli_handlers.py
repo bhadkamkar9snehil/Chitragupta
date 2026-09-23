@@ -273,6 +273,73 @@ class ConnectRetryTests(unittest.TestCase):
         self.assertEqual(connect.call_count, 1)
 
 
+class InvokeConnectionHygieneTests(unittest.TestCase):
+    def setUp(self):
+        orch._CLIENTS.clear()
+
+    def tearDown(self):
+        for client in list(orch._CLIENTS.values()):
+            try:
+                client.close()
+            except Exception:
+                pass
+        orch._CLIENTS.clear()
+
+    @staticmethod
+    def _prepared_args():
+        return argparse.Namespace(
+            server="server", database="db", username="user", hermes_user_id=None,
+        )
+
+    def test_success_commits_session_boundary(self):
+        client = MagicMock()
+        with patch.object(orch, "build_parser", return_value=MagicMock()), \
+             patch.object(orch, "prepare_args", return_value=self._prepared_args()), \
+             patch.object(orch, "_client_for", return_value=client), \
+             patch.object(orch, "dispatch") as dispatch:
+            orch.invoke([])
+        dispatch.assert_called_once()
+        client.conn.commit.assert_called_once()
+        client.conn.rollback.assert_not_called()
+
+    def test_non_connectivity_failure_rolls_back_and_keeps_healthy_session(self):
+        client = MagicMock()
+        with patch.object(orch, "build_parser", return_value=MagicMock()), \
+             patch.object(orch, "prepare_args", return_value=self._prepared_args()), \
+             patch.object(orch, "_client_for", return_value=client), \
+             patch.object(orch, "dispatch", side_effect=RuntimeError("bad procedure result")):
+            with self.assertRaisesRegex(RuntimeError, "bad procedure result"):
+                orch.invoke([])
+        client.conn.rollback.assert_called_once()
+        client.close.assert_not_called()
+        self.assertIs(next(iter(orch._CLIENTS.values())), client)
+
+    def test_failed_rollback_evicts_and_closes_session(self):
+        client = MagicMock()
+        client.conn.rollback.side_effect = orch.pyodbc.Error("rollback failed")
+        with patch.object(orch, "build_parser", return_value=MagicMock()), \
+             patch.object(orch, "prepare_args", return_value=self._prepared_args()), \
+             patch.object(orch, "_client_for", return_value=client), \
+             patch.object(orch, "dispatch", side_effect=RuntimeError("statement failed")):
+            with self.assertRaisesRegex(RuntimeError, "statement failed"):
+                orch.invoke([])
+        client.close.assert_called_once()
+        self.assertEqual(orch._CLIENTS, {})
+
+    def test_operational_error_closes_stale_client_and_retries_once(self):
+        first, second = MagicMock(), MagicMock()
+        err = orch.pyodbc.OperationalError("08S01", "connection lost")
+        with patch.object(orch, "build_parser", return_value=MagicMock()), \
+             patch.object(orch, "prepare_args", return_value=self._prepared_args()), \
+             patch.object(orch, "_client_for", side_effect=[first, second]), \
+             patch.object(orch, "dispatch", side_effect=[err, None]) as dispatch:
+            orch.invoke([])
+        self.assertEqual(dispatch.call_count, 2)
+        first.close.assert_called_once()
+        second.conn.commit.assert_called_once()
+        self.assertIs(next(iter(orch._CLIENTS.values())), second)
+
+
 class MainDispatchOrderTests(unittest.TestCase):
     """main()'s own body must still route to exactly the right handler."""
 
