@@ -128,5 +128,20 @@ class LearningPluginTests(unittest.TestCase):
         self.assertFalse(result["ok"]); self.assertFalse(result["retry_same_call"])
 
 
+class WorkerToolsetTests(unittest.TestCase):
+    """patch_l2_worker_budget used to rewrite the worker toolset without l2_learning,
+    so on-demand GBrain recall was removed on every deploy."""
+
+    def test_worker_budget_keeps_gbrain_recall_toolset(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import patch_l2_worker_budget
+        config = ("model:\n  default: q\nagent:\n  max_turns: 90\n"
+                  "platform_toolsets:\n  cli:\n    - file\n    - kanban\n    - skills\n    - xstudio_l2\n")
+        out = patch_l2_worker_budget.configure(config)
+        self.assertIn("    - l2_learning", out)
+        self.assertIn("    - xstudio_l2", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -977,9 +977,10 @@ def test_production_cards_render_typed_contract_and_no_raw_interpreter_recipe() 
     runtime = _load("l2_pipeline_runtime_test", ROOT / "l2_pipeline_runtime.py")
     body = runtime._query_instructions("RUN-1", "TICKET-1")
     assert "xstudio_l2" in body
-    for tool_name in ("select", "query", "suggest_tables",
-                      "heat_context", "save_ledger"):
-        assert tool_name in body
+    # Operations are described once, by the tool schemas; the card points to them and
+    # to on-demand knowledge instead of repeating an operations list.
+    assert "Tool schemas describe every xstudio_* operation" in body
+    assert "l2_recall" in body
     assert "RUN-1" in body and "TICKET-1" in body
     assert "A ticket/user identifier is not proof of database storage representation" in body
     assert "Evidence status: INCOMPLETE" in body

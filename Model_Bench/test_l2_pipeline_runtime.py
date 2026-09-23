@@ -442,7 +442,7 @@ class PipelineContractTests(unittest.TestCase):
             "run_id": "run-1", "ticket_id": "ticket-1", "api_type": "Inventory",
             "identifier": "B99402", "evidence_role": "investigator",
         })
-        self.assertIn('"action_id": "api-1"', rendered)
+        self.assertIn('"action_id":"api-1"', rendered)
 
     def test_dispatch_route_context_uses_typed_heat_context_with_run_provenance(self):
         ticket = {"ExtractedEntitiesJson": json.dumps({"HeatNo": "1602522"})}
@@ -454,7 +454,7 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(request, {"operation": "heat_context", "database": "XStudio_Xbatch",
                                    "run_id": "run-1", "ticket_id": "ticket-1", "heat": "1602522",
                                    "evidence_role": "investigator"})
-        self.assertIn('"action_id": "a-1"', rendered)
+        self.assertIn('"action_id":"a-1"', rendered)
 
     def test_dispatch_context_includes_bounded_world_recipe_and_relationships(self):
         ticket = {
@@ -465,9 +465,9 @@ class PipelineContractTests(unittest.TestCase):
                     "stdout": json.dumps({"ok": True, "evidence_refs": []})})()
         with patch.object(mod.subprocess, "run", return_value=completed):
             rendered = mod._dispatch_route_context("run-1", "ticket-1", ticket)
-        self.assertIn('"recipe_id": "xbatch.billet-inventory.v1"', rendered)
-        self.assertIn('"object": "Billet_Inventory"', rendered)
-        self.assertIn('"object": "XBatch_Material_Grade_Mst_Tbl"', rendered)
+        self.assertIn('"recipe_id":"xbatch.billet-inventory.v1"', rendered)
+        self.assertIn('"object":"Billet_Inventory"', rendered)
+        self.assertIn('"object":"XBatch_Material_Grade_Mst_Tbl"', rendered)
         self.assertLessEqual(len(rendered), 12000)
 
     def test_generic_dispatch_context_abstains_to_discover_recipe_without_bridge(self):
@@ -476,7 +476,7 @@ class PipelineContractTests(unittest.TestCase):
                 "run-1", "ticket-1", {"BriefDetails": "unclassified behaviour"}
             )
         bridge.assert_not_called()
-        self.assertIn('"recipe_id": "xbatch.discover.v1"', rendered)
+        self.assertIn('"recipe_id":"xbatch.discover.v1"', rendered)
 
     def test_priority_closes_work_before_new_claim(self):
         self.assertGreater(mod.REVIEW_PRIORITY, mod.REWORK_PRIORITY)
@@ -1355,7 +1355,7 @@ class PipelineContractTests(unittest.TestCase):
         # never carried the same typed-tool routing reminder investigation cards get.
         body = kwargs["spec"]["body"]
         self.assertIn("Typed XStudio investigation contract", body)
-        self.assertIn("Pass database explicitly", body)
+        self.assertEqual(body.count("--- Typed XStudio investigation contract ---"), 1)
 
     def test_build_stage_context_degrades_on_valid_non_dict_json_from_cli(self):
         """Antigravity review (Agent_Comms/0012): the CLI always prints a JSON
@@ -1559,7 +1559,7 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(result, "queued")
         body = captured["spec"]["body"]
         self.assertIn("Typed XStudio investigation contract", body)
-        self.assertIn("Pass database explicitly", body)
+        self.assertEqual(body.count("--- Typed XStudio investigation contract ---"), 1)
 
 
     def test_queued_local_model_without_card_is_not_orphan(self):
@@ -2006,8 +2006,7 @@ class PipelineContractTests(unittest.TestCase):
 
     def test_investigation_card_lists_semantic_context_tools(self):
         instructions = mod._query_instructions("run-1", "ticket-1")
-        self.assertIn("heat_context", instructions)
-        self.assertIn("sap_api_context", instructions)
+        self.assertIn("xstudio_submit_proposal", instructions)  # operations live in tool schemas
 
     def test_rework_card_repeats_typed_context_contract(self):
         task = {"id": "review-1", "body": "run_id: r\nticket_id: t\nticket_no: T1\nreview_cycle: 0"}
@@ -2020,7 +2019,7 @@ class PipelineContractTests(unittest.TestCase):
             mod.create_rework_card(mod.default_args(), source_task=task, reason="missing evidence",
                                    investigation_task_id="investigation-1")
         body = queue.call_args.kwargs["spec"]["body"]
-        self.assertIn("heat_context", body)
+        self.assertEqual(body.count("--- Typed XStudio investigation contract ---"), 1)
         self.assertIn("Deterministic live route/context", body)
         route.assert_called_once_with("r", "t", {"ExtractedEntitiesJson": '{"HeatNo":"1602522"}'})
 

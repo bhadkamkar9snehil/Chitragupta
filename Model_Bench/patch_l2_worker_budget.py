@@ -26,8 +26,10 @@ def configure(text: str) -> str:
     index = _find_key_line(lines, "cli", parent + 1, _block_end(lines, parent), 2)
     if index < 0:
         raise ValueError("Missing platform_toolsets.cli")
+    # Exact worker toolset. l2_learning carries l2_recall (on-demand GBrain); this list
+    # used to omit it and silently undo patch_profile_config on every deploy.
     lines[index:_block_end(lines, index)] = ["  cli:", "    - file", "    - kanban",
-                                           "    - skills", "    - xstudio_l2"]
+                                           "    - skills", "    - xstudio_l2", "    - l2_learning"]
     return "\n".join(lines) + "\n"
 
 
