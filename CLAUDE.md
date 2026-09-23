@@ -20,6 +20,8 @@ Do **not** duplicate the lifecycle architecture here. The authoritative sources 
 - Reviewer creation is deferred until investigator/rework completion is normalized and reviewable.
 - Reviewer receives frozen `proposal_json`; deterministic publisher publishes that same proposal.
 - Rework cycles use `review_cycle`, not SQL `AttemptNo`; max cycles = 3.
+- UPDATE continuations are capped at 3 per ticket version (no new requester input); the next UPDATE escalates to L3.
+- Stale/orphan recovery has one owner: `recover_orphan_runs` in the runtime. `--poll` no longer runs the blind `Hermes_L2_Recover_Stale_Runs_Usp` sweep.
 - `ticket_scout.py` is the 2-minute mutating reconciliation/claim backstop.
 - Separate 5-minute publish-safety-net and repair cron jobs were deliberately removed; do not recreate them.
 - L2 agents reach the database ONLY through the typed `xstudio_l2` tool (`xstudio-l2-tools` plugin + `Model_Bench/xstudio_l2_tool_bridge.py`). Model-driven terminal use of an interpreter, database driver, `sqlcmd`, or package install is blocked by the plugin guard and `approvals.deny`; benign terminal/file inspection still works. Raw agent SQL is read-only, arbitrary `EXEC` is unavailable, and `read_procedure` is an explicit allowlist. See `AGENTS.md` §8a.

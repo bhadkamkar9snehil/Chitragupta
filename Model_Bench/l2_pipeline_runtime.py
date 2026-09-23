@@ -87,6 +87,9 @@ MAX_QWEN_WAITING = _int_env("L2_MAX_QWEN_WAITING", 4, minimum=1, maximum=32)
 # only when a ticket is claimed into a genuinely new Hermes run; a reject/rework stays
 # inside the same run.
 MAX_REVIEW_CYCLES = 3  # cycle 0 initial + cycle 1/2 rework reviews; reject at 2 escalates
+# Published UPDATEs allowed on one ticket version (no new requester input) before the
+# next non-terminal outcome escalates. Live: tickets looped 5-15 UPDATEs with no progress.
+MAX_UPDATE_CONTINUATIONS = 3
 ORPHAN_GRACE_MINUTES = 45
 MIN_SUMMARY_CHARS = 40
 MODEL_CONTEXT_BUDGET_CHARS = 14000
@@ -985,6 +988,24 @@ def _l3_exists(args: argparse.Namespace, run_id: str) -> bool:
     return bool(rows)
 
 
+def _prior_update_continuations(args: argparse.Namespace, run_id: str) -> int:
+    """Published UPDATEs on this run's ticket version, excluding this run.
+
+    Same TicketModifiedOnSeen means the requester has added nothing since, so another
+    UPDATE cannot be justified by new input.
+    """
+    safe = run_id.replace("'", "''")
+    sql = (
+        "SELECT COUNT(*) AS N FROM dbo.Hermes_L2_Response_Trn_Tbl p "
+        "JOIN dbo.Hermes_L2_Response_Trn_Tbl r ON r.TicketID = p.TicketID "
+        "AND ISNULL(r.TicketModifiedOnSeen, '19000101') = ISNULL(p.TicketModifiedOnSeen, '19000101') "
+        f"WHERE r.ID = '{safe}' AND p.ID <> r.ID AND p.IsDeleted = 0 "
+        "AND p.ProcessStatus = 'COMPLETED' AND p.ResponseType = 'UPDATE'"
+    )
+    rows = run_orchestrator(args, ["--query", sql])
+    return int(rows[0].get("N") or 0) if isinstance(rows, list) and rows else 0
+
+
 # ---------------------------------------------------------------------------
 # Jev System-One semantic preflight
 # ---------------------------------------------------------------------------
@@ -1263,7 +1284,7 @@ def _try_qwen_free_handoff(
         proposal,
         source="Jev Qwen-free deterministic handoff",
     )
-    if publish_outcome not in {"published", "already_published"}:
+    if publish_outcome not in {"published", "already_published", "escalated"}:
         return None, f"deterministic publish returned {publish_outcome}; use local fallback"
 
     return {
@@ -2451,7 +2472,7 @@ def _apply_primary_review(
             source=f"Jev primary review for {task['id']}",
             dry_run=dry_run,
         )
-        counts["approved" if outcome == "published" else "unavailable"] += 1
+        counts[{"published": "approved", "escalated": "escalated"}.get(outcome, "unavailable")] += 1
         return
 
     if action == "REWORK":
@@ -2559,7 +2580,9 @@ def _escalate_run(
     reason: str,
     cycle: int,
     dry_run: bool,
+    budget: str | None = None,
 ) -> bool:
+    budget = budget or f"review/rework budget ({cycle + 1} cycles)"
     if dry_run:
         print(f"[DRY RUN] escalate run {run_id} after cycle {cycle}: {reason[:160]}")
         return True
@@ -2579,7 +2602,7 @@ def _escalate_run(
         }
         reply = (
             "Automated L2 did not reach an evidence-supported conclusion within its bounded "
-            f"review/rework budget ({cycle + 1} cycles). A human L3 investigation has been "
+            f"{budget}. A human L3 investigation has been "
             "created with the complete run audit and the specific remaining objection. "
             f"Remaining issue: {reason[:1200]}"
         )
@@ -2889,8 +2912,19 @@ def _publish_frozen_proposal(
         return "already_published"
     if not safe_query_active_run(run_id, args):
         return "inactive"
-    binding = load_workflow_binding()
     response_type = str(proposal["response_type"]).upper()
+    if response_type == "UPDATE":
+        prior = _prior_update_continuations(args, run_id)
+        if prior >= MAX_UPDATE_CONTINUATIONS:
+            reason = (
+                f"{prior} published UPDATE continuations on this ticket without new requester input; "
+                f"latest finding: {str(proposal.get('reply_text') or '')[:1200]}"
+            )
+            return "escalated" if _escalate_run(
+                args, run_id=run_id, ticket_id=ticket_id, reason=reason, cycle=0, dry_run=dry_run,
+                budget=f"continuation budget ({prior} updates with no new requester input)",
+            ) else "failed"
+    binding = load_workflow_binding()
     try:
         workflow_args, expected_status = _status_args_for_response(binding, proposal)
     except RuntimeError as exc:
@@ -2960,6 +2994,7 @@ def process_approvals(
         "already_published": 0,
         "inactive_skipped": 0,
         "blocked_configuration": 0,
+        "escalated": 0,
         "rework_created": 0,
     }
     source_tasks = tasks if tasks is not None else list_tasks()
@@ -3056,8 +3091,8 @@ def process_approvals(
                 counts["published"] += 1
             elif outcome == "already_published":
                 counts["already_published"] += 1
-            elif outcome == "blocked_configuration":
-                counts["blocked_configuration"] += 1
+            elif outcome in ("blocked_configuration", "escalated"):
+                counts[outcome] += 1
         except RuntimeError as exc:
             print(f"WARNING: approval processing failed for {task['id']}: {exc}")
 

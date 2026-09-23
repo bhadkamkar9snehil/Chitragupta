@@ -134,6 +134,7 @@ Ticket Scout / reconcile
 - Jev/local reviewers never publish; deterministic lifecycle code owns publication.
 - `review_cycle` counts reviewer/rework loops. SQL `AttemptNo` does not.
 - `MAX_REVIEW_CYCLES = 3`; rejection at cycle 2 escalates instead of creating cycle 3.
+- `MAX_UPDATE_CONTINUATIONS = 3` published `UPDATE`s per ticket version (no new requester input); the next `UPDATE` escalates through the same L3 handoff.
 - A rework is not complete until its fresh proposal receives a fresh Jev primary review; a local reviewer is added only if that review falls back.
 - The old `l2-review` board and `kanban_forward_bridge.py` are retired.
 - All investigator/reviewer/rework tasks live on the normal Kanban board.

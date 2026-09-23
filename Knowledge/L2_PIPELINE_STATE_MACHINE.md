@@ -421,6 +421,8 @@ cycle 2 = second focused rework
 
 `MAX_REVIEW_CYCLES = 3` means a rejection/rework request at the cap escalates instead of creating an unbounded loop.
 
+`MAX_UPDATE_CONTINUATIONS = 3`: once a ticket version (same `TicketModifiedOnSeen`, i.e. no new requester input) already has 3 published `UPDATE`s, the deterministic publisher escalates the next `UPDATE` through the same L3 handoff instead of publishing it. Continuations are bounded, not only review cycles.
+
 A Jev `REWORK` and a local-review rejection use the same deterministic rework path and preserve prior verified findings in the ledger.
 
 ## 9. Jev state and observability
@@ -511,7 +513,7 @@ A KB hit, previous ticket, snapshot, or memory item is a lead. A current-ticket 
 
 | Type | Meaning | Workflow Behavior |
 |---|---|---|
-| `UPDATE` | Verified progress exists, but incident is not finally resolved | Posts activity note; ticket remains `Enter`; bounded continuation window via `NextEligibleOn` (+15m) |
+| `UPDATE` | Verified progress exists, but incident is not finally resolved | Posts activity note; ticket remains `Enter`; bounded continuation window via `NextEligibleOn` (+15m); at most `MAX_UPDATE_CONTINUATIONS` per ticket version, then L3 handoff |
 | `QUESTION` | Specific requester fact is genuinely required | Applies configured `waiting_user_ask_status` (`Ask`) |
 | `RESOLUTION` | Outcome/fix is verified and complete | Moves ticket to `resolved_ticket_status` (`Closed`); fails closed if unbound |
 | `L3_ESCALATION` | Root cause unresolved or genuinely beyond L2 capability | Enters `Hermes_L3_Escalation_Trn_Tbl`; remains `Enter` (unbound L3 status) |

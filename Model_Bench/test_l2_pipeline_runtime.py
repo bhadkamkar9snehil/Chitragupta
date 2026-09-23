@@ -246,6 +246,39 @@ class PipelineContractTests(unittest.TestCase):
             self.assertEqual(run.call_count, 1)
             self.assertIn("--publish-response", run.call_args.args[1])
 
+    def _update_proposal(self):
+        return {"run_id": "run-u", "ticket_id": "ticket-u", "response_type": "UPDATE",
+                "reply_text": "Checked the heat log; next step is the SAP posting table."}
+
+    def test_update_below_continuation_cap_publishes_normally(self):
+        with patch.object(mod, "_proposal_complete", return_value=True),                 patch.object(mod, "_query_published_state", return_value=[]),                 patch.object(mod, "safe_query_active_run", return_value=True),                 patch.object(mod, "_prior_update_continuations", return_value=mod.MAX_UPDATE_CONTINUATIONS - 1),                 patch.object(mod, "_escalate_run") as escalate:
+            outcome = mod._publish_frozen_proposal(mod.default_args(), self._update_proposal(),
+                                                   source="test", dry_run=True)
+        self.assertEqual(outcome, "published")
+        escalate.assert_not_called()
+
+    def test_update_at_continuation_cap_escalates_instead_of_looping(self):
+        """Live: Ticket_239 published 5 UPDATEs on one ticket version with no progress."""
+        with patch.object(mod, "_proposal_complete", return_value=True),                 patch.object(mod, "_query_published_state", return_value=[]),                 patch.object(mod, "safe_query_active_run", return_value=True),                 patch.object(mod, "_prior_update_continuations", return_value=mod.MAX_UPDATE_CONTINUATIONS),                 patch.object(mod, "_escalate_run", return_value=True) as escalate:
+            outcome = mod._publish_frozen_proposal(mod.default_args(), self._update_proposal(), source="test")
+        self.assertEqual(outcome, "escalated")
+        self.assertIn("continuation budget", escalate.call_args.kwargs["budget"])
+        self.assertIn("SAP posting table", escalate.call_args.kwargs["reason"])
+
+    def test_non_update_outcomes_are_never_continuation_capped(self):
+        proposal = {**self._update_proposal(), "response_type": "QUESTION"}
+        with patch.object(mod, "_proposal_complete", return_value=True),                 patch.object(mod, "_query_published_state", return_value=[]),                 patch.object(mod, "safe_query_active_run", return_value=True),                 patch.object(mod, "_status_args_for_response", return_value=([], None)),                 patch.object(mod, "_prior_update_continuations") as prior:
+            mod._publish_frozen_proposal(mod.default_args(), proposal, source="test", dry_run=True)
+        prior.assert_not_called()
+
+    def test_escalation_reply_names_the_budget_that_was_exhausted(self):
+        with patch.object(mod, "run_orchestrator") as invoke, patch.object(mod, "_post_publish_activity"):
+            mod._escalate_run(mod.default_args(), run_id="r", ticket_id="t", reason="x", cycle=0,
+                              dry_run=False, budget="continuation budget (3 updates with no new requester input)")
+        reply = invoke.call_args.args[1][invoke.call_args.args[1].index("--reply-text") + 1]
+        self.assertIn("continuation budget (3 updates", reply)
+        self.assertNotIn("review/rework", reply)
+
     def test_review_cap_publishes_a_real_l3_handoff_not_a_failed_run(self):
         with patch.object(mod, "run_orchestrator") as invoke, \
                 patch.object(mod, "_post_publish_activity") as activity:
