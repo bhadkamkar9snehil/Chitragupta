@@ -43,9 +43,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+
 try:
+    from Model_Bench import direct_answer
     from Model_Bench.xbatch_world import load_world, select_recipes, world_context
 except ImportError:  # deployed scripts live beside xbatch_world.py
+    import direct_answer
     from xbatch_world import load_world, select_recipes, world_context
 
 
@@ -1099,9 +1102,7 @@ def _resolve_execution_contract(assessment: dict[str, Any]) -> dict[str, Any]:
     """Turn Jev's advisory execution-depth choice into deterministic runtime policy.
 
     Jev may recommend the cheapest sufficient mode, but the harness owns the
-    actual boundary. QWEN_FREE is intentionally narrow: only escalation/human
-    handoff outcomes can skip prose generation, and only at high evidence and
-    low-reasoning/probe uncertainty.
+    actual boundary. The no-Qwen path is decided separately by _jev_direct_answer.
     """
     if not isinstance(assessment, dict) or not assessment.get("ok"):
         return {
@@ -1125,18 +1126,6 @@ def _resolve_execution_contract(assessment: dict[str, Any]) -> dict[str, Any]:
     human_action = _noul_answer(assessment, "human_action_required", 0.0)
     quality = _score_answer(assessment, "confidence_quality", 0.0)
 
-    qwen_free_safe = (
-        recommended == "QWEN_FREE"
-        and recommendation_confidence >= 0.90
-        and response_confidence >= 0.90
-        and response_type in {"L3_ESCALATION", "NEEDS_HUMAN_ACTION"}
-        and evidence >= 0.90
-        and needs_probe <= 0.15
-        and needs_local <= 0.10
-        and quality >= 2.60
-        and (response_type != "NEEDS_HUMAN_ACTION" or human_action >= 0.85)
-    )
-
     compose_safe = (
         recommended in {"QWEN_FREE", "COMPOSE_ONLY"}
         and evidence >= 0.80
@@ -1144,16 +1133,8 @@ def _resolve_execution_contract(assessment: dict[str, Any]) -> dict[str, Any]:
         and quality >= 2.00
     )
 
-    if qwen_free_safe:
-        mode = "QWEN_FREE"
-    elif compose_safe:
-        mode = "COMPOSE_ONLY"
-    else:
-        mode = "FOCUSED_REASONING"
-
-    if mode == "QWEN_FREE":
-        max_reads = 0
-    elif mode == "COMPOSE_ONLY":
+    mode = "COMPOSE_ONLY" if compose_safe else "FOCUSED_REASONING"
+    if mode == "COMPOSE_ONLY":
         max_reads = 0 if needs_probe <= 0.15 else 1
     else:
         max_reads = 3 if needs_probe >= 0.50 else 2
@@ -1162,11 +1143,9 @@ def _resolve_execution_contract(assessment: dict[str, Any]) -> dict[str, Any]:
         "recommended_mode": recommended,
         "recommendation_confidence": recommendation_confidence,
         "execution_mode": mode,
-        # If a Qwen-free attempt is rejected by the primary review or workflow
-        # binding, its fallback local task is only a composer, not a fresh investigation.
-        "local_model_scope": "COMPOSE_ONLY" if mode == "QWEN_FREE" else mode,
+        "local_model_scope": mode,
         "max_additional_live_reads": max_reads,
-        "load_route_skill": mode != "QWEN_FREE" and needs_route_skill >= 0.55,
+        "load_route_skill": needs_route_skill >= 0.55,
         "response_type": response_type,
         "response_type_confidence": response_confidence,
         "evidence_sufficient": evidence,
@@ -1181,75 +1160,39 @@ def _context_budget_for_mode(mode: str) -> int:
     return int(CONTEXT_MODE_BUDGET_CHARS.get(mode, CONTEXT_MODE_BUDGET_CHARS["FOCUSED_REASONING"]))
 
 
-def _qwen_free_proposal(
-    *,
-    run_id: str | None,
-    ticket_id: str,
-    ticket_context: dict[str, Any],
-    probes: list[dict[str, Any]],
-    execution_contract: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Render only bounded handoff outcomes that do not need generative prose."""
-    if not run_id or execution_contract.get("execution_mode") != "QWEN_FREE":
-        return None
+DIRECT_ANSWER_MIN_CONFIDENCE = float(os.environ.get("L2_DIRECT_ANSWER_MIN_CONFIDENCE", "0.70"))
 
-    response_type = str(execution_contract.get("response_type") or "").upper()
-    if response_type == "L3_ESCALATION":
-        reply = (
-            "The bounded L2 evidence does not support a safe automated resolution. "
-            "This case requires L3 review. No corrective action was applied automatically."
-        )
-    elif response_type == "NEEDS_HUMAN_ACTION":
-        reply = (
-            "Current evidence indicates that the next corrective step requires authorized "
-            "human action. Hermes did not apply the change automatically; the case requires "
-            "an authorized handoff."
-        )
-    else:
-        return None
 
-    findings: list[str] = []
-    for item in probes[:3]:
-        if not isinstance(item, dict):
-            continue
-        candidate = item.get("candidate") or {}
-        probe = item.get("probe") or {}
-        if not isinstance(probe, dict) or not probe.get("ok"):
-            continue
-        table = ".".join(
-            part for part in (str(candidate.get("database") or ""), str(candidate.get("table") or ""))
-            if part
-        )
-        rows = probe.get("rows")
-        row_count = len(rows) if isinstance(rows, list) else 0
-        identifier = probe.get("identifier") or {}
-        identifier_column = identifier.get("column") if isinstance(identifier, dict) else None
-        if probe.get("probe_possible"):
-            detail = f"{table or 'live source'}: bounded live read returned {row_count} row(s)"
-            if identifier_column:
-                detail += f" using {identifier_column}"
-            findings.append(detail + ".")
+def _jev_direct_answer(
+    *, ticket: dict[str, Any], probes: list[dict[str, Any]], run_id: str | None, ticket_id: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """No-Qwen answer: audited facts -> Jev picks the outcome -> templated reply.
 
-    problem_summary = str(
-        ticket_context.get("BriefDetails")
-        or ticket_context.get("Description")
-        or "Current support request"
-    ).strip()[:800]
-
-    return {
-        "run_id": str(run_id),
-        "ticket_id": str(ticket_id),
-        "response_type": response_type,
-        "reply_text": reply,
-        "problem_summary": problem_summary,
-        "findings": " ".join(findings) if findings else (
-            "Jev assessed the bounded current-ticket evidence as sufficient for a handoff outcome; "
-            "no production/configuration mutation was performed."
-        ),
-        "execution_mode": "QWEN_FREE",
-        "generated_by": "deterministic_jev_fast_path",
-    }
-
+    Returns (frozen proposal or None, decision record). None means Qwen is needed.
+    """
+    table = direct_answer.build_facts(ticket, probes)
+    record: dict[str, Any] = {"facts": len(table["facts"]), "compared": table["compared"],
+                              "mismatches": table["mismatches"], "searched": len(table["searched"])}
+    if not run_id or not table["searched"]:
+        return None, {**record, "reason": "no audited probe evidence"}
+    call = _run_jev_workflow(
+        "direct_answer",
+        {"ticket": {k: ticket.get(k) for k in ("BriefDetails", "Description", "ConversationSummary")},
+         "fact_table": direct_answer.compact_for_jev(table)},
+        ticket_id=ticket_id, run_id=run_id, audit_stage="JEV_DIRECT_ANSWER",
+    )
+    result = call.get("result") if call.get("ok") else {}
+    outcome, confidence = _choice_answer(result or {}, "outcome", "NEEDS_REASONING")
+    answers = _noul_answer(result or {}, "facts_answer_question", 0.0)
+    record.update(outcome=outcome, confidence=confidence, facts_answer_question=answers)
+    if outcome == "NEEDS_REASONING" or min(confidence, answers) < DIRECT_ANSWER_MIN_CONFIDENCE:
+        return None, {**record, "reason": "Jev did not choose a confident direct outcome"}
+    proposal = direct_answer.proposal_for(outcome, table, run_id=str(run_id), ticket_id=ticket_id,
+                                          ticket=ticket)
+    if proposal is None:
+        return None, {**record, "reason": f"facts cannot carry outcome {outcome}"}
+    proposal["jev_direct_answer"] = record
+    return proposal, record
 
 
 def _try_qwen_free_handoff(
@@ -1257,7 +1200,7 @@ def _try_qwen_free_handoff(
     binding: dict[str, Any],
     proposal: dict[str, Any] | None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Attempt the narrow Jev-only handoff; otherwise return a local-model fallback reason."""
+    """Publish Jev's direct answer; otherwise return the local-model fallback reason."""
     if not proposal:
         return None, None
 
@@ -1268,17 +1211,10 @@ def _try_qwen_free_handoff(
     if not expected_handoff_status:
         return None, "workflow binding has no exact terminal status for this handoff outcome"
 
-    review = _jev_primary_review(args, proposal)
-    if review.get("action") != "APPROVE":
-        return None, (
-            "Jev primary review did not approve the deterministic fast path: "
-            f"{review.get('action') or 'unknown'}"
-        )
-
     publish_outcome = _publish_frozen_proposal(
         args,
         proposal,
-        source="Jev Qwen-free deterministic handoff",
+        source="Jev direct answer (no local model)",
     )
     if publish_outcome not in {"published", "already_published", "escalated"}:
         return None, f"deterministic publish returned {publish_outcome}; use local fallback"
@@ -1288,7 +1224,7 @@ def _try_qwen_free_handoff(
         "run_id": str(proposal.get("run_id") or ""),
         "ticket_id": str(proposal.get("ticket_id") or ""),
         "response_type": proposal.get("response_type"),
-        "primary_review": review,
+        "direct_answer": proposal.get("jev_direct_answer"),
         "publish_outcome": publish_outcome,
         "investigator_task_id": None,
         "reviewer_task_id": None,
@@ -1919,6 +1855,8 @@ def _jev_first_investigation(
             "relationship_hops": hops,
         })
 
+    direct, direct_record = _jev_direct_answer(ticket=ticket, probes=probes, run_id=run_id,
+                                               ticket_id=ticket_id)
     chunks = _make_context_chunks(
         ticket_context=ticket_context,
         routing_context=routing_context,
@@ -1930,6 +1868,15 @@ def _jev_first_investigation(
         probes=probes,
         gbrain=gbrain,
     )
+    if direct is not None:
+        return {
+            "enabled": True, "evidence_plan": plan, "selected_candidate_count": len(selected),
+            "live_probes": probes, "assessment": {"ok": False, "reason": "answered directly by Jev"},
+            "context_chunks": chunks, "execution_contract": {"execution_mode": "QWEN_FREE"},
+            "execution_mode": "QWEN_FREE", "local_model_scope": "COMPOSE_ONLY",
+            "max_additional_live_reads": 0, "load_route_skill": False,
+            "qwen_free_proposal": direct, "direct_answer": direct_record,
+        }
     assessment_state = {
         "ticket": ticket_context,
         "routing_context": routing_context,
@@ -1957,13 +1904,6 @@ def _jev_first_investigation(
     execution_contract = _resolve_execution_contract(
         assessment if isinstance(assessment, dict) else {}
     )
-    qwen_free_proposal = _qwen_free_proposal(
-        run_id=run_id,
-        ticket_id=ticket_id,
-        ticket_context=ticket_context,
-        probes=probes,
-        execution_contract=execution_contract,
-    )
     return {
         "enabled": True,
         "evidence_plan": plan,
@@ -1976,7 +1916,8 @@ def _jev_first_investigation(
         "local_model_scope": execution_contract["local_model_scope"],
         "max_additional_live_reads": execution_contract["max_additional_live_reads"],
         "load_route_skill": execution_contract["load_route_skill"],
-        "qwen_free_proposal": qwen_free_proposal,
+        "qwen_free_proposal": None,
+        "direct_answer": direct_record,
     }
 
 

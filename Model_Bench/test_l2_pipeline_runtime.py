@@ -731,6 +731,8 @@ class PipelineContractTests(unittest.TestCase):
             if workflow == "investigation_assessment":
                 self.assertEqual(len(state["live_probes"]), 1)
                 return {"ok": True, "result": assessment}
+            if workflow == "direct_answer":  # the probe row names no ticket field -> Qwen path
+                return {"ok": True, "result": {"answers": {}}}
             raise AssertionError(workflow)
 
         with patch.object(mod, "_run_jev_workflow", side_effect=fake_jev), \
@@ -751,32 +753,6 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(package["local_model_scope"], "COMPOSE_ONLY")
         self.assertEqual(package["max_additional_live_reads"], 0)
         self.assertFalse(package["load_route_skill"])
-
-    def test_execution_contract_allows_qwen_free_only_for_high_confidence_handoff(self):
-        assessment = {
-            "ok": True,
-            "answers": {
-                "evidence_sufficient": {"type": "noul", "noul": 0.97},
-                "response_type": {
-                    "type": "choice", "choice": "L3_ESCALATION", "confidence": 0.96,
-                    "probabilities": {"L3_ESCALATION": 0.96},
-                },
-                "execution_mode": {
-                    "type": "choice", "choice": "QWEN_FREE", "confidence": 0.95,
-                    "probabilities": {"QWEN_FREE": 0.95},
-                },
-                "needs_additional_probe": {"type": "noul", "noul": 0.05},
-                "needs_local_model": {"type": "noul", "noul": 0.03},
-                "needs_route_skill": {"type": "noul", "noul": 0.1},
-                "human_action_required": {"type": "noul", "noul": 0.1},
-                "confidence_quality": {"type": "score", "score": 2.9, "confidence": 0.95},
-            },
-        }
-        contract = mod._resolve_execution_contract(assessment)
-        self.assertEqual(contract["execution_mode"], "QWEN_FREE")
-        self.assertEqual(contract["local_model_scope"], "COMPOSE_ONLY")
-        self.assertEqual(contract["max_additional_live_reads"], 0)
-        self.assertFalse(contract["load_route_skill"])
 
     def test_execution_contract_loads_route_skill_only_when_jev_says_it_matters(self):
         assessment = {
@@ -803,62 +779,6 @@ class PipelineContractTests(unittest.TestCase):
         self.assertTrue(contract["load_route_skill"])
         self.assertEqual(contract["max_additional_live_reads"], 3)
 
-    def test_execution_contract_downgrades_qwen_free_resolution_to_compose_only(self):
-        assessment = {
-            "ok": True,
-            "answers": {
-                "evidence_sufficient": {"type": "noul", "noul": 0.98},
-                "response_type": {
-                    "type": "choice", "choice": "RESOLUTION", "confidence": 0.98,
-                    "probabilities": {"RESOLUTION": 0.98},
-                },
-                "execution_mode": {
-                    "type": "choice", "choice": "QWEN_FREE", "confidence": 0.98,
-                    "probabilities": {"QWEN_FREE": 0.98},
-                },
-                "needs_additional_probe": {"type": "noul", "noul": 0.02},
-                "needs_local_model": {"type": "noul", "noul": 0.02},
-                "needs_route_skill": {"type": "noul", "noul": 0.1},
-                "human_action_required": {"type": "noul", "noul": 0.0},
-                "confidence_quality": {"type": "score", "score": 3.0, "confidence": 0.98},
-            },
-        }
-        contract = mod._resolve_execution_contract(assessment)
-        self.assertEqual(contract["execution_mode"], "COMPOSE_ONLY")
-        self.assertIsNone(mod._qwen_free_proposal(
-            run_id="r1",
-            ticket_id="t1",
-            ticket_context={"BriefDetails": "known issue"},
-            probes=[],
-            execution_contract=contract,
-        ))
-
-    def test_qwen_free_proposal_is_deterministic_handoff_not_resolution(self):
-        contract = {
-            "execution_mode": "QWEN_FREE",
-            "response_type": "NEEDS_HUMAN_ACTION",
-        }
-        proposal = mod._qwen_free_proposal(
-            run_id="r1",
-            ticket_id="t1",
-            ticket_context={"BriefDetails": "configuration correction required"},
-            probes=[{
-                "candidate": {"database": "XStudio_Xbatch", "table": "dbo.Config"},
-                "probe": {
-                    "ok": True,
-                    "probe_possible": True,
-                    "identifier": {"column": "BatchNo", "value": "B1"},
-                    "rows": [{"BatchNo": "B1"}],
-                },
-            }],
-            execution_contract=contract,
-        )
-        self.assertIsNotNone(proposal)
-        self.assertEqual(proposal["response_type"], "NEEDS_HUMAN_ACTION")
-        self.assertEqual(proposal["execution_mode"], "QWEN_FREE")
-        self.assertNotIn("resolved", proposal["reply_text"].lower())
-        self.assertIn("did not apply", proposal["reply_text"].lower())
-
     def test_qwen_free_handoff_requires_exact_workflow_binding_before_review(self):
         proposal = {
             "run_id": "r1",
@@ -878,29 +798,42 @@ class PipelineContractTests(unittest.TestCase):
         review.assert_not_called()
         publish.assert_not_called()
 
-    def test_qwen_free_handoff_still_requires_jev_primary_approval(self):
-        proposal = {
-            "run_id": "r1",
-            "ticket_id": "t1",
-            "response_type": "L3_ESCALATION",
-            "reply_text": "handoff",
-        }
-        with patch.object(
-            mod, "_jev_primary_review",
-            return_value={"action": "APPROVE", "ok": True},
-        ) as review, patch.object(
-            mod, "_publish_frozen_proposal",
-            return_value="published",
-        ) as publish:
+    def _direct(self, outcome, confidence=0.9, row=None):
+        ticket = {"BriefDetails": "LRF Arcing time inquiry", "Description": "ArcingTime of 21.0000 min"}
+        probes = [{"probe": {"ok": True, "probe_possible": True, "table": "dbo.LRF_Per_Heat",
+                             "action_id": "A1", "identifier": {"column": "HeatID", "value": "1604007"},
+                             "rows": [row or {"ArcingTime": "21.0000"}]}}]
+        jev = {"ok": True, "result": {"answers": {
+            "outcome": {"type": "choice", "choice": outcome, "confidence": confidence},
+            "facts_answer_question": {"type": "noul", "noul": confidence}}}}
+        with patch.object(mod, "_run_jev_workflow", return_value=jev) as call:
+            proposal, record = mod._jev_direct_answer(ticket=ticket, probes=probes, run_id="r1", ticket_id="t1")
+        self.assertEqual(call.call_args.args[0], "direct_answer")
+        return proposal, record
+
+    def test_jev_outcome_on_audited_facts_answers_without_qwen(self):
+        proposal, record = self._direct("CONFIRMED")
+        self.assertEqual(proposal["response_type"], "RESOLUTION")
+        self.assertEqual(proposal["execution_mode"], "QWEN_FREE")
+        self.assertEqual(proposal["claims"][0]["evidence"], [{"action_id": "A1"}])
+        self.assertEqual(record["outcome"], "CONFIRMED")
+
+    def test_unsure_or_reasoning_outcome_falls_back_to_qwen(self):
+        self.assertIsNone(self._direct("CONFIRMED", confidence=0.5)[0])
+        self.assertIsNone(self._direct("NEEDS_REASONING")[0])
+        # Jev's outcome must agree with the facts: a mismatch cannot be CONFIRMED.
+        self.assertIsNone(self._direct("CONFIRMED", row={"ArcingTime": "22"})[0])
+
+    def test_direct_answer_publishes_without_a_second_review(self):
+        proposal = {"run_id": "r1", "ticket_id": "t1", "response_type": "RESOLUTION",
+                    "reply_text": "We checked ...", "jev_direct_answer": {"outcome": "CONFIRMED"}}
+        with patch.object(mod, "_jev_primary_review") as review, \
+                patch.object(mod, "_publish_frozen_proposal", return_value="published") as publish:
             result, reason = mod._try_qwen_free_handoff(
-                mod.default_args(),
-                {"l3_ticket_status": "Escalated"},
-                proposal,
-            )
+                mod.default_args(), {"resolved_ticket_status": "Closed"}, proposal)
         self.assertIsNone(reason)
         self.assertEqual(result["status"], "JEV_QWEN_FREE_PUBLISHED")
-        self.assertEqual(result["investigator_task_id"], None)
-        review.assert_called_once()
+        review.assert_not_called()
         publish.assert_called_once()
 
     def test_context_budget_is_smaller_for_compose_only_than_focused_reasoning(self):

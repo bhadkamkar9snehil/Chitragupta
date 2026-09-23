@@ -469,11 +469,16 @@ def test_probe_table_uses_real_identifier_and_never_broad_fishes() -> None:
             assert "HeatNo" in kwargs["columns"]
             return {"ok": True, "sql": "SELECT ...", "table": "dbo.Heat_Vw"}
 
-        @staticmethod
-        def run_readonly_query(client, sql, database, run_id=None):
-            assert database == "XStudio_Xbatch"
-            assert run_id == "r1"
-            return [{"HeatNo": "H123", "Status": "Running"}]
+    class FakeClient:
+        """One audited execution returns rows + action ID (no second raw read)."""
+        evidence = None
+
+        def execute_readonly_sql_with_rows(self, **kwargs):
+            assert kwargs["database_name"] == "XStudio_Xbatch" and kwargs["run_id"] == "r1"
+            return "ACT-1", [{"HeatNo": "H123", "Status": "Running"}]
+
+        def update_sql_action_evidence(self, action_id, after_json):
+            FakeClient.evidence = (action_id, after_json)
 
     allowlist = {"XStudio_Xbatch": {"dbo.Heat_Vw": ["HeatNo", "Status", "Reason", "EventTime"]}}
     with mock.patch.object(bridge, "_load_allowlist", return_value=allowlist), \
@@ -485,7 +490,9 @@ def test_probe_table_uses_real_identifier_and_never_broad_fishes() -> None:
             "ticket": {"HeatNo": "H123"},
             "run_id": "r1",
             "matched_columns": ["Status"],
-        }, object())
+        }, FakeClient())
+    assert result["action_id"] == "ACT-1"
+    assert FakeClient.evidence == ("ACT-1", [{"HeatNo": "H123", "Status": "Running"}])
     assert result["ok"] is True
     assert result["probe_possible"] is True
     assert result["identifier"] == {"column": "HeatNo", "value": "H123"}

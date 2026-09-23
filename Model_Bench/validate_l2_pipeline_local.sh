@@ -83,6 +83,9 @@ PY_FILES=(
   Model_Bench/jev/audit.py
   Model_Bench/model_scorecard.py
   Model_Bench/test_jev_fabric.py
+  Model_Bench/direct_answer.py
+  Model_Bench/jev/direct_answer.py
+  Model_Bench/test_direct_answer.py
   Model_Bench/test_kb_retrieval.py
   Model_Bench/patch_profile_config.py
   Model_Bench/patch_tool_search_off.py
@@ -130,6 +133,7 @@ run_fast_checks() {
 
   section "TypeSafe Jev fabric contract tests"
   timed "Jev fabric tests" python3 Model_Bench/test_jev_fabric.py
+  timed "No-Qwen direct answer tests" python3 Model_Bench/test_direct_answer.py
 
   section "Knowledge/skill validation"
   timed "knowledge manifest" python3 Model_Bench/validate_knowledge_manifest.py

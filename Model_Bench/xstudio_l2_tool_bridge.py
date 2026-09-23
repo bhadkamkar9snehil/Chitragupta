@@ -197,8 +197,9 @@ def _escape_sql_string(value: Any) -> str:
 
 
 _IDENTIFIER_PRIORITY = [
-    "transactionid", "heatno", "batchno", "workorderno", "workorder",
-    "productionorder", "orderno", "materialdocument", "recipeid", "recipeno",
+    "transactionid", "billetno", "materialdocument", "workordernumber", "heatno", "batchno",
+    "workorderno", "workorder",
+    "productionorder", "orderno", "recipeid", "recipeno",
     "equipmentid", "equipment", "heatid", "batchid",
 ]
 
@@ -313,6 +314,25 @@ def _probe_columns(filter_column: str, real_columns: list[str], requested: list[
     return columns[:_PROBE_COLUMN_LIMIT]
 
 
+def _audited_probe_read(client: Any, *, run_id: str, database: str, table: str, sql: str,
+                        operation: str, filter_column: str, filter_value: str) -> tuple[list[dict[str, Any]], str | None]:
+    """One audited read: the audit SP executes the SELECT once and returns rows + action ID.
+
+    run_readonly_query ran every probe twice (an audit row with no result, then a raw
+    read) and dropped the action ID, so probe evidence could never back a VERIFIED claim.
+    """
+    action_id, rows = client.execute_readonly_sql_with_rows(
+        run_id=run_id, database_name=database, sql=sql, schema_name="dbo",
+        object_name=table.split(".")[-1], operation_name=operation,
+        purpose=f"Ticket probe of {table} by {filter_column}",
+        parameters_json={filter_column: filter_value},
+    )
+    rows = rows[:MAX_LIST_ITEMS]
+    if action_id:
+        client.update_sql_action_evidence(action_id, after_json=rows)
+    return rows, action_id
+
+
 def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
     """Probe one allowlisted table by one strong ticket identifier."""
     database = str(_database(req))
@@ -358,12 +378,14 @@ def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
     if not built.get("ok"):
         return {"operation": "probe_table", **built, "retry_same_call": False}
 
-    rows = _orchestrator().run_readonly_query(
-        client, built["sql"], database=database, run_id=run_id
+    rows, action_id = _audited_probe_read(
+        client, run_id=run_id, database=database, table=qualified, sql=built["sql"],
+        operation="l2_probe_table", filter_column=filter_column, filter_value=filter_value,
     )
     return {
         "ok": True,
         "operation": "probe_table",
+        "action_id": action_id,
         "database": database,
         "table": qualified,
         "probe_possible": True,
@@ -421,12 +443,14 @@ def _probe_related_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
     if not built.get("ok"):
         return {"operation": "probe_related_table", **built, "retry_same_call": False}
 
-    rows = _orchestrator().run_readonly_query(
-        client, built["sql"], database=database, run_id=run_id
+    rows, action_id = _audited_probe_read(
+        client, run_id=run_id, database=database, table=qualified, sql=built["sql"],
+        operation="l2_probe_related_table", filter_column=real_filter_column, filter_value=filter_value,
     )
     return {
         "ok": True,
         "operation": "probe_related_table",
+        "action_id": action_id,
         "database": database,
         "table": qualified,
         "identifier": {"column": real_filter_column, "value": filter_value},

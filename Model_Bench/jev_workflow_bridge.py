@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Windows-side bridge for the four runtime Jev workflows.
+"""Windows-side bridge for the runtime Jev workflows.
 
 JSON in on stdin, JSON out on stdout. The Hermes model never calls this bridge
 or chooses a Jev workflow; deterministic Chitragupta runtime code does.
@@ -17,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from Model_Bench.jev.audit import persist_rows, rows_for_result
+from Model_Bench.jev.direct_answer import choose_outcome
 from Model_Bench.jev.evidence_plan import plan_evidence
 from Model_Bench.jev.investigation_assessment import assess_investigation
 from Model_Bench.jev.relationship_hops import select_relationship_hops
@@ -52,6 +53,10 @@ def _investigation_assessment(_req: dict[str, Any], state: dict[str, Any]) -> di
     return assess_investigation(state)
 
 
+def _direct_answer(_req: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    return choose_outcome(state)
+
+
 def _primary_review(_req: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     return review_proposal(state)
 
@@ -62,6 +67,7 @@ _WORKFLOWS: dict[str, WorkflowHandler] = {
     "relationship_hops": _relationship_hops,
     "investigation_assessment": _investigation_assessment,
     "primary_review": _primary_review,
+    "direct_answer": _direct_answer,
 }
 
 _QUESTION_VERSIONS = {
@@ -72,6 +78,7 @@ _QUESTION_VERSIONS = {
     # evidence/meta-attention request. Keep audit dedupe aware of that change.
     "investigation_assessment": "v2",
     "primary_review": "v1",
+    "direct_answer": "v1",
 }
 
 
