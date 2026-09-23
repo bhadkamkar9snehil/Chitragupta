@@ -1855,7 +1855,7 @@ def _cli_reject_draft(args: argparse.Namespace, parser: argparse.ArgumentParser)
                        "reason": args.rejection_reason}, indent=2))
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Hermes L2 Investigation Orchestrator")
     parser.add_argument("--server", default=os.environ.get("MSSQL_MCP_SERVER"))
     parser.add_argument("--database", default=None,
@@ -2111,7 +2111,12 @@ def main() -> None:
                               "Use this whenever your task body's embedded entity data might be "
                               "stale (e.g. corrected after you were assigned) -- don't keep "
                               "querying against values that were already fixed upstream.")
-    args = parser.parse_args()
+    return parser
+
+
+def prepare_args(parser: argparse.ArgumentParser, argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """Parse and validate CLI arguments (shared by main() and in-process invoke())."""
+    args = parser.parse_args(argv)
     # --build-query needs to know whether --database was actually typed by
     # the caller, to decide whether an ambiguous table name (one that
     # exists in more than one database) deserves a warning. Captured here,
@@ -2119,7 +2124,7 @@ def main() -> None:
     # for every other code path -- confirmed live this exact bug: the
     # ambiguity warning could never fire because args.database was never
     # actually None by the time --build-query's own handler ran.
-    _database_explicitly_given = args.database
+    args.database_explicitly_given = args.database
 
     if not args.server:
         parser.error("--server is required (or set MSSQL_MCP_SERVER)")
@@ -2136,74 +2141,130 @@ def main() -> None:
     if args.database is None:
         args.database = DEFAULT_DATABASE
 
-    client = HermesL2Client(
+    return args
+
+
+def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    """Run the one CLI operation selected by args on an already-open client."""
+    if args.discover_workflow:
+        return _cli_discover_workflow(client)
+    if args.local_model_action:
+        return _cli_local_model_action(args, parser, client)
+    if args.poll:
+        return _cli_poll(args, parser, client)
+    if args.log_activity:
+        return _cli_log_activity(args, parser, client)
+    if args.search_solutions:
+        return _cli_search_solutions(args, client)
+    if args.create_solution:
+        return _cli_create_solution(args, parser, client)
+    if args.link_solution:
+        return _cli_link_solution(args, parser, client)
+    if args.get_activity:
+        return _cli_get_activity(args, parser, client)
+    if args.list_root_cause_categories:
+        return _cli_list_root_cause_categories(client)
+    if args.create_problem:
+        return _cli_create_problem(args, parser, client)
+    if args.link_problem:
+        return _cli_link_problem(args, parser, client)
+    if args.find_sql_objects:
+        return _cli_find_sql_objects(args, client)
+    if args.get_sql_object_definition:
+        return _cli_get_sql_object_definition(args, client)
+    if args.get_reference_documents:
+        return _cli_get_reference_documents(args, client)
+    if args.get_run_actions:
+        return _cli_get_run_actions(args, client)
+    if args.get_ticket_context:
+        return _cli_get_ticket_context(args, client)
+    if args.build_query:
+        return _cli_build_query(args, parser, client, args.database_explicitly_given)
+    if args.suggest_tables:
+        return _cli_suggest_tables(args, args.database_explicitly_given)
+    if args.save_ledger:
+        return _cli_save_ledger(args, parser, client)
+    if args.investigate_bundle:
+        return _cli_investigate_bundle(args, client)
+    if args.get_ledger:
+        return _cli_get_ledger(args, client)
+    if args.query:
+        return _cli_query(args, parser, client)
+    if args.escalate_blocked:
+        return _cli_escalate_blocked(args, parser, client)
+    if args.fail_run:
+        return _cli_fail_run(args, parser, client)
+    if args.publish_response:
+        return _cli_publish_response(args, parser, client)
+    if args.draft_response:
+        return _cli_draft_response(args, parser, client)
+    if args.approve_draft:
+        return _cli_approve_draft(args, parser, client)
+    if args.reject_draft:
+        return _cli_reject_draft(args, parser)
+    parser.error("Pass one of --discover-workflow, --poll, --publish-response, "
+                  "--draft-response, --approve-draft, or --reject-draft.")
+
+
+def _client_for(args: argparse.Namespace) -> "HermesL2Client":
+    return HermesL2Client(
         server=args.server, database=args.database, username=args.username,
         password=args.password, driver=args.driver, worker_id=args.worker_id,
         hermes_user_id=args.hermes_user_id,
     )
 
+
+# In-process clients reused across invoke() calls, one per (server, database, user).
+# The lifecycle runtime used to spawn a Python process and open a fresh SQL connection
+# for every operation (dozens per scout tick): slow ticks, and a single transient
+# prelogin timeout failed a whole run.
+_CLIENTS: Dict[tuple, "HermesL2Client"] = {}
+
+
+def invoke(argv: List[str], stdin_text: Optional[str] = None) -> str:
+    """Run one CLI operation in-process on a reused connection; return its stdout.
+
+    Same arguments and output as the command line. Usage errors raise ValueError;
+    a dropped connection is reopened once.
+    """
+    import contextlib
+    import io
+    parser = build_parser()
+    err = io.StringIO()
     try:
-        if args.discover_workflow:
-            return _cli_discover_workflow(client)
-        if args.local_model_action:
-            return _cli_local_model_action(args, parser, client)
-        if args.poll:
-            return _cli_poll(args, parser, client)
-        if args.log_activity:
-            return _cli_log_activity(args, parser, client)
-        if args.search_solutions:
-            return _cli_search_solutions(args, client)
-        if args.create_solution:
-            return _cli_create_solution(args, parser, client)
-        if args.link_solution:
-            return _cli_link_solution(args, parser, client)
-        if args.get_activity:
-            return _cli_get_activity(args, parser, client)
-        if args.list_root_cause_categories:
-            return _cli_list_root_cause_categories(client)
-        if args.create_problem:
-            return _cli_create_problem(args, parser, client)
-        if args.link_problem:
-            return _cli_link_problem(args, parser, client)
-        if args.find_sql_objects:
-            return _cli_find_sql_objects(args, client)
-        if args.get_sql_object_definition:
-            return _cli_get_sql_object_definition(args, client)
-        if args.get_reference_documents:
-            return _cli_get_reference_documents(args, client)
-        if args.get_run_actions:
-            return _cli_get_run_actions(args, client)
-        if args.get_ticket_context:
-            return _cli_get_ticket_context(args, client)
-        if args.build_query:
-            return _cli_build_query(args, parser, client, _database_explicitly_given)
-        if args.suggest_tables:
-            return _cli_suggest_tables(args, _database_explicitly_given)
-        if args.save_ledger:
-            return _cli_save_ledger(args, parser, client)
-        if args.investigate_bundle:
-            return _cli_investigate_bundle(args, client)
-        if args.get_ledger:
-            return _cli_get_ledger(args, client)
-        if args.query:
-            return _cli_query(args, parser, client)
-        if args.escalate_blocked:
-            return _cli_escalate_blocked(args, parser, client)
-        if args.fail_run:
-            return _cli_fail_run(args, parser, client)
-        if args.publish_response:
-            return _cli_publish_response(args, parser, client)
-        if args.draft_response:
-            return _cli_draft_response(args, parser, client)
-        if args.approve_draft:
-            return _cli_approve_draft(args, parser, client)
-        if args.reject_draft:
-            return _cli_reject_draft(args, parser)
-        parser.error("Pass one of --discover-workflow, --poll, --publish-response, "
-                      "--draft-response, --approve-draft, or --reject-draft.")
+        with contextlib.redirect_stderr(err):
+            args = prepare_args(parser, argv)
+    except SystemExit as exc:
+        raise ValueError(err.getvalue().strip() or f"invalid arguments (exit {exc.code})") from None
+    key = (args.server, args.database, args.username, args.hermes_user_id)
+    for attempt in (1, 2):
+        client = _CLIENTS.get(key) or _CLIENTS.setdefault(key, _client_for(args))
+        out = io.StringIO()
+        saved_stdin = sys.stdin
+        try:
+            sys.stdin = io.StringIO(stdin_text or "")
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                dispatch(args, parser, client)
+            return out.getvalue()
+        except SystemExit as exc:
+            raise ValueError(err.getvalue().strip() or f"operation failed (exit {exc.code})") from None
+        except pyodbc.OperationalError:
+            _CLIENTS.pop(key, None)
+            if attempt == 2:
+                raise
+        finally:
+            sys.stdin = saved_stdin
+    return ""
+
+
+def main() -> None:
+    parser = build_parser()
+    args = prepare_args(parser)
+    client = _client_for(args)
+    try:
+        dispatch(args, parser, client)
     finally:
         client.close()
-
 
 if __name__ == "__main__":
     main()

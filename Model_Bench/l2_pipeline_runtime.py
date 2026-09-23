@@ -309,6 +309,21 @@ def _base_orchestrator_args(args: argparse.Namespace) -> list[str]:
     return cmd
 
 
+_ORCHESTRATOR_MODULE: Any = None
+
+
+def _orchestrator_module() -> Any:
+    """Hermes_Orchestrator imported once; its invoke() reuses one SQL connection per database."""
+    global _ORCHESTRATOR_MODULE
+    if _ORCHESTRATOR_MODULE is None:
+        root = str(Path(_orch_path()).parent)
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        import Hermes_Orchestrator
+        _ORCHESTRATOR_MODULE = Hermes_Orchestrator
+    return _ORCHESTRATOR_MODULE
+
+
 def run_orchestrator(
     args: argparse.Namespace,
     extra: Iterable[str],
@@ -316,22 +331,17 @@ def run_orchestrator(
     timeout: int = 60,
     input_text: str | None = None,
 ) -> Any:
-    cmd = _base_orchestrator_args(args) + list(extra)
+    """Run one orchestrator CLI operation in-process and parse its JSON output.
+
+    Previously a Python subprocess with its own SQL login per call (dozens per scout
+    tick). Any failure still surfaces as RuntimeError, exactly as a non-zero exit did.
+    `timeout` is kept for callers; SQL statements carry their own driver timeouts.
+    """
+    argv = _base_orchestrator_args(args)[2:] + list(extra)
     try:
-        result = subprocess.run(
-            cmd,
-            input=input_text,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            encoding="utf-8",
-            errors="replace",
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(f"orchestrator invocation failed: {type(exc).__name__}: {exc}") from exc
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}")
-    text = result.stdout.strip()
+        text = _orchestrator_module().invoke(argv, stdin_text=input_text).strip()
+    except Exception as exc:  # noqa: BLE001 - every failure mode maps to the old non-zero exit
+        raise RuntimeError(f"{type(exc).__name__}: {exc}") from exc
     if not text:
         return None
     try:
@@ -3146,13 +3156,15 @@ def process_approvals(
     for task in source_tasks:
         if task.get("status") != "done" or (task.get("assignee") or "") not in REVIEWER_PROFILES:
             continue
-        if is_reviewer_rejection(task):
-            continue
         run_id, ticket_id = task_run_id(task), task_ticket_id(task)
         if not run_id or not ticket_id:
             continue
+        # Cheap in-memory filter before is_reviewer_rejection(), which spawns `hermes`
+        # for run history: checking every historical reviewer card cost ~29s per tick.
         if run_id not in active_ids:
             counts["inactive_skipped"] += 1
+            continue
+        if is_reviewer_rejection(task):
             continue
         try:
             outcome = _approve_one(args, task, run_id, ticket_id, source_tasks, dry_run)
