@@ -144,14 +144,15 @@ Ticket Scout / reconcile
 The central reconciler owns lifecycle sequencing synchronously. Current order:
 
 ```text
-1. release terminal local-model leases; recover stale leases only when no live local card owns the run
-2. normalize investigator/rework completions
-3. convert unreviewable terminal completions into queued bounded rework
-4. run Jev primary reviews and apply direct approve/rework/escalation or queue local-review fallback
-5. process local-review rejections
-6. process local-review approvals through the same deterministic publisher
-7. recover true SQL/Kanban orphans
-8. admit at most one next local-Qwen task
+1. repair missing human-readable publication activity for already-published runs
+2. release terminal local-model leases; recover stale leases only when no live local card owns the run
+3. normalize investigator/rework completions
+4. convert unreviewable terminal completions into queued bounded rework
+5. run Jev primary reviews and apply direct approve/rework/escalation or queue local-review fallback
+6. process local-review rejections
+7. process local-review approvals through the same deterministic publisher
+8. recover true SQL/Kanban orphans
+9. admit at most one next local-Qwen task
 ```
 
 The old design launched repair/reject/publisher as independent concurrent processes. Do not restore that pattern.
@@ -199,7 +200,7 @@ Helpdesk = still visibly unresolved
 
 The deterministic publisher publishes only a semantically approved frozen proposal—either a Jev-primary direct approval that passes deterministic safety gates or a local-review fallback approval—through `Hermes_Orchestrator.py --publish-response --force-run-id`.
 
-After publication, verify persisted SQL state; Kanban narration is not the final truth.
+After publication, verify persisted SQL state; Kanban narration is not the final truth. The human-readable activity row is a secondary projection: an activity-write failure does not roll back an already-verified publication, and the normal reconciler repairs a missing publication activity by matching RunID, expected ActivityType, and the frozen published ReplyText.
 
 For a `RESOLUTION`, the expected postcondition includes:
 
