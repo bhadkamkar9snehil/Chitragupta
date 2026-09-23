@@ -1409,6 +1409,43 @@ def _gbrain_hit_context_compact(hit: dict[str, Any]) -> dict[str, Any]:
     return _bounded_context_value({key: hit.get(key) for key in fields if hit.get(key) is not None}, 2)
 
 
+def context_chunk(
+    chunk_id: str,
+    kind: str,
+    authority: str,
+    source: str,
+    state_path: str,
+    content: Any,
+    *,
+    index: int,
+    compact: Any | None = None,
+    summary: Any | None = None,
+    minimum_level: int = 0,
+    fallback_level: int = 1,
+    recover_with: str | None = None,
+) -> dict[str, Any] | None:
+    """One context chunk in the single format every stage's compiler consumes.
+
+    index numbers the Jev attention question (context_c<index>) that scores it.
+    """
+    if content in (None, "", [], {}):
+        return None
+    return {
+        "id": chunk_id,
+        "kind": kind,
+        "authority": authority,
+        "source": source,
+        "state_path": state_path,
+        "attention_question": f"context_c{index}",
+        "minimum_level": minimum_level,
+        "fallback_level": fallback_level,
+        "recover_with": recover_with,
+        "content": content,
+        "compact": compact if compact is not None else _bounded_context_value(content, 2),
+        "summary": summary if summary is not None else _bounded_context_value(content, 1),
+    }
+
+
 def _make_context_chunks(
     *,
     ticket_context: dict[str, Any],
@@ -1423,36 +1460,12 @@ def _make_context_chunks(
 ) -> list[dict[str, Any]]:
     chunks: list[dict[str, Any]] = []
 
-    def add(
-        chunk_id: str,
-        kind: str,
-        authority: str,
-        source: str,
-        state_path: str,
-        content: Any,
-        *,
-        compact: Any | None = None,
-        summary: Any | None = None,
-        minimum_level: int = 0,
-        fallback_level: int = 1,
-        recover_with: str | None = None,
-    ) -> None:
-        if content in (None, "", [], {}):
-            return
-        chunks.append({
-            "id": chunk_id,
-            "kind": kind,
-            "authority": authority,
-            "source": source,
-            "state_path": state_path,
-            "attention_question": f"context_c{len(chunks)}",
-            "minimum_level": minimum_level,
-            "fallback_level": fallback_level,
-            "recover_with": recover_with,
-            "content": content,
-            "compact": compact if compact is not None else _bounded_context_value(content, 2),
-            "summary": summary if summary is not None else _bounded_context_value(content, 1),
-        })
+    def add(chunk_id: str, kind: str, authority: str, source: str, state_path: str, content: Any,
+            **options: Any) -> None:
+        chunk = context_chunk(chunk_id, kind, authority, source, state_path, content,
+                              index=len(chunks), **options)
+        if chunk:
+            chunks.append(chunk)
 
     ticket_compact = _ticket_context_compact(ticket_context)
     add(
@@ -2297,19 +2310,86 @@ def _review_evidence(args: argparse.Namespace, run_id: str, proposal: dict[str, 
     return [compact_run_action(a) for a in chosen] + [note]
 
 
-def _proposal_reference(proposal: dict[str, Any]) -> dict[str, Any]:
-    """Governed-context stand-in for a proposal that the review card already carries.
+# Governed-history sections become optional chunks that Jev scores; pinned current
+# evidence and the rework objection are added by the card builders.
+_GOVERNED_CHUNK_SECTIONS = {
+    "rejected_cases": ("NEGATIVE_HISTORY", "Reviewer-rejected historical pattern", 2),
+    "reopened_cases": ("NEGATIVE_HISTORY", "Reopened / regression history", 2),
+    "governed_solutions": ("GOVERNED_KNOWLEDGE", "Approved solution article", 1),
+    "promoted_facts": ("GOVERNED_KNOWLEDGE", "Reviewed reusable fact", 1),
+    "approved_cases": ("HISTORICAL_ANALOGY", "Approved historical analogy (not current proof)", 1),
+    "canonical_documents": ("CANONICAL_REFERENCE", "Canonical procedure/reference", 1),
+}
 
-    The card holds the full proposal_json (what gets published) plus the digest; a
-    third full copy in governed context put review cards at 33K chars, past the
-    spill point for the 9B reviewer.
+
+def _governed_history_chunks(envelope: dict[str, Any] | None, start_index: int) -> list[dict[str, Any]]:
+    chunks: list[dict[str, Any]] = []
+    for section, (authority, source, fallback) in _GOVERNED_CHUNK_SECTIONS.items():
+        for n, item in enumerate((envelope or {}).get(section) or []):
+            chunk = context_chunk(
+                f"{section}_{n}", section, authority, f"{source}: {item.get('title') or item.get('source_ref') or ''}",
+                f"stage_context.{section}_{n}", item.get("content") or item,
+                index=start_index + len(chunks), fallback_level=fallback,
+                recover_with="l2_recall",
+            )
+            if chunk:
+                chunks.append(chunk)
+    return chunks
+
+
+def stage_context_chunks(
+    args: argparse.Namespace,
+    *,
+    stage: str,
+    source_task: dict[str, Any],
+    run_id: str,
+    ticket_id: str,
+    evidence: list[Any],
+    dry_run: bool = False,
+) -> list[dict[str, Any]]:
+    """Review/rework context in the same chunk format investigation uses.
+
+    Pinned current-run evidence plus governed history (retrieved by the governed
+    delivery layer, now a retrieval source only); Jev's primary review scores them.
     """
-    claims = [c.get("id") for c in proposal.get("claims") or [] if isinstance(c, dict)]
+    chunks: list[dict[str, Any]] = []
+    evidence_chunk = context_chunk(
+        "current_run_evidence", "run_evidence", "CURRENT_RUN_EVIDENCE", "SQL actions for this run",
+        "stage_context.current_run_evidence", evidence, index=0,
+        minimum_level=2, fallback_level=3, recover_with="xstudio_get_run_actions",
+    )
+    if evidence_chunk:
+        chunks.append(evidence_chunk)
+    if dry_run:
+        return chunks
+    ticket_no = body_field(source_task.get("body"), "ticket_no") or ticket_id
+    original_context, _ = _original_context_for_task(source_task)
+    _header, _rendered, receipt_path = _build_and_persist_stage_context(
+        args, ticket=_ticket_snapshot(args, ticket_id), run_id=run_id, ticket_id=ticket_id,
+        ticket_no=ticket_no, stage=stage, review_cycle=task_review_cycle(source_task),
+        proposal=None, current_run_evidence=[], original_context=original_context,
+    )
+    return chunks + _governed_history_chunks(_load_context_receipt(receipt_path), len(chunks))
+
+
+def render_stage_context(chunks: list[dict[str, Any]], assessment: dict[str, Any] | None) -> str:
+    """The one compiled context block for review and rework cards (Jev meta-attention)."""
+    if not chunks:
+        return ""
+    view = _compile_model_context(chunks, assessment or {}, budget_chars=CONTEXT_MODE_BUDGET_CHARS["FOCUSED_REASONING"])
+    return (
+        "\n--- Stage context (Jev meta-attention compiled) ---\n"
+        "Whole chunks chosen by Jev's scores; omitted ones name how to recover them.\n"
+        + json.dumps({"chunks": view["chunks"], "omitted": view["omitted"]}, separators=(",", ":"), default=str)
+        + "\n"
+    )
+
+
+def jev_review_state_chunks(chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    """State fields that let Jev's primary review score these chunks in the same call."""
     return {
-        "full_proposal": "proposal_json and PROPOSAL DIGEST on this card",
-        "run_id": proposal.get("run_id"),
-        "response_type": proposal.get("response_type"),
-        "claim_ids": claims,
+        "context_chunks": _context_chunk_metadata(chunks),
+        "stage_context": {c["id"]: c["compact"] for c in chunks},
     }
 
 
@@ -2318,7 +2398,8 @@ def create_reviewer_card(
     *,
     source_task: dict[str, Any],
     proposal: dict[str, Any],
-    verification_context: str = "",
+    context_chunks: list[dict[str, Any]] | None = None,
+    jev_result: dict[str, Any] | None = None,
     dry_run: bool = False,
 ) -> Optional[str]:
     run_id = str(proposal["run_id"])
@@ -2327,21 +2408,12 @@ def create_reviewer_card(
     cycle = task_review_cycle(source_task)
     proposal_json = json.dumps(proposal, separators=(",", ":"), default=str)
     work_key = f"review-{run_id}-{cycle}-{source_task['id']}"
-
-    original_context, _ = _original_context_for_task(source_task)
-    header, rendered_context, receipt_path = _build_and_persist_stage_context(
-        args,
-        ticket=_ticket_snapshot(args, ticket_id),
-        run_id=run_id,
-        ticket_id=ticket_id,
-        ticket_no=ticket_no,
-        stage="review",
-        review_cycle=cycle,
-        proposal=_proposal_reference(proposal),
-        current_run_evidence=_review_evidence(args, run_id, proposal),
-        original_context=original_context,
-        dry_run=dry_run,
-    )
+    if context_chunks is None:
+        context_chunks = stage_context_chunks(
+            args, stage="review", source_task=source_task, run_id=run_id, ticket_id=ticket_id,
+            evidence=_review_evidence(args, run_id, proposal), dry_run=dry_run,
+        )
+    rendered_context = render_stage_context(context_chunks, jev_result)
 
     body = (
         f"run_id: {run_id}\n"
@@ -2351,7 +2423,6 @@ def create_reviewer_card(
         f"review_cycle: {cycle}\n"
         f"claims_contract_version: {proposal.get('claims_contract_version') or body_field(source_task.get('body'), 'claims_contract_version') or 'legacy'}\n"
         "pipeline_stage: review\n"
-        + header
         + render_proposal_digest(proposal)
         + f"proposal_json: {proposal_json}\n\n"
         + (rendered_context + "\n" if rendered_context else "")
@@ -2424,8 +2495,12 @@ def direct_approval_allowed(response_type: str, signals: dict[str, float]) -> bo
 def _jev_primary_review(
     args: argparse.Namespace,
     proposal: dict[str, Any],
+    context_chunks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     state = _proposal_preflight_state(args, proposal)
+    if context_chunks:
+        # The same Jev call that judges the proposal scores the next card's context.
+        state.update(jev_review_state_chunks(context_chunks))
     call = _run_jev_workflow(
         "primary_review",
         state,
@@ -2493,6 +2568,7 @@ def _jev_primary_review(
         "reason_code": reason_code,
         "reason": reasons.get(reason_code, reasons["OTHER"]),
         "result": result,
+        "context_chunks": context_chunks or [],
         "safety": signals,
     }
 
@@ -2559,6 +2635,8 @@ def _apply_primary_review(
             investigation_task_id=task["id"],
             dry_run=dry_run,
             tasks=tasks,
+            context_chunks=review.get("context_chunks") or None,
+            jev_result=review.get("result"),
         )
         counts["reworked"] += int(bool(created))
         return
@@ -2575,7 +2653,10 @@ def _apply_primary_review(
         counts["escalated"] += int(bool(escalated))
         return
 
-    created = create_reviewer_card(args, source_task=task, proposal=proposal, dry_run=dry_run)
+    created = create_reviewer_card(
+        args, source_task=task, proposal=proposal, dry_run=dry_run,
+        context_chunks=review.get("context_chunks") or None, jev_result=review.get("result"),
+    )
     counts["local_review"] += int(bool(created))
     counts["unavailable"] += int(not review.get("ok"))
 
@@ -2604,7 +2685,10 @@ def process_jev_primary_reviews(
         run_id, ticket_id, proposal = pending
         review = (
             {"action": "LOCAL_REVIEW", "ok": False, "reason": "dry-run"}
-            if dry_run else _jev_primary_review(args, proposal)
+            if dry_run else _jev_primary_review(args, proposal, stage_context_chunks(
+                args, stage="review", source_task=task, run_id=run_id, ticket_id=ticket_id,
+                evidence=_review_evidence(args, run_id, proposal),
+            ))
         )
         try:
             _apply_primary_review(
@@ -2706,6 +2790,8 @@ def create_rework_card(
     investigation_task_id: Optional[str],
     dry_run: bool = False,
     tasks: list[dict[str, Any]] | None = None,
+    context_chunks: list[dict[str, Any]] | None = None,
+    jev_result: dict[str, Any] | None = None,
 ) -> Optional[str]:
     run_id, ticket_id = task_run_id(source_task), task_ticket_id(source_task)
     if not run_id or not ticket_id:
@@ -2730,21 +2816,19 @@ def create_rework_card(
     route_context = _dispatch_route_context(run_id, ticket_id, route_ticket)
     ticket_no = body_field(source_task.get("body"), "ticket_no") or ticket_id
 
-    original_context, _ = _original_context_for_task(source_task)
-    header, rendered_context, _receipt_path = _build_and_persist_stage_context(
-        args,
-        ticket=_ticket_snapshot(args, ticket_id),
-        run_id=run_id,
-        ticket_id=ticket_id,
-        ticket_no=ticket_no,
-        stage="rework",
-        review_cycle=next_cycle,
-        proposal=task_proposal(source_task),
-        current_run_evidence=_run_evidence_snapshot(args, run_id),
-        rejection_reason=reason,
-        original_context=original_context,
-        dry_run=dry_run,
+    # Same compiler and Jev scores as the review that produced this rework; the full
+    # current-run evidence replaces the review's claim-cited subset.
+    evidence = [] if dry_run else _run_evidence_snapshot(args, run_id)
+    chunks = [c for c in (context_chunks or stage_context_chunks(
+        args, stage="rework", source_task=source_task, run_id=run_id, ticket_id=ticket_id,
+        evidence=evidence, dry_run=dry_run,
+    )) if c["id"] != "current_run_evidence"]
+    pinned = context_chunk(
+        "current_run_evidence", "run_evidence", "CURRENT_RUN_EVIDENCE", "SQL actions for this run",
+        "stage_context.current_run_evidence", evidence, index=len(chunks),
+        minimum_level=2, fallback_level=3, recover_with="xstudio_get_run_actions",
     )
+    rendered_context = render_stage_context(chunks + ([pinned] if pinned else []), jev_result)
 
     body = (
         f"run_id: {run_id}\n"
@@ -2755,7 +2839,6 @@ def create_rework_card(
         f"prior_investigation_task_id: {investigation_task_id or 'unknown'}\n"
         "pipeline_stage: rework\n"
         f"claims_contract_version: {CLAIMS_CONTRACT_VERSION}\n"
-        + header + "\n"
         + (rendered_context + "\n" if rendered_context else "")
         + f"REWORK REASON:\n{reason}\n\n"
         "Address this exact rejected/invalid point using current live evidence. Reuse prior verified "

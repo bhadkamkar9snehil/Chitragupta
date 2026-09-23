@@ -5,6 +5,7 @@ publication, SQL safety, and the thresholds that decide whether a local deep
 review is required.
 """
 from __future__ import annotations
+from .investigation_assessment import _context_attention_questions
 from typing import Any
 
 from .client import system_one
@@ -91,4 +92,8 @@ def review_proposal(
     api_key: str | None = None,
     sender=None,
 ) -> dict[str, Any]:
-    return system_one(state, QUESTIONS, api_key=api_key, sender=sender)
+    # Jev also decides how much of each review/rework context chunk the next local
+    # step sees (one context system, driven by Jev, in the same call).
+    questions = {**QUESTIONS, **_context_attention_questions(
+        state, "local review or bounded rework of this frozen proposal")}
+    return system_one(state, questions, api_key=api_key, sender=sender)

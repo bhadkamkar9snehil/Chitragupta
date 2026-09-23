@@ -363,6 +363,27 @@ class FabricTests(unittest.TestCase):
         self.assertIn("needs_deep_local_reasoning", seen["questions"])
         self.assertIn("publication_risk", seen["questions"])
 
+    def test_primary_review_scores_next_card_context_in_the_same_request(self):
+        """One context system: Jev's review call also decides review/rework card context."""
+        seen = {}
+
+        def sender(url, payload, headers, timeout):
+            seen["questions"] = payload["questions"]
+            return {"model": "jev-test", "answers": {}, "usage": {}}
+
+        review_proposal(
+            {"proposal": {"response_type": "UPDATE"}, "run_actions": [],
+             "context_chunks": [{"id": "rejected_cases_0", "state_path": "stage_context.rejected_cases_0",
+                                 "attention_question": "context_c1", "kind": "rejected_cases",
+                                 "authority": "NEGATIVE_HISTORY", "source": "history"}],
+             "stage_context": {"rejected_cases_0": "prior pattern"}},
+            api_key="test", sender=sender,
+        )
+        question = seen["questions"]["context_c1"]
+        self.assertEqual(question["type"], "score")
+        self.assertIn("review or bounded rework", question["instructions"]["task"])
+        self.assertIn("decision", seen["questions"])
+
     def test_trace_assessment_has_silent_failure_and_attention(self):
         seen = {}
 

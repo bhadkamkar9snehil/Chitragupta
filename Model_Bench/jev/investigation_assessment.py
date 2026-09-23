@@ -114,7 +114,10 @@ def _known_solution_question(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _context_attention_questions(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def _context_attention_questions(
+    state: dict[str, Any],
+    next_step: str = "local System-2 investigation/synthesis step",
+) -> dict[str, dict[str, Any]]:
     """Score how much of each explicit state chunk the next System-2 step needs.
 
     The chunk metadata points at state already present in this same request, so
@@ -136,7 +139,7 @@ def _context_attention_questions(state: dict[str, Any]) -> dict[str, dict[str, A
             "type": "score",
             "instructions": {
                 "task": (
-                    "For the next local System-2 investigation/synthesis step, how much of "
+                    f"For the next {next_step}, how much of "
                     "this explicit context chunk should be shown? Judge relevance and needed "
                     "detail only; do not change its authority or treat historical/KB material "
                     "as proof of the current incident."

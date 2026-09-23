@@ -311,13 +311,6 @@ class PipelineContractTests(unittest.TestCase):
         self.assertNotIn("AfterJson", compact)
         self.assertLess(len(json.dumps(compact)), 900)
 
-    def test_review_context_references_the_proposal_instead_of_copying_it(self):
-        proposal = {"run_id": "R", "response_type": "RESOLUTION", "reply_text": "x" * 3000,
-                    "claims": [{"id": "C1", "claim": "y" * 2000}]}
-        ref = mod._proposal_reference(proposal)
-        self.assertEqual(ref["claim_ids"], ["C1"])
-        self.assertLess(len(json.dumps(ref)), 300)
-
     def _signals(self, p, ev, over, fit, deep, risk, act=0.05):
         return {"p_approve": p, "evidence": ev, "overclaim": over, "response_fit": fit,
                 "deep_reasoning": deep, "risk": risk, "action_claim": act, "action_audit": 1.0}
@@ -354,6 +347,56 @@ class PipelineContractTests(unittest.TestCase):
         strong = self._signals(0.99, 0.99, 0.0, 0.99, 0.0, 0.0)
         self.assertFalse(mod.direct_approval_allowed("L3_ESCALATION", strong))
         self.assertFalse(mod.direct_approval_allowed("UPDATE", {**strong, "action_claim": 0.9, "action_audit": 0.2}))
+
+    ENVELOPE = {"rejected_cases": [{"title": "Earlier bad fix", "content": "NEGATIVE PATTERN: blamed SAP"}],
+                "governed_solutions": [{"title": "Arc time check", "content": "SOLUTION: compare LRF_Per_Heat"}]}
+
+    def _card(self, builder, jev_result=None, **extra):
+        source = {"id": "t_src", "body": "run_id: r1\nticket_id: t1\nticket_no: Ticket_1\nreview_cycle: 0"}
+        proposal = {"run_id": "r1", "ticket_id": "t1", "response_type": "UPDATE", "reply_text": "Verified update",
+                    "claims": [{"id": "C1", "status": "VERIFIED", "claim": "x", "evidence": [{"action_id": "A1"}]}]}
+        actions = [{"ID": "A1", "ActionNo": 1, "SqlText": "SELECT 1", "Status": "SUCCESS"}]
+        with patch.object(mod, "_queue_local_model_task", side_effect=lambda *a, **kw: {"QueueStatus": "QUEUED"}) as queue, \
+                patch.object(mod, "run_hermes"), \
+                patch.object(mod, "run_orchestrator", return_value=actions), \
+                patch.object(mod, "_build_and_persist_stage_context", return_value=("", "", "/tmp/r.json")), \
+                patch.object(mod, "_load_context_receipt", return_value=self.ENVELOPE), \
+                patch.object(mod, "_ticket_snapshot", return_value={}), \
+                patch.object(mod, "_persist_rejected_ledger", return_value=""), \
+                patch.object(mod, "_dispatch_route_context", return_value=""), \
+                patch.object(mod, "list_tasks", return_value=[]):
+            if builder == "review":
+                chunks = mod.stage_context_chunks(mod.default_args(), stage="review", source_task=source,
+                                                  run_id="r1", ticket_id="t1", evidence=actions)
+                mod.create_reviewer_card(mod.default_args(), source_task=source, proposal=proposal,
+                                         context_chunks=chunks, jev_result=jev_result)
+            else:
+                mod.create_rework_card(mod.default_args(), source_task=source, reason="missing SAP evidence",
+                                       investigation_task_id="t_inv", jev_result=jev_result, **extra)
+        return queue.call_args.kwargs["spec"]["body"]
+
+    def test_review_card_context_is_one_jev_compiled_block_with_governed_history(self):
+        body = self._card("review")
+        self.assertEqual(body.count("--- Stage context (Jev meta-attention compiled) ---"), 1)
+        self.assertIn("NEGATIVE PATTERN: blamed SAP", body)
+        self.assertIn("SOLUTION: compare LRF_Per_Heat", body)
+        self.assertNotIn("HARNESS-PROVIDED GOVERNED CONTEXT", body)
+
+    def test_jev_scores_decide_which_history_the_reviewer_sees(self):
+        # Chunk order: c0 = pinned run evidence, c1 = rejected case, c2 = governed solution.
+        jev = {"answers": {"context_c1": {"type": "score", "score": 0, "confidence": 0.9},
+                           "context_c2": {"type": "score", "score": 3, "confidence": 0.9}}}
+        body = self._card("review", jev_result=jev)
+        self.assertNotIn("NEGATIVE PATTERN: blamed SAP", body)   # omitted by Jev
+        self.assertIn("SOLUTION: compare LRF_Per_Heat", body)
+        self.assertIn('"id":"current_run_evidence"', body)        # pinned regardless
+        self.assertIn("l2_recall", body)                          # omitted chunk names its recovery
+
+    def test_rework_card_uses_the_same_compiled_context(self):
+        body = self._card("rework")
+        self.assertEqual(body.count("--- Stage context (Jev meta-attention compiled) ---"), 1)
+        self.assertIn("SOLUTION: compare LRF_Per_Heat", body)
+        self.assertIn("REWORK REASON:\nmissing SAP evidence", body)
 
     def test_review_cap_publishes_a_real_l3_handoff_not_a_failed_run(self):
         with patch.object(mod, "run_orchestrator") as invoke, \
@@ -1404,60 +1447,6 @@ class PipelineContractTests(unittest.TestCase):
                     stage="review", review_cycle=0,
                 )
         self.assertEqual((header, rendered, receipt), ("", "", None))
-
-    def test_reviewer_card_carries_governed_context_when_delivery_succeeds(self):
-        """Review cards get no canonical procedure, promoted facts, or historical
-        negative cases today -- only proposal_json and instructions. Prove the
-        governed-context wiring actually lands in the card body when context
-        delivery succeeds, and that its provenance header/receipt appear too."""
-        source = {
-            "id": "t_inv",
-            "body": "run_id: r1\nticket_id: t1\nticket_no: Ticket_1\nreview_cycle: 0",
-        }
-        proposal = {"run_id": "r1", "ticket_id": "t1", "response_type": "UPDATE", "reply_text": "Verified update"}
-        with patch.object(mod, "_queue_local_model_task", side_effect=lambda *a, **kw: {"QueueStatus": "QUEUED"}) as queue, \
-             patch.object(mod, "run_hermes"), \
-             patch.object(mod, "run_orchestrator", side_effect=RuntimeError("no live SQL in a unit test")), \
-             patch.object(
-                 mod, "_build_and_persist_stage_context",
-                 return_value=("context_sha256: abc123\ncontext_receipt: /tmp/r1.json\n",
-                               "CANONICAL PROCEDURE / REFERENCE\nsome governed content here\n", "/tmp/r1.json"),
-             ) as build_ctx:
-            mod.create_reviewer_card(mod.default_args(), source_task=source, proposal=proposal)
-        self.assertEqual(build_ctx.call_args.kwargs["stage"], "review")
-        body = queue.call_args.kwargs["spec"]["body"]
-        self.assertIn("context_sha256: abc123", body)
-        self.assertIn("some governed content here", body)
-
-    def test_rework_card_carries_governed_context_when_delivery_succeeds(self):
-        source_task = {
-            "id": "t-source",
-            "body": "run_id: run-1\nticket_id: ticket-1\nticket_no: Ticket_999\nreview_cycle: 0\n",
-        }
-        captured = {}
-
-        def fake_queue(args, *, run_id, purpose, execution_mode, priority, work_key, spec, dry_run=False):
-            captured["spec"] = spec
-            return {"QueueStatus": "QUEUED"}
-
-        with patch.object(mod, "_persist_rejected_ledger", return_value=""), \
-             patch.object(mod, "_source_has_rework", return_value=False), \
-             patch.object(mod, "run_orchestrator", side_effect=RuntimeError("no live SQL in a unit test")), \
-             patch.object(
-                 mod, "_build_and_persist_stage_context",
-                 return_value=("context_sha256: def456\ncontext_receipt: /tmp/run-1.json\n",
-                               "PRIOR REJECTED REASONING\nverbatim rejection carried forward\n", "/tmp/run-1.json"),
-             ) as build_ctx, \
-             patch.object(mod, "_queue_local_model_task", side_effect=fake_queue):
-            mod.create_rework_card(
-                mod.default_args(), source_task=source_task,
-                reason="ACTION_AUTHORITY mismatch", investigation_task_id="t-inv",
-            )
-        self.assertEqual(build_ctx.call_args.kwargs["stage"], "rework")
-        self.assertEqual(build_ctx.call_args.kwargs["rejection_reason"], "ACTION_AUTHORITY mismatch")
-        body = captured["spec"]["body"]
-        self.assertIn("context_sha256: def456", body)
-        self.assertIn("verbatim rejection carried forward", body)
 
     def test_resolution_fails_closed_without_binding(self):
         with self.assertRaises(RuntimeError):
