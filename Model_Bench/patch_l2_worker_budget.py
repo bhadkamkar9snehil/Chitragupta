@@ -8,7 +8,7 @@ from patch_profile_config import _find_key_line, _block_end
 # reviewers with kanban_complete/kanban_block. Reviewers seeing the submit tool made
 # 22 replacement-proposal attempts in 6h, so it lives in its own plugin toolset.
 SUBMIT_TOOLSET = "l2_submit"
-EXPLORE_TOOLSET = "xstudio_explore"
+DATA_TOOLSET = "xstudio_l2"
 
 
 def _mark_known_plugin_toolset(lines: list[str], toolset: str) -> None:
@@ -81,13 +81,13 @@ def configure(text: str, reviewer: bool = False, disabled_skills: list[str] | No
         raise ValueError("Missing platform_toolsets.cli")
     # Exact worker toolset. l2_learning carries l2_recall (on-demand GBrain); this list
     # used to omit it and silently undo patch_profile_config on every deploy.
-    toolsets = ["file", "kanban", "skills", "xstudio_l2", "l2_learning"] + ([] if reviewer else [SUBMIT_TOOLSET])
+    # The investigator only writes: the harness gathered the evidence, so it gets no data
+    # tools. The reviewer keeps them to verify cited claims.
+    toolsets = ["file", "kanban", "skills", "l2_learning"] + (
+        [DATA_TOOLSET] if reviewer else [SUBMIT_TOOLSET])
     lines[index:_block_end(lines, index)] = ["  cli:"] + [f"    - {t}" for t in toolsets]
-    # Known-but-unlisted keeps a plugin toolset off: the exploration tools for every
-    # worker, the submit tool for reviewers.
-    _mark_known_plugin_toolset(lines, EXPLORE_TOOLSET)
-    if reviewer:
-        _mark_known_plugin_toolset(lines, SUBMIT_TOOLSET)
+    # Known-but-unlisted keeps a plugin toolset off.
+    _mark_known_plugin_toolset(lines, SUBMIT_TOOLSET if reviewer else DATA_TOOLSET)
     if disabled_skills:
         _set_disabled_skills(lines, disabled_skills)
     return "\n".join(lines) + "\n"

@@ -924,15 +924,14 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str]:
         "Reject RESOLUTION if it only diagnoses a problem or proposes an unexecuted fix. "
         "Reject unsupported causal assertions without broad schema exploration. "
         if context.get("pipeline_stage", "").lower() == "review" else
-        "When completing the investigation, use xstudio_submit_proposal(response_type,summary) "
-        "instead of kanban_complete. If only the requester can supply a missing incident identifier "
-        "or reproduction detail, submit QUESTION with requester_question containing the exact question "
-        "now; do not submit UPDATE or query unrelated sample rows. "
+        "You are the WRITER: the evidence is on the card. Finish with one "
+        "xstudio_submit_proposal call; if the evidence does not answer the ticket, choose "
+        "L3_ESCALATION, or QUESTION when only the requester can supply the missing identifier. "
     )
     return {
         "context": (
-            "L2 EXECUTION CONTRACT: live evidence comes only from the named xstudio_* tools; the "
-            "harness chooses databases, filters and columns. Never write SQL, scripts or files. "
+            "L2 EXECUTION CONTRACT: the harness owns every database read. Never write SQL, "
+            "scripts or files. "
             f"{completion_contract}"
             "UPDATE needs next_investigation_step; RESOLUTION needs resolution and VERIFIED claims "
             "with action_id. "

@@ -94,15 +94,25 @@ def _best_row(rows: list[dict[str, Any]], text: str) -> dict[str, Any] | None:
     return max(scored)[2] if scored else None
 
 
+def _audited_reads(probes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every successful read: the table probes and the relationship hops followed from them."""
+    reads = []
+    for item in probes:
+        if not isinstance(item, dict):
+            continue
+        for probe in [item.get("probe")] + [h.get("probe") for h in item.get("relationship_hops") or []
+                                            if isinstance(h, dict)]:
+            if isinstance(probe, dict) and probe.get("ok") and probe.get("probe_possible", True):
+                reads.append(probe)
+    return reads
+
+
 def build_facts(ticket: dict[str, Any], probes: list[dict[str, Any]]) -> dict[str, Any]:
     """Fact table from audited probes: one entry per ticket-named field on the best row."""
     text = ticket_text(ticket)
     facts: list[dict[str, Any]] = []
     searched: list[dict[str, Any]] = []
-    for item in probes:
-        probe = item.get("probe") if isinstance(item, dict) else None
-        if not isinstance(probe, dict) or not probe.get("ok") or not probe.get("probe_possible"):
-            continue
+    for probe in _audited_reads(probes):
         identifier = probe.get("identifier") or {}
         rows = [r for r in probe.get("rows") or [] if isinstance(r, dict)]
         searched.append({"table": probe.get("table"), "identifier": identifier, "rows": len(rows),
@@ -224,3 +234,8 @@ def compact_for_jev(table: dict[str, Any]) -> dict[str, Any]:
         "compared": table["compared"], "mismatches": table["mismatches"],
     }
 
+
+def writer_facts(table: dict[str, Any]) -> list[dict[str, Any]]:
+    """The fact table as the writing model sees it: values plus the action ID to cite."""
+    return [{k: f[k] for k in ("table", "field", "recorded", "reported", "matches", "action_id")}
+            for f in table["facts"]]

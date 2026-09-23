@@ -727,7 +727,8 @@ class PipelineContractTests(unittest.TestCase):
 
         def fake_jev(workflow, state, **kwargs):
             if workflow == "evidence_plan":
-                return {"ok": True, "result": plan}
+                # A real plan scores only the candidates it is shown; round 2 sees Heat_B alone.
+                return {"ok": True, "result": plan if len(state["candidates"]) == 2 else {"ok": True, "answers": {}}}
             if workflow == "investigation_assessment":
                 self.assertEqual(len(state["live_probes"]), 1)
                 return {"ok": True, "result": assessment}
@@ -846,6 +847,44 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(result["status"], "JEV_QWEN_FREE_PUBLISHED")
         review.assert_not_called()
         publish.assert_called_once()
+
+    def test_evidence_loop_reads_more_tables_until_jev_says_the_facts_answer(self):
+        tables = [{"database": "XStudio_Xbatch", "table": f"dbo.T{i}", "matched_columns": []} for i in range(4)]
+        plan = {"ok": True, "answers": {"inspect_c0": {"type": "noul", "noul": 0.9},
+                                        "value_c0": {"type": "score", "score": 3}}}
+        rounds = []
+
+        def fake_jev(workflow, state, **kwargs):
+            if workflow == "evidence_plan":
+                rounds.append([c["table"] for c in state["candidates"]])
+                return {"ok": True, "result": plan}
+            if workflow == "direct_answer":  # answerable only once two tables were read
+                ok = len(rounds) >= 2
+                return {"ok": True, "result": {"answers": {
+                    "outcome": {"type": "choice", "choice": "ANSWERED",
+                                "probabilities": {"ANSWERED": 0.9 if ok else 0.1, "NEEDS_REASONING": 0.1 if ok else 0.9}},
+                    "facts_answer_question": {"type": "noul", "noul": 0.9 if ok else 0.1}}}}
+            return {"ok": True, "result": {"ok": True, "answers": {}}}
+
+        probe = {"ok": True, "probe_possible": True, "action_id": "A1", "table": "dbo.T",
+                 "identifier": {"column": "HeatNo", "value": "1"}, "rows": [{"HeatNo": "1", "ArcingTime": "21"}]}
+        with patch.object(mod, "_run_jev_workflow", side_effect=fake_jev), \
+                patch.object(mod, "_run_xstudio_bridge", return_value=probe), \
+                patch.object(mod, "load_world", return_value={"atlas": {}}):
+            package = mod._jev_first_investigation(
+                ticket={"Description": "ArcingTime of 21"}, ticket_context={"TicketNo": "T1"},
+                run_id="r1", ticket_id="t1", suggested_tables=tables,
+                kb_retrieval={"solutions": [], "ticket_characterization": {}, "route_candidates": []},
+            )
+        self.assertEqual(rounds, [["dbo.T0", "dbo.T1", "dbo.T2", "dbo.T3"], ["dbo.T1", "dbo.T2", "dbo.T3"]])
+        self.assertEqual(package["execution_mode"], "QWEN_FREE")
+        self.assertEqual(package["direct_answer"]["evidence_rounds"], 2)
+
+    def test_writer_card_has_no_data_tool_procedure(self):
+        text = mod._query_instructions("run-1", "ticket-1")
+        self.assertIn("WRITE, NOT TO INVESTIGATE", text)
+        self.assertNotIn("xstudio_read_table", text)
+        self.assertIn("xstudio_submit_proposal", text)
 
     def test_context_budget_is_smaller_for_compose_only_than_focused_reasoning(self):
         self.assertLess(
@@ -1991,55 +2030,6 @@ class PipelineContractTests(unittest.TestCase):
         body = queue.call_args.kwargs["spec"]["body"]
         self.assertIn("claims_contract_version", body)
         self.assertIn("VERIFIED", body)
-
-class ValidTablesRenderingTests(unittest.TestCase):
-    def test_query_instructions_renders_table_with_bracketed_columns(self):
-        instructions = mod._query_instructions(
-            "run-1", "ticket-1",
-            [("XStudio_Xbatch", "dbo.EAF_SMS_Data", ["EAFHeatID", "ActivePower"])],
-        )
-        self.assertIn(
-            "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data[EAFHeatID,ActivePower]",
-            instructions,
-        )
-        self.assertIn("xstudio_read_table", instructions)
-        self.assertNotIn("xstudio_select", instructions)
-
-    def test_query_instructions_omits_brackets_when_no_columns_known(self):
-        instructions = mod._query_instructions(
-            "run-1", "ticket-1", [("XStudio_Xbatch", "dbo.Grade_Master", [])],
-        )
-        self.assertIn("Current valid_tables: XStudio_Xbatch.dbo.Grade_Master\n", instructions)
-        self.assertNotIn("Grade_Master[", instructions)
-
-    def test_query_instructions_with_no_valid_tables_omits_the_line_entirely(self):
-        instructions = mod._query_instructions("run-1", "ticket-1", None)
-        self.assertNotIn("Current valid_tables", instructions)
-        self.assertIn("xstudio_read_table", instructions)
-
-    def test_extraction_includes_primary_and_relationship_hop_tables_with_columns(self):
-        investigation = {
-            "live_probes": [{
-                "candidate": {"database": "XStudio_Xbatch", "table": "dbo.EAF_PER_HEAT"},
-                "probe": {"columns": ["HeatID", "SteelGrade"]},
-                "relationship_hops": [{
-                    "hop": {"target_database": "XStudio_Xbatch", "target_table": "Grade_Master"},
-                    "probe": {"columns": ["ID", "GradeName"]},
-                }],
-            }],
-        }
-        result = mod._valid_tables_from_investigation(investigation)
-        self.assertEqual(
-            result,
-            [
-                ("XStudio_Xbatch", "dbo.EAF_PER_HEAT", ["HeatID", "SteelGrade"]),
-                ("XStudio_Xbatch", "Grade_Master", ["ID", "GradeName"]),
-            ],
-        )
-
-    def test_extraction_with_no_investigation_data_returns_empty_list(self):
-        self.assertEqual(mod._valid_tables_from_investigation({}), [])
-
 
 class RelationshipHopTests(unittest.TestCase):
     def test_available_hops_only_includes_edges_this_row_can_actually_follow(self):

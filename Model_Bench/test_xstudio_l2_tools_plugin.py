@@ -745,7 +745,7 @@ def test_production_cards_render_typed_contract_and_no_raw_interpreter_recipe() 
     """Fresh cards must not teach the retired transport (requirement 12)."""
     runtime = _load("l2_pipeline_runtime_test", ROOT / "l2_pipeline_runtime.py")
     body = runtime._query_instructions("RUN-1", "TICKET-1")
-    assert "xstudio_submit_proposal" in body and "NEXT ACTIONS" in body
+    assert "xstudio_submit_proposal" in body and "WRITE, NOT TO INVESTIGATE" in body
     assert "l2_recall" in body
     assert "RUN-1" in body and "TICKET-1" in body
     assert "A ticket/user identifier is not proof of database storage representation" in body
