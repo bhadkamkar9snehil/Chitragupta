@@ -2214,18 +2214,40 @@ def _client_for(args: argparse.Namespace) -> "HermesL2Client":
     )
 
 
-# In-process clients reused across invoke() calls, one per (server, database, user).
-# The lifecycle runtime used to spawn a Python process and open a fresh SQL connection
-# for every operation (dozens per scout tick): slow ticks, and a single transient
-# prelogin timeout failed a whole run.
+# In-process clients reused across invoke() calls, one per logical SQL session.
+# Reuse removes dozens of process/login round-trips per reconcile tick, but unlike the
+# old one-process-per-call transport it also means transaction/session state can leak
+# into the next operation unless every invocation finishes on a clean boundary.
 _CLIENTS: Dict[tuple, "HermesL2Client"] = {}
+
+
+def _discard_cached_client(key: tuple, client: "HermesL2Client" | None = None) -> None:
+    """Evict and best-effort close one cached client."""
+    cached = _CLIENTS.get(key)
+    if cached is None or (client is not None and cached is not client):
+        return
+    _CLIENTS.pop(key, None)
+    try:
+        cached.close()
+    except Exception:
+        pass
+
+
+def _rollback_cached_client(key: tuple, client: "HermesL2Client") -> None:
+    """Rollback a failed invocation; evict the session if rollback itself fails."""
+    try:
+        client.conn.rollback()
+    except Exception:
+        _discard_cached_client(key, client)
 
 
 def invoke(argv: List[str], stdin_text: Optional[str] = None) -> str:
     """Run one CLI operation in-process on a reused connection; return its stdout.
 
-    Same arguments and output as the command line. Usage errors raise ValueError;
-    a dropped connection is reopened once.
+    Every invocation is a transaction boundary. Successful reads/writes commit so a
+    pooled pyodbc session never retains an open transaction. Failed operations roll
+    back before the session is reused. Connectivity failures evict/close the cached
+    client and retain the existing single reconnect attempt.
     """
     import contextlib
     import io
@@ -2245,17 +2267,23 @@ def invoke(argv: List[str], stdin_text: Optional[str] = None) -> str:
             sys.stdin = io.StringIO(stdin_text or "")
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 dispatch(args, parser, client)
+            # Write handlers already drain deferred result sets through _commit();
+            # this second commit is harmless for them and closes read transactions.
+            client.conn.commit()
             return out.getvalue()
         except SystemExit as exc:
+            _rollback_cached_client(key, client)
             raise ValueError(err.getvalue().strip() or f"operation failed (exit {exc.code})") from None
         except pyodbc.OperationalError:
-            _CLIENTS.pop(key, None)
+            _discard_cached_client(key, client)
             if attempt == 2:
                 raise
+        except Exception:
+            _rollback_cached_client(key, client)
+            raise
         finally:
             sys.stdin = saved_stdin
     return ""
-
 
 def main() -> None:
     parser = build_parser()
