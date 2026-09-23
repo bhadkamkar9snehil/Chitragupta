@@ -41,11 +41,39 @@ class WriteCurationActionTests(unittest.TestCase):
         insert_sql, params = cur.calls[0]
         self.assertIn("INSERT INTO dbo.Hermes_Solution_Article_Mst_Tbl", insert_sql)
         self.assertIn("'Candidate'", insert_sql)
+        # The article table carries a trigger; a bare OUTPUT clause fails there (SQL error 334).
+        self.assertIn("OUTPUT INSERTED.ID INTO @ids", insert_sql)
         self.assertIn(BASE_RUN["RootCause"], params)
         self.assertIn(BASE_RUN["Resolution"], params)
         # No supersede link and no second UPDATE statement for a fresh candidate.
-        self.assertIsNone(params[-1])
+        self.assertIsNone(params[-2])
         self.assertEqual(len(cur.calls), 1)
+
+    def test_verified_resolution_without_root_cause_still_becomes_a_candidate(self):
+        """Live: every RESOLUTION lacked RootCause, so no article was ever written."""
+        run = {**BASE_RUN, "RootCause": None}
+        cur = FakeCursor(insert_id="ART-VERIFY")
+        result = write_curation_action(cur, run=run, disposition="CREATE_CANDIDATE", top_existing=None)
+        self.assertEqual(result["action"], "CREATE_CANDIDATE_WRITTEN")
+        self.assertIn("'Candidate'", cur.calls[0][0])
+        self.assertEqual(cur.calls[0][1][-1], "HowTo")
+
+    def test_knowledge_type_satisfies_the_live_check_constraint(self):
+        """CK_Hermes_Solution_KnowledgeType: HowTo / Diagnostic / KnownIssue only."""
+        cur = FakeCursor()
+        write_curation_action(cur, run=BASE_RUN, disposition="CREATE_CANDIDATE", top_existing=None)
+        self.assertEqual(cur.calls[0][1][-1], "KnownIssue")
+
+    def test_title_fits_the_varchar_100_column(self):
+        run = {**BASE_RUN, "ProblemSummary": "x" * 400}
+        cur = FakeCursor()
+        write_curation_action(cur, run=run, disposition="CREATE_CANDIDATE", top_existing=None)
+        self.assertLessEqual(len(cur.calls[0][1][0]), 100)
+
+    def test_no_article_without_a_verified_resolution(self):
+        run = {**BASE_RUN, "Resolution": ""}
+        result = write_curation_action(FakeCursor(insert_id="X"), run=run, disposition="CREATE_CANDIDATE", top_existing=None)
+        self.assertEqual(result["action"], "NONE")
 
     def test_update_existing_links_supersedes_both_directions(self):
         cur = FakeCursor(insert_id="ART-NEW-2")
@@ -85,15 +113,6 @@ class WriteCurationActionTests(unittest.TestCase):
 
         self.assertEqual(result["action"], "NONE")
         self.assertEqual(cur.calls, [])
-
-    def test_create_candidate_refuses_to_write_without_verified_root_cause(self):
-        cur = FakeCursor()
-        run = dict(BASE_RUN, RootCause="")
-        result = write_curation_action(cur, run=run, disposition="CREATE_CANDIDATE", top_existing=None)
-
-        self.assertEqual(result["action"], "NONE")
-        self.assertEqual(cur.calls, [])
-
 
 if __name__ == "__main__":
     unittest.main()

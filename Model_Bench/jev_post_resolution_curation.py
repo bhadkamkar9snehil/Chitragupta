@@ -155,28 +155,40 @@ def write_curation_action(
         return {"action": "REUSE_EXISTING_BUMPED", "article_id": top_existing["ID"]}
 
     if disposition in ("CREATE_CANDIDATE", "UPDATE_EXISTING"):
-        if not resolution or not root_cause:
-            return {"action": "NONE", "reason": "missing verified root_cause/resolution, refusing to write"}
-        title = f"{ticket_no}: {problem_summary[:120] or root_cause[:120]}".strip()
-        canonical_key = _content_hash(route, root_cause)[:32]
+        # The verified outcome is what makes an article reusable. Verification-type
+        # requests have no fault behind them, so RootCause is used when established
+        # but is not required (it blocked every live RESOLUTION from becoming knowledge).
+        if not resolution:
+            return {"action": "NONE", "reason": "missing verified resolution, refusing to write"}
+        subject = root_cause or problem_summary or resolution
+        title = f"{ticket_no}: {problem_summary or subject}".strip()[:100]  # Title is varchar(100)
+        canonical_key = _content_hash(route, subject)[:32]
         content_hash = _content_hash(problem_summary, root_cause, resolution)
         supersedes = (
             top_existing["ID"]
             if disposition == "UPDATE_EXISTING" and top_existing and top_existing.get("ID")
             else None
         )
+        # OUTPUT ... INTO: the table has an enabled trigger, and SQL Server rejects a
+        # bare OUTPUT clause there (error 334), so no article could ever be written.
         new_id = cur.execute(
             """
+            SET NOCOUNT ON;
+            DECLARE @ids TABLE (ID varchar(36));
             INSERT INTO dbo.Hermes_Solution_Article_Mst_Tbl
                 (Title, ProblemSummary, RootCause, ResolutionSteps, Route,
                  UsageCount, IsActive, ArticleStatus, CanonicalKey, ContentHash,
                  SourceTicketID, SourceRunID, SupersedesSolutionID, KnowledgeType,
                  Source)
-            OUTPUT INSERTED.ID
-            VALUES (?, ?, ?, ?, ?, 0, 1, 'Candidate', ?, ?, ?, ?, ?, 'jev_post_resolution_curation', 'T-SQL')
+            OUTPUT INSERTED.ID INTO @ids
+            VALUES (?, ?, ?, ?, ?, 0, 1, 'Candidate', ?, ?, ?, ?, ?, ?, 'T-SQL');
+            SELECT ID FROM @ids;
             """,
-            title, problem_summary or None, root_cause, resolution, route,
+            title, problem_summary or None, root_cause or None, resolution, route,
             canonical_key, content_hash, ticket_id, run_id, supersedes,
+            # CK_Hermes_Solution_KnowledgeType allows HowTo/Diagnostic/KnownIssue only;
+            # provenance lives in SourceRunID/SourceTicketID.
+            "KnownIssue" if root_cause else "HowTo",
         ).fetchone()[0]
         if supersedes:
             cur.execute(
