@@ -409,6 +409,8 @@ That path:
 4. verifies SQL/Helpdesk postconditions;
 5. writes the human-readable ticket activity.
 
+If step 5 fails after step 4 succeeded, publication remains authoritative. The regular reconciler repairs the missing activity on a later tick using the published run/reply identity; no second publisher or activity daemon exists.
+
 Jev and the local reviewer do not choose raw Helpdesk status names.
 
 ## 8. Rework-cycle semantics
