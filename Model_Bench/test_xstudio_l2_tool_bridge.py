@@ -100,13 +100,27 @@ class DatabaseRoutingTests(unittest.TestCase):
         self.assertEqual(self._route(unknown), unknown)
 
 
-class StarColumnTests(unittest.TestCase):
-    def test_star_expands_to_real_columns(self):
-        allow = {"XStudio_Xbatch": {"dbo.LRF_Per_Heat": ["ID", "HeatID", "ArcingTime"]}}
-        with patch.object(bridge, "_load_allowlist", return_value=allow):
-            self.assertEqual(bridge._expand_star("XStudio_Xbatch", "LRF_Per_Heat", ["*"]), ["ID", "HeatID", "ArcingTime"])
-            self.assertEqual(bridge._expand_star("XStudio_Xbatch", "LRF_Per_Heat", ["HeatID"]), ["HeatID"])
+class ColumnResolutionTests(unittest.TestCase):
+    ALLOW = {"XStudio_Xbatch": {"dbo.LRF_Per_Heat": ["ID", "HeatID", "ArcingTime"]}}
 
+    def _resolve(self, columns):
+        with patch.object(bridge, "_load_allowlist", return_value=self.ALLOW):
+            return bridge._resolve_columns("XStudio_Xbatch", "LRF_Per_Heat", columns)
+
+    def test_star_or_nothing_selects_real_columns(self):
+        self.assertEqual(self._resolve(["*"])[0], ["ID", "HeatID", "ArcingTime"])
+        self.assertEqual(self._resolve([])[0], ["ID", "HeatID", "ArcingTime"])
+
+    def test_guessed_columns_are_dropped_not_substituted_and_reported(self):
+        cols, note = self._resolve(["heatid", "SuperHeat", "ArcingTime"])
+        self.assertEqual(cols, ["HeatID", "ArcingTime"])
+        self.assertEqual(note["columns_ignored"], ["SuperHeat"])
+        self.assertIn("ArcingTime", note["real_columns"])
+
+    def test_all_guesses_wrong_falls_back_to_real_columns(self):
+        cols, note = self._resolve(["HeatNo"])
+        self.assertEqual(cols, ["ID", "HeatID", "ArcingTime"])
+        self.assertEqual(note["columns_ignored"], ["HeatNo"])
 
 class KnownSourceHintTests(unittest.TestCase):
     def test_guessed_ticket_and_run_tables_point_to_real_sources(self):

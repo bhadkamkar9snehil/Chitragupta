@@ -669,13 +669,25 @@ def _resolve_heat(req: dict[str, Any], client: Any) -> dict[str, Any]:
     }
 
 
-def _expand_star(database: str, table: str, columns: list[str]) -> list[str]:
-    """columns=['*'] means "show me the row": use the real columns (bounded) instead of
-    rejecting a clear intent (live: 4 failed calls in one hour)."""
-    if [c.strip() for c in columns] != ["*"]:
-        return columns
+def _resolve_columns(database: str, table: str, columns: list[str]) -> tuple[list[str], dict[str, Any]]:
+    """Map requested columns onto the table's real columns without guessing.
+
+    Known names keep their real casing; unknown names are dropped (never substituted)
+    and reported with the real list; '*' or no valid name selects the real columns
+    (max 25). A 9B model's column recall errors used to fail the whole call.
+    """
     found = _allowed_table(database, table)
-    return found[1][:25] if found else columns
+    if not found:
+        return columns, {}
+    real = found[1]
+    by_lower = {c.lower(): c for c in real}
+    wanted = [c.strip() for c in columns if str(c).strip() and str(c).strip() != "*"]
+    kept = [by_lower[c.lower()] for c in wanted if c.lower() in by_lower]
+    ignored = [c for c in wanted if c.lower() not in by_lower]
+    note: dict[str, Any] = {}
+    if ignored:
+        note = {"columns_ignored": ignored, "real_columns": real[:60]}
+    return (kept or real[:25]), note
 
 
 # Names a small model guesses for the ticket and run records. Live: dbo.Tickets,
@@ -698,7 +710,7 @@ def _known_source_hint(table: str) -> dict[str, str]:
 def _select(req: dict[str, Any], client: Any) -> dict[str, Any]:
     database = str(_database(req))
     table = str(_require(req, "table"))
-    columns = _expand_star(database, table, [str(x) for x in _require(req, "columns")])
+    columns, column_note = _resolve_columns(database, table, [str(x) for x in req.get("columns") or []])
     run_id = str(_require(req, "run_id"))
     built = _orchestrator().build_query_mechanically(
         table=table,
@@ -721,6 +733,7 @@ def _select(req: dict[str, Any], client: Any) -> dict[str, Any]:
         "sql": built.get("sql"),
         "warning": built.get("warning") or built.get("ambiguity_warning"),
         "rows": rows,
+        **column_note,
     }
 
 

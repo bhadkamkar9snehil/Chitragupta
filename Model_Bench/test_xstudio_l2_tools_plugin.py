@@ -137,7 +137,7 @@ def test_typed_tool_guard_requires_operation_specific_arguments() -> None:
 
 def test_named_tool_schemas_have_small_required_contracts() -> None:
     expected = {
-        "xstudio_select": {"database", "table", "columns"},
+        "xstudio_select": {"database", "table"},  # columns optional: bridge resolves
         "xstudio_query": {"database", "sql"},
         "xstudio_suggest_tables": {"database", "search"},
         "xstudio_find_objects": {"database", "search"},
@@ -617,8 +617,8 @@ def test_operations_reject_missing_required_arguments_before_sql() -> None:
     fake_client = mock.MagicMock()
     cases = [
         ("select", {"database": "XStudio_Xbatch"}, "table is required"),
-        ("select", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "columns is required"),
-        ("select", {"database": "XStudio_Xbatch", "table": "dbo.T", "columns": []}, "columns is required"),
+        # columns are optional: the bridge resolves them against the live schema.
+        ("select", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "run_id is required"),
         ("select", {"database": "XStudio_Xbatch", "table": "dbo.T", "columns": ["ID"]}, "run_id is required"),
         ("query", {"database": "XStudio_Xbatch"}, "sql is required"),
         ("query", {"database": "XStudio_Xbatch", "sql": ""}, "sql is required"),
@@ -886,19 +886,19 @@ def test_no_valid_tables_line_means_no_restriction_applied() -> None:
     assert result is None or result["action"] != "block"
 
 
-def test_select_requesting_a_column_not_in_the_evidence_plan_is_blocked() -> None:
+def test_select_with_an_unprobed_column_is_left_to_the_bridge() -> None:
+    """Jev's plan limits tables; columns are resolved (never guessed) by the bridge,
+    so a real-but-unprobed or mistyped column no longer costs the worker a call."""
     session = "stall-guard-5"
     _seed_valid_tables(
         session, "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data[EAFHeatID,EAFEnergyMWH,ActivePower]"
     )
-    blocked = plugin._pre_tool_call(
+    result = plugin._pre_tool_call(
         "xstudio_select",
         {"database": "XStudio_Xbatch", "table": "dbo.EAF_SMS_Data", "columns": ["EAFHeatID", "SomeGuessedColumn"]},
         task_id=session,
     )
-    assert blocked and blocked["action"] == "block"
-    assert "SomeGuessedColumn" in blocked["message"] or "someguessedcolumn" in blocked["message"].lower()
-    assert "did not consume the investigation budget" in blocked["message"]
+    assert not (result and result.get("action") == "block")
 
 
 def test_select_requesting_only_probed_columns_is_allowed() -> None:

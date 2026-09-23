@@ -65,10 +65,11 @@ _OBJECT_TYPE = {"type": "string", "enum": ["TABLE", "VIEW", "PROCEDURE", "TRIGGE
 # operation or fill an unrelated union of arguments.
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "xstudio_select": _tool_schema(
-        "Read validated columns from one allowlisted XStudio table or view.",
+        "Read rows from one allowlisted XStudio table or view. columns is optional: omit it to get "
+        "the real columns; unknown names are ignored and the real column list is returned.",
         {"database": _DATABASE, "table": _STRING, "columns": _COLUMNS,
          "where": _STRING, "order_by": _STRING, "top": _INTEGER},
-        ("database", "table", "columns"),
+        ("database", "table"),
     ),
     "xstudio_query": _tool_schema(
         "Run one read-only SQL query against an explicitly selected XStudio database.",
@@ -250,7 +251,7 @@ _BLOCK_MESSAGE = (
 )
 
 _REQUIRED_FIELDS_BY_OPERATION: dict[str, tuple[str, ...]] = {
-    "select": ("database", "table", "columns"),
+    "select": ("database", "table"),
     "query": ("database", "sql"),
     "suggest_tables": ("database", "search"),
     "find_objects": ("database", "search"),
@@ -361,9 +362,8 @@ def _parse_valid_tables(raw: str) -> dict[str, set[str] | None]:
 
 
 def _table_not_in_valid_tables(session: str, effective_args: dict[str, Any]) -> str | None:
-    """None if the call's table (and, when recorded, its requested columns)
-    are allowed, or no evidence-plan restriction applies to this ticket;
-    otherwise a message naming the real options.
+    """None if the call's table is one Jev's evidence plan selected (or no plan
+    restriction applies); otherwise a message naming the allowed tables.
     """
     with _lock:
         raw = _session_context.get(session, {}).get("valid_tables")
@@ -382,17 +382,7 @@ def _table_not_in_valid_tables(session: str, effective_args: dict[str, Any]) -> 
             f"(valid_tables: {raw})."
         )
 
-    allowed_columns = allowed.get(table.lower())
-    if allowed_columns is None:
-        allowed_columns = allowed.get(bare)
-    requested = effective_args.get("columns")
-    if allowed_columns and isinstance(requested, list):
-        bad = [c for c in requested if str(c).strip().lower() not in allowed_columns]
-        if bad:
-            return (
-                f"{bad} are not among the real columns Jev's evidence plan already probed on "
-                f"'{table}' (valid_tables: {raw})."
-            )
+    # Columns are resolved against the live schema by the bridge (one owner).
     return None
 
 
