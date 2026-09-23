@@ -247,7 +247,7 @@ def _probe_filter(ticket: dict[str, Any], columns: list[str]) -> tuple[str, str]
     scalars = _ticket_scalar_map(ticket)
     for identifier in _IDENTIFIER_PRIORITY:
         if identifier in lookup and identifier in scalars:
-            return lookup[identifier], scalars[identifier]
+            return lookup[identifier], scalars[identifier].rstrip(".,;:/-")
 
     raw = json.dumps(ticket, default=str)
     for identifier in _IDENTIFIER_PRIORITY:
@@ -259,31 +259,66 @@ def _probe_filter(ticket: dict[str, Any], columns: list[str]) -> tuple[str, str]
             raw,
         )
         if match:
-            return column, match.group(1)
+            return column, match.group(1).rstrip(".,;:/-")
     return None
 
 
-def _probe_columns(filter_column: str, real_columns: list[str], requested: list[Any]) -> list[str]:
-    lookup = {re.sub(r"[^a-z0-9]", "", column.lower()): column for column in real_columns}
-    columns = [filter_column]
-    for candidate in requested:
-        real = lookup.get(re.sub(r"[^a-z0-9]", "", str(candidate).lower()))
-        if real and real not in columns:
-            columns.append(real)
-    for column in real_columns:
-        lower = column.lower()
-        if any(word in lower for word in _PROBE_COLUMN_WORDS) and column not in columns:
+# Audit/sync plumbing present on every XStudio table; never evidence for a ticket.
+_PROBE_EXCLUDED = {
+    "id", "name", "parentid", "createdby", "modifiedby", "createdon", "isdeleted", "issystem",
+    "assigneduserid", "hostaddress", "dbsyncstatus", "mobilesyncstatus", "source",
+}
+# Ticket prose names chemistry elements; the columns use symbols.
+_TERM_ALIASES = {
+    "carbon": "c", "silicon": "si", "manganese": "mn", "sulphur": "s", "sulfur": "s",
+    "phosphorus": "p", "chromium": "cr", "nickel": "ni", "copper": "cu", "aluminium": "al",
+    "aluminum": "al", "nitrogen": "n2ppm", "vanadium": "v", "niobium": "nb", "boron": "b",
+}
+_PROBE_COLUMN_LIMIT = 16
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(text).lower())
+
+
+def _ticket_terms(ticket_text: str) -> set[str]:
+    words = re.findall(r"[A-Za-z][A-Za-z0-9_]*", ticket_text or "")
+    terms = {_norm(w) for w in words}
+    terms |= {_TERM_ALIASES[t] for t in terms if t in _TERM_ALIASES}
+    # Adjacent word pairs catch "Power-On time" -> "poweron", "Cut start time" -> "cutstart".
+    lowered = [w.lower() for w in words]
+    terms |= {_norm(x + y) for x, y in zip(lowered, lowered[1:])}
+    return {t for t in terms if t}
+
+
+def _probe_columns(filter_column: str, real_columns: list[str], requested: list[Any],
+                   ticket_text: str = "") -> list[str]:
+    """Columns for an identifier probe, chosen by the harness, never by the model."""
+    usable = [c for c in real_columns if _norm(c) not in _PROBE_EXCLUDED]
+    lookup = {_norm(c): c for c in usable}
+    terms = _ticket_terms(ticket_text)
+    identifiers = set(_IDENTIFIER_PRIORITY) | {"billetno", "strandno", "sampletype", "grade"}
+    ranked = [filter_column]
+    ranked += [lookup[_norm(r)] for r in requested if _norm(r) in lookup]
+    ranked += [c for c in usable if _norm(c) in terms]                        # named exactly
+    ranked += [c for c in usable if len(_norm(c)) >= 5
+               and any(_norm(c).startswith(t) for t in terms if len(t) >= 5)]  # "arcing" -> ArcingTime
+    ranked += [c for c in usable if any(len(t) >= 10 and t in _norm(c) for t in terms)]
+    ranked += [c for c in usable if _norm(c) in identifiers]
+    ranked += [c for c in usable if any(w in c.lower() for w in _PROBE_COLUMN_WORDS)]
+    columns: list[str] = []
+    for column in ranked:
+        if column not in columns:
             columns.append(column)
-        if len(columns) >= 12:
-            break
-    return columns[:12]
+    return columns[:_PROBE_COLUMN_LIMIT]
 
 
 def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
     """Probe one allowlisted table by one strong ticket identifier."""
     database = str(_database(req))
     table = str(_require(req, "table")).strip()
-    ticket = _require(req, "ticket")
+    # Harness probes pass the ticket; the worker tool passes only ticket_id.
+    ticket = req.get("ticket") or client.get_ticket_context(str(_require(req, "ticket_id")))
     if not isinstance(ticket, dict):
         raise ValueError("ticket must be an object")
 
@@ -310,7 +345,8 @@ def _probe_table(req: dict[str, Any], client: Any) -> dict[str, Any]:
 
     run_id = str(_require(req, "run_id"))
     filter_column, filter_value = selected_filter
-    columns = _probe_columns(filter_column, real_columns, req.get("matched_columns") or [])
+    columns = _probe_columns(filter_column, real_columns, req.get("matched_columns") or [],
+                             json.dumps(ticket, default=str))
     built = _orchestrator().build_query_mechanically(
         table=qualified,
         columns=columns,

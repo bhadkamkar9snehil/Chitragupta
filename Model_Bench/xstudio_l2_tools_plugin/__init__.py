@@ -38,6 +38,22 @@ TOOL_NAME = "xstudio_l2"
 TOOLSET = "xstudio_l2"
 # Investigator-only completion tool; reviewer profiles leave this toolset off.
 SUBMIT_TOOLSET = "l2_submit"
+# Model-composed SQL and schema exploration. The 9B worker named tables/columns/WHERE
+# clauses itself and most of those calls failed; workers read through
+# xstudio_read_table (harness-chosen filter and columns) instead. No worker profile
+# enables this toolset; it stays registered for harness diagnostics.
+EXPLORE_TOOLSET = "xstudio_explore"
+EXPLORE_TOOLS = frozenset({
+    "xstudio_select", "xstudio_query", "xstudio_suggest_tables", "xstudio_find_objects",
+    "xstudio_get_definition", "xstudio_validate_identifiers", "xstudio_read_procedure",
+    "xstudio_resolve_heat",
+})
+
+
+def _toolset_for(name: str) -> str:
+    if name == "xstudio_submit_proposal":
+        return SUBMIT_TOOLSET
+    return EXPLORE_TOOLSET if name in EXPLORE_TOOLS else TOOLSET
 
 _DATABASE_ENUM = [
     "XStudio_Helpdesk", "XStudio_Xbatch", "XStudio_Configuration_Xbatch",
@@ -120,6 +136,12 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "Persist ticket-specific investigation findings for this L2 run.",
         {"run_id": _STRING, "ledger": {"type": "object"}}, ("ledger",),
     ),
+    "xstudio_read_table": _tool_schema(
+        "Read one XStudio table or view for THIS ticket. Give only the table name: the harness "
+        "filters by the ticket's own heat/work order/billet/document and picks the relevant "
+        "columns. Each result carries an action_id for VERIFIED claims.",
+        {"table": _STRING, "database": _DATABASE}, ("table",),
+    ),
     "xstudio_heat_context": _tool_schema(
         "Read canonical EAF/LRF/CCM, work-order, SAP and billet evidence for one heat.",
         {"heat": _STRING, "database": _DATABASE}, ("heat",),
@@ -170,6 +192,7 @@ TOOL_OPERATIONS: dict[str, str] = {
     "xstudio_get_ticket_context": "get_ticket_context",
     "xstudio_get_run_actions": "get_run_actions",
     "xstudio_save_ledger": "save_ledger",
+    "xstudio_read_table": "probe_table",
     "xstudio_heat_context": "heat_context",
     "xstudio_sap_api_context": "sap_api_context",
     "xstudio_work_order_context": "work_order_context",
@@ -190,6 +213,7 @@ _EFFECTIVE_REQUIRED_FIELDS_BY_TOOL: dict[str, tuple[str, ...]] = {
     "xstudio_get_ticket_context": ("ticket_id",),
     "xstudio_get_run_actions": ("run_id",),
     "xstudio_save_ledger": ("run_id", "ledger"),
+    "xstudio_read_table": ("database", "run_id", "ticket_id", "table"),
     "xstudio_heat_context": ("database", "run_id", "heat"),
     "xstudio_sap_api_context": ("database", "run_id", "api_type"),
     "xstudio_work_order_context": ("database", "run_id", "work_order"),
@@ -400,7 +424,7 @@ def _repair_args(tool_name: str, args: dict[str, Any], session: str,
             changed[field] = context[field]
 
     operation = TOOL_OPERATIONS.get(tool_name)
-    if operation in {"resolve_heat", "heat_context", "sap_api_context", "work_order_context"} and not effective.get("database"):
+    if operation in {"resolve_heat", "heat_context", "sap_api_context", "work_order_context", "probe_table"} and not effective.get("database"):
         effective["database"] = "XStudio_Xbatch"
         changed["database"] = "XStudio_Xbatch"
     return effective, changed
@@ -1274,7 +1298,7 @@ def register(ctx: Any) -> None:
         # same toolset preserves the existing profile enablement boundary.
         ctx.register_tool(
             name=name,
-            toolset=SUBMIT_TOOLSET if name == "xstudio_submit_proposal" else TOOLSET,
+            toolset=_toolset_for(name),
             schema=schema,
             handler=TOOL_HANDLERS[name],
             description=schema["description"],

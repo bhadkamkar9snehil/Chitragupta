@@ -8,6 +8,7 @@ from patch_profile_config import _find_key_line, _block_end
 # reviewers with kanban_complete/kanban_block. Reviewers seeing the submit tool made
 # 22 replacement-proposal attempts in 6h, so it lives in its own plugin toolset.
 SUBMIT_TOOLSET = "l2_submit"
+EXPLORE_TOOLSET = "xstudio_explore"
 
 
 def _mark_known_plugin_toolset(lines: list[str], toolset: str) -> None:
@@ -82,6 +83,9 @@ def configure(text: str, reviewer: bool = False, disabled_skills: list[str] | No
     # used to omit it and silently undo patch_profile_config on every deploy.
     toolsets = ["file", "kanban", "skills", "xstudio_l2", "l2_learning"] + ([] if reviewer else [SUBMIT_TOOLSET])
     lines[index:_block_end(lines, index)] = ["  cli:"] + [f"    - {t}" for t in toolsets]
+    # Known-but-unlisted keeps a plugin toolset off: the exploration tools for every
+    # worker, the submit tool for reviewers.
+    _mark_known_plugin_toolset(lines, EXPLORE_TOOLSET)
     if reviewer:
         _mark_known_plugin_toolset(lines, SUBMIT_TOOLSET)
     if disabled_skills:

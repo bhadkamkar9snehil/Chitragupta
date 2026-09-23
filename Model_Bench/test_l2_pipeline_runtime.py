@@ -2058,7 +2058,8 @@ class ValidTablesRenderingTests(unittest.TestCase):
             "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data[EAFHeatID,ActivePower]",
             instructions,
         )
-        self.assertIn("rejected before SQL", instructions)
+        self.assertIn("xstudio_read_table", instructions)
+        self.assertNotIn("xstudio_select", instructions)
 
     def test_query_instructions_omits_brackets_when_no_columns_known(self):
         instructions = mod._query_instructions(
@@ -2070,7 +2071,7 @@ class ValidTablesRenderingTests(unittest.TestCase):
     def test_query_instructions_with_no_valid_tables_omits_the_line_entirely(self):
         instructions = mod._query_instructions("run-1", "ticket-1", None)
         self.assertNotIn("Current valid_tables", instructions)
-        self.assertIn("xstudio_suggest_tables", instructions)
+        self.assertIn("xstudio_read_table", instructions)
 
     def test_extraction_includes_primary_and_relationship_hop_tables_with_columns(self):
         investigation = {

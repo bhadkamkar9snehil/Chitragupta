@@ -148,6 +148,7 @@ def test_named_tool_schemas_have_small_required_contracts() -> None:
         "xstudio_get_ticket_context": set(),
         "xstudio_get_run_actions": set(),
         "xstudio_save_ledger": {"ledger"},
+        "xstudio_read_table": {"table"},  # filter + columns chosen by the harness
         "xstudio_heat_context": {"heat"},
         "xstudio_sap_api_context": {"api_type"},
         "xstudio_work_order_context": {"work_order"},
@@ -637,7 +638,7 @@ def test_operations_reject_missing_required_arguments_before_sql() -> None:
         ("save_ledger", {}, "run_id is required"),
         ("save_ledger", {"run_id": "r1"}, "ledger is required"),
         ("probe_table", {"database": "XStudio_Xbatch"}, "table is required"),
-        ("probe_table", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "ticket is required"),
+        ("probe_table", {"database": "XStudio_Xbatch", "table": "dbo.T"}, "ticket_id is required"),
     ]
     for op, payload, err in cases:
         req = dict(payload, operation=op)
@@ -1598,6 +1599,23 @@ def test_worker_config_gives_each_role_one_completion_path_and_only_xstudio_skil
     assert "known_plugin_toolsets:\n  cli:\n    - l2_submit" in reviewer
     assert "skills:\n  disabled:\n    - codex" in investigator
     assert budget.configure(investigator, disabled_skills=["codex"]) == investigator
+
+
+def test_read_table_probe_filters_on_the_ticket_identifier_without_prose_punctuation() -> None:
+    # Ticket_338: "Please verify LRF_Per_Heat for HeatID 1604007." probed '1604007.' -> 0 rows.
+    ticket = {"Description": "Please verify LRF_Per_Heat for HeatID 1604007."}
+    assert bridge._probe_filter(ticket, ["ID", "HeatID", "ArcingTime"]) == ("HeatID", "1604007")
+
+
+def test_read_table_probe_picks_the_columns_the_ticket_names_not_sync_plumbing() -> None:
+    lrf = ["ID", "Name", "DbSyncStatus", "MobileSyncStatus", "StartTime", "Status", "PowerONTime",
+           "PowerOFFTime", "ArcingTime", "HeatID", "ArgonConsumption"]
+    cols = bridge._probe_columns("HeatID", lrf, [], "Operator logged ArcingTime; confirm PowerONTime and PowerOFFTime")
+    assert cols[:4] == ["HeatID", "PowerONTime", "PowerOFFTime", "ArcingTime"]
+    assert not {"Name", "DbSyncStatus", "MobileSyncStatus", "ID"} & set(cols)
+    chem = ["HeatNo", "C", "Si", "Mn", "SampleType", "Grade", "DbSyncStatus"]
+    cols = bridge._probe_columns("HeatNo", chem, [], "chemistry shows Carbon=0.07 and Silicon=0.003")
+    assert {"C", "Si", "SampleType", "Grade"} <= set(cols) and "Mn" not in cols
 
 
 def main() -> int:
