@@ -330,6 +330,26 @@ class PipelineContractTests(unittest.TestCase):
         self.assertTrue(allowed("UPDATE", self._signals(0.88, 0.95, 0.29, 0.78, 0.20, 0.60)))  # Ticket_251
         self.assertFalse(allowed("UPDATE", self._signals(0.46, 0.81, 0.36, 0.60, 0.68, 1.88)))  # Ticket_289
 
+    def _review_with(self, choice, confidence, probabilities, response_type="L3_ESCALATION"):
+        result = {"ok": True, "answers": {"decision": {"choice": choice, "confidence": confidence,
+                                                       "probabilities": probabilities},
+                                          "rework_reason": {"choice": "EVIDENCE_GAP"}}}
+        with patch.object(mod, "_proposal_preflight_state", return_value={}), \
+                patch.object(mod, "_run_jev_workflow", return_value={"ok": True, "result": result}):
+            return mod._jev_primary_review(mod.default_args(), {"response_type": response_type,
+                                                                 "run_id": "r", "ticket_id": "t"})
+
+    def test_jev_rework_is_acted_on_by_probability_not_raw_confidence(self):
+        """Live Ticket_322: REWORK P=0.64 with confidence 0.53 must rework, not go to a local reviewer."""
+        review = self._review_with("REWORK", 0.53, {"REWORK": 0.64, "LOCAL_REVIEW": 0.21})
+        self.assertEqual(review["action"], "REWORK")
+        weak = self._review_with("REWORK", 0.9, {"REWORK": 0.45, "LOCAL_REVIEW": 0.4})
+        self.assertEqual(weak["action"], "LOCAL_REVIEW")
+
+    def test_direct_l3_escalation_needs_a_high_probability(self):
+        self.assertEqual(self._review_with("L3_ESCALATION", 0.9, {"L3_ESCALATION": 0.7})["action"], "LOCAL_REVIEW")
+        self.assertEqual(self._review_with("L3_ESCALATION", 0.3, {"L3_ESCALATION": 0.9})["action"], "L3_ESCALATION")
+
     def test_escalations_and_unaudited_actions_never_publish_directly(self):
         strong = self._signals(0.99, 0.99, 0.0, 0.99, 0.0, 0.0)
         self.assertFalse(mod.direct_approval_allowed("L3_ESCALATION", strong))

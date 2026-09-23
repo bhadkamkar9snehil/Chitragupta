@@ -2434,7 +2434,13 @@ def _jev_primary_review(
     except (TypeError, ValueError):
         confidence = 0.0
 
-    rework_threshold = float(os.environ.get("CHITRAGUPTA_JEV_DIRECT_REWORK_CONFIDENCE", "0.88"))
+    # Probabilities, not raw decision confidence (uncalibrated): live 2026-09-23, Jev said
+    # REWORK (EVIDENCE_GAP, P=0.64/0.70) on Ticket_322/323, the 0.88 confidence gate
+    # overruled it, and a local reviewer approved escalating a ticket the proposal itself
+    # had answered. Rework publishes nothing and is bounded by MAX_REVIEW_CYCLES.
+    probabilities = decision_answer.get("probabilities") or {}
+    rework_bound = float(os.environ.get("CHITRAGUPTA_JEV_DIRECT_REWORK_PROBABILITY", "0.60"))
+    l3_bound = float(os.environ.get("CHITRAGUPTA_JEV_DIRECT_L3_PROBABILITY", "0.85"))
     signals = {
         "p_approve": float(((decision_answer.get("probabilities") or {}).get("APPROVE")) or 0.0),
         "evidence": _noul_answer(result, "evidence_supports_core_claim", 0.0),
@@ -2453,9 +2459,9 @@ def _jev_primary_review(
     action = "LOCAL_REVIEW"
     if safe_approve:
         action = "APPROVE"
-    elif decision == "REWORK" and confidence >= rework_threshold:
+    elif decision == "REWORK" and float(probabilities.get("REWORK") or 0.0) >= rework_bound:
         action = "REWORK"
-    elif decision == "L3_ESCALATION" and confidence >= rework_threshold:
+    elif decision == "L3_ESCALATION" and float(probabilities.get("L3_ESCALATION") or 0.0) >= l3_bound:
         action = "L3_ESCALATION"
 
     reason_answer = answers.get("rework_reason") or {}
