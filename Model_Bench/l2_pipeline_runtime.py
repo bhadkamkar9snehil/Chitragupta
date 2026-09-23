@@ -3045,6 +3045,31 @@ def _publish_frozen_proposal(
     return "published"
 
 
+def _approve_one(
+    args: argparse.Namespace, task: dict[str, Any], run_id: str, ticket_id: str,
+    source_tasks: list[dict[str, Any]], dry_run: bool,
+) -> str:
+    """Gate and publish one approved local review; returns the counts key to bump."""
+    proposal = task_proposal(task)
+    gate_reason = (
+        "Local reviewer reached done but its frozen proposal_json is missing/incomplete; "
+        "re-package the original verified finding through focused rework."
+        if not _proposal_complete(proposal)
+        else pre_publish_gate_reason(args, proposal, run_id=run_id, ticket_id=ticket_id)
+    )
+    if gate_reason:
+        created = create_rework_card(
+            args, source_task=task, reason=gate_reason,
+            investigation_task_id=body_field(task.get("body"), "investigation_task_id"),
+            dry_run=dry_run, tasks=source_tasks,
+        )
+        return "rework_created" if created else ""
+    return _publish_frozen_proposal(
+        args, proposal, source=f"local reviewer {task['id']}",
+        ledger=publication_ledger(proposal, task), dry_run=dry_run,
+    )
+
+
 def process_approvals(
     args: argparse.Namespace,
     *,
@@ -3053,14 +3078,10 @@ def process_approvals(
     active_run_ids: set[str] | None = None,
 ) -> dict[str, int]:
     """Publish local-review approvals that still belong to active SQL runs."""
-    counts = {
-        "published": 0,
-        "already_published": 0,
-        "inactive_skipped": 0,
-        "blocked_configuration": 0,
-        "escalated": 0,
-        "rework_created": 0,
-    }
+    counts = dict.fromkeys((
+        "published", "already_published", "inactive_skipped",
+        "blocked_configuration", "escalated", "rework_created",
+    ), 0)
     source_tasks = tasks if tasks is not None else list_tasks()
     active_ids = active_run_ids
     if active_ids is None:
@@ -3077,49 +3098,13 @@ def process_approvals(
         if run_id not in active_ids:
             counts["inactive_skipped"] += 1
             continue
-
         try:
-            proposal = task_proposal(task)
-            if not _proposal_complete(proposal):
-                reason = (
-                    "Local reviewer reached done but its frozen proposal_json is missing/incomplete; "
-                    "re-package the original verified finding through focused rework."
-                )
-                source_id = body_field(task.get("body"), "investigation_task_id")
-                if create_rework_card(
-                    args, source_task=task, reason=reason,
-                    investigation_task_id=source_id, dry_run=dry_run,
-                    tasks=source_tasks,
-                ):
-                    counts["rework_created"] += 1
-                continue
-
-            gate_reason = pre_publish_gate_reason(args, proposal, run_id=run_id, ticket_id=ticket_id)
-            if gate_reason:
-                if create_rework_card(
-                    args, source_task=task, reason=gate_reason,
-                    investigation_task_id=body_field(task.get("body"), "investigation_task_id"),
-                    dry_run=dry_run,
-                ):
-                    counts["rework_created"] += 1
-                continue
-
-            outcome = _publish_frozen_proposal(
-                args,
-                proposal or {},
-                source=f"local reviewer {task['id']}",
-                ledger=publication_ledger(proposal, task),
-                dry_run=dry_run,
-            )
-            if outcome == "published":
-                counts["published"] += 1
-            elif outcome == "already_published":
-                counts["already_published"] += 1
-            elif outcome in ("blocked_configuration", "escalated"):
-                counts[outcome] += 1
+            outcome = _approve_one(args, task, run_id, ticket_id, source_tasks, dry_run)
         except RuntimeError as exc:
             print(f"WARNING: approval processing failed for {task['id']}: {exc}")
-
+            continue
+        if outcome in counts:
+            counts[outcome] += 1
     return counts
 
 
