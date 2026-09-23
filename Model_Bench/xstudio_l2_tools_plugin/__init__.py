@@ -27,7 +27,7 @@ import subprocess
 import sys
 import threading
 from collections import defaultdict
-from typing import Any
+from typing import Any, Optional
 
 BRIDGE_PATH = os.environ.get(
     "L2_XSTUDIO_BRIDGE",
@@ -517,22 +517,12 @@ def _legacy_tool_handler(params: dict[str, Any], **kwargs: Any) -> str:
     return _invoke_bridge(params)
 
 
-def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
-    """Assemble flat proposal args into full kanban_complete metadata, then complete the task.
-
-    This is trusted harness code. The model fills in simple top-level string
-    fields; this handler builds the nested claims array and metadata dict that
-    the completion contract requires, then calls ``hermes kanban complete``
-    directly.  It does NOT consume the XStudio tool-call budget and does NOT
-    go through the SQL bridge.
-    """
-    session = _session_key(kwargs.get("task_id", ""))
-    context = _context_for(session, kwargs)
-    params = dict(params or {})
-    if context.get("pipeline_stage", "").lower() == "review":
-        return json.dumps({"ok": False, "error": "Reviewers judge the frozen proposal: use kanban_complete to approve or kanban_block to reject. Do not submit a replacement proposal.", "retry_same_call": False})
-
-    # --- validate required fields ---
+def _validate_submit_proposal_inputs(
+    params: dict[str, Any], context: dict[str, Any],
+) -> tuple[Optional[str], Optional[dict[str, Any]]]:
+    """Reject bad/incomplete xstudio_submit_proposal input before any assembly.
+    Returns (error_json, None) to reject the call, or (None, validated_fields)
+    to proceed. Pure validation -- no side effects, no derived metadata."""
     response_type = str(params.get("response_type") or "").upper().strip()
     summary = str(params.get("summary") or "").strip()
     if response_type not in _VALID_RESPONSE_TYPES:
@@ -540,7 +530,7 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
             "ok": False,
             "error": f"response_type must be one of {sorted(_VALID_RESPONSE_TYPES)}, got {response_type!r}",
             "retry_same_call": False,
-        })
+        }), None
     if len(summary) < MIN_SUBSTANTIVE_COMPLETION_CHARS:
         return json.dumps({
             "ok": False,
@@ -549,7 +539,7 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
                 f"substantive investigation findings (got {len(summary)})"
             ),
             "retry_same_call": False,
-        })
+        }), None
 
     run_id = context.get("run_id", "")
     ticket_id = context.get("ticket_id", "")
@@ -559,7 +549,7 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
             "error": "run_id and ticket_id could not be resolved from session context; "
                      "ensure the task body was parsed before calling xstudio_submit_proposal",
             "retry_same_call": False,
-        })
+        }), None
 
     requester_question = str(params.get("requester_question") or "").strip()
     if requester_question:
@@ -569,9 +559,8 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
             "ok": False,
             "error": "QUESTION requires requester_question: ask for the specific missing fact in customer-facing language.",
             "retry_same_call": False,
-        })
+        }), None
 
-    # --- claim assembly ---
     claim_status = str(params.get("claim_status") or "UNVERIFIED").upper().strip()
     if claim_status not in {"VERIFIED", "INFERRED", "UNVERIFIED", "CONTRADICTED"}:
         claim_status = "UNVERIFIED"
@@ -583,12 +572,31 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
             "error": "VERIFIED claims require action_id — a current-run Hermes action ID. "
                      "Use xstudio_get_run_actions to find one, or set claim_status to INFERRED/UNVERIFIED.",
             "retry_same_call": False,
-        })
+        }), None
+
+    return None, {
+        "response_type": response_type,
+        "summary": summary,
+        "run_id": run_id,
+        "ticket_id": ticket_id,
+        "requester_question": requester_question,
+        "claim_status": claim_status,
+        "action_id": action_id,
+    }
+
+
+def _derive_proposal_metadata(fields: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """Pure derivation of the kanban_complete metadata dict: claim assembly,
+    evidence_status, reply_text. Assumes fields already passed validation."""
+    response_type = fields["response_type"]
+    summary = fields["summary"]
+    claim_status = fields["claim_status"]
+    action_id = fields["action_id"]
+    requester_question = fields["requester_question"]
 
     evidence: list[dict[str, str]] = []
     if action_id:
         evidence = [{"action_id": action_id}]
-
     claim = {
         "id": "C1",
         "claim": summary,
@@ -597,7 +605,6 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
         "evidence": evidence,
     }
 
-    # --- evidence status ---
     evidence_status = str(params.get("evidence_status") or "").upper().strip()
     if evidence_status not in {"COMPLETE", "INCOMPLETE"}:
         # Default: COMPLETE only for RESOLUTION with VERIFIED claim
@@ -607,7 +614,6 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
     if claim_status != "VERIFIED" or not action_id:
         evidence_status = "INCOMPLETE"
 
-    # --- reply text ---
     reply_text = str(params.get("reply_text") or "").strip()
     if not reply_text:
         if evidence_status == "INCOMPLETE":
@@ -624,10 +630,9 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
             "verified until current-run evidence is cited.\n\n" + reply_text
         )
 
-    # --- metadata assembly ---
     metadata: dict[str, Any] = {
-        "run_id": run_id,
-        "ticket_id": ticket_id,
+        "run_id": fields["run_id"],
+        "ticket_id": fields["ticket_id"],
         "response_type": response_type,
         "reply_text": reply_text,
         "claims_contract_version": 1,
@@ -643,8 +648,33 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
         value = str(params.get(optional_field) or "").strip()
         if value:
             metadata[optional_field] = value
+    return metadata
 
-    # --- invoke kanban complete ---
+
+def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
+    """Assemble flat proposal args into full kanban_complete metadata, then complete the task.
+
+    This is trusted harness code. The model fills in simple top-level string
+    fields; this handler builds the nested claims array and metadata dict that
+    the completion contract requires, then calls ``hermes kanban complete``
+    directly.  It does NOT consume the XStudio tool-call budget and does NOT
+    go through the SQL bridge.
+    """
+    session = _session_key(kwargs.get("task_id", ""))
+    context = _context_for(session, kwargs)
+    params = dict(params or {})
+    if context.get("pipeline_stage", "").lower() == "review":
+        return json.dumps({"ok": False, "error": "Reviewers judge the frozen proposal: use kanban_complete to approve or kanban_block to reject. Do not submit a replacement proposal.", "retry_same_call": False})
+
+    error, fields = _validate_submit_proposal_inputs(params, context)
+    if error:
+        return error
+
+    metadata = _derive_proposal_metadata(fields, params)
+    response_type = fields["response_type"]
+    claim_status = fields["claim_status"]
+    evidence_status = metadata["evidence_status"]
+
     task_id = str(context.get("kanban_task_id") or kwargs.get("task_id") or "")
     if not task_id:
         return json.dumps({
@@ -655,7 +685,7 @@ def _submit_proposal_handler(params: dict[str, Any], **kwargs: Any) -> str:
 
     cmd = [
         "hermes", "kanban", "complete", task_id,
-        "--summary", summary[:500],
+        "--summary", fields["summary"][:500],
         "--result", response_type,
         "--metadata", json.dumps(metadata, separators=(",", ":"), default=str),
     ]
@@ -700,14 +730,8 @@ TOOL_HANDLERS: dict[str, Any] = {
 TOOL_HANDLERS["xstudio_submit_proposal"] = _submit_proposal_handler
 
 
-def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
-                   task_id: str = "", **kwargs: Any) -> dict[str, str] | None:
-    args = args or {}
-    session = _session_key(task_id, **kwargs)
-    context = _context_for(session, kwargs)
-
-    if (tool_name == "kanban_complete"
-            and context.get("pipeline_stage", "").lower() == "review"
+def _kanban_review_contract_guard(context: dict[str, Any]) -> dict[str, str] | None:
+    if (context.get("pipeline_stage", "").lower() == "review"
             and context.get("contract_repaired_from_unstructured", "").lower() == "true"):
         return {
             "action": "block",
@@ -718,62 +742,79 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
                 "produce a fresh structured proposal."
             ),
         }
+    return None
 
-    if tool_name == "kanban_complete" and context.get("pipeline_stage", "").lower() in {"investigation", "rework"}:
-        metadata = dict(args.get("metadata") or {}) if isinstance(args.get("metadata"), dict) else {}
-        for field in ("run_id", "ticket_id"):
-            if not metadata.get(field) and context.get(field):
-                metadata[field] = context[field]
-        metadata.setdefault("claims_contract_version", 1)
-        missing = [field for field in ("run_id", "ticket_id", "response_type", "reply_text", "claims")
-                   if metadata.get(field) in (None, "", [])]
-        summary = str(args.get("summary") or "").strip()
-        if (len(summary) >= MIN_SUBSTANTIVE_COMPLETION_CHARS
-                and metadata.get("run_id") and metadata.get("ticket_id")
-                and all(metadata.get(field) in (None, "", [])
-                        for field in ("response_type", "reply_text", "claims"))):
-            # Small local models reliably produce a useful flat summary but can loop
-            # forever when asked to serialize the nested proposal contract. Package
-            # that summary as an explicitly incomplete UPDATE. The independent
-            # reviewer still owns truth, and no statement is promoted to VERIFIED.
-            metadata.update({
-                "response_type": "UPDATE",
-                "reply_text": (
-                    "Evidence status: INCOMPLETE. The investigation produced findings "
-                    "that require independent review before any cause or resolution is "
-                    "treated as verified."
-                ),
-                "claims": [{
-                    "id": "summary-1",
-                    "claim": summary,
-                    "material": True,
-                    "status": "UNVERIFIED",
-                    "evidence": [],
-                }],
-                "contract_packaged_from_summary": True,
-                "evidence_status": "INCOMPLETE",
-                "investigator_notes": summary,
-            })
-            return {"action": "modify", "args": {"metadata": metadata}}
-        if missing:
-            return {
-                "action": "block",
-                "message": (
-                    "L2 completion contract: metadata is missing " + ", ".join(missing) + ". "
-                    "Stay in this turn and retry kanban_complete with metadata containing run_id, ticket_id, "
-                    "response_type, reply_text, claims_contract_version=1, and a non-empty claims array. "
-                    "Each claim needs id, claim, material, status, and evidence; VERIFIED material claims "
-                    "must cite current-run action_id values."
-                ),
-            }
 
-    # A small model can select the right terminal Kanban action yet serialize
-    # an empty object. Preserve that decision without paying for another model
-    # turn; structured metadata and the SQL evidence trail remain authoritative.
-    if tool_name == "kanban_complete" and not (args.get("summary") or args.get("result")):
-        return {"action": "modify", "args": {
-            "summary": "Task completed; use the structured task metadata and persisted evidence trail for details."
-        }}
+def _kanban_completion_metadata_guard(args: dict[str, Any], context: dict[str, Any]) -> dict[str, str] | None:
+    if context.get("pipeline_stage", "").lower() not in {"investigation", "rework"}:
+        return None
+    metadata = dict(args.get("metadata") or {}) if isinstance(args.get("metadata"), dict) else {}
+    for field in ("run_id", "ticket_id"):
+        if not metadata.get(field) and context.get(field):
+            metadata[field] = context[field]
+    metadata.setdefault("claims_contract_version", 1)
+    missing = [field for field in ("run_id", "ticket_id", "response_type", "reply_text", "claims")
+               if metadata.get(field) in (None, "", [])]
+    summary = str(args.get("summary") or "").strip()
+    if (len(summary) >= MIN_SUBSTANTIVE_COMPLETION_CHARS
+            and metadata.get("run_id") and metadata.get("ticket_id")
+            and all(metadata.get(field) in (None, "", [])
+                    for field in ("response_type", "reply_text", "claims"))):
+        # Small local models reliably produce a useful flat summary but can loop
+        # forever when asked to serialize the nested proposal contract. Package
+        # that summary as an explicitly incomplete UPDATE. The independent
+        # reviewer still owns truth, and no statement is promoted to VERIFIED.
+        metadata.update({
+            "response_type": "UPDATE",
+            "reply_text": (
+                "Evidence status: INCOMPLETE. The investigation produced findings "
+                "that require independent review before any cause or resolution is "
+                "treated as verified."
+            ),
+            "claims": [{
+                "id": "summary-1",
+                "claim": summary,
+                "material": True,
+                "status": "UNVERIFIED",
+                "evidence": [],
+            }],
+            "contract_packaged_from_summary": True,
+            "evidence_status": "INCOMPLETE",
+            "investigator_notes": summary,
+        })
+        return {"action": "modify", "args": {"metadata": metadata}}
+    if missing:
+        return {
+            "action": "block",
+            "message": (
+                "L2 completion contract: metadata is missing " + ", ".join(missing) + ". "
+                "Stay in this turn and retry kanban_complete with metadata containing run_id, ticket_id, "
+                "response_type, reply_text, claims_contract_version=1, and a non-empty claims array. "
+                "Each claim needs id, claim, material, status, and evidence; VERIFIED material claims "
+                "must cite current-run action_id values."
+            ),
+        }
+    return None
+
+
+def _kanban_contract_guard(tool_name: str, args: dict[str, Any], context: dict[str, Any]) -> dict[str, str] | None:
+    """Every kanban_complete/kanban_block/terminal special case, self-contained."""
+    if tool_name == "kanban_complete":
+        result = _kanban_review_contract_guard(context)
+        if result is not None:
+            return result
+        result = _kanban_completion_metadata_guard(args, context)
+        if result is not None:
+            return result
+        # A small model can select the right terminal Kanban action yet serialize
+        # an empty object. Preserve that decision without paying for another model
+        # turn; structured metadata and the SQL evidence trail remain authoritative.
+        if not (args.get("summary") or args.get("result")):
+            return {"action": "modify", "args": {
+                "summary": "Task completed; use the structured task metadata and persisted evidence trail for details."
+            }}
+        return None
+
     if tool_name == "kanban_block" and not (args.get("reason") or args.get("summary")):
         return {"action": "modify", "args": {
             "reason": "Task rejected or blocked; no structured reason was supplied by the worker."
@@ -785,48 +826,25 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
             return {"action": "block", "message": _BLOCK_MESSAGE}
         return None
 
-    # xstudio_submit_proposal does its own validation in _submit_proposal_handler
-    # and is not a bridge/SQL tool, so it must not consume the investigation budget.
-    if tool_name == "xstudio_submit_proposal":
-        return None
+    return None
 
-    if tool_name not in TOOL_OPERATIONS and tool_name != TOOL_NAME:
-        return None
 
+def _resolve_typed_tool_args(
+    tool_name: str, args: dict[str, Any], session: str, kwargs: dict[str, Any],
+) -> tuple[Optional[str], dict[str, Any], dict[str, Any]]:
+    """Shape/compatibility resolution: one owner for "is this call well-formed,
+    and what are its effective (possibly repaired) arguments"."""
     if tool_name == TOOL_NAME:
         # Keep the old guard for compatibility with pre-migration callers, but
         # never expose/register this polymorphic surface to the model.
-        shape_error = _shape_error(args)
-        effective_args = args
-        repairs: dict[str, Any] = {}
-    else:
-        effective_args, repairs = _repair_args(tool_name, args, session, kwargs)
-        shape_error = _shape_error_for_tool(tool_name, effective_args)
-    if shape_error:
-        required = list(_REQUIRED_FIELDS_BY_TOOL.get(tool_name, ()))
-        effective_req = _EFFECTIVE_REQUIRED_FIELDS_BY_TOOL.get(tool_name, ())
-        retry_fields = required or list(effective_req)
-        return {
-            "action": "block",
-            "message": (
-                f"Invalid {tool_name} arguments: {shape_error}. Correct the typed "
-                "arguments; this call was not sent to SQL and did not consume "
-                f"the investigation budget. RETRY_WITH: {json.dumps({'tool': tool_name, 'required': retry_fields})}"
-            ),
-        }
+        return _shape_error(args), args, {}
+    effective_args, repairs = _repair_args(tool_name, args, session, kwargs)
+    return _shape_error_for_tool(tool_name, effective_args), effective_args, repairs
 
-    if tool_name in ("xstudio_select", "xstudio_validate_identifiers"):
-        table_error = _table_not_in_valid_tables(session, effective_args)
-        if table_error:
-            return {
-                "action": "block",
-                "message": (
-                    f"{table_error} This call was not sent to SQL and did not consume the "
-                    "investigation budget. Use one of the listed valid_tables, or call "
-                    "find_objects/suggest_tables first if genuinely none of them fit."
-                ),
-            }
 
+def _budget_guard(session: str, tool_name: str, effective_args: dict[str, Any]) -> dict[str, str] | None:
+    """Repeated-failure and per-session call-budget rate limiting. Self-contained
+    owner of _session_calls/_session_failures; the only place that mutates them."""
     fp = _fingerprint(
         {"tool": tool_name, **effective_args} if tool_name in TOOL_OPERATIONS else effective_args
     )
@@ -854,6 +872,55 @@ def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
                 ),
             }
         _session_calls[session] = calls + 1
+    return None
+
+
+def _pre_tool_call(tool_name: str, args: dict[str, Any] | None = None,
+                   task_id: str = "", **kwargs: Any) -> dict[str, str] | None:
+    args = args or {}
+    session = _session_key(task_id, **kwargs)
+    context = _context_for(session, kwargs)
+
+    if tool_name in ("kanban_complete", "kanban_block", "terminal"):
+        return _kanban_contract_guard(tool_name, args, context)
+
+    # xstudio_submit_proposal does its own validation in _submit_proposal_handler
+    # and is not a bridge/SQL tool, so it must not consume the investigation budget.
+    if tool_name == "xstudio_submit_proposal":
+        return None
+
+    if tool_name not in TOOL_OPERATIONS and tool_name != TOOL_NAME:
+        return None
+
+    shape_error, effective_args, repairs = _resolve_typed_tool_args(tool_name, args, session, kwargs)
+    if shape_error:
+        required = list(_REQUIRED_FIELDS_BY_TOOL.get(tool_name, ()))
+        effective_req = _EFFECTIVE_REQUIRED_FIELDS_BY_TOOL.get(tool_name, ())
+        retry_fields = required or list(effective_req)
+        return {
+            "action": "block",
+            "message": (
+                f"Invalid {tool_name} arguments: {shape_error}. Correct the typed "
+                "arguments; this call was not sent to SQL and did not consume "
+                f"the investigation budget. RETRY_WITH: {json.dumps({'tool': tool_name, 'required': retry_fields})}"
+            ),
+        }
+
+    if tool_name in ("xstudio_select", "xstudio_validate_identifiers"):
+        table_error = _table_not_in_valid_tables(session, effective_args)
+        if table_error:
+            return {
+                "action": "block",
+                "message": (
+                    f"{table_error} This call was not sent to SQL and did not consume the "
+                    "investigation budget. Use one of the listed valid_tables, or call "
+                    "find_objects/suggest_tables first if genuinely none of them fit."
+                ),
+            }
+
+    budget_error = _budget_guard(session, tool_name, effective_args)
+    if budget_error:
+        return budget_error
     if repairs:
         return {"action": "modify", "args": repairs}
     return None

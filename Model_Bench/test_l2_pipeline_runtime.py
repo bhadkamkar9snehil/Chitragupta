@@ -199,6 +199,23 @@ class PipelineContractTests(unittest.TestCase):
             create.assert_called_once()
             self.assertEqual(calls, ["finish", "rework"])
 
+    def test_recovery_proceeds_when_lease_already_released(self):
+        """Live 2026-09-23 regression: if the lease was already released through
+        the normal completion path, SQL's finish raises 'No matching running
+        local-model work was found'. That must not crash the whole tick --
+        recovery should still queue rework for this task."""
+        task = {"id": "task", "status": "blocked", "assignee": mod.INVESTIGATOR_PROFILE,
+                "body": "run_id: run\nticket_id: ticket\nreview_cycle: 1"}
+        with patch.object(mod, "list_tasks", return_value=[task]), \
+                patch.object(mod, "query_active_runs", return_value=[{"ID": "run"}]), \
+                patch.object(mod, "get_runs", return_value=[{"status": "timed_out", "ended_at": 1}]), \
+                patch.object(mod, "check_worker_dependencies"), \
+                patch.object(mod, "_finish_local_model_work",
+                              side_effect=RuntimeError("No matching running local-model work was found")), \
+                patch.object(mod, "create_rework_card", return_value="rework") as create:
+            self.assertEqual(mod.recover_failed_workers(mod.default_args()), 1)
+            create.assert_called_once()
+
     def test_recovery_dry_run_does_not_release_lease(self):
         task = {"id": "task", "status": "blocked", "assignee": mod.INVESTIGATOR_PROFILE,
                 "body": "run_id: run\nticket_id: ticket\nreview_cycle: 1"}

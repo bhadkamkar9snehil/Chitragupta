@@ -23,18 +23,23 @@ try:
 except ImportError:
     pyodbc = None
 
-DEFAULT_SERVER = "10.2.6.204"
+DEFAULT_SERVER = os.environ.get("MSSQL_MCP_SERVER") or "10.2.6.204"
 DEFAULT_DATABASE = "XStudio_Helpdesk"
-DEFAULT_USER = "sa"
-DEFAULT_PASSWORD = "$$Mit@1234"
+DEFAULT_USER = os.environ.get("MSSQL_MCP_USER") or "sa"
 
 
 def get_db_connection(
     server: str = DEFAULT_SERVER,
     database: str = DEFAULT_DATABASE,
     user: str = DEFAULT_USER,
-    password: str = DEFAULT_PASSWORD,
+    password: Optional[str] = None,
 ):
+    password = password or os.environ.get("MSSQL_MCP_PASSWORD")
+    if not password:
+        raise RuntimeError(
+            "No SQL password supplied. Pass --password or set MSSQL_MCP_PASSWORD -- "
+            "this script must never hardcode a credential default."
+        )
     if not pyodbc:
         return None
     cs = (
@@ -307,7 +312,7 @@ def main():
     parser.add_argument("--server", default=DEFAULT_SERVER)
     parser.add_argument("--database", default=DEFAULT_DATABASE)
     parser.add_argument("--user", default=DEFAULT_USER)
-    parser.add_argument("--password", default=DEFAULT_PASSWORD)
+    parser.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))
     parser.add_argument("--tasks-dir", default=r"\\wsl$\Ubuntu\home\snehil\.hermes\kanban\tasks")
     parser.add_argument("--limit", type=int, default=25)
     parser.add_argument("--json", action="store_true", help="Output JSON instead of markdown")

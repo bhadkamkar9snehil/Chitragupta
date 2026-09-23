@@ -1399,6 +1399,529 @@ def poll_and_claim(
     return result
 
 
+# ---------------------------------------------------------------------------
+# CLI command handlers -- one per main() flag, dispatched from main() below.
+# Each is self-contained: it takes exactly the (args, parser, client) it
+# needs and does not depend on any other handler's state, with a single
+# documented exception: --build-query --execute calls _cli_query directly
+# (an explicit version of what used to be an implicit fall-through).
+# ---------------------------------------------------------------------------
+
+def _cli_discover_workflow(client: "HermesL2Client") -> None:
+    workflow = client.discover_helpdesk_workflow()
+    print("Live Status / AskStatus / messages combinations (dbo.Complaint_Mst_Tbl):")
+    for row in workflow["status_combinations"]:
+        print(f"  {row}")
+
+
+def _cli_local_model_action(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    action = args.local_model_action
+    if action == "queue":
+        if not (
+            args.run_id and args.local_model_purpose
+            and args.local_model_priority is not None
+            and args.local_model_work_key
+            and (args.local_model_work_json or args.local_model_work_stdin)
+        ):
+            parser.error(
+                "--local-model-action queue requires --run-id, --local-model-purpose, "
+                "--local-model-priority, --local-model-work-key and WorkJson via "
+                "--local-model-work-json or --local-model-work-stdin"
+            )
+        raw_work_json = sys.stdin.read() if args.local_model_work_stdin else args.local_model_work_json
+        try:
+            work_json = json.loads(raw_work_json or "")
+        except json.JSONDecodeError as exc:
+            parser.error(f"local-model WorkJson is invalid JSON: {exc}")
+        result = client.queue_local_model_work(
+            args.run_id,
+            args.local_model_purpose,
+            args.local_model_priority,
+            args.local_model_work_key,
+            work_json,
+            execution_mode=args.local_model_execution_mode,
+            max_waiting=args.local_model_max_waiting,
+        )
+    elif action == "acquire":
+        result = client.try_acquire_local_model_work()
+    elif action == "bind":
+        if not (args.run_id and args.local_model_work_key and args.local_model_task_id):
+            parser.error(
+                "--local-model-action bind requires --run-id, "
+                "--local-model-work-key and --local-model-task-id"
+            )
+        result = client.bind_local_model_task(
+            args.run_id,
+            args.local_model_work_key,
+            args.local_model_task_id,
+        )
+    else:
+        if not args.run_id:
+            parser.error("--local-model-action finish requires --run-id")
+        result = client.finish_local_model_work(
+            args.run_id,
+            task_id=args.local_model_task_id,
+            outcome=args.local_model_outcome,
+        )
+    print(json.dumps(result, indent=2, default=str))
+
+
+def _cli_poll(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    if not args.eligible_status:
+        parser.error("--eligible-status is required with --poll")
+    result = poll_and_claim(
+        client,
+        args.eligible_status,
+        bot_label=args.bot_label,
+        max_pipeline_wip=args.max_pipeline_wip,
+        persist_claim_state=not args.no_local_claim_state,
+        ticket_id=args.ticket_id,
+    )
+    print(json.dumps(result, indent=2, default=str))
+
+
+def _cli_log_activity(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    if not args.ticket_id or not args.activity_type:
+        parser.error("--log-activity requires --ticket-id and --activity-type")
+    client.log_activity(
+        ticket_id=args.ticket_id, activity_type=args.activity_type,
+        note_text=args.note_text, actor_type=args.actor_type, run_id=args.run_id,
+    )
+    print(f"Logged {args.activity_type} activity for ticket {args.ticket_id}.")
+
+
+def _cli_search_solutions(args: argparse.Namespace, client: "HermesL2Client") -> None:
+    cur = client.conn.cursor()
+    cur.execute(
+        "SELECT TOP 5 ID, Title, ProblemSummary, RootCause, ResolutionSteps, UsageCount "
+        "FROM dbo.Hermes_Solution_Article_Mst_Tbl "
+        "WHERE Route = ? AND IsActive = 1 AND IsDeleted = 0 "
+        "ORDER BY UsageCount DESC",
+        (args.search_solutions,),
+    )
+    cols = [d[0] for d in cur.description]
+    rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+    print(json.dumps(rows, indent=2, default=str))
+
+
+def _cli_create_solution(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    if not args.solution_title or not args.resolution_steps:
+        parser.error("--create-solution requires --solution-title and --resolution-steps")
+    new_id = client.create_solution(
+        title=args.solution_title, resolution_steps=args.resolution_steps,
+        problem_summary=args.problem_summary, root_cause=args.root_cause,
+        route=args.route, tags=args.tags,
+    )
+    print(f"Created solution {new_id}")
+
+
+def _cli_link_solution(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    if not args.ticket_id:
+        parser.error("--link-solution requires --ticket-id")
+    client.link_solution(ticket_id=args.ticket_id, solution_id=args.link_solution, run_id=args.run_id)
+    print(f"Linked ticket {args.ticket_id} to solution {args.link_solution}.")
+
+
+def _cli_get_activity(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    if not args.ticket_id:
+        parser.error("--get-activity requires --ticket-id")
+    print(json.dumps(client.get_ticket_activity(args.ticket_id), indent=2, default=str))
+
+
+def _cli_list_root_cause_categories(client: "HermesL2Client") -> None:
+    print(json.dumps(client.list_root_cause_categories(), indent=2, default=str))
+
+
+def _cli_create_problem(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    if not args.solution_title:
+        parser.error("--create-problem requires --solution-title (used as the Problem title)")
+    new_id = client.create_problem(
+        title=args.solution_title, root_cause_summary=args.root_cause,
+    )
+    print(f"Created problem {new_id}")
+
+
+def _cli_link_problem(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    if not args.ticket_id:
+        parser.error("--link-problem requires --ticket-id")
+    client.link_problem(problem_id=args.link_problem, ticket_id=args.ticket_id)
+    print(f"Linked ticket {args.ticket_id} to problem {args.link_problem}.")
+
+
+def _cli_find_sql_objects(args: argparse.Namespace, client: "HermesL2Client") -> None:
+    print(json.dumps(
+        client.find_sql_objects(args.target_database, args.find_sql_objects, object_type=args.object_type),
+        indent=2, default=str,
+    ))
+
+
+def _cli_get_sql_object_definition(args: argparse.Namespace, client: "HermesL2Client") -> None:
+    result = client.get_sql_object_definition(args.target_database, args.schema_name, args.get_sql_object_definition)
+    print(json.dumps(result, indent=2, default=str) if result else "null")
+
+
+def _cli_get_reference_documents(args: argparse.Namespace, client: "HermesL2Client") -> None:
+    print(json.dumps(
+        client.get_reference_documents(args.get_reference_documents, area=args.area),
+        indent=2, default=str,
+    ))
+
+
+def _cli_get_run_actions(args: argparse.Namespace, client: "HermesL2Client") -> None:
+    print(json.dumps(client.get_run_actions(args.get_run_actions), indent=2, default=str))
+
+
+def _cli_get_ticket_context(args: argparse.Namespace, client: "HermesL2Client") -> None:
+    print(json.dumps(client.get_ticket_context(args.get_ticket_context), indent=2, default=str))
+
+
+def _cli_build_query(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client",
+                      database_explicitly_given: Optional[str]) -> None:
+    if not args.columns:
+        parser.error("--build-query requires --columns")
+    result = build_query_mechanically(
+        table=args.build_query,
+        columns=[c.strip() for c in args.columns.split(",") if c.strip()],
+        where=args.where, order_by=args.order_by, top=args.top,
+        database=database_explicitly_given,
+    )
+    if not result["ok"]:
+        print(json.dumps(result, indent=2))
+        sys.exit(1)
+    if not args.execute:
+        print(json.dumps(result, indent=2))
+        return
+    # Fall through into the exact same audited --query path -- no separate
+    # execution code to maintain, and it gets the same write-keyword
+    # refusal, the same audit trail, and the same post-failure
+    # fuzzy-suggestion safety net for free (structurally unreachable here
+    # since every identifier was already validated, but a real, still-useful
+    # backstop against anything this validator itself missed).
+    args.query = result["sql"]
+    args.database = args.database or result["database"]
+    print(f"Executing mechanically-built query: {result['sql']}", file=sys.stderr)
+    _cli_query(args, parser, client)
+
+
+def _cli_suggest_tables(args: argparse.Namespace, database_explicitly_given: Optional[str]) -> None:
+    result = suggest_tables_mechanically(
+        args.suggest_tables, top=args.top or 8, database=database_explicitly_given,
+    )
+    print(json.dumps(result, indent=2))
+
+
+def _cli_save_ledger(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    if not args.ledger:
+        parser.error("--save-ledger requires --ledger")
+    try:
+        ledger_obj = json.loads(args.ledger)
+    except json.JSONDecodeError as e:
+        parser.error(f"--ledger is not valid JSON: {e}")
+    client.save_investigation_ledger(run_id=args.save_ledger, ledger=ledger_obj)
+    print(json.dumps({"status": "LEDGER_SAVED", "run_id": args.save_ledger}, indent=2))
+
+
+def _cli_investigate_bundle(args: argparse.Namespace, client: "HermesL2Client") -> None:
+    print(json.dumps(
+        build_investigation_bundle(client, args.investigate_bundle, top_tables=args.top or 8),
+        indent=2, default=str,
+    ))
+
+
+def _cli_get_ledger(args: argparse.Namespace, client: "HermesL2Client") -> None:
+    ledger = client.get_latest_ledger(ticket_id=args.get_ledger)
+    print(json.dumps({"ticket_id": args.get_ledger, "ledger": ledger}, indent=2))
+
+
+def _cli_query(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    # Strip single-quoted string literals before checking for write keywords
+    # -- otherwise a legitimate read like "...WHERE p.name LIKE '%Insert%'"
+    # (searching for procedure NAMES) gets refused because "Insert" appears
+    # inside a string literal, not as an actual SQL command. A real
+    # 2026-09-03 false-positive, found while investigating this exact
+    # official-SP-first workflow.
+    query_without_literals = re.sub(r"'(?:[^']|'')*'", "''", args.query)
+    if _WRITE_KEYWORDS.search(query_without_literals):
+        parser.error(
+            "--query must be read-only (SELECT / sys.* metadata lookups only). "
+            "This query contains a write keyword and was refused. Writes go through "
+            "--publish-response, never a direct query."
+        )
+    # Audit every --query call the same way execute_sql() already does for
+    # Hermes_L2_Execute_SQL_Usp -- added 2026-09-04 after confirming live that
+    # Hermes_L2_SQL_Action_Trn_Tbl had gone dark since 2026-09-02, the exact day
+    # --query was introduced as the skill's primary read path. The reviewer reads
+    # this table to verify an investigator's claims were actually backed by a
+    # query; --query running real investigation reads with zero audit trail was
+    # silently making every one of those investigations look unverified, which is
+    # exactly the rejection reason confirmed live on real review tasks. Best-effort:
+    # if --run-id isn't supplied (e.g. an ad-hoc lookup with no active run), skip
+    # logging rather than erroring -- audit richness should never block a read.
+    action_id = None
+    if args.run_id:
+        try:
+            action_id = client.execute_sql(
+                run_id=args.run_id, database_name=args.database or "", action_type="READ",
+                sql=args.query, operation_name="--query", purpose="Investigation read via --query",
+            )
+        except Exception:
+            pass  # audit logging must never block the actual read
+    cur = client.conn.cursor()
+    try:
+        cur.execute(args.query)
+    except pyodbc.Error as e:
+        # Turn "Invalid column/object name 'X'" into an immediate, actionable
+        # correction using the same ground truth validate_identifiers.py uses
+        # -- so a naming miss is fixed in this same tool call, not left for
+        # the agent to separately remember to check afterward (or, per a real
+        # 2026-09-03 incident, not check at all and escalate a ticket that a
+        # one-word column-name fix would have solved).
+        msg = str(e)
+        col_m = re.search(r"Invalid column name '([^']+)'", msg)
+        obj_m = re.search(r"Invalid object name '([^']+)'", msg)
+        allowlist_path = Path(__file__).parent / "Knowledge" / "schema_allowlist.json"
+        if (col_m or obj_m) and allowlist_path.exists():
+            allowlist = json.loads(allowlist_path.read_text(encoding="utf-8"))
+            flat = {}  # normalized table name -> (db, qname, columns)
+            for db, tables in allowlist.items():
+                for qname, cols in tables.items():
+                    flat[qname.split(".")[-1].lower()] = (db, qname, cols)
+
+            if obj_m:
+                # Wrong table/object name -- suggest against every real table.
+                bad_name = obj_m.group(1)
+                table_names = list(flat.keys())
+                suggestions = difflib.get_close_matches(bad_name.lower(), table_names, n=3, cutoff=0.5)
+                suggestion_text = [flat[s][1] for s in suggestions]
+            else:
+                # Wrong column name -- restrict candidates to the table(s) this
+                # query actually references, not the whole schema (a same/similar
+                # column name existing in some unrelated table produced a wrong,
+                # confident-looking suggestion the first time this was tried).
+                bad_name = col_m.group(1)
+                referenced = re.findall(
+                    r"(?:FROM|JOIN)\s+(?:\[?\w+\]?\.)?\[?(\w+)\]?", args.query, re.IGNORECASE
+                )
+                candidate_cols = []
+                for t in referenced:
+                    entry = flat.get(t.lower())
+                    if entry:
+                        candidate_cols.extend(entry[2])
+                if not candidate_cols:
+                    # Table itself wasn't resolvable from the query text -- fall
+                    # back to a schema-wide search rather than giving no help.
+                    for db, tables in allowlist.items():
+                        for cols in tables.values():
+                            candidate_cols.extend(cols)
+                suggestion_text = difflib.get_close_matches(bad_name, candidate_cols, n=3, cutoff=0.5)
+
+            if suggestion_text:
+                raise RuntimeError(
+                    f"{msg} -- '{bad_name}' is not real. Closest real names in the "
+                    f"live schema (scoped to this query's own table where possible): "
+                    f"{suggestion_text}. Retry the query with one of these, do not guess "
+                    f"again or escalate without trying the correction."
+                ) from None
+        raise
+    if cur.description is None:
+        result_payload = {"rows_affected": cur.rowcount}
+    else:
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        result_payload = _strip_embedded_images(rows)
+    if action_id:
+        try:
+            client.update_sql_action_evidence(
+                action_id, after_json={"row_count": len(result_payload) if isinstance(result_payload, list) else None,
+                                        "sample": result_payload[:5] if isinstance(result_payload, list) else result_payload},
+            )
+        except Exception:
+            pass  # audit logging must never block the actual read
+    print(json.dumps(result_payload, indent=2, default=str))
+
+
+def _cli_escalate_blocked(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    if not (args.run_id and args.ticket_id and args.block_reason):
+        parser.error("--escalate-blocked requires --run-id, --ticket-id, and --block-reason")
+    client.log_blocked_escalation(
+        run_id=args.run_id, ticket_id=args.ticket_id,
+        block_reason=args.block_reason, findings=args.findings,
+    )
+    print(json.dumps({"status": "ESCALATED", "run_id": args.run_id}, indent=2))
+
+
+def _cli_fail_run(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    if not (args.run_id and args.error_message):
+        parser.error("--fail-run requires --run-id and --error-message")
+    client.fail_run(
+        run_id=args.run_id,
+        error_message=args.error_message,
+        retry_after_minutes=args.retry_after_minutes,
+    )
+    print(json.dumps({"status": "FAILED", "run_id": args.run_id}, indent=2))
+
+
+def _cli_publish_response(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    if not (args.response_type and args.reply_text):
+        parser.error("--publish-response requires --response-type and --reply-text")
+
+    last_claim = None
+    if _LAST_CLAIM_STATE_PATH.exists():
+        last_claim = json.loads(_LAST_CLAIM_STATE_PATH.read_text(encoding="utf-8"))
+
+    run_id = args.run_id
+    if run_id is None:
+        if last_claim is None:
+            parser.error(
+                "--run-id was omitted and no prior --poll claim was found on disk "
+                f"({_LAST_CLAIM_STATE_PATH}). Run --poll first, or pass --run-id explicitly."
+            )
+        run_id = last_claim["run_id"]
+        print(f"Using run_id from most recent --poll claim: {run_id}", file=sys.stderr)
+    elif last_claim is not None and run_id != last_claim["run_id"] and not args.force_run_id:
+        parser.error(
+            f"--run-id {run_id!r} does not match the most recently claimed run "
+            f"{last_claim['run_id']!r} (ticket {last_claim.get('ticket_id')!r}, "
+            f"claimed {last_claim.get('claimed_at')!r}). This usually means the wrong "
+            f"ID was typed/recalled from memory -- omit --run-id to use the recorded "
+            f"claim automatically, or verify this is genuinely a different, already-"
+            f"claimed run before overriding."
+        )
+
+    ledger_obj = None
+    if args.ledger:
+        try:
+            ledger_obj = json.loads(args.ledger)
+        except json.JSONDecodeError as e:
+            parser.error(f"--ledger is not valid JSON: {e}")
+
+    client.publish_response(
+        run_id=run_id,
+        response_type=args.response_type,
+        reply_text=args.reply_text,
+        problem_summary=args.problem_summary,
+        findings=args.findings,
+        root_cause=args.root_cause,
+        resolution=args.resolution,
+        investigation_json=ledger_obj,
+        new_ticket_status=args.new_ticket_status,
+        new_ask_status=args.new_ask_status,
+        approval_status=args.approval_status,
+        mirror_reply_to_support_remarks=args.mirror_to_support_remarks,
+        mirror_question_to_ask_remarks=args.mirror_to_ask_remarks,
+    )
+    if last_claim is not None and last_claim["run_id"] == run_id:
+        _LAST_CLAIM_STATE_PATH.unlink(missing_ok=True)
+    print(json.dumps({"status": "PUBLISHED", "run_id": run_id}, indent=2))
+
+
+def _cli_draft_response(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    if not (args.response_type and args.reply_text):
+        parser.error("--draft-response requires --response-type and --reply-text")
+
+    last_claim = None
+    if _LAST_CLAIM_STATE_PATH.exists():
+        last_claim = json.loads(_LAST_CLAIM_STATE_PATH.read_text(encoding="utf-8"))
+
+    run_id = args.run_id
+    if run_id is None:
+        if last_claim is None:
+            parser.error(
+                "--run-id was omitted and no prior --poll claim was found on disk "
+                f"({_LAST_CLAIM_STATE_PATH}). Run --poll first, or pass --run-id explicitly."
+            )
+        run_id = last_claim["run_id"]
+        print(f"Using run_id from most recent --poll claim: {run_id}", file=sys.stderr)
+    elif last_claim is not None and run_id != last_claim["run_id"] and not args.force_run_id:
+        parser.error(
+            f"--run-id {run_id!r} does not match the most recently claimed run "
+            f"{last_claim['run_id']!r}. Omit --run-id to use the recorded claim "
+            f"automatically, or pass --force-run-id if this is genuinely intentional."
+        )
+
+    _DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
+    draft = {
+        "run_id": run_id,
+        "ticket_id": (last_claim or {}).get("ticket_id"),
+        "investigator_bot_label": (last_claim or {}).get("bot_label"),
+        "response_type": args.response_type,
+        "reply_text": args.reply_text,
+        "problem_summary": args.problem_summary,
+        "findings": args.findings,
+        "root_cause": args.root_cause,
+        "resolution": args.resolution,
+        "new_ticket_status": args.new_ticket_status,
+        "new_ask_status": args.new_ask_status,
+        "mirror_to_support_remarks": args.mirror_to_support_remarks,
+        "drafted_at": datetime.now(timezone.utc).isoformat(),
+    }
+    (_DRAFTS_DIR / f"{run_id}.json").write_text(json.dumps(draft, indent=2), encoding="utf-8")
+    if last_claim is not None and last_claim["run_id"] == run_id:
+        _LAST_CLAIM_STATE_PATH.unlink(missing_ok=True)
+    print(json.dumps({"status": "DRAFTED", "run_id": run_id,
+                       "note": "Not yet published -- awaiting verifier approval."}, indent=2))
+
+
+def _cli_approve_draft(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    run_id = args.approve_draft
+    draft_path = _DRAFTS_DIR / f"{run_id}.json"
+    if not draft_path.exists():
+        parser.error(f"No draft found for run_id {run_id!r} at {draft_path}")
+    draft = json.loads(draft_path.read_text(encoding="utf-8"))
+    client.publish_response(
+        run_id=run_id,
+        response_type=draft["response_type"],
+        reply_text=draft["reply_text"],
+        problem_summary=draft.get("problem_summary"),
+        findings=draft.get("findings"),
+        root_cause=draft.get("root_cause"),
+        resolution=draft.get("resolution"),
+        new_ticket_status=draft.get("new_ticket_status"),
+        new_ask_status=draft.get("new_ask_status"),
+        mirror_reply_to_support_remarks=bool(draft.get("mirror_to_support_remarks")),
+    )
+    draft_path.unlink()
+    _log_combo_audit({
+        "run_id": run_id,
+        "ticket_id": draft.get("ticket_id"),
+        "outcome": "APPROVED",
+        "investigator_bot_label": draft.get("investigator_bot_label"),
+        "verifier_bot_label": args.verifier_label,
+        "response_type": draft.get("response_type"),
+        "logged_at": datetime.now(timezone.utc).isoformat(),
+    })
+    print(json.dumps({"status": "PUBLISHED_FROM_DRAFT", "run_id": run_id}, indent=2))
+
+
+def _cli_reject_draft(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if not args.rejection_reason:
+        parser.error("--reject-draft requires --rejection-reason")
+    run_id = args.reject_draft
+    draft_path = _DRAFTS_DIR / f"{run_id}.json"
+    if not draft_path.exists():
+        parser.error(f"No draft found for run_id {run_id!r} at {draft_path}")
+    draft = json.loads(draft_path.read_text(encoding="utf-8"))
+    draft["rejected_at"] = datetime.now(timezone.utc).isoformat()
+    draft["rejection_reason"] = args.rejection_reason
+    _REJECTED_DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
+    (_REJECTED_DRAFTS_DIR / f"{run_id}_{int(datetime.now(timezone.utc).timestamp())}.json").write_text(
+        json.dumps(draft, indent=2), encoding="utf-8"
+    )
+    draft_path.unlink()
+    _log_combo_audit({
+        "run_id": run_id,
+        "ticket_id": draft.get("ticket_id"),
+        "outcome": "REJECTED",
+        "investigator_bot_label": draft.get("investigator_bot_label"),
+        "verifier_bot_label": args.verifier_label,
+        "response_type": draft.get("response_type"),
+        "rejection_reason": args.rejection_reason,
+        "logged_at": datetime.now(timezone.utc).isoformat(),
+    })
+    print(json.dumps({"status": "REJECTED", "run_id": run_id,
+                       "reason": args.rejection_reason}, indent=2))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Hermes L2 Investigation Orchestrator")
     parser.add_argument("--server", default=os.environ.get("MSSQL_MCP_SERVER"))
@@ -1688,520 +2211,61 @@ def main() -> None:
 
     try:
         if args.discover_workflow:
-            workflow = client.discover_helpdesk_workflow()
-            print("Live Status / AskStatus / messages combinations (dbo.Complaint_Mst_Tbl):")
-            for row in workflow["status_combinations"]:
-                print(f"  {row}")
-            return
-
+            return _cli_discover_workflow(client)
         if args.local_model_action:
-            action = args.local_model_action
-            if action == "queue":
-                if not (
-                    args.run_id and args.local_model_purpose
-                    and args.local_model_priority is not None
-                    and args.local_model_work_key
-                    and (args.local_model_work_json or args.local_model_work_stdin)
-                ):
-                    parser.error(
-                        "--local-model-action queue requires --run-id, --local-model-purpose, "
-                        "--local-model-priority, --local-model-work-key and WorkJson via "
-                        "--local-model-work-json or --local-model-work-stdin"
-                    )
-                raw_work_json = sys.stdin.read() if args.local_model_work_stdin else args.local_model_work_json
-                try:
-                    work_json = json.loads(raw_work_json or "")
-                except json.JSONDecodeError as exc:
-                    parser.error(f"local-model WorkJson is invalid JSON: {exc}")
-                result = client.queue_local_model_work(
-                    args.run_id,
-                    args.local_model_purpose,
-                    args.local_model_priority,
-                    args.local_model_work_key,
-                    work_json,
-                    execution_mode=args.local_model_execution_mode,
-                    max_waiting=args.local_model_max_waiting,
-                )
-            elif action == "acquire":
-                result = client.try_acquire_local_model_work()
-            elif action == "bind":
-                if not (args.run_id and args.local_model_work_key and args.local_model_task_id):
-                    parser.error(
-                        "--local-model-action bind requires --run-id, "
-                        "--local-model-work-key and --local-model-task-id"
-                    )
-                result = client.bind_local_model_task(
-                    args.run_id,
-                    args.local_model_work_key,
-                    args.local_model_task_id,
-                )
-            else:
-                if not args.run_id:
-                    parser.error("--local-model-action finish requires --run-id")
-                result = client.finish_local_model_work(
-                    args.run_id,
-                    task_id=args.local_model_task_id,
-                    outcome=args.local_model_outcome,
-                )
-            print(json.dumps(result, indent=2, default=str))
-            return
-
+            return _cli_local_model_action(args, parser, client)
         if args.poll:
-            if not args.eligible_status:
-                parser.error("--eligible-status is required with --poll")
-            result = poll_and_claim(
-                client,
-                args.eligible_status,
-                bot_label=args.bot_label,
-                max_pipeline_wip=args.max_pipeline_wip,
-                persist_claim_state=not args.no_local_claim_state,
-                ticket_id=args.ticket_id,
-            )
-            print(json.dumps(result, indent=2, default=str))
-            return
-
+            return _cli_poll(args, parser, client)
         if args.log_activity:
-            if not args.ticket_id or not args.activity_type:
-                parser.error("--log-activity requires --ticket-id and --activity-type")
-            client.log_activity(
-                ticket_id=args.ticket_id, activity_type=args.activity_type,
-                note_text=args.note_text, actor_type=args.actor_type, run_id=args.run_id,
-            )
-            print(f"Logged {args.activity_type} activity for ticket {args.ticket_id}.")
-            return
-
+            return _cli_log_activity(args, parser, client)
         if args.search_solutions:
-            cur = client.conn.cursor()
-            cur.execute(
-                "SELECT TOP 5 ID, Title, ProblemSummary, RootCause, ResolutionSteps, UsageCount "
-                "FROM dbo.Hermes_Solution_Article_Mst_Tbl "
-                "WHERE Route = ? AND IsActive = 1 AND IsDeleted = 0 "
-                "ORDER BY UsageCount DESC",
-                (args.search_solutions,),
-            )
-            cols = [d[0] for d in cur.description]
-            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
-            print(json.dumps(rows, indent=2, default=str))
-            return
-
+            return _cli_search_solutions(args, client)
         if args.create_solution:
-            if not args.solution_title or not args.resolution_steps:
-                parser.error("--create-solution requires --solution-title and --resolution-steps")
-            new_id = client.create_solution(
-                title=args.solution_title, resolution_steps=args.resolution_steps,
-                problem_summary=args.problem_summary, root_cause=args.root_cause,
-                route=args.route, tags=args.tags,
-            )
-            print(f"Created solution {new_id}")
-            return
-
+            return _cli_create_solution(args, parser, client)
         if args.link_solution:
-            if not args.ticket_id:
-                parser.error("--link-solution requires --ticket-id")
-            client.link_solution(ticket_id=args.ticket_id, solution_id=args.link_solution, run_id=args.run_id)
-            print(f"Linked ticket {args.ticket_id} to solution {args.link_solution}.")
-            return
-
+            return _cli_link_solution(args, parser, client)
         if args.get_activity:
-            if not args.ticket_id:
-                parser.error("--get-activity requires --ticket-id")
-            print(json.dumps(client.get_ticket_activity(args.ticket_id), indent=2, default=str))
-            return
-
+            return _cli_get_activity(args, parser, client)
         if args.list_root_cause_categories:
-            print(json.dumps(client.list_root_cause_categories(), indent=2, default=str))
-            return
-
+            return _cli_list_root_cause_categories(client)
         if args.create_problem:
-            if not args.solution_title:
-                parser.error("--create-problem requires --solution-title (used as the Problem title)")
-            new_id = client.create_problem(
-                title=args.solution_title, root_cause_summary=args.root_cause,
-            )
-            print(f"Created problem {new_id}")
-            return
-
+            return _cli_create_problem(args, parser, client)
         if args.link_problem:
-            if not args.ticket_id:
-                parser.error("--link-problem requires --ticket-id")
-            client.link_problem(problem_id=args.link_problem, ticket_id=args.ticket_id)
-            print(f"Linked ticket {args.ticket_id} to problem {args.link_problem}.")
-            return
-
+            return _cli_link_problem(args, parser, client)
         if args.find_sql_objects:
-            print(json.dumps(
-                client.find_sql_objects(args.target_database, args.find_sql_objects, object_type=args.object_type),
-                indent=2, default=str,
-            ))
-            return
-
+            return _cli_find_sql_objects(args, client)
         if args.get_sql_object_definition:
-            result = client.get_sql_object_definition(args.target_database, args.schema_name, args.get_sql_object_definition)
-            print(json.dumps(result, indent=2, default=str) if result else "null")
-            return
-
+            return _cli_get_sql_object_definition(args, client)
         if args.get_reference_documents:
-            print(json.dumps(
-                client.get_reference_documents(args.get_reference_documents, area=args.area),
-                indent=2, default=str,
-            ))
-            return
-
+            return _cli_get_reference_documents(args, client)
         if args.get_run_actions:
-            print(json.dumps(client.get_run_actions(args.get_run_actions), indent=2, default=str))
-            return
-
+            return _cli_get_run_actions(args, client)
         if args.get_ticket_context:
-            print(json.dumps(client.get_ticket_context(args.get_ticket_context), indent=2, default=str))
-            return
-
+            return _cli_get_ticket_context(args, client)
         if args.build_query:
-            if not args.columns:
-                parser.error("--build-query requires --columns")
-            result = build_query_mechanically(
-                table=args.build_query,
-                columns=[c.strip() for c in args.columns.split(",") if c.strip()],
-                where=args.where, order_by=args.order_by, top=args.top,
-                database=_database_explicitly_given,
-            )
-            if not result["ok"]:
-                print(json.dumps(result, indent=2))
-                sys.exit(1)
-            if not args.execute:
-                print(json.dumps(result, indent=2))
-                return
-            # Fall through into the exact same audited --query path below --
-            # no separate execution code to maintain, and it gets the same
-            # write-keyword refusal, the same audit trail, and the same
-            # post-failure fuzzy-suggestion safety net for free (structurally
-            # unreachable here since every identifier was already validated,
-            # but a real, still-useful backstop against anything this
-            # validator itself missed).
-            args.query = result["sql"]
-            args.database = args.database or result["database"]
-            print(f"Executing mechanically-built query: {result['sql']}", file=sys.stderr)
-
+            return _cli_build_query(args, parser, client, _database_explicitly_given)
         if args.suggest_tables:
-            result = suggest_tables_mechanically(
-                args.suggest_tables, top=args.top or 8, database=_database_explicitly_given,
-            )
-            print(json.dumps(result, indent=2))
-            return
-
+            return _cli_suggest_tables(args, _database_explicitly_given)
         if args.save_ledger:
-            if not args.ledger:
-                parser.error("--save-ledger requires --ledger")
-            try:
-                ledger_obj = json.loads(args.ledger)
-            except json.JSONDecodeError as e:
-                parser.error(f"--ledger is not valid JSON: {e}")
-            client.save_investigation_ledger(run_id=args.save_ledger, ledger=ledger_obj)
-            print(json.dumps({"status": "LEDGER_SAVED", "run_id": args.save_ledger}, indent=2))
-            return
-
+            return _cli_save_ledger(args, parser, client)
         if args.investigate_bundle:
-            print(json.dumps(
-                build_investigation_bundle(client, args.investigate_bundle, top_tables=args.top or 8),
-                indent=2, default=str,
-            ))
-            return
-
+            return _cli_investigate_bundle(args, client)
         if args.get_ledger:
-            ledger = client.get_latest_ledger(ticket_id=args.get_ledger)
-            print(json.dumps({"ticket_id": args.get_ledger, "ledger": ledger}, indent=2))
-            return
-
+            return _cli_get_ledger(args, client)
         if args.query:
-            # Strip single-quoted string literals before checking for write
-            # keywords -- otherwise a legitimate read like
-            # "...WHERE p.name LIKE '%Insert%'" (searching for procedure
-            # NAMES) gets refused because "Insert" appears inside a string
-            # literal, not as an actual SQL command. A real 2026-09-03
-            # false-positive, found while investigating this exact
-            # official-SP-first workflow.
-            query_without_literals = re.sub(r"'(?:[^']|'')*'", "''", args.query)
-            if _WRITE_KEYWORDS.search(query_without_literals):
-                parser.error(
-                    "--query must be read-only (SELECT / sys.* metadata lookups only). "
-                    "This query contains a write keyword and was refused. Writes go through "
-                    "--publish-response, never a direct query."
-                )
-            # Audit every --query call the same way execute_sql() already does for
-            # Hermes_L2_Execute_SQL_Usp -- added 2026-09-04 after confirming live that
-            # Hermes_L2_SQL_Action_Trn_Tbl had gone dark since 2026-09-02, the exact day
-            # --query was introduced as the skill's primary read path. The reviewer reads
-            # this table to verify an investigator's claims were actually backed by a
-            # query; --query running real investigation reads with zero audit trail was
-            # silently making every one of those investigations look unverified, which is
-            # exactly the rejection reason confirmed live on real review tasks. Best-effort:
-            # if --run-id isn't supplied (e.g. an ad-hoc lookup with no active run), skip
-            # logging rather than erroring -- audit richness should never block a read.
-            action_id = None
-            if args.run_id:
-                try:
-                    action_id = client.execute_sql(
-                        run_id=args.run_id, database_name=args.database or "", action_type="READ",
-                        sql=args.query, operation_name="--query", purpose="Investigation read via --query",
-                    )
-                except Exception:
-                    pass  # audit logging must never block the actual read
-            cur = client.conn.cursor()
-            try:
-                cur.execute(args.query)
-            except pyodbc.Error as e:
-                # Turn "Invalid column/object name 'X'" into an immediate,
-                # actionable correction using the same ground truth
-                # validate_identifiers.py uses -- so a naming miss is fixed
-                # in this same tool call, not left for the agent to
-                # separately remember to check afterward (or, per a real
-                # 2026-09-03 incident, not check at all and escalate a
-                # ticket that a one-word column-name fix would have solved).
-                msg = str(e)
-                col_m = re.search(r"Invalid column name '([^']+)'", msg)
-                obj_m = re.search(r"Invalid object name '([^']+)'", msg)
-                allowlist_path = Path(__file__).parent / "Knowledge" / "schema_allowlist.json"
-                if (col_m or obj_m) and allowlist_path.exists():
-                    allowlist = json.loads(allowlist_path.read_text(encoding="utf-8"))
-                    flat = {}  # normalized table name -> (db, qname, columns)
-                    for db, tables in allowlist.items():
-                        for qname, cols in tables.items():
-                            flat[qname.split(".")[-1].lower()] = (db, qname, cols)
-
-                    if obj_m:
-                        # Wrong table/object name -- suggest against every real table.
-                        bad_name = obj_m.group(1)
-                        table_names = list(flat.keys())
-                        suggestions = difflib.get_close_matches(bad_name.lower(), table_names, n=3, cutoff=0.5)
-                        suggestion_text = [flat[s][1] for s in suggestions]
-                    else:
-                        # Wrong column name -- restrict candidates to the table(s) this
-                        # query actually references, not the whole schema (a same/similar
-                        # column name existing in some unrelated table produced a wrong,
-                        # confident-looking suggestion the first time this was tried).
-                        bad_name = col_m.group(1)
-                        referenced = re.findall(
-                            r"(?:FROM|JOIN)\s+(?:\[?\w+\]?\.)?\[?(\w+)\]?", args.query, re.IGNORECASE
-                        )
-                        candidate_cols = []
-                        for t in referenced:
-                            entry = flat.get(t.lower())
-                            if entry:
-                                candidate_cols.extend(entry[2])
-                        if not candidate_cols:
-                            # Table itself wasn't resolvable from the query text -- fall
-                            # back to a schema-wide search rather than giving no help.
-                            for db, tables in allowlist.items():
-                                for cols in tables.values():
-                                    candidate_cols.extend(cols)
-                        suggestion_text = difflib.get_close_matches(bad_name, candidate_cols, n=3, cutoff=0.5)
-
-                    if suggestion_text:
-                        raise RuntimeError(
-                            f"{msg} -- '{bad_name}' is not real. Closest real names in the "
-                            f"live schema (scoped to this query's own table where possible): "
-                            f"{suggestion_text}. Retry the query with one of these, do not guess "
-                            f"again or escalate without trying the correction."
-                        ) from None
-                raise
-            if cur.description is None:
-                result_payload = {"rows_affected": cur.rowcount}
-            else:
-                cols = [d[0] for d in cur.description]
-                rows = [dict(zip(cols, row)) for row in cur.fetchall()]
-                result_payload = _strip_embedded_images(rows)
-            if action_id:
-                try:
-                    client.update_sql_action_evidence(
-                        action_id, after_json={"row_count": len(result_payload) if isinstance(result_payload, list) else None,
-                                                "sample": result_payload[:5] if isinstance(result_payload, list) else result_payload},
-                    )
-                except Exception:
-                    pass  # audit logging must never block the actual read
-            print(json.dumps(result_payload, indent=2, default=str))
-            return
-
+            return _cli_query(args, parser, client)
         if args.escalate_blocked:
-            if not (args.run_id and args.ticket_id and args.block_reason):
-                parser.error("--escalate-blocked requires --run-id, --ticket-id, and --block-reason")
-            client.log_blocked_escalation(
-                run_id=args.run_id, ticket_id=args.ticket_id,
-                block_reason=args.block_reason, findings=args.findings,
-            )
-            print(json.dumps({"status": "ESCALATED", "run_id": args.run_id}, indent=2))
-            return
-
+            return _cli_escalate_blocked(args, parser, client)
         if args.fail_run:
-            if not (args.run_id and args.error_message):
-                parser.error("--fail-run requires --run-id and --error-message")
-            client.fail_run(
-                run_id=args.run_id,
-                error_message=args.error_message,
-                retry_after_minutes=args.retry_after_minutes,
-            )
-            print(json.dumps({"status": "FAILED", "run_id": args.run_id}, indent=2))
-            return
-
+            return _cli_fail_run(args, parser, client)
         if args.publish_response:
-            if not (args.response_type and args.reply_text):
-                parser.error("--publish-response requires --response-type and --reply-text")
-
-            last_claim = None
-            if _LAST_CLAIM_STATE_PATH.exists():
-                last_claim = json.loads(_LAST_CLAIM_STATE_PATH.read_text(encoding="utf-8"))
-
-            run_id = args.run_id
-            if run_id is None:
-                if last_claim is None:
-                    parser.error(
-                        "--run-id was omitted and no prior --poll claim was found on disk "
-                        f"({_LAST_CLAIM_STATE_PATH}). Run --poll first, or pass --run-id explicitly."
-                    )
-                run_id = last_claim["run_id"]
-                print(f"Using run_id from most recent --poll claim: {run_id}", file=sys.stderr)
-            elif last_claim is not None and run_id != last_claim["run_id"] and not args.force_run_id:
-                parser.error(
-                    f"--run-id {run_id!r} does not match the most recently claimed run "
-                    f"{last_claim['run_id']!r} (ticket {last_claim.get('ticket_id')!r}, "
-                    f"claimed {last_claim.get('claimed_at')!r}). This usually means the wrong "
-                    f"ID was typed/recalled from memory -- omit --run-id to use the recorded "
-                    f"claim automatically, or verify this is genuinely a different, already-"
-                    f"claimed run before overriding."
-                )
-
-            ledger_obj = None
-            if args.ledger:
-                try:
-                    ledger_obj = json.loads(args.ledger)
-                except json.JSONDecodeError as e:
-                    parser.error(f"--ledger is not valid JSON: {e}")
-
-            client.publish_response(
-                run_id=run_id,
-                response_type=args.response_type,
-                reply_text=args.reply_text,
-                problem_summary=args.problem_summary,
-                findings=args.findings,
-                root_cause=args.root_cause,
-                resolution=args.resolution,
-                investigation_json=ledger_obj,
-                new_ticket_status=args.new_ticket_status,
-                new_ask_status=args.new_ask_status,
-                approval_status=args.approval_status,
-                mirror_reply_to_support_remarks=args.mirror_to_support_remarks,
-                mirror_question_to_ask_remarks=args.mirror_to_ask_remarks,
-            )
-            if last_claim is not None and last_claim["run_id"] == run_id:
-                _LAST_CLAIM_STATE_PATH.unlink(missing_ok=True)
-            print(json.dumps({"status": "PUBLISHED", "run_id": run_id}, indent=2))
-            return
-
+            return _cli_publish_response(args, parser, client)
         if args.draft_response:
-            if not (args.response_type and args.reply_text):
-                parser.error("--draft-response requires --response-type and --reply-text")
-
-            last_claim = None
-            if _LAST_CLAIM_STATE_PATH.exists():
-                last_claim = json.loads(_LAST_CLAIM_STATE_PATH.read_text(encoding="utf-8"))
-
-            run_id = args.run_id
-            if run_id is None:
-                if last_claim is None:
-                    parser.error(
-                        "--run-id was omitted and no prior --poll claim was found on disk "
-                        f"({_LAST_CLAIM_STATE_PATH}). Run --poll first, or pass --run-id explicitly."
-                    )
-                run_id = last_claim["run_id"]
-                print(f"Using run_id from most recent --poll claim: {run_id}", file=sys.stderr)
-            elif last_claim is not None and run_id != last_claim["run_id"] and not args.force_run_id:
-                parser.error(
-                    f"--run-id {run_id!r} does not match the most recently claimed run "
-                    f"{last_claim['run_id']!r}. Omit --run-id to use the recorded claim "
-                    f"automatically, or pass --force-run-id if this is genuinely intentional."
-                )
-
-            _DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
-            draft = {
-                "run_id": run_id,
-                "ticket_id": (last_claim or {}).get("ticket_id"),
-                "investigator_bot_label": (last_claim or {}).get("bot_label"),
-                "response_type": args.response_type,
-                "reply_text": args.reply_text,
-                "problem_summary": args.problem_summary,
-                "findings": args.findings,
-                "root_cause": args.root_cause,
-                "resolution": args.resolution,
-                "new_ticket_status": args.new_ticket_status,
-                "new_ask_status": args.new_ask_status,
-                "mirror_to_support_remarks": args.mirror_to_support_remarks,
-                "drafted_at": datetime.now(timezone.utc).isoformat(),
-            }
-            (_DRAFTS_DIR / f"{run_id}.json").write_text(json.dumps(draft, indent=2), encoding="utf-8")
-            if last_claim is not None and last_claim["run_id"] == run_id:
-                _LAST_CLAIM_STATE_PATH.unlink(missing_ok=True)
-            print(json.dumps({"status": "DRAFTED", "run_id": run_id,
-                               "note": "Not yet published -- awaiting verifier approval."}, indent=2))
-            return
-
+            return _cli_draft_response(args, parser, client)
         if args.approve_draft:
-            run_id = args.approve_draft
-            draft_path = _DRAFTS_DIR / f"{run_id}.json"
-            if not draft_path.exists():
-                parser.error(f"No draft found for run_id {run_id!r} at {draft_path}")
-            draft = json.loads(draft_path.read_text(encoding="utf-8"))
-            client.publish_response(
-                run_id=run_id,
-                response_type=draft["response_type"],
-                reply_text=draft["reply_text"],
-                problem_summary=draft.get("problem_summary"),
-                findings=draft.get("findings"),
-                root_cause=draft.get("root_cause"),
-                resolution=draft.get("resolution"),
-                new_ticket_status=draft.get("new_ticket_status"),
-                new_ask_status=draft.get("new_ask_status"),
-                mirror_reply_to_support_remarks=bool(draft.get("mirror_to_support_remarks")),
-            )
-            draft_path.unlink()
-            _log_combo_audit({
-                "run_id": run_id,
-                "ticket_id": draft.get("ticket_id"),
-                "outcome": "APPROVED",
-                "investigator_bot_label": draft.get("investigator_bot_label"),
-                "verifier_bot_label": args.verifier_label,
-                "response_type": draft.get("response_type"),
-                "logged_at": datetime.now(timezone.utc).isoformat(),
-            })
-            print(json.dumps({"status": "PUBLISHED_FROM_DRAFT", "run_id": run_id}, indent=2))
-            return
-
+            return _cli_approve_draft(args, parser, client)
         if args.reject_draft:
-            if not args.rejection_reason:
-                parser.error("--reject-draft requires --rejection-reason")
-            run_id = args.reject_draft
-            draft_path = _DRAFTS_DIR / f"{run_id}.json"
-            if not draft_path.exists():
-                parser.error(f"No draft found for run_id {run_id!r} at {draft_path}")
-            draft = json.loads(draft_path.read_text(encoding="utf-8"))
-            draft["rejected_at"] = datetime.now(timezone.utc).isoformat()
-            draft["rejection_reason"] = args.rejection_reason
-            _REJECTED_DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
-            (_REJECTED_DRAFTS_DIR / f"{run_id}_{int(datetime.now(timezone.utc).timestamp())}.json").write_text(
-                json.dumps(draft, indent=2), encoding="utf-8"
-            )
-            draft_path.unlink()
-            _log_combo_audit({
-                "run_id": run_id,
-                "ticket_id": draft.get("ticket_id"),
-                "outcome": "REJECTED",
-                "investigator_bot_label": draft.get("investigator_bot_label"),
-                "verifier_bot_label": args.verifier_label,
-                "response_type": draft.get("response_type"),
-                "rejection_reason": args.rejection_reason,
-                "logged_at": datetime.now(timezone.utc).isoformat(),
-            })
-            print(json.dumps({"status": "REJECTED", "run_id": run_id,
-                               "reason": args.rejection_reason}, indent=2))
-            return
-
+            return _cli_reject_draft(args, parser)
         parser.error("Pass one of --discover-workflow, --poll, --publish-response, "
                       "--draft-response, --approve-draft, or --reject-draft.")
     finally:

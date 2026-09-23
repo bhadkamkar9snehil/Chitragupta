@@ -2509,17 +2509,20 @@ def process_jev_primary_reviews(
             {"action": "LOCAL_REVIEW", "ok": False, "reason": "dry-run"}
             if dry_run else _jev_primary_review(args, proposal)
         )
-        _apply_primary_review(
-            args,
-            task=task,
-            run_id=run_id,
-            ticket_id=ticket_id,
-            proposal=proposal,
-            review=review,
-            counts=counts,
-            dry_run=dry_run,
-            tasks=source_tasks,
-        )
+        try:
+            _apply_primary_review(
+                args,
+                task=task,
+                run_id=run_id,
+                ticket_id=ticket_id,
+                proposal=proposal,
+                review=review,
+                counts=counts,
+                dry_run=dry_run,
+                tasks=source_tasks,
+            )
+        except RuntimeError as exc:
+            print(f"WARNING: jev primary review routing failed for {task['id']}: {exc}")
     return counts
 
 
@@ -2728,11 +2731,16 @@ def process_unreviewable_completions(
             "metadata is still incomplete after deterministic normalization. Re-package verified findings; "
             "do not invent new evidence."
         )
-        if create_rework_card(
-            args, source_task=task, reason=reason,
-            investigation_task_id=task["id"], dry_run=dry_run,
-            tasks=source_tasks,
-        ):
+        try:
+            created = create_rework_card(
+                args, source_task=task, reason=reason,
+                investigation_task_id=task["id"], dry_run=dry_run,
+                tasks=source_tasks,
+            )
+        except RuntimeError as exc:
+            print(f"WARNING: unreviewable-completion rework failed for {task['id']}: {exc}")
+            continue
+        if created:
             processed += 1
     return processed
 
@@ -2971,62 +2979,39 @@ def process_approvals(
             counts["inactive_skipped"] += 1
             continue
 
-        proposal = task_proposal(task)
-        if not _proposal_complete(proposal):
-            reason = (
-                "Local reviewer reached done but its frozen proposal_json is missing/incomplete; "
-                "re-package the original verified finding through focused rework."
-            )
-            source_id = body_field(task.get("body"), "investigation_task_id")
-            if create_rework_card(
-                args, source_task=task, reason=reason,
-                investigation_task_id=source_id, dry_run=dry_run,
-                tasks=source_tasks,
-            ):
-                counts["rework_created"] += 1
-            continue
-
-        outcome_issues = resolution_issues(proposal) + continuation_issues(proposal)
-        if outcome_issues:
-            if create_rework_card(
-                args, source_task=task,
-                reason="Pre-publish outcome gate: " + "; ".join(outcome_issues)
-                       + ". Use QUESTION for missing requester facts, NEEDS_HUMAN_ACTION for a known unexecuted fix, or UPDATE for concrete further investigation.",
-                investigation_task_id=body_field(task.get("body"), "investigation_task_id"),
-                dry_run=dry_run,
-            ):
-                counts["rework_created"] += 1
-            continue
-
-        if proposal.get("contract_repaired_from_unstructured") is True:
-            reason = (
-                "Pre-publish proposal gate: the frozen proposal was repaired from an unstructured "
-                "investigator completion and cannot be approved. Re-package the findings with the "
-                "full claim/evidence contract and submit them through a fresh review cycle."
-            )
-            source_id = body_field(task.get("body"), "investigation_task_id")
-            if create_rework_card(
-                args, source_task=task, reason=reason,
-                investigation_task_id=source_id, dry_run=dry_run,
-            ):
-                counts["rework_created"] += 1
-            continue
-
-        # Structural claim/evidence gate. If the proposal carries a claims array,
-        # every material VERIFIED claim must have an evidence reference. This is a
-        # deterministic structural check, not semantic judgment (that stays with the
-        # reviewer). Legacy proposals without claims pass through normally.
-        proposal_claims = proposal.get("claims") if proposal else None
-        claims_required = proposal.get("claims_contract_version") == CLAIMS_CONTRACT_VERSION if proposal else False
-        if claims_required or proposal_claims is not None:
-            claims_valid, claims_issues = validate_claims_contract(
-                proposal_claims, run_id=run_id, ticket_id=ticket_id,
-                actions=get_run_actions(args, run_id),
-            )
-            if not claims_valid:
+        try:
+            proposal = task_proposal(task)
+            if not _proposal_complete(proposal):
                 reason = (
-                    "Pre-publish claim/evidence gate: " + "; ".join(claims_issues[:5])
-                    + ". Fix the material claim evidence references and resubmit."
+                    "Local reviewer reached done but its frozen proposal_json is missing/incomplete; "
+                    "re-package the original verified finding through focused rework."
+                )
+                source_id = body_field(task.get("body"), "investigation_task_id")
+                if create_rework_card(
+                    args, source_task=task, reason=reason,
+                    investigation_task_id=source_id, dry_run=dry_run,
+                    tasks=source_tasks,
+                ):
+                    counts["rework_created"] += 1
+                continue
+
+            outcome_issues = resolution_issues(proposal) + continuation_issues(proposal)
+            if outcome_issues:
+                if create_rework_card(
+                    args, source_task=task,
+                    reason="Pre-publish outcome gate: " + "; ".join(outcome_issues)
+                           + ". Use QUESTION for missing requester facts, NEEDS_HUMAN_ACTION for a known unexecuted fix, or UPDATE for concrete further investigation.",
+                    investigation_task_id=body_field(task.get("body"), "investigation_task_id"),
+                    dry_run=dry_run,
+                ):
+                    counts["rework_created"] += 1
+                continue
+
+            if proposal.get("contract_repaired_from_unstructured") is True:
+                reason = (
+                    "Pre-publish proposal gate: the frozen proposal was repaired from an unstructured "
+                    "investigator completion and cannot be approved. Re-package the findings with the "
+                    "full claim/evidence contract and submit them through a fresh review cycle."
                 )
                 source_id = body_field(task.get("body"), "investigation_task_id")
                 if create_rework_card(
@@ -3036,19 +3021,45 @@ def process_approvals(
                     counts["rework_created"] += 1
                 continue
 
-        outcome = _publish_frozen_proposal(
-            args,
-            proposal or {},
-            source=f"local reviewer {task['id']}",
-            ledger=publication_ledger(proposal, task),
-            dry_run=dry_run,
-        )
-        if outcome == "published":
-            counts["published"] += 1
-        elif outcome == "already_published":
-            counts["already_published"] += 1
-        elif outcome == "blocked_configuration":
-            counts["blocked_configuration"] += 1
+            # Structural claim/evidence gate. If the proposal carries a claims array,
+            # every material VERIFIED claim must have an evidence reference. This is a
+            # deterministic structural check, not semantic judgment (that stays with the
+            # reviewer). Legacy proposals without claims pass through normally.
+            proposal_claims = proposal.get("claims") if proposal else None
+            claims_required = proposal.get("claims_contract_version") == CLAIMS_CONTRACT_VERSION if proposal else False
+            if claims_required or proposal_claims is not None:
+                claims_valid, claims_issues = validate_claims_contract(
+                    proposal_claims, run_id=run_id, ticket_id=ticket_id,
+                    actions=get_run_actions(args, run_id),
+                )
+                if not claims_valid:
+                    reason = (
+                        "Pre-publish claim/evidence gate: " + "; ".join(claims_issues[:5])
+                        + ". Fix the material claim evidence references and resubmit."
+                    )
+                    source_id = body_field(task.get("body"), "investigation_task_id")
+                    if create_rework_card(
+                        args, source_task=task, reason=reason,
+                        investigation_task_id=source_id, dry_run=dry_run,
+                    ):
+                        counts["rework_created"] += 1
+                    continue
+
+            outcome = _publish_frozen_proposal(
+                args,
+                proposal or {},
+                source=f"local reviewer {task['id']}",
+                ledger=publication_ledger(proposal, task),
+                dry_run=dry_run,
+            )
+            if outcome == "published":
+                counts["published"] += 1
+            elif outcome == "already_published":
+                counts["already_published"] += 1
+            elif outcome == "blocked_configuration":
+                counts["blocked_configuration"] += 1
+        except RuntimeError as exc:
+            print(f"WARNING: approval processing failed for {task['id']}: {exc}")
 
     return counts
 
@@ -3296,10 +3307,17 @@ def recover_failed_workers(args: argparse.Namespace, *, dry_run: bool = False) -
             health_checked = True
         run_id = task_run_id(task)
         if not dry_run and run_id:
-            # The terminated worker never released its SQL local-model lease.
-            # Release it before queuing rework, or the rework queue call below
-            # collides with this same task's own stale RUNNING/TaskID lease.
-            _finish_local_model_work(args, run_id=run_id, task_id=task["id"], outcome="DONE")
+            # The terminated worker may not have released its SQL local-model
+            # lease. Release it before queuing rework, or the rework queue
+            # call below can collide with this same task's own stale
+            # RUNNING/TaskID lease. If the lease was already released through
+            # the normal completion path (nothing left to finish), SQL raises
+            # "No matching running local-model work was found" -- that is a
+            # benign no-op here, not a reason to crash the whole tick.
+            try:
+                _finish_local_model_work(args, run_id=run_id, task_id=task["id"], outcome="DONE")
+            except RuntimeError as exc:
+                print(f"WARNING: pre-rework lease release failed for {task['id']}: {exc}")
         reason = "Worker infrastructure failure: " + str(latest.get("error") or latest["status"])
         source_id = body_field(task.get("body"), "investigation_task_id") or task["id"]
         if create_rework_card(args, source_task=task, reason=reason,
@@ -3641,6 +3659,78 @@ def _ticket_for_route(args: argparse.Namespace, ticket_id: str) -> dict[str, Any
     return ticket if isinstance(ticket, dict) else context
 
 
+_SAP_API_TYPES = (
+    (("BATCH CHARACTERISTIC",), "BatchCharacteristics"),
+    (("BATCH CREATION",), "BatchCreation"),
+    (("RESULT RECORDING",), "ResultRecording"),
+    (("USAGE DECISION",), "UsageDecision"),
+    (("INVENTORY", "STORAGE LOCATION"), "Inventory"),
+    (("CONSUMPTION",), "Consumption"),
+    (("BY PRODUCT", "BYPRODUCT"), "ByProduct"),
+    (("REVERSAL",), "Reversal"),
+    (("PRODUCTION POSTING", "PRODUCTION"), "Production"),
+    (("WORK ORDER CREATION", "PROCESS ORDER CREATE", "PROCESS ORDER CREATION"), "WorkOrderCreation"),
+)
+
+
+def _route_sap_api(entities: dict[str, Any], normalized_text: str) -> Optional[dict[str, Any]]:
+    api_type = next((value for phrases, value in _SAP_API_TYPES if any(p in normalized_text for p in phrases)), None)
+    explicit_api = "API" in normalized_text or "SAP INTEGRATION" in normalized_text
+    named_sap_operation = "SAP" in normalized_text and api_type is not None
+    if not (explicit_api or named_sap_operation) or not api_type:
+        return None
+    identifier = next((entities.get(key) for key in (
+        "Batch", "BatchNo", "SAPTransactionID", "TransactionID", "InspectionLot",
+        "ManufacturingOrder", "WorkOrderNumber", "HeatNo",
+    ) if entities.get(key) not in (None, "")), None)
+    return {
+        "domain": "sap_api", "api_type": api_type,
+        "identifier": str(identifier) if identifier is not None else None,
+        "recommended_tool": "xstudio_sap_api_context",
+        "reason": "The ticket explicitly asks about a reviewed SAP API family; route directly to its live diagnostic.",
+    }
+
+
+def _route_work_order(entities: dict[str, Any], summary: str) -> Optional[dict[str, Any]]:
+    work_order = next((entities.get(key) for key in (
+        "WorkOrderNumber", "WorkOrder", "ManufacturingOrder", "MESWorkOrderNumber"
+    ) if entities.get(key) not in (None, "")), None)
+    if work_order is None:
+        match = re.search(r"\b(?:work\s*order|wo)\s*[:#-]?\s*([A-Z0-9][A-Z0-9_.-]{2,99})\b", summary, re.I)
+        work_order = match.group(1) if match else None
+    if not work_order or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", str(work_order)):
+        return None
+    campaign = next((entities.get(key) for key in ("CampaignNo", "Campaign")
+                     if entities.get(key) not in (None, "")), None)
+    if campaign is None:
+        match = re.search(r"\bcampaign\s*[:#-]?\s*([A-Z0-9][A-Z0-9_.-]{2,99})\b", summary, re.I)
+        campaign = match.group(1) if match else None
+    return {
+        "domain": "work_order", "work_order": str(work_order),
+        "campaign": str(campaign) if campaign else None,
+        "recommended_tool": "xstudio_work_order_context",
+        "reason": "Work-order and campaign identifiers route directly to canonical fixed live projections.",
+    }
+
+
+def _route_heat(entities: dict[str, Any], summary: str, category: str) -> Optional[dict[str, Any]]:
+    raw_heat = next((entities.get(key) for key in ("HeatNo", "HeatID", "Heat") if entities.get(key) is not None), None)
+    if raw_heat is None:
+        match = re.search(r"\bheat\s+(?:H\s*)?(\d{4,})\b", summary, re.I)
+        raw_heat = match.group(1) if match else None
+    heat_match = re.fullmatch(r"\s*[Hh]?(\d+)\s*", str(raw_heat or ""))
+    if not heat_match:
+        return None
+    sap = "SAP" in category or "SAP" in summary.upper()
+    billet = "BILLET" in category or "BILLET" in summary.upper() or "STRAND" in summary.upper()
+    return {
+        "domain": "heat_sap" if sap else ("billet_genealogy" if billet else "heat_execution"),
+        "heat": heat_match.group(1),
+        "recommended_tool": "xstudio_heat_context",
+        "reason": "Canonical EAF/LRF/CCM, billet genealogy, work-order and SAP production surfaces are harness-routed for this heat.",
+    }
+
+
 def deterministic_ticket_route(ticket: dict[str, Any]) -> dict[str, Any]:
     """Extract a small, auditable first evidence path from ticket-owned fields."""
     entities: dict[str, Any] = {}
@@ -3658,68 +3748,16 @@ def deterministic_ticket_route(ticket: dict[str, Any]) -> dict[str, Any]:
         "BriefDetails", "Description", "ConversationSummary"
     ))
     normalized_text = re.sub(r"[^A-Z0-9]+", " ", (category + " " + summary).upper())
-    api_types = (
-        (("BATCH CHARACTERISTIC",), "BatchCharacteristics"),
-        (("BATCH CREATION",), "BatchCreation"),
-        (("RESULT RECORDING",), "ResultRecording"),
-        (("USAGE DECISION",), "UsageDecision"),
-        (("INVENTORY", "STORAGE LOCATION"), "Inventory"),
-        (("CONSUMPTION",), "Consumption"),
-        (("BY PRODUCT", "BYPRODUCT"), "ByProduct"),
-        (("REVERSAL",), "Reversal"),
-        (("PRODUCTION POSTING", "PRODUCTION"), "Production"),
-        (("WORK ORDER CREATION", "PROCESS ORDER CREATE", "PROCESS ORDER CREATION"), "WorkOrderCreation"),
-    )
-    api_type = next((value for phrases, value in api_types if any(p in normalized_text for p in phrases)), None)
-    explicit_api = "API" in normalized_text or "SAP INTEGRATION" in normalized_text
-    named_sap_operation = "SAP" in normalized_text and api_type is not None
-    if explicit_api or named_sap_operation:
-        if api_type:
-            identifier = next((entities.get(key) for key in (
-                "Batch", "BatchNo", "SAPTransactionID", "TransactionID", "InspectionLot",
-                "ManufacturingOrder", "WorkOrderNumber", "HeatNo",
-            ) if entities.get(key) not in (None, "")), None)
-            return {
-                "domain": "sap_api", "api_type": api_type,
-                "identifier": str(identifier) if identifier is not None else None,
-                "recommended_tool": "xstudio_sap_api_context",
-                "reason": "The ticket explicitly asks about a reviewed SAP API family; route directly to its live diagnostic.",
-            }
 
-    work_order = next((entities.get(key) for key in (
-        "WorkOrderNumber", "WorkOrder", "ManufacturingOrder", "MESWorkOrderNumber"
-    ) if entities.get(key) not in (None, "")), None)
-    if work_order is None:
-        match = re.search(r"\b(?:work\s*order|wo)\s*[:#-]?\s*([A-Z0-9][A-Z0-9_.-]{2,99})\b", summary, re.I)
-        work_order = match.group(1) if match else None
-    campaign = next((entities.get(key) for key in ("CampaignNo", "Campaign")
-                     if entities.get(key) not in (None, "")), None)
-    if campaign is None:
-        match = re.search(r"\bcampaign\s*[:#-]?\s*([A-Z0-9][A-Z0-9_.-]{2,99})\b", summary, re.I)
-        campaign = match.group(1) if match else None
-    if work_order and re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", str(work_order)):
-        return {
-            "domain": "work_order", "work_order": str(work_order),
-            "campaign": str(campaign) if campaign else None,
-            "recommended_tool": "xstudio_work_order_context",
-            "reason": "Work-order and campaign identifiers route directly to canonical fixed live projections.",
-        }
+    for route in (
+        _route_sap_api(entities, normalized_text),
+        _route_work_order(entities, summary),
+        _route_heat(entities, summary, category),
+    ):
+        if route is not None:
+            return route
 
-    raw_heat = next((entities.get(key) for key in ("HeatNo", "HeatID", "Heat") if entities.get(key) is not None), None)
-    if raw_heat is None:
-        match = re.search(r"\bheat\s+(?:H\s*)?(\d{4,})\b", summary, re.I)
-        raw_heat = match.group(1) if match else None
-    heat_match = re.fullmatch(r"\s*[Hh]?(\d+)\s*", str(raw_heat or ""))
-    if not heat_match:
-        return {"domain": "generic", "recommended_tool": None, "reason": "No unambiguous numeric heat identifier."}
-    sap = "SAP" in category or "SAP" in summary.upper()
-    billet = "BILLET" in category or "BILLET" in summary.upper() or "STRAND" in summary.upper()
-    return {
-        "domain": "heat_sap" if sap else ("billet_genealogy" if billet else "heat_execution"),
-        "heat": heat_match.group(1),
-        "recommended_tool": "xstudio_heat_context",
-        "reason": "Canonical EAF/LRF/CCM, billet genealogy, work-order and SAP production surfaces are harness-routed for this heat.",
-    }
+    return {"domain": "generic", "recommended_tool": None, "reason": "No unambiguous numeric heat identifier."}
 
 
 def _dispatch_route_context(run_id: str, ticket_id: str, ticket: dict[str, Any],
