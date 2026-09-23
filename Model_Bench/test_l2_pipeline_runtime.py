@@ -2153,6 +2153,54 @@ class RelationshipHopTests(unittest.TestCase):
         self.assertEqual(executed, [])
 
 
+class PublicationActivityReconciliationTests(unittest.TestCase):
+    def test_repairs_missing_activity_with_response_specific_type(self):
+        row = {
+            "RunID": "RUN-1",
+            "TicketID": "TICKET-1",
+            "ResponseType": "RESOLUTION",
+            "ReplyText": "Verified and closed.",
+        }
+        with patch.object(mod, "run_orchestrator", side_effect=[[row], {"status": "OK"}]) as invoke:
+            repaired = mod.reconcile_missing_publication_activities(mod.default_args())
+
+        self.assertEqual(repaired, 1)
+        self.assertEqual(invoke.call_count, 2)
+        query_args = invoke.call_args_list[0].args[1]
+        self.assertEqual(query_args[0], "--query")
+        self.assertIn("NOT EXISTS", query_args[1])
+        log_args = invoke.call_args_list[1].args[1]
+        self.assertEqual(log_args[0], "--log-activity")
+        self.assertEqual(log_args[log_args.index("--activity-type") + 1], "Resolution")
+        self.assertEqual(log_args[log_args.index("--run-id") + 1], "RUN-1")
+
+    def test_dry_run_reports_missing_activity_without_writing(self):
+        row = {
+            "RunID": "RUN-2",
+            "TicketID": "TICKET-2",
+            "ResponseType": "UPDATE",
+            "ReplyText": "Still investigating.",
+        }
+        with patch.object(mod, "run_orchestrator", return_value=[row]) as invoke:
+            repaired = mod.reconcile_missing_publication_activities(
+                mod.default_args(), dry_run=True,
+            )
+
+        self.assertEqual(repaired, 1)
+        invoke.assert_called_once()
+
+    def test_reconcile_repairs_publication_activity_even_when_no_runs_are_active(self):
+        with patch.object(mod, "reconcile_missing_publication_activities", return_value=2) as activity, \
+             patch.object(mod, "recover_failed_workers", return_value=0), \
+             patch.object(mod, "list_tasks", return_value=[]), \
+             patch.object(mod, "query_active_runs", return_value=[]):
+            result = mod.reconcile(mod.default_args())
+
+        activity.assert_called_once()
+        self.assertEqual(result["publication_activities_repaired"], 2)
+        self.assertEqual(result["snapshot"]["active_run_count"], 0)
+
+
 class PipelineStallDetectionTests(unittest.TestCase):
     def _row(self, waiting, last_claim, server_now):
         return [{"WaitingCount": waiting, "LastClaimOn": last_claim, "ServerNow": server_now}]
