@@ -747,7 +747,8 @@ CREATE OR ALTER PROCEDURE dbo.Hermes_Log_Ticket_Activity_Usp
     @NewValue           nvarchar(500) = NULL,
     @IsCustomerVisible  bit = 0,
     @RunID              varchar(36) = NULL,
-    @HermesUserID       varchar(36) = NULL
+    @HermesUserID       varchar(36) = NULL,
+    @DeduplicateExact   bit = 0
 )
 AS
 BEGIN
@@ -756,6 +757,27 @@ BEGIN
     IF @ActivityType NOT IN ('Note', 'StatusChange', 'Escalation', 'Resolution', 'Reopen', 'SolutionLinked', 'ProblemLinked')
     BEGIN
         RAISERROR('ActivityType must be one of Note/StatusChange/Escalation/Resolution/Reopen/SolutionLinked/ProblemLinked.', 16, 1);
+        RETURN;
+    END;
+
+    IF @DeduplicateExact = 1
+    BEGIN
+        INSERT INTO dbo.Hermes_Ticket_Activity_Trn_Tbl
+            (TicketID, RunID, ActivityType, ActorType, ActorName, NoteText, OldValue, NewValue, IsCustomerVisible, CreatedBy, Source)
+        SELECT
+            @TicketID, @RunID, @ActivityType, @ActorType, @ActorName, @NoteText,
+            @OldValue, @NewValue, @IsCustomerVisible, @HermesUserID, 'T-SQL'
+        WHERE NOT EXISTS
+        (
+            SELECT 1
+            FROM dbo.Hermes_Ticket_Activity_Trn_Tbl WITH (UPDLOCK, HOLDLOCK)
+            WHERE TicketID = @TicketID
+              AND ((RunID = @RunID) OR (RunID IS NULL AND @RunID IS NULL))
+              AND ActivityType = @ActivityType
+              AND ActorType = @ActorType
+              AND ISNULL(NoteText, N'') = ISNULL(@NoteText, N'')
+              AND IsDeleted = 0
+        );
         RETURN;
     END;
 
