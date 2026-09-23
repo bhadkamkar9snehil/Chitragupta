@@ -304,10 +304,15 @@ class InvokeConnectionHygieneTests(unittest.TestCase):
         orch._CLIENTS.clear()
 
     @staticmethod
-    def _prepared_args():
-        return argparse.Namespace(
-            server="server", database="db", username="user", hermes_user_id=None,
-        )
+    def _prepared_args(**overrides):
+        values = {
+            "server": "server",
+            "database": "db",
+            "username": "user",
+            "hermes_user_id": None,
+        }
+        values.update(overrides)
+        return argparse.Namespace(**values)
 
     def test_success_commits_session_boundary(self):
         client = MagicMock()
@@ -344,11 +349,11 @@ class InvokeConnectionHygieneTests(unittest.TestCase):
         client.close.assert_called_once()
         self.assertEqual(orch._CLIENTS, {})
 
-    def test_operational_error_closes_stale_client_and_retries_once(self):
+    def test_read_operational_error_closes_stale_client_and_retries_once(self):
         first, second = MagicMock(), MagicMock()
         err = orch.pyodbc.OperationalError("08S01", "connection lost")
         with patch.object(orch, "build_parser", return_value=MagicMock()), \
-             patch.object(orch, "prepare_args", return_value=self._prepared_args()), \
+             patch.object(orch, "prepare_args", return_value=self._prepared_args(query="SELECT 1")), \
              patch.object(orch, "_client_for", side_effect=[first, second]), \
              patch.object(orch, "dispatch", side_effect=[err, None]) as dispatch:
             orch.invoke([])
@@ -356,6 +361,19 @@ class InvokeConnectionHygieneTests(unittest.TestCase):
         first.close.assert_called_once()
         second.conn.commit.assert_called_once()
         self.assertIs(next(iter(orch._CLIENTS.values())), second)
+
+    def test_mutating_operational_error_is_not_replayed(self):
+        first = MagicMock()
+        err = orch.pyodbc.OperationalError("08S01", "connection lost")
+        with patch.object(orch, "build_parser", return_value=MagicMock()), \
+             patch.object(orch, "prepare_args", return_value=self._prepared_args(poll=True)), \
+             patch.object(orch, "_client_for", return_value=first), \
+             patch.object(orch, "dispatch", side_effect=err) as dispatch:
+            with self.assertRaises(orch.pyodbc.OperationalError):
+                orch.invoke([])
+        dispatch.assert_called_once()
+        first.close.assert_called_once()
+        self.assertEqual(orch._CLIENTS, {})
 
 
 class MainDispatchOrderTests(unittest.TestCase):
