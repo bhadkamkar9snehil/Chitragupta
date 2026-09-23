@@ -880,17 +880,65 @@ CREATE OR ALTER PROCEDURE dbo.Hermes_Link_Solution_To_Ticket_Usp
 AS
 BEGIN
     SET NOCOUNT ON;
+    SET XACT_ABORT ON;
 
-    INSERT INTO dbo.Hermes_Ticket_Solution_Link_Tbl (TicketID, SolutionID, RunID, WasHelpful, LinkedBy)
-    VALUES (@TicketID, @SolutionID, @RunID, @WasHelpful, @HermesUserID);
+    DECLARE @StartedTransaction bit = CASE WHEN @@TRANCOUNT = 0 THEN 1 ELSE 0 END;
+    IF @StartedTransaction = 1
+        BEGIN TRANSACTION;
 
-    UPDATE dbo.Hermes_Solution_Article_Mst_Tbl
-    SET UsageCount = UsageCount + 1, ModifiedOn = GETDATE()
-    WHERE ID = @SolutionID;
+    BEGIN TRY
+        IF NOT EXISTS
+        (
+            SELECT 1
+            FROM dbo.Hermes_Ticket_Solution_Link_Tbl WITH (UPDLOCK, HOLDLOCK)
+            WHERE TicketID = @TicketID
+              AND SolutionID = @SolutionID
+              AND ((RunID = @RunID) OR (RunID IS NULL AND @RunID IS NULL))
+              AND IsDeleted = 0
+        )
+        BEGIN
+            INSERT INTO dbo.Hermes_Ticket_Solution_Link_Tbl
+                (TicketID, SolutionID, RunID, WasHelpful, LinkedBy)
+            VALUES
+                (@TicketID, @SolutionID, @RunID, @WasHelpful, @HermesUserID);
 
-    EXEC dbo.Hermes_Log_Ticket_Activity_Usp
-        @TicketID = @TicketID, @ActivityType = 'SolutionLinked', @ActorType = 'Bot',
-        @NoteText = 'Linked to an existing solution article.', @RunID = @RunID, @HermesUserID = @HermesUserID;
+            UPDATE dbo.Hermes_Solution_Article_Mst_Tbl
+            SET UsageCount = ISNULL(UsageCount, 0) + 1,
+                LastVerifiedOn = CASE WHEN @WasHelpful = 1 THEN GETDATE() ELSE LastVerifiedOn END,
+                LastVerifiedRunID = CASE
+                    WHEN @WasHelpful = 1 AND @RunID IS NOT NULL THEN @RunID
+                    ELSE LastVerifiedRunID
+                END,
+                ModifiedOn = GETDATE()
+            WHERE ID = @SolutionID
+              AND IsDeleted = 0;
+
+            EXEC dbo.Hermes_Log_Ticket_Activity_Usp
+                @TicketID = @TicketID,
+                @ActivityType = 'SolutionLinked',
+                @ActorType = 'Bot',
+                @NoteText = 'Linked to an existing solution article.',
+                @RunID = @RunID,
+                @HermesUserID = @HermesUserID;
+        END
+        ELSE IF @WasHelpful IS NOT NULL
+        BEGIN
+            UPDATE dbo.Hermes_Ticket_Solution_Link_Tbl
+            SET WasHelpful = @WasHelpful
+            WHERE TicketID = @TicketID
+              AND SolutionID = @SolutionID
+              AND ((RunID = @RunID) OR (RunID IS NULL AND @RunID IS NULL))
+              AND IsDeleted = 0;
+        END;
+
+        IF @StartedTransaction = 1
+            COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF @StartedTransaction = 1 AND XACT_STATE() <> 0
+            ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH;
 END;
 GO
 
