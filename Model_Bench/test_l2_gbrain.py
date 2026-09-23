@@ -66,6 +66,22 @@ class GBrainAdapterTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("no requested source is populated yet", result["error"])
 
+    def test_explicit_recall_into_an_empty_lane_answers_from_knowledge(self):
+        """Live 2026-09-23: scope=facts/cases/solutions errored (not populated yet) and the worker
+        spent a turn retrying scope=knowledge. The explicit call now falls back in one step."""
+        def fake_run(args, **kwargs):
+            if args[args.index("--source-id") + 1] == "xstudio-knowledge":
+                return (0, '[{"slug":"knowledge/lrf","score":0.8}]', "")
+            return (1, "", "Error [unknown_source]: does not exist")
+
+        with mock.patch.object(mod, "run", side_effect=fake_run):
+            result = mod.search("arcing time", scope="facts", automatic=False)
+            automatic = mod.search("arcing time", scope="facts", automatic=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["fallback_scope"], "knowledge")
+        self.assertEqual(result["requested_scope"], "facts")
+        self.assertFalse(automatic["ok"])  # harness retrieval keeps the named-missing contract
+
     def test_legacy_modes_never_invoke_gbrain_query(self):
         for requested in ("deep", "vector", "fts", "hybrid"):
             with self.subTest(requested=requested), \

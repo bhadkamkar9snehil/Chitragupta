@@ -4376,6 +4376,16 @@ def lifecycle_lock(args: argparse.Namespace):
 
 def cli(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.mode == "preflight":
+        # Read-only, so it never takes the lifecycle lock: under the lock a busy scout made the
+        # post-deploy check print LIFECYCLE_BUSY yet exit 0, i.e. a false "preflight OK".
+        try:
+            check_worker_dependencies()
+        except Exception as exc:
+            print(json.dumps({"ok": False, "mode": "preflight", "error": f"{type(exc).__name__}: {exc}"}))
+            return 1
+        print(json.dumps({"ok": True, "mode": "preflight", "result": {"preflight": "ok"}}))
+        return 0
     try:
         with lifecycle_lock(args):
             return _cli_owned(argv)
@@ -4412,11 +4422,6 @@ def _cli_owned(argv: Optional[list[str]] = None) -> int:
             result = {"orphans_recovered": recover_orphan_runs(
                 args, dry_run=args.dry_run, stale_after_minutes=args.stale_after_minutes,
             )}
-        elif args.mode == "preflight":
-            # The scout's own gate, run by deploy right after restart: a deploy that would
-            # stop claims fails loudly instead of stalling silently (twice on 2026-09-23).
-            check_worker_dependencies()
-            result = {"preflight": "ok"}
         elif args.mode == "audit":
             result = {
                 "review_sql_divergences": audit_done_reviewers(args, dry_run=args.dry_run),

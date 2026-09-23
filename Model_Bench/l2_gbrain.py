@@ -233,6 +233,14 @@ def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
             if isinstance(row, dict):
                 merged_rows.append(row)
 
+    if not queried and not automatic and not last_hard_error and scope != "knowledge":
+        # Explicit recall into a lane nobody has populated yet (no curated cases/facts/solutions)
+        # answered with an error, and the worker spent a turn retrying scope=knowledge (7x in 2h,
+        # 2026-09-23). Answer from the populated reference lane in the same call and say so.
+        fallback = search(query, scope="knowledge", mode=mode, limit=limit, automatic=False)
+        if fallback.get("ok"):
+            return {**fallback, "requested_scope": scope, "fallback_scope": "knowledge",
+                    "note": f"No {scope} are recorded yet; these results come from the reference knowledge."}
     if not queried:
         return {
             "ok": False,

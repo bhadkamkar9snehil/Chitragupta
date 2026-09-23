@@ -886,6 +886,15 @@ class PipelineContractTests(unittest.TestCase):
         self.assertNotIn("xstudio_read_table", text)
         self.assertIn("xstudio_submit_proposal", text)
 
+    def test_preflight_runs_without_the_lifecycle_lock_and_fails_loudly(self):
+        # Live: under the lock a busy scout made preflight print LIFECYCLE_BUSY yet exit 0.
+        with patch.object(mod, "lifecycle_lock", side_effect=AssertionError("preflight must not lock")), \
+                patch.object(mod, "check_worker_dependencies"):
+            self.assertEqual(mod.cli(["preflight"]), 0)
+        with patch.object(mod, "lifecycle_lock", side_effect=AssertionError("preflight must not lock")), \
+                patch.object(mod, "check_worker_dependencies", side_effect=RuntimeError("WORKER_DEPENDENCY_UNAVAILABLE")):
+            self.assertEqual(mod.cli(["preflight"]), 1)
+
     def test_scout_dependency_check_accepts_the_toolsets_deploy_writes(self):
         # Live 19:35 IST: writer-only investigators lost xstudio_l2, the scout still demanded it,
         # and claims paused. Check the real deploy output, not a mocked check.
