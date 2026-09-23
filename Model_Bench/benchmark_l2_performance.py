@@ -163,6 +163,29 @@ def card_sizes(cur, since: datetime) -> list[dict[str, Any]]:
         GROUP BY LocalModelPurpose""", since)
 
 
+def largest_card_sections(cur, since: datetime) -> dict[str, Any]:
+    """Section sizes of the largest recent worker card, to see what to trim.
+
+    kanban_show adds ~40% (JSON escaping, runs, events) on top of the body, so a body
+    above ~25K chars still spills for a 65K-token model.
+    """
+    row = cur.execute("""SELECT TOP 1 LocalModelPurpose, PendingLocalModelJson FROM dbo.Hermes_L2_Response_Trn_Tbl
+                         WHERE PendingLocalModelJson IS NOT NULL AND LocalModelQueuedOn >= ?
+                         ORDER BY LEN(PendingLocalModelJson) DESC""", since).fetchone()
+    if not row:
+        return {}
+    body = str(json.loads(row[1]).get("body") or "")
+    # Blank-line separated blocks, labelled by their first line (pretty JSON context
+    # and prose instructions both break this way).
+    blocks = [b for b in re.split(r"\n\s*\n", body) if b.strip()]
+    ranked = sorted(blocks, key=len, reverse=True)[:8]
+    compiler = {k: m.group(1) for k in ("budget_chars", "compiled_chunk_chars", "rendered_chars_estimate",
+                                          "target_total_chars", "budget_overflow_for_pinned_context")
+                for m in [re.search(rf'"{k}"\s*:\s*(\w+)', body)] if m}
+    return {"purpose": row[0], "body_chars": len(body), "context_compiler": compiler,
+            "sections": [{"section": b.strip().splitlines()[0][:70], "chars": len(b)} for b in ranked]}
+
+
 def invariants(cur) -> dict[str, int]:
     return {label: cur.execute(sql).fetchone()[0] for label, sql in INVARIANTS.items()}
 
@@ -176,6 +199,7 @@ def build_report(cur, since: datetime) -> dict[str, Any]:
         "tool_health": tool_health(cur, since),
         "waste": waste_signals(cur, since),
         "card_sizes": card_sizes(cur, since),
+        "largest_card": largest_card_sections(cur, since),
         "spill_threshold_chars": SPILL_THRESHOLD_CHARS,
         "invariants": invariants(cur),
     }
@@ -202,6 +226,13 @@ def print_markdown(report: dict[str, Any], limit: int) -> None:
     print(f"\n## Worker card sizes (spill above {report['spill_threshold_chars']:,} chars)")
     for c in report["card_sizes"]:
         print(f"- {c['Purpose']}: {c['Cards']} cards, avg {c['AvgChars']:,}, max {c['MaxChars']:,}, over spill {c['OverSpill']}")
+    card = report["largest_card"]
+    if card:
+        print(f"\nLargest {card['purpose']} card body {card['body_chars']:,} chars (spills above ~25K):")
+        if card.get("context_compiler"):
+            print(f"- context compiler: {card['context_compiler']}")
+        for sec in card["sections"]:
+            print(f"- {sec['chars']:>7,}  {sec['section']}")
     print("\n## Lifecycle invariants (must be 0)")
     for label, value in report["invariants"].items():
         print(f"- {'OK ' if value == 0 else 'BAD'} {value:>3}  {label}")

@@ -3725,13 +3725,15 @@ def _investigation_bundle(
         "jev_ticket_security": bundle.get("jev_ticket_security"),
         "untrusted_context_policy": bundle.get("untrusted_context_policy"),
     }
-    rendered = json.dumps(model_bundle, indent=2, default=str)
+    # Compact JSON: indent=2 made this block 24.9K chars against a 14K target and pushed
+    # worker cards past Hermes's spill threshold for the 65K-token model.
+    rendered = json.dumps(model_bundle, separators=(",", ":"), default=str)
     model_bundle["context_view"]["rendered_chars_estimate"] = len(rendered)
     model_bundle["context_view"]["target_total_chars"] = min(
         MODEL_CONTEXT_BUDGET_CHARS,
         context_budget + MODEL_CONTEXT_RESERVED_CHARS,
     )
-    rendered = json.dumps(model_bundle, indent=2, default=str)
+    rendered = json.dumps(model_bundle, separators=(",", ":"), default=str)
     return (
         (
             "\n--- Investigation context (Jev meta-attention compiled) ---\n"
