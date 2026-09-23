@@ -1999,7 +1999,8 @@ class PipelineContractTests(unittest.TestCase):
         instructions = mod._query_instructions("run-1", "ticket-1")
         self.assertIn("xstudio_submit_proposal", instructions)
         self.assertIn("VERIFIED", instructions)
-        self.assertNotIn("kanban_complete", instructions)
+        # One finish: submit stages the proposal, Hermes's own kanban_complete carries it.
+        self.assertIn("kanban_complete with no arguments", instructions)
         self.assertIn("Absence of records is evidence of absence", instructions)
 
     def test_unstructured_completion_normalizes_to_unverified_claim(self):
