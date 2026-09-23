@@ -2144,64 +2144,44 @@ def prepare_args(parser: argparse.ArgumentParser, argv: Optional[List[str]] = No
     return args
 
 
+# CLI flag -> handler, in precedence order (the first set flag wins, as before).
+_OPERATIONS = (
+    ("discover_workflow", lambda a, p, c: _cli_discover_workflow(c)),
+    ("local_model_action", lambda a, p, c: _cli_local_model_action(a, p, c)),
+    ("poll", lambda a, p, c: _cli_poll(a, p, c)),
+    ("log_activity", lambda a, p, c: _cli_log_activity(a, p, c)),
+    ("search_solutions", lambda a, p, c: _cli_search_solutions(a, c)),
+    ("create_solution", lambda a, p, c: _cli_create_solution(a, p, c)),
+    ("link_solution", lambda a, p, c: _cli_link_solution(a, p, c)),
+    ("get_activity", lambda a, p, c: _cli_get_activity(a, p, c)),
+    ("list_root_cause_categories", lambda a, p, c: _cli_list_root_cause_categories(c)),
+    ("create_problem", lambda a, p, c: _cli_create_problem(a, p, c)),
+    ("link_problem", lambda a, p, c: _cli_link_problem(a, p, c)),
+    ("find_sql_objects", lambda a, p, c: _cli_find_sql_objects(a, c)),
+    ("get_sql_object_definition", lambda a, p, c: _cli_get_sql_object_definition(a, c)),
+    ("get_reference_documents", lambda a, p, c: _cli_get_reference_documents(a, c)),
+    ("get_run_actions", lambda a, p, c: _cli_get_run_actions(a, c)),
+    ("get_ticket_context", lambda a, p, c: _cli_get_ticket_context(a, c)),
+    ("build_query", lambda a, p, c: _cli_build_query(a, p, c, a.database_explicitly_given)),
+    ("suggest_tables", lambda a, p, c: _cli_suggest_tables(a, a.database_explicitly_given)),
+    ("save_ledger", lambda a, p, c: _cli_save_ledger(a, p, c)),
+    ("investigate_bundle", lambda a, p, c: _cli_investigate_bundle(a, c)),
+    ("get_ledger", lambda a, p, c: _cli_get_ledger(a, c)),
+    ("query", lambda a, p, c: _cli_query(a, p, c)),
+    ("escalate_blocked", lambda a, p, c: _cli_escalate_blocked(a, p, c)),
+    ("fail_run", lambda a, p, c: _cli_fail_run(a, p, c)),
+    ("publish_response", lambda a, p, c: _cli_publish_response(a, p, c)),
+    ("draft_response", lambda a, p, c: _cli_draft_response(a, p, c)),
+    ("approve_draft", lambda a, p, c: _cli_approve_draft(a, p, c)),
+    ("reject_draft", lambda a, p, c: _cli_reject_draft(a, p)),
+)
+
+
 def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
     """Run the one CLI operation selected by args on an already-open client."""
-    if args.discover_workflow:
-        return _cli_discover_workflow(client)
-    if args.local_model_action:
-        return _cli_local_model_action(args, parser, client)
-    if args.poll:
-        return _cli_poll(args, parser, client)
-    if args.log_activity:
-        return _cli_log_activity(args, parser, client)
-    if args.search_solutions:
-        return _cli_search_solutions(args, client)
-    if args.create_solution:
-        return _cli_create_solution(args, parser, client)
-    if args.link_solution:
-        return _cli_link_solution(args, parser, client)
-    if args.get_activity:
-        return _cli_get_activity(args, parser, client)
-    if args.list_root_cause_categories:
-        return _cli_list_root_cause_categories(client)
-    if args.create_problem:
-        return _cli_create_problem(args, parser, client)
-    if args.link_problem:
-        return _cli_link_problem(args, parser, client)
-    if args.find_sql_objects:
-        return _cli_find_sql_objects(args, client)
-    if args.get_sql_object_definition:
-        return _cli_get_sql_object_definition(args, client)
-    if args.get_reference_documents:
-        return _cli_get_reference_documents(args, client)
-    if args.get_run_actions:
-        return _cli_get_run_actions(args, client)
-    if args.get_ticket_context:
-        return _cli_get_ticket_context(args, client)
-    if args.build_query:
-        return _cli_build_query(args, parser, client, args.database_explicitly_given)
-    if args.suggest_tables:
-        return _cli_suggest_tables(args, args.database_explicitly_given)
-    if args.save_ledger:
-        return _cli_save_ledger(args, parser, client)
-    if args.investigate_bundle:
-        return _cli_investigate_bundle(args, client)
-    if args.get_ledger:
-        return _cli_get_ledger(args, client)
-    if args.query:
-        return _cli_query(args, parser, client)
-    if args.escalate_blocked:
-        return _cli_escalate_blocked(args, parser, client)
-    if args.fail_run:
-        return _cli_fail_run(args, parser, client)
-    if args.publish_response:
-        return _cli_publish_response(args, parser, client)
-    if args.draft_response:
-        return _cli_draft_response(args, parser, client)
-    if args.approve_draft:
-        return _cli_approve_draft(args, parser, client)
-    if args.reject_draft:
-        return _cli_reject_draft(args, parser)
+    for flag, handler in _OPERATIONS:
+        if getattr(args, flag):
+            return handler(args, parser, client)
     parser.error("Pass one of --discover-workflow, --poll, --publish-response, "
                   "--draft-response, --approve-draft, or --reject-draft.")
 
