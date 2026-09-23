@@ -41,6 +41,11 @@ def flush_observability() -> bool:
     return True
 
 if __name__ == "__main__":
+    try:  # local call trace (Model_Bench/l2_calltrace.py); L2_CALLTRACE=0 disables
+        import l2_calltrace
+        l2_calltrace.install()
+    except ImportError:
+        pass
     rc = cli(["scout", *sys.argv[1:]])
 
     # A dry-run must be read-only end-to-end, including its audit sink.

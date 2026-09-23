@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export L2_CALLTRACE=0  # tests must not write the live call trace
 
 export PATH="$HOME/.local/bin:$HOME/.hermes/hermes-agent/venv/bin:$PATH"
 

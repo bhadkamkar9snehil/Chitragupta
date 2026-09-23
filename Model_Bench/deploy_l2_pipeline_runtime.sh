@@ -94,7 +94,8 @@ for f in \
   audit_kanban_completions.py \
   run_coalesced.py \
   drain_and_summarize.py \
-  l2_gbrain.py
+  l2_gbrain.py \
+  l2_calltrace.py
  do
   cp "$ROOT/Model_Bench/$f" "$SCRIPTS_DIR/$f"
  done
@@ -109,7 +110,8 @@ for profile in "${ACTIVE_PROFILES[@]}"; do
     reconcile_l2_pipeline.py \
     audit_kanban_completions.py \
     run_coalesced.py \
-    drain_and_summarize.py
+    drain_and_summarize.py \
+    l2_calltrace.py
   do
     cp "$ROOT/Model_Bench/$f" "$scripts_dir/$f"
   done

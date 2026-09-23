@@ -1293,6 +1293,12 @@ _SCHEMA = {
 }
 
 def register(ctx: Any) -> None:
+    sys.path.insert(0, str(Path(BRIDGE_PATH).parent))  # l2_calltrace lives beside the bridge
+    try:  # local call trace (Model_Bench/l2_calltrace.py); L2_CALLTRACE=0 disables
+        import l2_calltrace
+        l2_calltrace.install()
+    except ImportError:
+        pass
     for name, schema in TOOL_SCHEMAS.items():
         # Registry injects the actual name into the OpenAI schema. Keeping the
         # same toolset preserves the existing profile enablement boundary.
