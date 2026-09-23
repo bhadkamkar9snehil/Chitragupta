@@ -24,7 +24,7 @@ import pyodbc
 OUT_PATH = Path(__file__).resolve().parent.parent / "Knowledge" / "schema_allowlist.json"
 DATABASES = ("XStudio_Helpdesk", "XStudio_Xbatch")
 COLUMNS_SQL = """
-SELECT c.TABLE_SCHEMA, c.TABLE_NAME, c.COLUMN_NAME
+SELECT c.TABLE_SCHEMA, c.TABLE_NAME, c.COLUMN_NAME, t.TABLE_TYPE
 FROM INFORMATION_SCHEMA.COLUMNS c
 JOIN INFORMATION_SCHEMA.TABLES t
   ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
@@ -41,12 +41,33 @@ def live_objects(database: str) -> dict[str, list[str]]:
         "TrustServerCertificate=yes;Connection Timeout=60"
     )
     try:
+        cur = conn.cursor()
         objects: dict[str, list[str]] = {}
-        for schema, table, column in conn.cursor().execute(COLUMNS_SQL).fetchall():
+        views: set[str] = set()
+        for schema, table, column, table_type in cur.execute(COLUMNS_SQL).fetchall():
             objects.setdefault(f"{schema}.{table}", []).append(column)
+            if table_type == "VIEW":
+                views.add(f"{schema}.{table}")
+        for name in sorted(views):
+            if not _view_executes(cur, name):
+                del objects[name]
         return objects
     finally:
         conn.close()
+
+
+def _view_executes(cur, name: str) -> bool:
+    """Exclude vendor views that no longer bind (10 live on 2026-09-23): Qwen spent
+    19 tool calls on them. A repaired view reappears on the next regeneration."""
+    schema, _, view = name.partition(".")
+    try:
+        cur.execute(f"SELECT TOP 0 * FROM [{schema}].[{view}]")
+        while cur.nextset():
+            pass
+        return True
+    except pyodbc.Error:
+        print(f"  excluded non-executable view {name}")
+        return False
 
 
 def main() -> None:
