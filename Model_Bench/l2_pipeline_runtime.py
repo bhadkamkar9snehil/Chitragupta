@@ -2037,9 +2037,9 @@ def _run_evidence_snapshot(args: argparse.Namespace, run_id: str) -> list[Any]:
         actions = run_orchestrator(args, ["--get-run-actions", run_id], timeout=45)
     except RuntimeError:
         return []
-    # Last 15 compact actions keep kanban_show under Hermes's spill threshold for a
+    # Last 12 compact actions keep kanban_show under Hermes's spill threshold for a
     # 65K-token model (15% of window ~ 39K chars); spilled cards made Qwen write parsers.
-    return [compact_run_action(a) for a in actions[-15:]] if isinstance(actions, list) else []
+    return [compact_run_action(a) for a in actions[-12:]] if isinstance(actions, list) else []
 
 
 _ACTION_CARD_FIELDS = ("ID", "ActionNo", "ActionType", "DatabaseName", "ObjectName", "OperationName",
@@ -2055,7 +2055,7 @@ def compact_run_action(action: Any) -> Any:
     if not isinstance(action, dict):
         return action
     out = {k: action[k] for k in _ACTION_CARD_FIELDS if action.get(k) not in (None, "")}
-    out["SqlText"] = str(action.get("SqlText") or "")[:300]
+    out["SqlText"] = str(action.get("SqlText") or "")[:200]
     rows = action.get("AfterJson")
     if isinstance(rows, str):
         try:
@@ -2064,7 +2064,7 @@ def compact_run_action(action: Any) -> Any:
             pass
     preview = rows[:2] if isinstance(rows, list) else rows
     if preview not in (None, ""):
-        out["ResultPreview"] = json.dumps(preview, default=str, separators=(",", ":"))[:500]
+        out["ResultPreview"] = json.dumps(preview, default=str, separators=(",", ":"))[:250]
     return out
 
 
@@ -2279,6 +2279,22 @@ def render_proposal_digest(proposal: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def _proposal_reference(proposal: dict[str, Any]) -> dict[str, Any]:
+    """Governed-context stand-in for a proposal that the review card already carries.
+
+    The card holds the full proposal_json (what gets published) plus the digest; a
+    third full copy in governed context put review cards at 33K chars, past the
+    spill point for the 9B reviewer.
+    """
+    claims = [c.get("id") for c in proposal.get("claims") or [] if isinstance(c, dict)]
+    return {
+        "full_proposal": "proposal_json and PROPOSAL DIGEST on this card",
+        "run_id": proposal.get("run_id"),
+        "response_type": proposal.get("response_type"),
+        "claim_ids": claims,
+    }
+
+
 def create_reviewer_card(
     args: argparse.Namespace,
     *,
@@ -2303,7 +2319,7 @@ def create_reviewer_card(
         ticket_no=ticket_no,
         stage="review",
         review_cycle=cycle,
-        proposal=proposal,
+        proposal=_proposal_reference(proposal),
         current_run_evidence=_run_evidence_snapshot(args, run_id),
         original_context=original_context,
         dry_run=dry_run,

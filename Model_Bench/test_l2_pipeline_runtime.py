@@ -306,10 +306,17 @@ class PipelineContractTests(unittest.TestCase):
                   "RowsAffected": 25, "CreatedBy": None}
         compact = mod.compact_run_action(action)
         self.assertEqual((compact["ID"], compact["ActionNo"], compact["Status"]), ("A-1", 12, "SUCCESS"))
-        self.assertLessEqual(len(compact["ResultPreview"]), 500)
-        self.assertLessEqual(len(compact["SqlText"]), 300)
+        self.assertLessEqual(len(compact["ResultPreview"]), 250)
+        self.assertLessEqual(len(compact["SqlText"]), 200)
         self.assertNotIn("AfterJson", compact)
-        self.assertLess(len(json.dumps(compact)), 1400)
+        self.assertLess(len(json.dumps(compact)), 900)
+
+    def test_review_context_references_the_proposal_instead_of_copying_it(self):
+        proposal = {"run_id": "R", "response_type": "RESOLUTION", "reply_text": "x" * 3000,
+                    "claims": [{"id": "C1", "claim": "y" * 2000}]}
+        ref = mod._proposal_reference(proposal)
+        self.assertEqual(ref["claim_ids"], ["C1"])
+        self.assertLess(len(json.dumps(ref)), 300)
 
     def test_review_cap_publishes_a_real_l3_handoff_not_a_failed_run(self):
         with patch.object(mod, "run_orchestrator") as invoke, \
