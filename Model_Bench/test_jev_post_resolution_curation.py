@@ -95,7 +95,11 @@ class WriteCurationActionTests(unittest.TestCase):
         result = write_curation_action(cur, run=BASE_RUN, disposition="REUSE_EXISTING", top_existing=top_existing)
 
         self.assertEqual(result["action"], "REUSE_EXISTING_LINKED")
-        link_sql, link_params = cur.calls[0]
+        begin_sql, begin_params = cur.calls[0]
+        self.assertIn("BEGIN TRANSACTION", begin_sql)
+        self.assertEqual(begin_params, ())
+
+        link_sql, link_params = cur.calls[1]
         self.assertIn("Hermes_Link_Solution_To_Ticket_Usp", link_sql)
         self.assertNotIn("UsageCount =", link_sql)
         self.assertEqual(
@@ -103,7 +107,7 @@ class WriteCurationActionTests(unittest.TestCase):
             (BASE_RUN["TicketID"], "ART-OLD", BASE_RUN["RunID"]),
         )
 
-        promote_sql, promote_params = cur.calls[1]
+        promote_sql, promote_params = cur.calls[2]
         self.assertIn("ArticleStatus = 'Approved'", promote_sql)
         self.assertIn("ArticleStatus = 'Candidate'", promote_sql)
         self.assertIn("SourceTicketID", promote_sql)
@@ -121,7 +125,7 @@ class WriteCurationActionTests(unittest.TestCase):
             top_existing={"ID": "ART-NEW"},
         )
 
-        promote_sql = cur.calls[1][0]
+        promote_sql = cur.calls[2][0]
         self.assertIn("OUTPUT INSERTED.ID, INSERTED.SupersedesSolutionID", promote_sql)
         self.assertIn("INNER JOIN @promoted", promote_sql)
         self.assertIn("previous.ArticleStatus = 'Superseded'", promote_sql)
