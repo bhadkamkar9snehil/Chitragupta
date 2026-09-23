@@ -163,9 +163,11 @@ class PipelineContractTests(unittest.TestCase):
                     patch.object(mod, "query_active_runs", return_value=[{"ID": "run"}]), \
                     patch.object(mod, "get_runs", return_value=[attempt]), \
                     patch.object(mod, "check_worker_dependencies"), \
+                    patch.object(mod, "_finish_local_model_work", return_value={}) as finish, \
                     patch.object(mod, "create_rework_card", return_value="rework") as create:
                 self.assertEqual(mod.recover_failed_workers(mod.default_args()), expected)
                 self.assertEqual(create.call_count, expected)
+                self.assertEqual(finish.call_count, expected)
 
     def test_failed_worker_recovery_does_not_duplicate_rework(self):
         task = {"id": "task", "status": "blocked", "assignee": mod.INVESTIGATOR_PROFILE,
@@ -176,6 +178,37 @@ class PipelineContractTests(unittest.TestCase):
                 patch.object(mod, "create_rework_card") as create:
             self.assertEqual(mod.recover_failed_workers(mod.default_args()), 0)
             create.assert_not_called()
+
+    def test_recovery_releases_stale_lease_before_requeuing(self):
+        """A terminated worker's own SQL lease must be released before rework
+        is queued for the same run, or the queue call collides with it."""
+        task = {"id": "t_cffde6ec", "status": "blocked", "assignee": mod.INVESTIGATOR_PROFILE,
+                "body": "run_id: run-301\nticket_id: ticket-301\nreview_cycle: 1"}
+        calls: list[str] = []
+        with patch.object(mod, "list_tasks", return_value=[task]), \
+                patch.object(mod, "query_active_runs", return_value=[{"ID": "run-301"}]), \
+                patch.object(mod, "get_runs", return_value=[{"status": "timed_out", "ended_at": 1}]), \
+                patch.object(mod, "check_worker_dependencies"), \
+                patch.object(mod, "_finish_local_model_work",
+                              side_effect=lambda *a, **k: calls.append("finish") or {}) as finish, \
+                patch.object(mod, "create_rework_card",
+                              side_effect=lambda *a, **k: calls.append("rework") or "queued") as create:
+            self.assertEqual(mod.recover_failed_workers(mod.default_args()), 1)
+            finish.assert_called_once_with(mod.default_args(), run_id="run-301",
+                                            task_id="t_cffde6ec", outcome="DONE")
+            create.assert_called_once()
+            self.assertEqual(calls, ["finish", "rework"])
+
+    def test_recovery_dry_run_does_not_release_lease(self):
+        task = {"id": "task", "status": "blocked", "assignee": mod.INVESTIGATOR_PROFILE,
+                "body": "run_id: run\nticket_id: ticket\nreview_cycle: 1"}
+        with patch.object(mod, "list_tasks", return_value=[task]), \
+                patch.object(mod, "query_active_runs", return_value=[{"ID": "run"}]), \
+                patch.object(mod, "get_runs", return_value=[{"status": "timed_out", "ended_at": 1}]), \
+                patch.object(mod, "_finish_local_model_work") as finish, \
+                patch.object(mod, "create_rework_card", return_value="dry_run"):
+            mod.recover_failed_workers(mod.default_args(), dry_run=True)
+            finish.assert_not_called()
 
     def test_dependency_failure_prevents_worker_retry(self):
         task = {"id": "task", "status": "blocked", "assignee": mod.INVESTIGATOR_PROFILE,

@@ -3294,6 +3294,12 @@ def recover_failed_workers(args: argparse.Namespace, *, dry_run: bool = False) -
         if not dry_run and not health_checked:
             check_worker_dependencies()
             health_checked = True
+        run_id = task_run_id(task)
+        if not dry_run and run_id:
+            # The terminated worker never released its SQL local-model lease.
+            # Release it before queuing rework, or the rework queue call below
+            # collides with this same task's own stale RUNNING/TaskID lease.
+            _finish_local_model_work(args, run_id=run_id, task_id=task["id"], outcome="DONE")
         reason = "Worker infrastructure failure: " + str(latest.get("error") or latest["status"])
         source_id = body_field(task.get("body"), "investigation_task_id") or task["id"]
         if create_rework_card(args, source_task=task, reason=reason,
