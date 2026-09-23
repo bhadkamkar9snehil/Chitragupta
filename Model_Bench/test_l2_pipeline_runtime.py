@@ -886,6 +886,18 @@ class PipelineContractTests(unittest.TestCase):
         self.assertNotIn("xstudio_read_table", text)
         self.assertIn("xstudio_submit_proposal", text)
 
+    def test_scout_dependency_check_accepts_the_toolsets_deploy_writes(self):
+        # Live 19:35 IST: writer-only investigators lost xstudio_l2, the scout still demanded it,
+        # and claims paused. Check the real deploy output, not a mocked check.
+        import yaml
+        sys.path.insert(0, str(Path(mod.__file__).resolve().parent))
+        import patch_l2_worker_budget as budget
+        base = "\n".join(["model:", "  context_length: 1", "agent:", "  max_turns: 1",
+                          "platform_toolsets:", "  cli:", "    - terminal", ""])
+        for reviewer in (False, True):
+            toolsets = yaml.safe_load(budget.configure(base, reviewer=reviewer))["platform_toolsets"]["cli"]
+            self.assertTrue(mod.REQUIRED_WORKER_TOOLSETS[reviewer].issubset(toolsets), (reviewer, toolsets))
+
     def test_context_budget_is_smaller_for_compose_only_than_focused_reasoning(self):
         self.assertLess(
             mod._context_budget_for_mode("COMPOSE_ONLY"),

@@ -3490,6 +3490,10 @@ def recover_failed_workers(args: argparse.Namespace, *, dry_run: bool = False) -
     return recovered
 
 
+# Per role: the investigator only writes and submits; the reviewer verifies with data tools.
+REQUIRED_WORKER_TOOLSETS = {False: {"kanban", "l2_submit"}, True: {"kanban", "xstudio_l2"}}
+
+
 def check_worker_dependencies() -> None:
     """Exercise the configured worker transport/model before consuming work.
 
@@ -3511,7 +3515,7 @@ def check_worker_dependencies() -> None:
         config_path = Path.home() / ".hermes" / "profiles" / profile / "config.yaml"
         config = yaml.safe_load(config_path.read_text())
         toolsets = config.get("platform_toolsets", {}).get("cli", [])
-        if not {"xstudio_l2", "kanban"}.issubset(toolsets):
+        if not REQUIRED_WORKER_TOOLSETS[profile == REVIEWER_PROFILE].issubset(toolsets):
             raise RuntimeError(f"WORKER_DEPENDENCY_UNAVAILABLE: required tools absent in {profile}")
         model = config["model"]
         key = (model["base_url"], model["default"])
