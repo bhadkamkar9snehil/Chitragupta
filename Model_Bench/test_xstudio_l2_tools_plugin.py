@@ -976,14 +976,11 @@ def test_production_cards_render_typed_contract_and_no_raw_interpreter_recipe() 
     """Fresh cards must not teach the retired transport (requirement 12)."""
     runtime = _load("l2_pipeline_runtime_test", ROOT / "l2_pipeline_runtime.py")
     body = runtime._query_instructions("RUN-1", "TICKET-1")
-    assert "xstudio_l2" in body
-    # Operations are described once, by the tool schemas; the card points to them and
-    # to on-demand knowledge instead of repeating an operations list.
-    assert "Tool schemas describe every xstudio_* operation" in body
+    assert "xstudio_submit_proposal" in body and "NEXT ACTIONS" in body
     assert "l2_recall" in body
     assert "RUN-1" in body and "TICKET-1" in body
     assert "A ticket/user identifier is not proof of database storage representation" in body
-    assert "Evidence status: INCOMPLETE" in body
+    assert "Evidence status: INCOMPLETE" not in body  # banner leaked into requester replies
     for retired in ("/mnt/c/Python314/python.exe", "Hermes_Orchestrator.py", "sqlcmd",
                     "--build-query", "--save-ledger", "pip install"):
         assert retired not in body, f"fresh card still teaches {retired!r}"
@@ -1232,8 +1229,8 @@ def test_submit_proposal_generates_reply_text_when_absent() -> None:
             task_id="submit-reply",
         )
     metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
-    assert metadata["reply_text"].startswith("Evidence status: INCOMPLETE.")
-    assert _SUBSTANTIVE_SUMMARY in metadata["reply_text"]
+    assert metadata["reply_text"] == _SUBSTANTIVE_SUMMARY
+    assert metadata["evidence_status"] == "INCOMPLETE"
 
 
 def test_submit_proposal_uses_explicit_reply_text_when_provided() -> None:
@@ -1246,8 +1243,7 @@ def test_submit_proposal_uses_explicit_reply_text_when_provided() -> None:
             task_id="submit-reply-explicit",
         )
     metadata = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("--metadata") + 1])
-    assert metadata["reply_text"].startswith("Evidence status: INCOMPLETE.")
-    assert metadata["reply_text"].endswith("Custom user-facing message.")
+    assert metadata["reply_text"] == "Custom user-facing message."
 
 
 def test_submit_proposal_injects_run_and_ticket_from_context() -> None:
@@ -1463,7 +1459,7 @@ def test_submit_proposal_cannot_mark_unverified_claim_complete() -> None:
     command = mock_run.call_args[0][0]
     metadata = json.loads(command[command.index("--metadata") + 1])
     assert metadata["evidence_status"] == "INCOMPLETE"
-    assert metadata["reply_text"].startswith("Evidence status: INCOMPLETE.")
+    assert not metadata["reply_text"].startswith("Evidence status")
 
 
 def test_reviewer_completion_does_not_require_investigator_proposal_metadata() -> None:
@@ -1590,6 +1586,20 @@ def test_reviewer_cannot_submit_replacement_proposal() -> None:
     run.assert_not_called()
 
 
+def test_worker_config_gives_each_role_one_completion_path_and_only_xstudio_skills() -> None:
+    budget = _load("patch_l2_worker_budget_test", ROOT / "patch_l2_worker_budget.py")
+    base = ("model:\n  context_length: 1\nagent:\n  max_turns: 1\n"
+            "platform_toolsets:\n  cli:\n    - terminal\n")
+    investigator = budget.configure(base, disabled_skills=["codex"])
+    reviewer = budget.configure(base, reviewer=True, disabled_skills=["codex"])
+    assert "    - l2_submit" in investigator.split("known_plugin_toolsets")[0]
+    assert "    - l2_submit" not in reviewer.split("known_plugin_toolsets")[0]
+    # Known-but-unlisted keeps the plugin toolset off (hermes tools_config).
+    assert "known_plugin_toolsets:\n  cli:\n    - l2_submit" in reviewer
+    assert "skills:\n  disabled:\n    - codex" in investigator
+    assert budget.configure(investigator, disabled_skills=["codex"]) == investigator
+
+
 def main() -> int:
     tests = [value for name, value in sorted(globals().items())
              if name.startswith("test_") and callable(value)]
@@ -1611,3 +1621,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

@@ -1425,8 +1425,8 @@ class PipelineContractTests(unittest.TestCase):
         # accounted for most missing-`database` failures because create_reviewer_card()
         # never carried the same typed-tool routing reminder investigation cards get.
         body = kwargs["spec"]["body"]
-        self.assertIn("Typed XStudio investigation contract", body)
-        self.assertEqual(body.count("--- Typed XStudio investigation contract ---"), 1)
+        self.assertEqual(body.count("--- Review contract ---"), 1)
+        self.assertNotIn("Typed XStudio investigation contract", body)
 
     def test_build_stage_context_degrades_on_valid_non_dict_json_from_cli(self):
         """Antigravity review (Agent_Comms/0012): the CLI always prints a JSON
@@ -1749,8 +1749,8 @@ class PipelineContractTests(unittest.TestCase):
         }
         result = mod.annotate_evidence_status(proposal)
         self.assertEqual(result["evidence_status"], "INCOMPLETE")
-        self.assertIn("Evidence status: INCOMPLETE", result["reply_text"])
-        self.assertIn("could not complete", result["reply_text"].lower())
+        # The gap is metadata for review; the requester reply is left untouched.
+        self.assertEqual(result["reply_text"], proposal["reply_text"])
 
     def test_reviewer_prompt_does_not_treat_ticket_identifier_as_storage_proof(self):
         task = {"id": "investigation-1", "body":
@@ -1763,6 +1763,7 @@ class PipelineContractTests(unittest.TestCase):
             mod.create_reviewer_card(mod.default_args(), source_task=task, proposal=proposal)
         body = queue.call_args.kwargs["spec"]["body"]
         self.assertIn("not proof of database storage representation", body)
+        self.assertNotIn("xstudio_submit_proposal", body)
 
     # ------------------------------------------------------------------
     # Claim / evidence contract tests
@@ -2001,8 +2002,9 @@ class PipelineContractTests(unittest.TestCase):
 
     def test_investigation_card_contains_claim_instructions(self):
         instructions = mod._query_instructions("run-1", "ticket-1")
-        self.assertIn("claims array", instructions)
+        self.assertIn("xstudio_submit_proposal", instructions)
         self.assertIn("VERIFIED", instructions)
+        self.assertNotIn("kanban_complete", instructions)
         self.assertIn("Absence of records is evidence of absence", instructions)
 
     def test_unstructured_completion_normalizes_to_unverified_claim(self):
@@ -2056,7 +2058,7 @@ class ValidTablesRenderingTests(unittest.TestCase):
             "Current valid_tables: XStudio_Xbatch.dbo.EAF_SMS_Data[EAFHeatID,ActivePower]",
             instructions,
         )
-        self.assertIn("rejected before reaching SQL", instructions)
+        self.assertIn("rejected before SQL", instructions)
 
     def test_query_instructions_omits_brackets_when_no_columns_known(self):
         instructions = mod._query_instructions(
@@ -2067,7 +2069,8 @@ class ValidTablesRenderingTests(unittest.TestCase):
 
     def test_query_instructions_with_no_valid_tables_omits_the_line_entirely(self):
         instructions = mod._query_instructions("run-1", "ticket-1", None)
-        self.assertNotIn("valid_tables", instructions)
+        self.assertNotIn("Current valid_tables", instructions)
+        self.assertIn("xstudio_suggest_tables", instructions)
 
     def test_extraction_includes_primary_and_relationship_hop_tables_with_columns(self):
         investigation = {

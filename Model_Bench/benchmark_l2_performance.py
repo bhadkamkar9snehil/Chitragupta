@@ -155,6 +155,30 @@ def waste_signals(cur, since: datetime) -> dict[str, int]:
         WHERE EventOn >= ? AND EventType IN ('pre_tool_call', 'post_tool_call')""", since)[0]
 
 
+MODEL_WINDOW_TOKENS = 65792
+
+
+def model_input(cur, since: datetime) -> list[dict[str, Any]]:
+    """Whole model input as LM Studio saw it: system prompt + tool schemas + card + turns.
+
+    The first request of a session is the fixed prefix plus the card; the largest shows
+    how far tool results grew the context toward the window.
+    """
+    return _rows(cur, """
+        WITH req AS (
+            SELECT SessionID, EventOn,
+                   TRY_CAST(JSON_VALUE(UsageJson, '$.prompt_tokens') AS INT) AS PromptTokens,
+                   JSON_VALUE(UsageJson, '$.profile_name') AS ProfileName,
+                   ROW_NUMBER() OVER (PARTITION BY SessionID ORDER BY EventOn) AS Seq
+            FROM dbo.Hermes_Agent_Trace_Trn_Tbl
+            WHERE EventType = 'post_api_request' AND EventOn >= ? AND UsageJson IS NOT NULL)
+        SELECT ProfileName, COUNT(DISTINCT SessionID) AS Sessions, COUNT(*) AS Requests,
+               AVG(CASE WHEN Seq = 1 THEN PromptTokens END) AS AvgFirstPrompt,
+               AVG(PromptTokens) AS AvgPrompt, MAX(PromptTokens) AS MaxPrompt
+        FROM req WHERE PromptTokens IS NOT NULL
+        GROUP BY ProfileName ORDER BY Sessions DESC""", since)
+
+
 def card_sizes(cur, since: datetime) -> list[dict[str, Any]]:
     """Frozen work-package size per purpose; the card body is the bulk of it."""
     return _rows(cur, f"""
@@ -254,6 +278,7 @@ def build_report(cur, since: datetime) -> dict[str, Any]:
         "failure_reasons": failure_reasons(cur, since),
         "jev_review_gates": jev_review_gates(cur, since),
         "card_sizes": card_sizes(cur, since),
+        "model_input": model_input(cur, since),
         "largest_card": largest_card_sections(cur, since),
         "spill_threshold_chars": SPILL_THRESHOLD_CHARS,
         "invariants": invariants(cur),
@@ -287,6 +312,10 @@ def print_markdown(report: dict[str, Any], limit: int) -> None:
     for c in report["tool_health"]["top_failure_causes"]:
         print(f"- {c['count']:>3}  {c['cause']}")
     print(f"\n## Small-model waste\n- {report['waste']}")
+    print(f"\n## Model input tokens per request (window {MODEL_WINDOW_TOKENS:,})")
+    for m in report["model_input"]:
+        print(f"- {m['ProfileName'] or '-'}: {m['Sessions']} sessions, {m['Requests']} requests, "
+              f"first {m['AvgFirstPrompt'] or 0:,}, avg {m['AvgPrompt'] or 0:,}, max {m['MaxPrompt'] or 0:,}")
     print(f"\n## Worker card sizes (spill above {report['spill_threshold_chars']:,} chars)")
     for c in report["card_sizes"]:
         print(f"- {c['Purpose']}: {c['Cards']} cards, avg {c['AvgChars']:,}, max {c['MaxChars']:,}, over spill {c['OverSpill']}")

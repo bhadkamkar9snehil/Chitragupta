@@ -36,6 +36,8 @@ BRIDGE_PATH = os.environ.get(
 )
 TOOL_NAME = "xstudio_l2"
 TOOLSET = "xstudio_l2"
+# Investigator-only completion tool; reviewer profiles leave this toolset off.
+SUBMIT_TOOLSET = "l2_submit"
 
 _DATABASE_ENUM = [
     "XStudio_Helpdesk", "XStudio_Xbatch", "XStudio_Configuration_Xbatch",
@@ -622,21 +624,8 @@ def _derive_proposal_metadata(fields: dict[str, Any], params: dict[str, Any]) ->
     if claim_status != "VERIFIED" or not action_id:
         evidence_status = "INCOMPLETE"
 
-    reply_text = str(params.get("reply_text") or "").strip()
-    if not reply_text:
-        if evidence_status == "INCOMPLETE":
-            reply_text = (
-                "Evidence status: INCOMPLETE. The investigation produced findings "
-                "that require independent review before any cause or resolution is "
-                "treated as verified.\n\n" + summary
-            )
-        else:
-            reply_text = summary
-    elif evidence_status == "INCOMPLETE" and not reply_text.lower().startswith("evidence status: incomplete"):
-        reply_text = (
-            "Evidence status: INCOMPLETE. No material claim below should be treated as "
-            "verified until current-run evidence is cited.\n\n" + reply_text
-        )
+    # evidence_status carries the gap for review; the reply stays requester-facing.
+    reply_text = str(params.get("reply_text") or "").strip() or summary
 
     metadata: dict[str, Any] = {
         "run_id": fields["run_id"],
@@ -779,9 +768,8 @@ def _packaged_summary_metadata(metadata: dict[str, Any], summary: str) -> dict[s
     return {**metadata,
             "response_type": "UPDATE",
             "reply_text": (
-                "Evidence status: INCOMPLETE. The investigation produced findings "
-                "that require independent review before any cause or resolution is "
-                "treated as verified."
+                "We are still investigating this ticket. Our findings so far are not yet "
+                "confirmed against live data; we will update you once they are."
             ),
             "claims": [{"id": "summary-1", "claim": summary, "material": True,
                         "status": "UNVERIFIED", "evidence": []}],
@@ -1286,7 +1274,7 @@ def register(ctx: Any) -> None:
         # same toolset preserves the existing profile enablement boundary.
         ctx.register_tool(
             name=name,
-            toolset=TOOLSET,
+            toolset=SUBMIT_TOOLSET if name == "xstudio_submit_proposal" else TOOLSET,
             schema=schema,
             handler=TOOL_HANDLERS[name],
             description=schema["description"],
