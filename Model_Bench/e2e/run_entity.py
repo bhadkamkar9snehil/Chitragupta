@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E2E thermometer for entity resolution: real ticket text -> real resolver -> live XBatch + real Jev.
+"""E2E thermometer for identifier resolution: real ticket text -> world keys -> live XBatch + real Jev.
 
     python Model_Bench/e2e/run_entity.py            # all cases
     python Model_Bench/e2e/run_entity.py arc_heat   # one case
@@ -13,38 +13,30 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-import entity_resolver  # noqa: E402
-
-
-def check(expect: dict, got: dict) -> tuple[bool, str]:
-    if expect.get("kind") is None:
-        return got.get("kind") is None, "expected no entity"
-    ok = got.get("kind") == expect["kind"] and str(got.get("value")) == expect["value"]
-    if ok and "exists" in expect:
-        ok = bool(got.get("exists")) == expect["exists"]
-    return ok, f"expected {expect['kind']}={expect['value']}" + (f" exists={expect['exists']}" if "exists" in expect else "")
+import world_walk  # noqa: E402
 
 
 def main() -> int:
     only = set(sys.argv[1:])
     cases = [json.loads(line) for line in (HERE / "entity_cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    cases = [c for c in cases if not only or c["id"] in only]
+    conn = world_walk.connect()
     passed = 0
     for case in cases:
-        if only and case["id"] not in only:
-            continue
         start = time.perf_counter()
         try:
-            got = entity_resolver.resolve(case["text"])
+            found = world_walk.subject(case["text"], world_walk.resolve(case["text"], conn))
+            got = found[0]["value"] if found else None
+            where = found[0]["key"] if found else ""
         except Exception as exc:  # the thermometer reports, never crashes
-            got = {"error": f"{type(exc).__name__}: {exc}"}
-        ms = (time.perf_counter() - start) * 1000
-        ok, want = check(case["expect"], got)
+            got, where = None, f"error {type(exc).__name__}: {exc}"
+        want = case["expect"].get("value")
+        ok = got == want
         passed += ok
-        shown = {k: got.get(k) for k in ("kind", "value", "exists", "error") if got.get(k) is not None}
-        print(f"{'PASS' if ok else 'FAIL'} {case['id']:18} {ms:6.0f} ms  got {shown}  ({want})")
-    total = len(cases) if not only else len(only)
-    print(f"\n{passed}/{total} passed")
-    return 0 if passed == total else 1
+        print(f"{'PASS' if ok else 'FAIL'} {case['id']:18} {(time.perf_counter() - start) * 1000:6.0f} ms  "
+              f"got {got} {where}  (want {want})")
+    print(f"\n{passed}/{len(cases)} passed")
+    return 0 if passed == len(cases) else 1
 
 
 if __name__ == "__main__":

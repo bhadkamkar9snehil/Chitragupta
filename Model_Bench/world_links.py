@@ -1,96 +1,32 @@
 #!/usr/bin/env python3
-"""Load Knowledge/world/links.jsonl into GBrain as typed links, over one `gbrain serve` (MCP stdio) session.
+"""Load Knowledge/world/links.jsonl into GBrain as typed links (after the sync imported Knowledge/world).
 
-Run in WSL after `gbrain sync --source xstudio-knowledge` has imported Knowledge/world.
-Idempotent: GBrain keys links on (from, to, type, source), so a re-run adds nothing new.
+Runs in WSL from sync_gbrain_knowledge.sh. Idempotent: GBrain keys links on (from, to, type, source).
 
     python3 Model_Bench/world_links.py
 """
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-LINKS = ROOT / "Knowledge" / "world" / "links.jsonl"
-GBRAIN = os.environ.get("GBRAIN_BIN", str(Path.home() / ".bun" / "bin" / "gbrain"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from l2_gbrain import Brain  # noqa: E402  (the one GBrain owner)
+
+LINKS = Path(__file__).resolve().parent.parent / "Knowledge" / "world" / "links.jsonl"
 LINK_SOURCE = "world-build"
 
 
-class Brain:
-    """Minimal MCP stdio client: initialize once, then tools/call."""
-
-    def __init__(self) -> None:
-        env = {**os.environ, "GBRAIN_HOME": os.environ.get("GBRAIN_HOME", str(Path.home() / ".hermes" / "xstudio-gbrain")),
-               "PATH": f"{Path(GBRAIN).parent}:{os.environ.get('PATH', '')}"}
-        self.proc = subprocess.Popen([GBRAIN, "serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.DEVNULL, text=True, env=env, bufsize=1)
-        self.next_id = 0
-        self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
-                                    "clientInfo": {"name": "world_links", "version": "1"}})
-        self.notify("notifications/initialized")
-
-    def notify(self, method: str) -> None:
-        self.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": method}) + "\n")
-
-    def request(self, method: str, params: dict) -> dict:
-        self.next_id += 1
-        self.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params}) + "\n")
-        while True:
-            line = self.proc.stdout.readline()
-            if not line:
-                raise RuntimeError("gbrain serve closed the connection")
-            msg = json.loads(line)
-            if msg.get("id") == self.next_id:
-                if "error" in msg:
-                    raise RuntimeError(msg["error"])
-                return msg["result"]
-
-    def call(self, tool: str, **args) -> dict:
-        result = self.request("tools/call", {"name": tool, "arguments": args})
-        text = "".join(c.get("text", "") for c in result.get("content", []))
-        if result.get("isError"):
-            raise RuntimeError(text[:300])
-        try:
-            return json.loads(text)
-        except ValueError:
-            return {"text": text}
-
-
-def slugs(brain: Brain) -> dict[str, str]:
-    """Our page path (kind/name) -> the slug GBrain assigned, found from the synced pages themselves."""
-    out = {}
-    for page in all_pages(brain):
-        slug = page["slug"]
-        out[f"{page.get('type')}/{slug.rsplit('/', 1)[-1]}".lower()] = slug
-    return out
-
-
-def all_pages(brain: Brain, page_size: int = 100) -> list[dict]:
-    """list_pages caps each call, so page through with offset."""
-    pages, offset = [], 0
-    while True:
-        listed = brain.call("list_pages", limit=page_size, offset=offset)
-        batch = listed if isinstance(listed, list) else listed.get("pages", [])
-        pages += batch
-        if len(batch) < page_size:
-            return pages
-        offset += page_size
-
-
-def prune(brain: Brain) -> int:
-    """GBrain sync adds and updates pages but keeps pages whose files were removed (a key merged away).
-    The world is generated, so a world page with no file is stale: delete it."""
+def prune(brain: Brain, pages: list[dict]) -> int:
+    """GBrain sync keeps pages whose files were removed on a full import (a key merged away).
+    The world is generated, so a world page with no file is stale: soft-delete it."""
     world_dir = LINKS.parent
     files = {("knowledge/world/" + str(p.relative_to(world_dir).with_suffix(""))).lower() for p in world_dir.rglob("*.md")}
-    stale = [p["slug"] for p in all_pages(brain) if p["slug"].startswith("knowledge/world/") and p["slug"].lower() not in files]
     removed = 0
-    for slug in stale:
+    for slug in (p["slug"] for p in pages if p["slug"].startswith("knowledge/world/") and p["slug"].lower() not in files):
         try:
-            brain.call("delete_page", slug=slug)  # soft delete, same as sync does for removed files
+            brain.call("delete_page", slug=slug)
             removed += 1
         except RuntimeError as exc:
             print(f"could not delete stale page {slug}: {exc}")
@@ -100,8 +36,9 @@ def prune(brain: Brain) -> int:
 def main() -> int:
     links = [json.loads(l) for l in LINKS.read_text(encoding="utf-8").splitlines() if l.strip()]
     brain = Brain()
-    print(f"stale world pages removed {prune(brain)}")
-    by_path = slugs(brain)
+    print(f"stale world pages removed {prune(brain, brain.all_pages())}")
+    # Our page path (kind/name) -> the slug GBrain assigned, read from the synced pages themselves.
+    by_path = {f"{p.get('type')}/{p['slug'].rsplit('/', 1)[-1]}".lower(): p["slug"] for p in brain.all_pages()}
     added = missing = 0
     for l in links:
         frm, to = by_path.get(l["from"].lower()), by_path.get(l["to"].lower())

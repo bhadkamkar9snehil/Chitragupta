@@ -48,7 +48,16 @@ page_types:
     aliases: []
     extractable: false
     expert_routing: false
+  - name: screen
+    primitive: entity
+    path_prefixes:
+      - knowledge/world/screen/
+    aliases: []
+    extractable: false
+    expert_routing: false
 link_types:
+  - name: shows
+    inverse: shown_on
   - name: writes
     inverse: written_by
   - name: reads

@@ -12,7 +12,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from world_links import Brain, all_pages  # noqa: E402
+from l2_gbrain import Brain  # noqa: E402
 
 WORLD = json.loads((HERE.parent.parent / "Knowledge" / "process_world.json").read_text(encoding="utf-8"))
 
@@ -46,7 +46,7 @@ def main() -> int:
                     str(sorted(framework))[:120]))
 
     brain = Brain()
-    pages = all_pages(brain)
+    pages = brain.all_pages()
     for check in WORLD["acceptance"]:  # mode 6: every vendor chain exists as a GBrain link
         proc, relation, target = check["check"].split(" ")[0], check["check"].split(" ")[1], check["check"].split(" ")[2]
         start = time.perf_counter()
@@ -58,7 +58,7 @@ def main() -> int:
             found = any(target.lower() in json.dumps(i).lower() and relation in json.dumps(i) for i in items)
         results.append((f"mode 6: link {proc[:40]} {relation} {target}", found,
                         f"{(time.perf_counter() - start) * 1000:.0f} ms"))
-    unknown = [p for p in pages if p.get("type") not in ("table", "view", "procedure", "event", "key", "api")]
+    unknown = [p for p in pages if p.get("type") not in ("table", "view", "procedure", "event", "key", "api", "screen")]
     results.append(("mode 8: every world page is in GBrain", len(pages) == sum(
         1 for _ in (HERE.parent.parent / "Knowledge" / "world").rglob("*.md")), f"{len(pages)} in GBrain"))
     results.append(("mode 10: brain holds only world pages", not unknown, f"{len(unknown)} other pages"))

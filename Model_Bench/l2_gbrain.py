@@ -114,9 +114,7 @@ def available() -> bool:
     return shutil.which(binary()) is not None
 
 
-def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT,
-        cwd: Path | None = None) -> tuple[int, str, str]:
-    """Run one GBrain command inside the dedicated Chitragupta brain home."""
+def _env() -> dict[str, str]:
     env = os.environ.copy()
     env["GBRAIN_HOME"] = str(gbrain_home())
     # gbrain's own shebang is `env bun`; a systemd --user gateway's PATH is a
@@ -126,6 +124,60 @@ def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT,
     bun_bin = str(Path.home() / ".bun" / "bin")
     if bun_bin not in env.get("PATH", "").split(os.pathsep):
         env["PATH"] = bun_bin + os.pathsep + env.get("PATH", "")
+    return env
+
+
+class Brain:
+    """One `gbrain serve` (MCP stdio) session for many fast calls: the world walk reads pages and
+    links step by step, where a CLI process per call (~0.7 s each) would dominate."""
+
+    def __init__(self) -> None:
+        self.proc = subprocess.Popen([binary(), "serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL, text=True, env=_env(), bufsize=1)
+        self.next_id = 0
+        self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
+                                    "clientInfo": {"name": "chitragupta", "version": "1"}})
+        self.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+
+    def request(self, method: str, params: dict) -> dict:
+        self.next_id += 1
+        self.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params}) + "\n")
+        while True:
+            line = self.proc.stdout.readline()
+            if not line:
+                raise RuntimeError("gbrain serve closed the connection")
+            msg = json.loads(line)
+            if msg.get("id") == self.next_id:
+                if "error" in msg:
+                    raise RuntimeError(msg["error"])
+                return msg["result"]
+
+    def call(self, tool: str, **args) -> Any:
+        result = self.request("tools/call", {"name": tool, "arguments": args})
+        text = "".join(c.get("text", "") for c in result.get("content", []))
+        if result.get("isError"):
+            raise RuntimeError(text[:300])
+        try:
+            return json.loads(text)
+        except ValueError:
+            return {"text": text}
+
+    def all_pages(self, page_size: int = 100) -> list[dict]:
+        """list_pages caps each call, so page through with offset."""
+        pages, offset = [], 0
+        while True:
+            listed = self.call("list_pages", limit=page_size, offset=offset)
+            batch = listed if isinstance(listed, list) else listed.get("pages", [])
+            pages += batch
+            if len(batch) < page_size:
+                return pages
+            offset += page_size
+
+
+def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT,
+        cwd: Path | None = None) -> tuple[int, str, str]:
+    """Run one GBrain command inside the dedicated Chitragupta brain home."""
+    env = _env()
     try:
         proc = subprocess.run(
             [binary(), *args],

@@ -2204,6 +2204,202 @@
 {"from": "view/vw_RM_Quality_Day_Summary", "to": "table/RM_Quality_Data_Day_Summary", "type": "reads", "context": ""}
 {"from": "view/vw_TotalBil", "to": "table/Electricity_Meter_Bill_Amount", "type": "reads", "context": ""}
 {"from": "table/xbatch_material_inventory_trn_history_tbl", "to": "key/HeatNo", "type": "holds", "context": "LotNumber"}
+{"from": "screen/EAF_Per_Shift_Data", "to": "view/XStudio_EAF_Summary_Shift_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Consumed_Item", "to": "view/XStudio_List_XBatch_Material_Item_Cons_Tbl_Vw", "type": "shows", "context": "cast(getdate() -7 as date) <= Cast(Createdon as date)"}
+{"from": "screen/Template", "to": "view/XStudio_RM_Mill_Attribute_Tag_Template_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/LRF_Per_Shift_Data", "to": "view/XStudio_LRF_Summary_Shift_List_Vw", "type": "shows", "context": "Datetime is not null"}
+{"from": "screen/PLC_status", "to": "view/XStudio_Communication_System_Data_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/SMS_Production_Day", "to": "view/XStudio_List_SMS_Target_Summary_Day_Vw", "type": "shows", "context": ""}
+{"from": "screen/Material_Master", "to": "view/XStudio_List_XBatch_Material_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_ProcessTime", "to": "view/XStudio_List_EAF_ProcessTime_Vw", "type": "shows", "context": ""}
+{"from": "screen/Production", "to": "view/XStudio_List_XBatch_Material_Item_Prod_Trn_Tbl_Vw", "type": "shows", "context": "cast(getdate() -7 as date) < cast(createdon as date)"}
+{"from": "screen/EAF", "to": "view/XStudio_List_Life_Tracking_Status_Typewise_Vw", "type": "shows", "context": "Life like '%<Request.Life>%'"}
+{"from": "screen/Ladle_Tracking", "to": "view/XStudio_List_Life_Tracking_Status_Typewise_Vw", "type": "shows", "context": "Life like '%<Request.Life>%'"}
+{"from": "screen/Ladle", "to": "view/XStudio_List_Life_Tracking_Status_Typewise_Vw", "type": "shows", "context": "Life like '%<Request.Life>%'"}
+{"from": "screen/BOM_or_Formula", "to": "view/XStudio_List_XBatch_Formula_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/RM_Mill_Data", "to": "view/XStudio_RM_Mill_Data_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Measurement_Units", "to": "view/XStudio_List_XBatch_Measurement_Unit_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/Recipes", "to": "view/XStudio_List_XBatch_Recipe_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/CCMs", "to": "view/XStudio_CCM_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/LRF_SMS_5", "to": "view/XStudio_LRF_SMS_5_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Steel_Grade_Master", "to": "view/XStudio_List_Steel_Grade_Master_Vw", "type": "shows", "context": ""}
+{"from": "screen/Customers", "to": "view/XStudio_List_XBatch_Customer_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/LRF_Per_Day_Data", "to": "view/XStudio_LRF_Summary_Day_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Tundish", "to": "view/XStudio_List_Life_Tracking_Status_Typewise_Vw", "type": "shows", "context": "Life like '%<Request.Life>%'"}
+{"from": "screen/Inventory", "to": "view/XStudio_List_XBatch_Material_Inventory_Mst_Tbl_Vw", "type": "shows", "context": "PLantName='<request.PlantName>'"}
+{"from": "screen/RM_Furnace_Logbook_Block", "to": "view/XStudio_RM_Furnace_Logbook_Block_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/RM_Rebar_Block", "to": "view/XStudio_RM_Rebar_Block_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Mapping", "to": "view/XStudio_RM_Furnace_Combustion_Tag_Mapping_Tbl_List_Vw", "type": "shows", "context": "(IsXBatchTag=0 or IsXBatchTag is null)"}
+{"from": "screen/Spectro_Result_Parameter_Wise_Data", "to": "view/XStudio_List_Quality_Spectro_Result_Vw", "type": "shows", "context": ""}
+{"from": "screen/Template-2", "to": "view/XStudio_CCM_SMS_Attribute_Tag_Template_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Equipments", "to": "view/XStudio_List_XBatch_Unit_Equipment_Mst_Tbl_Vw", "type": "shows", "context": "('<request.UETargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Unit_Mst_Tbl)) or\r\n('<request.UETargetType>' = 1 and ParentID in('<request.unitID>'))"}
+{"from": "screen/Inventory_Upload", "to": "view/XStudio_Billet_Inventory_View_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_Ladle_Addition", "to": "view/XStudio_List_EAF_LogSheet_Ladle_Addition_Vw", "type": "shows", "context": ""}
+{"from": "screen/View_And_Search", "to": "view/XStudio_List_RM_Sales_Order_View_Vw", "type": "shows", "context": ""}
+{"from": "screen/Campaign_PO_Management", "to": "view/XStudio_List_RM_Sales_Order_View_Vw", "type": "shows", "context": ""}
+{"from": "screen/Price_Masters", "to": "view/XStudio_List_Price_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/Batches", "to": "view/XStudio_List_XBatch_Batch_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_SMS_5", "to": "view/XStudio_EAF_SMS_5_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Template-3", "to": "view/XStudio_RM_Rebar_Attribute_Tag_Template_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/SMS_DATA_DASHBOARD", "to": "view/XStudio_List_SMS_DATA_DASHBOARD_Update_Data_Vw", "type": "shows", "context": ""}
+{"from": "screen/CCM_Data", "to": "view/XStudio_CCM_Data_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Delay_Trn_Tbl", "to": "view/XStudio_List_Delay_Trn_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/Spectro_Result_File_Ingestion_Transactions", "to": "view/XStudio_List_Quality_Spectro_File_Vw", "type": "shows", "context": ""}
+{"from": "screen/Transaction_Logs", "to": "view/XStudio_List_XMES_API_Transaction_Summary_Fact_Tbl_Vw", "type": "shows", "context": "((0 < len('<request.id>') and id='<request.id>') or (len('<request.id>')=0 and 0=0))"}
+{"from": "screen/RM_Furnace_Combustions", "to": "view/XStudio_RM_Furnace_Combustion_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Material_Types", "to": "view/XStudio_List_XBatch_Material_Type_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/Ladle_Life_for_Each_Heat", "to": "view/XStudio_List_Laddle_Life_for_Each_Heat_Vw", "type": "shows", "context": ""}
+{"from": "screen/Template-4", "to": "view/XStudio_RM_Furnace_Combustion_Attribute_Tag_Template_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/LadleAddition", "to": "view/XStudio_List_LadleAddition_Vw", "type": "shows", "context": ""}
+{"from": "screen/CCM_Per_Day_Data", "to": "view/XStudio_CCM_Summary_Day_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Billet_Assignment", "to": "view/XStudio_List_RM_Rolling_Plan_Billet_Vw", "type": "shows", "context": "Status not in  ('DRAFT')"}
+{"from": "screen/Recipe_Phase_Groups", "to": "view/XStudio_List_XBatch_Recipe_Phase_Group_Mst_Tbl_Vw", "type": "shows", "context": "('<request.PGTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Recipe_Operation_Mst_Tbl)) or\r\n('<request.PGTargetType>' = 1 and ParentID in('<request.OperationID>'))"}
+{"from": "screen/Organization", "to": "view/XStudio_Organization_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Make_Up_Water_Reading_Data", "to": "view/XStudio_List_MES_Logbook_Water_Reading_Vw", "type": "shows", "context": ""}
+{"from": "screen/Create_Batch", "to": "view/XStudio_List_XMES_SAP_CreateBatch_Mst_Tbl_Vw", "type": "shows", "context": "(Status='<request.SAPPostingStatus>' OR IIF('<request.SAPPostingStatus>'='',1,0)=1)"}
+{"from": "screen/RM_WRM_Block", "to": "view/XStudio_RM_WRM_Block_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Customers-2", "to": "view/XStudio_List_XBatch_Customer_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/Tundish_Life", "to": "view/XStudio_List_Tundish_Life_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_Per_Heat_Data", "to": "view/XStudio_List_EAF_PER_HEAT_Last_Ten_Heat_Vw", "type": "shows", "context": ""}
+{"from": "screen/Ring_No_Master", "to": "view/XStudio_List_RM_Ring_No_MST_Vw", "type": "shows", "context": ""}
+{"from": "screen/Spectro_Result_Sample_Details", "to": "view/XStudio_List_Quality_Spectro_Sample_Vw", "type": "shows", "context": ""}
+{"from": "screen/GLS_Vs_Billet_Vs_End_Product_Grade_Mapping", "to": "view/XStudio_List_XMES_Billet_VS_GLS_Grade_Mapping_Vw", "type": "shows", "context": ""}
+{"from": "screen/SMS_Production_Shift", "to": "view/XStudio_SMS_Production_Summary_Shift_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/CCM_Ladle_Details", "to": "view/XStudio_List_CCM_LogSheet_Ladle_Details_Vw", "type": "shows", "context": ""}
+{"from": "screen/Mapping-2", "to": "view/XStudio_RM_Reheating_Furnace_Tag_Mapping_Tbl_List_Vw", "type": "shows", "context": "(IsXBatchTag=0 or IsXBatchTag is null)"}
+{"from": "screen/Mapping-3", "to": "view/XStudio_CCM_SMS_Tag_Mapping_Tbl_List_Vw", "type": "shows", "context": "(IsXBatchTag=0 or IsXBatchTag is null)"}
+{"from": "screen/Agency_Wise_Delay", "to": "view/XStudio_List_Agency_Wise_Delay_Vw", "type": "shows", "context": "ParentID='<request.ID>'"}
+{"from": "screen/Chemistry_Deviation_Quality_Data", "to": "view/XStudio_List_Chemistry_Deviation_Quality_Data_Vw", "type": "shows", "context": ""}
+{"from": "screen/Create_Campaign", "to": "view/XStudio_List_RM_Sales_Order_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_Quality_Data", "to": "view/XStudio_List_EAF_LogSheet_Quantity_Vw", "type": "shows", "context": ""}
+{"from": "screen/RM_Reheating_Furnace_Data", "to": "view/XStudio_RM_Reheating_Furnace_Data_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/RM_Furnace_Logbook", "to": "view/XStudio_RM_Furnace_Logbook_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/SMS_Target_Summary_Day", "to": "view/XStudio_List_SMS_Target_Summary_Day_Vw", "type": "shows", "context": ""}
+{"from": "screen/RM_Rebars", "to": "view/XStudio_RM_Rebar_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Material_Masters", "to": "view/XStudio_List_XBatch_Material_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/LRF_Per_Heat_Data", "to": "view/XStudio_List_LRF_Per_Heat_Last_Ten_Heat_Vw", "type": "shows", "context": ""}
+{"from": "screen/Communication_System_Block", "to": "view/XStudio_Communication_System_Block_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Billets_Position_InFurnace", "to": "view/XStudio_List_BilletsPosition_InFurnace_Vw", "type": "shows", "context": ""}
+{"from": "screen/Plant", "to": "view/XStudio_Plant_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_Consumption_Data", "to": "view/XStudio_List_EAF_LogSheet_Consumption_Vw", "type": "shows", "context": ""}
+{"from": "screen/Work_Orders", "to": "view/XStudio_List_XBatch_Work_Order_Mst_Tbl_Vw", "type": "shows", "context": "SalesOrder='<Request.SalesOrder>'"}
+{"from": "screen/Communication_System_Data", "to": "view/XStudio_Communication_System_Data_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Scrap_Yard_Charge_Mix_Data", "to": "view/XStudio_List_SMS_EAF_Per_Heat_ChargeMix_Vw", "type": "shows", "context": ""}
+{"from": "screen/SMS_EAF_Per_Heat_Charge_Mix", "to": "view/XStudio_List_SMS_EAF_Per_Heat_ChargeMix_Vw", "type": "shows", "context": ""}
+{"from": "screen/Historical_Tag_Configuration", "to": "view/XStudio_List_Tag_Configuration_Vw", "type": "shows", "context": ""}
+{"from": "screen/LRF_Per_Heat_Data-2", "to": "view/XStudio_List_LRF_Per_Heat_Vw", "type": "shows", "context": "CAST(Dateyyyymmdd AS DATE) BETWEEN CAST(DATEADD(DAY, -7, GETDATE()) AS DATE)  AND CAST(GETDATE() AS DATE) and (Workorder='<request.WOId>' OR IIF('<request.WOId>'='',1,0)=1)"}
+{"from": "screen/Units", "to": "view/XStudio_List_XBatch_Unit_Mst_Tbl_Vw", "type": "shows", "context": "('<request.UnitTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Process_Cell_Mst_Tbl)) or\r\n('<request.UnitTargetType>' = 1 and ParentID in('<request.CellID>'))"}
+{"from": "screen/CCM_Per_Heat_Data", "to": "view/XStudio_List_CCM_Per_Heat_Vw", "type": "shows", "context": "CAST(HeatReportDate AS DATE) BETWEEN CAST(DATEADD(DAY, -45, GETDATE()) AS DATE)  AND CAST(GETDATE() AS DATE) and (Workorder='<request.WOId>' OR IIF('<request.WOId>'='',1,0)=1)"}
+{"from": "screen/Billets_InFurnace_Tracking_Trn", "to": "view/XStudio_List_Billets_InFurnace_Tracking_Trn_Vw", "type": "shows", "context": "cast(Getdate()-7 as date)< cast(createdon as date)"}
+{"from": "screen/RM_Reheating_Furnaces", "to": "view/XStudio_RM_Reheating_Furnace_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/CCM_Per_Heat_Data-2", "to": "view/XStudio_List_CCM_Per_Heat_Last_Ten_Heat_Vw", "type": "shows", "context": ""}
+{"from": "screen/Template-5", "to": "view/XStudio_EAF_SMS_Attribute_Tag_Template_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/CCM_ProcessTime", "to": "view/XStudio_List_CCM_ProcessTime_Vw", "type": "shows", "context": ""}
+{"from": "screen/LRF_Manual_Entry", "to": "view/XStudio_List_LRF_Manual_Entry_Vw", "type": "shows", "context": ""}
+{"from": "screen/LRF_SMSs", "to": "view/XStudio_LRF_SMS_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Trace_Log", "to": "view/XStudio_List_XMES_Log_Trn_Tbl_Vw", "type": "shows", "context": "cast(getdate() -1 as date) <= Reportdate"}
+{"from": "screen/Sub_Station_Check_List", "to": "view/XStudio_List_Sub_Station_Check_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Config_parameters", "to": "view/XStudio_List_XBatch_ConfigParameter_Mst_Tbl_Vw", "type": "shows", "context": "IsVisible = 1"}
+{"from": "screen/Production_Targets", "to": "view/XStudio_List_financialyears_Vw", "type": "shows", "context": ""}
+{"from": "screen/Batch_Characteristics", "to": "view/XStudio_List_XMES_SAP_Batch_Characteristic_Trn_Tbl_Vw", "type": "shows", "context": "(HeatNo='<request.HeatNo>' OR IIF('<request.HeatNO>'='',1,0)=1)"}
+{"from": "screen/Product_Master", "to": "view/XStudio_List_Product_Master_Vw", "type": "shows", "context": ""}
+{"from": "screen/FileUploader", "to": "view/XStudio_List_fileuploader_Vw", "type": "shows", "context": ""}
+{"from": "screen/Charging_Plan", "to": "view/XStudio_List_RM_Charging_Plan_Vw", "type": "shows", "context": ""}
+{"from": "screen/Billets_Tracking_In_Furnace", "to": "view/XStudio_List_BilletsTracking_In_Furnace_Vw", "type": "shows", "context": ""}
+{"from": "screen/Mapping-4", "to": "view/XStudio_Communication_System_Tag_Mapping_Tbl_List_Vw", "type": "shows", "context": "(IsXBatchTag=0 or IsXBatchTag is null)"}
+{"from": "screen/EAF_Process_Time", "to": "view/XStudio_List_EAF_ProcessTime_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_Per_Shift_Data-2", "to": "view/XStudio_EAF_Summary_Shift_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/CCM_SMS_Block", "to": "view/XStudio_CCM_SMS_Block_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Template-6", "to": "view/XStudio_LRF_SMS_Attribute_Tag_Template_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Inventory_Xbatch_Material_Inventory_Trn_Tbl", "to": "view/XStudio_List_Xbatch_Material_Inventory_Trn_Tbl_Vw", "type": "shows", "context": "(Plantcode in (select value from string_split('<request.Plant>',',') )OR IIF('<request.Plant>'='',1,0)=1) and (ItemType='<request.ItemType>' OR IIF('<request.ItemType>'='',1,0)=1) and (PostingMaterialType like'%<request.Type>%' OR IIF('<request.Type>'='',1,0)=1)"}
+{"from": "screen/Communication_Systems", "to": "view/XStudio_Communication_System_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Sales_Orders", "to": "view/XStudio_List_XBatch_Sales_Order_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/Consumptions_Day", "to": "view/XStudio_Consumptions_Summary_Day_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Mapping-5", "to": "view/XStudio_LRF_SMS_Tag_Mapping_Tbl_List_Vw", "type": "shows", "context": "(IsXBatchTag=0 or IsXBatchTag is null)"}
+{"from": "screen/Item_Lot", "to": "view/XStudio_List_XBatch_Material_Item_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/Test", "to": "view/XStudio_List_Test_Vw", "type": "shows", "context": ""}
+{"from": "screen/LRF_SMS_Data", "to": "view/XStudio_LRF_SMS_Data_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Work_Order", "to": "view/XStudio_List_XBatch_Work_Order_Mst_Tbl_RM_Vw", "type": "shows", "context": "Equipment='RM'"}
+{"from": "screen/SMS_Shift_Operator_Incharge", "to": "view/XStudio_List_SMS_Shift_Operator_Incharge_Selection_Trn_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/Produced_Items", "to": "view/XStudio_List_XBatch_Material_Item_Prod_Trn_Tbl_Vw", "type": "shows", "context": "cast(getdate() -7 as date) < cast(createdon as date)"}
+{"from": "screen/Process_Cells", "to": "view/XStudio_List_XBatch_Process_Cell_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/Sales_Order", "to": "view/XStudio_List_XBatch_Planned_Sales_Order_Mst_Tbl_RM_Vw", "type": "shows", "context": "Status in ('New','Released')"}
+{"from": "screen/Template-7", "to": "view/XStudio_Communication_System_Attribute_Tag_Template_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Process_Timing", "to": "view/XStudio_List_SMS_Plant_Process_EventTime_Vw", "type": "shows", "context": ""}
+{"from": "screen/CCM_5", "to": "view/XStudio_CCM_5_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Mapping-6", "to": "view/XStudio_CCM_Tag_Mapping_Tbl_List_Vw", "type": "shows", "context": "(IsXBatchTag=0 or IsXBatchTag is null)"}
+{"from": "screen/Billets_Position_Detals", "to": "view/XStudio_List_Billets_In_Yard_Vw", "type": "shows", "context": "ToLocation Not in ('Mill','Furnace') AND BilletNo IS NOT NULL"}
+{"from": "screen/LRF_Per_Heat_Data-3", "to": "view/XStudio_List_LRF_Per_Heat_Vw", "type": "shows", "context": "CAST(Dateyyyymmdd AS DATE) BETWEEN CAST(DATEADD(DAY, -7, GETDATE()) AS DATE)  AND CAST(GETDATE() AS DATE) and (Workorder='<request.WOId>' OR IIF('<request.WOId>'='',1,0)=1)"}
+{"from": "screen/Consumption", "to": "view/XStudio_List_XBatch_Material_Item_Cons_Tbl_Vw", "type": "shows", "context": "cast(getdate() -7 as date) <= Cast(Createdon as date)"}
+{"from": "screen/Shift_Incharge_Details", "to": "view/XStudio_List_Shift_Operator_Incharge_Selection_Trn_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/Roll_History_Card", "to": "view/XStudio_List_Roll_History_Card_Vw", "type": "shows", "context": ""}
+{"from": "screen/SAP_MES_Raw_Material_Consumptions_Reconciliation_Mapping", "to": "view/XStudio_List_MES_Raw_Material_Consumptions_Mapping_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/Outward_Location", "to": "view/XStudio_List_XBatch_OutwardLocation_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/RM_Mill_Block", "to": "view/XStudio_RM_Mill_Block_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Shift_Configuration", "to": "view/XStudio_Xstudio_Shift_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/RM_Furnace_Combustion_Data", "to": "view/XStudio_RM_Furnace_Combustion_Data_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/RM_WRMs", "to": "view/XStudio_RM_WRM_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Ladle_No_Per_Heat", "to": "view/XStudio_List_LRF_Ladle_No_Per_Heat_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_Ladle_Details", "to": "view/XStudio_List_EAF_LogSheet_Ladle_Details_Vw", "type": "shows", "context": ""}
+{"from": "screen/Mapping-7", "to": "view/XStudio_EAF_SMS_Tag_Mapping_Tbl_List_Vw", "type": "shows", "context": "(IsXBatchTag=0 or IsXBatchTag is null)"}
+{"from": "screen/Billet_Transaction_History", "to": "view/XStudio_List_XBatch_Billets_Transfer_History_Tbl_All_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_Per_Heat_Data-2", "to": "view/XStudio_List_EAF_PER_HEAT_Vw", "type": "shows", "context": "CAST(Dateyyyymmdd AS DATE) BETWEEN CAST(DATEADD(DAY, -120, GETDATE()) AS DATE)  AND CAST(GETDATE() AS DATE) and (Workorder='<request.WOId>' OR IIF('<request.WOId>'='',1,0)=1)"}
+{"from": "screen/EAF_Per_Day_Data", "to": "view/XStudio_EAF_Summary_Day_List_Vw", "type": "shows", "context": "Reportdate is not null"}
+{"from": "screen/RM_Mills", "to": "view/XStudio_RM_Mill_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_Per_Heat_Data-3", "to": "view/XStudio_List_EAF_PER_HEAT_Vw", "type": "shows", "context": "CAST(Dateyyyymmdd AS DATE) BETWEEN CAST(DATEADD(DAY, -120, GETDATE()) AS DATE)  AND CAST(GETDATE() AS DATE) and (Workorder='<request.WOId>' OR IIF('<request.WOId>'='',1,0)=1)"}
+{"from": "screen/Billets_Position_Detals-2", "to": "view/XStudio_List_Charged_Billets_InFurnace_Vw", "type": "shows", "context": "BilletPosition='Out of Furnace' and HeatNo is not null and Cast(EntryDateTime as Date)=Cast(getdate() as date)"}
+{"from": "screen/Template-8", "to": "view/XStudio_CCM_Attribute_Tag_Template_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Inventory-2", "to": "view/XStudio_List_Billet_Inventory_Vw", "type": "shows", "context": ""}
+{"from": "screen/LRF_ProcessTime", "to": "view/XStudio_List_LRF_ProcessTime_Vw", "type": "shows", "context": ""}
+{"from": "screen/Equipment_Wise_Delay", "to": "view/XStudio_List_Equipment_Wise_Delay_Vw", "type": "shows", "context": "ParentID='<Request.ID>'"}
+{"from": "screen/RM_Rebar_Data", "to": "view/XStudio_RM_Rebar_Data_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/RM_Production_Data", "to": "view/XStudio_List_XMES_RM_Production_Summary_Vw", "type": "shows", "context": ""}
+{"from": "screen/LRF_Quality_Data", "to": "view/XStudio_List_LRF_Chemical_Composition_Vw", "type": "shows", "context": ""}
+{"from": "screen/Inventory_as_per_SAP", "to": "view/XStudio_List_MES_SAP_Inventory_Stock_Tbl_Vw", "type": "shows", "context": "Plant='<request.Plant>'"}
+{"from": "screen/Storage_Locations", "to": "view/XStudio_List_XBatch_Store_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/MES_SAP_UsageDecision_Trn_Tbl", "to": "view/XStudio_List_MES_SAP_UsageDecision_Trn_Tbl_Vw", "type": "shows", "context": "SAPPostingStatus = 'Entered'"}
+{"from": "screen/WRM", "to": "view/XStudio_List_MES_WRM_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_Manual_Entry", "to": "view/XStudio_List_EAF_Manual_Entry_Vw", "type": "shows", "context": ""}
+{"from": "screen/Template-9", "to": "view/XStudio_RM_Reheating_Furnace_Attribute_Tag_Template_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Connections", "to": "view/XStudio_List_XBatch_Connection_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/Rolling_Plan_History", "to": "view/XStudio_List_RM_Rolling_Plan_History_Vw", "type": "shows", "context": ""}
+{"from": "screen/CCM_Manual_Entry", "to": "view/XStudio_List_CCM_Manual_Entry_Vw", "type": "shows", "context": ""}
+{"from": "screen/Rolling_Plan", "to": "view/XStudio_List_RM_Sales_Order_Open_Campaign_Vw", "type": "shows", "context": "Status = 'Open'"}
+{"from": "screen/CCM_SMSs", "to": "view/XStudio_CCM_SMS_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Mapping-8", "to": "view/XStudio_RM_Rebar_Tag_Mapping_Tbl_List_Vw", "type": "shows", "context": "(IsXBatchTag=0 or IsXBatchTag is null)"}
+{"from": "screen/CCM_Per_Shift_Data", "to": "view/XStudio_CCM_Summary_Shift_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Process_Tracker_Master", "to": "view/XStudio_List_XMES_SMS_Event_Process_Tracker_Mst_Vw", "type": "shows", "context": ""}
+{"from": "screen/FG_Production", "to": "view/XStudio_List_MES_SAP_Production_Trn_Tbl_FG_Vw", "type": "shows", "context": "postingmaterialtype='FG'"}
+{"from": "screen/SMS_Temperature", "to": "view/XStudio_List_SMS_Temperature_Per_Heat_Vw", "type": "shows", "context": ""}
+{"from": "screen/Create_Batch-2", "to": "view/XStudio_List_Creation_Batch_Pending_Vw", "type": "shows", "context": "Status='Entered'"}
+{"from": "screen/Recipe_Unit_Procedures", "to": "view/XStudio_List_XBatch_Recipe_Unit_Procedure_Mst_Tbl_Vw", "type": "shows", "context": "('<request.UpTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Recipe_Mst_Tbl)) or\r\n('<request.UpTargetType>' = 1 and ParentID in('<request.RecipeID>'))"}
+{"from": "screen/Rolling_Plan-2", "to": "view/XStudio_List_RM_Rolling_Plan_Vw", "type": "shows", "context": "Status = 'Draft'"}
+{"from": "screen/Area", "to": "view/XStudio_Area_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_Per_Day_Data-2", "to": "view/XStudio_EAF_Summary_Day_List_Vw", "type": "shows", "context": "Reportdate is not null"}
+{"from": "screen/Recipe_Phase_Parameters", "to": "view/XStudio_List_XBatch_Recipe_Phase_Parameter_Mst_Tbl_Vw", "type": "shows", "context": "('<request.PhaseParameterTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Recipe_Phase_Mst_Tbl)) or\r\n('<request.PhaseParameterTargetType>' = 1 and ParentID in('<request.PhaseID>'))"}
+{"from": "screen/Template-10", "to": "view/XStudio_RM_WRM_Attribute_Tag_Template_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Material_Grades", "to": "view/XStudio_List_XBatch_Material_Grade_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_SMSs", "to": "view/XStudio_EAF_SMS_Mst_Tbl_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Per_Heat_LadleNo", "to": "view/XStudio_List_Per_Heat_LadleNo_Vw", "type": "shows", "context": ""}
+{"from": "screen/Billet_Wise_WRM_Parameters", "to": "view/XStudio_List_Billet_Wise_WRMParameters_Vw", "type": "shows", "context": ""}
+{"from": "screen/Batch_Status", "to": "view/XStudio_List_XBatch_Status_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/LRF_Per_Day_Data-2", "to": "view/XStudio_LRF_Summary_Day_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Electricity_Rate_Band_Master", "to": "view/XStudio_List_Rate_Band_Master_Vw", "type": "shows", "context": ""}
+{"from": "screen/RM_Reheating_Furnace_Block", "to": "view/XStudio_RM_Reheating_Furnace_Block_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/EAF_Custom", "to": "view/XStudio_EAF_Custom_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Storage_Areas", "to": "view/XStudio_List_XBatch_Storage_Area_Mst_Tbl_Vw", "type": "shows", "context": "('<request.SATargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Store_Mst_Tbl)) or\r\n('<request.SATargetType>' = 1 and ParentID in('<request.StoreID>'))"}
+{"from": "screen/Billet_Consumption", "to": "view/XStudio_List_MES_SAP_Consumption_Trn_Tbl_Billet_Vw", "type": "shows", "context": "(HeatNo='<request.Heat>' OR IIF('<request.Heat>'='',1,0)=1) and postingmaterialtype='Billet'"}
+{"from": "screen/CCM_SMS_Data", "to": "view/XStudio_CCM_SMS_Data_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/RM_NGConsumption_Report", "to": "view/XStudio_RM_NGConsumption_Report_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Storage_Subareas", "to": "view/XStudio_List_XBatch_Storage_Rack_Mst_Tbl_Vw", "type": "shows", "context": "('<request.SRTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Storage_Area_Mst_Tbl)) or\r\n('<request.SRTargetType>' = 1 and ParentID in('<request.StorageAreaID>'))"}
+{"from": "screen/LRF_SMS_Block", "to": "view/XStudio_LRF_SMS_Block_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/RM_Billet_Weight_Block", "to": "view/XStudio_RM_Billet_Weight_Block_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/RM_WRM_Data", "to": "view/XStudio_RM_WRM_Data_List_Vw", "type": "shows", "context": ""}
+{"from": "screen/Recipe_Phases", "to": "view/XStudio_List_XBatch_Recipe_Phase_Mst_Tbl_Vw", "type": "shows", "context": "('<request.PhaseTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Recipe_Phase_Group_Mst_Tbl)) or\r\n('<request.PhaseTargetType>' = 1 and ParentID in('<request.PhaseGroupID>'))"}
+{"from": "screen/Status_Master", "to": "view/XStudio_List_Status_Mst_Tbl_Vw", "type": "shows", "context": ""}
+{"from": "screen/LRF_Per_Shift_Data-2", "to": "view/XStudio_LRF_Summary_Shift_List_Vw", "type": "shows", "context": "Datetime is not null"}
+{"from": "screen/RM_Furnace_Combustion_5", "to": "view/XStudio_RM_Furnace_Combustion_5_List_Vw", "type": "shows", "context": "EntryDateTime <= GETDATE()"}
+{"from": "screen/Recipe_Operations", "to": "view/XStudio_List_XBatch_Recipe_Operation_Mst_Tbl_Vw", "type": "shows", "context": "('<request.OperationTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Recipe_Unit_Procedure_Mst_Tbl)) or\r\n('<request.OperationTargetType>' = 1 and ParentID in('<request.ProcedureID>'))"}
 {"from": "procedure/AllocateBilletsToStacksByBilletNo", "to": "table/XBatch_Material_Inventory_Mst_Tbl", "type": "writes", "context": "LocationID"}
 {"from": "procedure/AllocateBilletsToStacksByBilletNo", "to": "table/XBatch_Material_Inventory_Mst_Tbl", "type": "reads", "context": "ID, LotNumber, SublotNumber"}
 {"from": "procedure/AllocateBilletsToStacksByBilletNo", "to": "table/XBatch_Storage_Rack_Mst_Tbl", "type": "reads", "context": "Capacity, ID, Name, Number"}

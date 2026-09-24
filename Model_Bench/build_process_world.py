@@ -379,8 +379,78 @@ def keys(cur) -> dict:
             "framework_columns": sorted(framework)}
 
 
-LOG_INDEX = ROOT / ".cache" / "log_index.sqlite"
-_GUID = re.compile(r"^[0-9a-fA-F-]{36}$")
+# Derived lookups the walk needs instantly; rebuilt with the world, not in git.
+WORLD_INDEX = ROOT / ".cache" / "world_index.sqlite"
+
+
+def _write_index_table(name: str, columns: str, records, index_column: str) -> None:
+    """Replace one table in the world index (each index owns its table; one file for all)."""
+    import sqlite3
+
+    WORLD_INDEX.parent.mkdir(exist_ok=True)
+    db = sqlite3.connect(WORLD_INDEX)
+    db.execute(f"DROP TABLE IF EXISTS {name}")
+    db.execute(f"CREATE TABLE {name} ({columns})")
+    db.executemany(f"INSERT INTO {name} VALUES ({','.join('?' * len(columns.split(',')))})", records)
+    db.execute(f"CREATE INDEX {name}_{index_column} ON {name}({index_column})")
+    db.commit()
+    db.close()
+
+
+VALUE_SCAN_TIMEOUT_S = 180
+
+
+def value_index(cur, world: dict) -> dict:
+    """Identifier value -> the table columns that hold it, for every key and identifier column.
+
+    Resolving a 7-digit number live checks ~100 unindexed columns (30-80 s per ticket); one DISTINCT
+    scan per column at build time makes it a local lookup. ponytail: values written after the build
+    are unknown until the next build (the plant data here is a snapshot; rebuild nightly otherwise)."""
+    objs = world["schema"]["objects"]
+    cols = sorted({c for k in world["keys"]["keys"].values() for c in k["columns"]} | set(world["keys"]["identifiers"]))
+    cols = [c for c in cols if objs.get(c.split(".")[0], {}).get("kind") == "table"]
+    cur.connection.timeout = VALUE_SCAN_TIMEOUT_S
+    cur = cur.connection.cursor()
+    records, skipped = [], []
+    for colref in cols:
+        table, col = colref.split(".", 1)
+        try:
+            cur.execute(f"SELECT DISTINCT CONVERT(nvarchar(100), [{col}]) FROM dbo.[{table}] WHERE [{col}] IS NOT NULL")
+            records += [(str(v).strip(), colref) for (v,) in cur.fetchall() if v is not None and len(str(v).strip()) >= 5]
+        except pyodbc.Error as exc:
+            skipped.append(f"{colref}: {str(exc)[:60]}")
+    _write_index_table("value_columns", "value, colref", records, "value")
+    return {"columns": len(cols), "values": len(records), "skipped": skipped}
+
+
+def activity_index(cur, world: dict) -> dict:
+    """Rows arriving per table per day, and calls/error steps per procedure per day.
+
+    Answers "is this normal?" for tickets without an identifier: a feed that stopped, an error wave,
+    an empty report. Code compares a window against the table's own history; Jev never sees raw counts."""
+    objs = world["schema"]["objects"]
+    cur.connection.timeout = VALUE_SCAN_TIMEOUT_S
+    cur = cur.connection.cursor()
+    daily, skipped = [], []
+    for table, obj in sorted(objs.items()):
+        if obj["kind"] != "table" or table == "XMES_Log_Trn_Tbl":  # the log is covered per procedure below
+            continue
+        stamp = next((c.split(" ")[0] for c in obj["columns"] if c.split(" ")[0].lower() == "createdon"), None)
+        if not stamp:
+            continue
+        try:
+            cur.execute(f"SELECT CONVERT(date, [{stamp}]), COUNT(*) FROM dbo.[{table}] WHERE [{stamp}] IS NOT NULL "
+                        f"GROUP BY CONVERT(date, [{stamp}])")
+            daily += [(table, str(d), n) for d, n in cur.fetchall()]
+        except pyodbc.Error as exc:
+            skipped.append(f"{table}: {str(exc)[:60]}")
+    _write_index_table("table_daily", "table_name, day, rows", daily, "table_name")
+    cur.execute("""SELECT Name, CONVERT(date, CreatedOn), COUNT(*),
+                          SUM(CASE WHEN Status LIKE '%error%' OR Status LIKE '%fail%' THEN 1 ELSE 0 END)
+                   FROM dbo.XMES_Log_Trn_Tbl WHERE Name IS NOT NULL GROUP BY Name, CONVERT(date, CreatedOn)""")
+    proc = [(n, str(d), steps, errs or 0) for n, d, steps, errs in cur.fetchall()]
+    _write_index_table("proc_daily", "proc, day, steps, error_steps", proc, "proc")
+    return {"table_days": len(daily), "proc_days": len(proc), "skipped": skipped}
 
 
 def log_index(cur) -> dict:
@@ -388,17 +458,10 @@ def log_index(cur) -> dict:
 
     A live LIKE scan per ticket takes 54-94 s. Every step of one call repeats the same ExecutionQuery,
     so grouping by (Name, ExecutionQuery) gives the distinct calls (~216k, one 200 s scan); their
-    parameter values are parsed here. Written to .cache/log_index.sqlite (derived, not in git)."""
-    import sqlite3
-
+    parameter values are parsed here."""
     calls = rows(cur, """SELECT Name, ExecutionQuery q, COUNT(*) steps, MIN(CreatedOn) first_on, MAX(CreatedOn) last_on,
                                 SUM(CASE WHEN Status LIKE '%error%' OR Status LIKE '%fail%' THEN 1 ELSE 0 END) error_steps
                          FROM dbo.XMES_Log_Trn_Tbl WHERE ExecutionQuery LIKE '%@%=%' GROUP BY Name, ExecutionQuery""")
-    LOG_INDEX.parent.mkdir(exist_ok=True)
-    tmp = LOG_INDEX.with_suffix(".tmp")
-    tmp.unlink(missing_ok=True)
-    db = sqlite3.connect(tmp)
-    db.execute("CREATE TABLE runs (value TEXT, proc TEXT, param TEXT, calls INT, steps INT, error_steps INT, first_on TEXT, last_on TEXT)")
     agg: dict[tuple[str, str, str], list] = {}
     for c in calls:
         for param, raw in PARAM.findall(c["q"] or ""):
@@ -412,12 +475,26 @@ def log_index(cur) -> dict:
             a[2] += c["error_steps"] or 0
             a[3] = min(a[3], str(c["first_on"]))
             a[4] = max(a[4], str(c["last_on"]))
-    db.executemany("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?)", [(*k, *v) for k, v in agg.items()])
-    db.execute("CREATE INDEX runs_value ON runs(value)")
-    db.commit()
-    db.close()
-    tmp.replace(LOG_INDEX)
-    return {"calls": len(calls), "values": len({k[0] for k in agg}), "rows": len(agg), "path": str(LOG_INDEX)}
+    _write_index_table("runs", "value, proc, param, calls, steps, error_steps, first_on, last_on",
+                       [(*k, *v) for k, v in agg.items()], "value")
+    return {"calls": len(calls), "values": len({k[0] for k in agg}), "rows": len(agg)}
+
+
+def screens(cur, objs: dict) -> list[dict]:
+    """What users call things: XStudio menu -> page -> grid -> list view -> database view, with the
+    list view's filter (e.g. "only Status='Open'", "only the last 7 days"). 252 of 256 grids map to a
+    view named XStudio_<list view>_Vw. Reads only names and filters from the config database (its
+    data-source table holds credentials and is never read)."""
+    found = rows(cur, """SELECT m.Name menu, pg.Name page, lv.Name list_view, lv.FilterCondition filter
+        FROM XStudio_Configuration_Xbatch.dbo.XStudio_Menu_Mst_Tbl m
+        JOIN XStudio_Configuration_Xbatch.dbo.XStudio_Page_Mst_Tbl pg ON pg.ID = m.PageID AND ISNULL(pg.IsDeleted,0) = 0
+        JOIN XStudio_Configuration_Xbatch.dbo.XStudio_PageControls_Mst_Tbl pc
+             ON pc.ParentID = pg.ID AND ISNULL(pc.IsDeleted,0) = 0 AND pc.ControlType = 'grid'
+        JOIN XStudio_Configuration_Xbatch.dbo.XStudio_LV_Mst_Tbl lv ON lv.ID = pc.ControlID AND ISNULL(lv.IsDeleted,0) = 0
+        WHERE ISNULL(m.IsDeleted,0) = 0 AND ISNULL(m.IsVisible,1) = 1""")
+    return [{"menu": r["menu"], "page": r["page"], "list_view": r["list_view"],
+             "view": f"XStudio_{r['list_view']}_Vw" if f"XStudio_{r['list_view']}_Vw" in objs else None,
+             "filter": (r["filter"] or "").strip() or None} for r in found]
 
 
 def add_view_keys(world: dict) -> int:
@@ -608,21 +685,27 @@ def coverage(world: dict) -> dict:
     }
 
 
+def rebuild(part: str, cur, world: dict):
+    """--only <part>: rebuild one part on the existing world (the full build takes ~25 min)."""
+    if part == "keys":
+        world["keys"] = keys(cur)
+        return {"keys": len(world["keys"]["keys"]), "view_key_columns": add_view_keys(world)}
+    if part == "screens":
+        world["screens"] = screens(cur, world["schema"]["objects"])
+        return {"screens": len(world["screens"])}
+    if part == "indexes":
+        return {"values": value_index(cur, world), "runs": log_index(cur), "activity": activity_index(cur, world)}
+    if part == "activity":
+        return activity_index(cur, world)
+    raise SystemExit(f"--only takes keys, screens, indexes or activity, not {part!r}")
+
+
 def main() -> None:
     cur = connect().cursor()
-    if "--log-index-only" in os.sys.argv:
-        print(json.dumps(log_index(cur)))
-        return
-    if "--keys-only" in os.sys.argv or "--view-keys-only" in os.sys.argv:  # rest of the build takes ~20 min
+    if "--only" in os.sys.argv:
         world = json.loads(OUT.read_text(encoding="utf-8"))
-        if "--keys-only" in os.sys.argv:
-            world["keys"] = keys(cur)
-        print(f"view key columns added {add_view_keys(world)}")
+        print(json.dumps(rebuild(os.sys.argv[os.sys.argv.index("--only") + 1], cur, world), default=str)[:2000])
         OUT.write_text(json.dumps(world, indent=1, default=str), encoding="utf-8")
-        k = world["keys"]
-        print(f"keys {len(k['keys'])}, contained joins {len(k['contained'])}, unordered {k['unordered']}")
-        for c in k["contained"]:
-            print(f"  joined {c['columns'][:3]} into {c['into']} ({c['found']}/{c['of']})")
         return
     types = object_types(cur)
     names = {r["name"].lower(): r["name"] for r in rows(cur, "SELECT name FROM sys.objects WHERE type IN ('U','V')")}
@@ -632,7 +715,8 @@ def main() -> None:
     world["schema"] = schema(cur)
     world["keys"] = keys(cur)
     add_view_keys(world)
-    world["log_index"] = log_index(cur)
+    world["screens"] = screens(cur, world["schema"]["objects"])
+    world["indexes"] = {"values": value_index(cur, world), "runs": log_index(cur), "activity": activity_index(cur, world)}
     world["jobs"] = [j for j in world["jobs"] if j["procedures"]]  # jobs that run none of our procedures add nothing
     world["coverage"] = coverage(world)
     world["acceptance"] = [{"check": c, "passed": ok} for c, ok in acceptance(world)]

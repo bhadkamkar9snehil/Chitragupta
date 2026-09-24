@@ -101965,5 +101965,1400 @@
    "check": "XSTUDIO_WORKFLOW_64B14ECC-2663-434D-B0DC-FF70513 writes CCM_Data",
    "passed": true
   }
+ ],
+ "screens": [
+  {
+   "menu": "EAF Per Shift Data",
+   "page": "List_Page_EAF_Per_Shift_Data",
+   "list_view": "EAF_Summary_Shift_List",
+   "view": "XStudio_EAF_Summary_Shift_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Consumed Item",
+   "page": "List_Page_XBatch_Material_Item_Cons_Tbl",
+   "list_view": "List_XBatch_Material_Item_Cons_Tbl",
+   "view": "XStudio_List_XBatch_Material_Item_Cons_Tbl_Vw",
+   "filter": "cast(getdate() -7 as date) <= Cast(Createdon as date)"
+  },
+  {
+   "menu": "Template",
+   "page": "RM_Mill_Attribute_Tag_Template_Mst_Tbl_List_Page",
+   "list_view": "RM_Mill_Attribute_Tag_Template_Mst_Tbl_List",
+   "view": "XStudio_RM_Mill_Attribute_Tag_Template_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "LRF Per Shift Data",
+   "page": "LRF_Summary_Shift_List_Page",
+   "list_view": "LRF_Summary_Shift_List",
+   "view": "XStudio_LRF_Summary_Shift_List_Vw",
+   "filter": "Datetime is not null"
+  },
+  {
+   "menu": "PLC status",
+   "page": "Communication_System_Data_dashbord_List_Page",
+   "list_view": "Communication_System_Data_List",
+   "view": "XStudio_Communication_System_Data_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "SMS Production Day",
+   "page": "SMS_Production_Summary_Day_List_Page",
+   "list_view": "List_SMS_Target_Summary_Day",
+   "view": "XStudio_List_SMS_Target_Summary_Day_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Material Master",
+   "page": "Material_Master",
+   "list_view": "List_XBatch_Material_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Material_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF ProcessTime",
+   "page": "List_Page_EAF_ProcessTime",
+   "list_view": "List_EAF_ProcessTime",
+   "view": "XStudio_List_EAF_ProcessTime_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Production",
+   "page": "Page_List_XBatch_Material_Item_Prod_Trn_Tbl",
+   "list_view": "List_XBatch_Material_Item_Prod_Trn_Tbl",
+   "view": "XStudio_List_XBatch_Material_Item_Prod_Trn_Tbl_Vw",
+   "filter": "cast(getdate() -7 as date) < cast(createdon as date)"
+  },
+  {
+   "menu": "EAF",
+   "page": "List_Page_Life_Tracking_Status_Typewise",
+   "list_view": "List_Life_Tracking_Status_Typewise",
+   "view": "XStudio_List_Life_Tracking_Status_Typewise_Vw",
+   "filter": "Life like '%<Request.Life>%'"
+  },
+  {
+   "menu": "Ladle Tracking",
+   "page": "List_Page_Life_Tracking_Status_Typewise",
+   "list_view": "List_Life_Tracking_Status_Typewise",
+   "view": "XStudio_List_Life_Tracking_Status_Typewise_Vw",
+   "filter": "Life like '%<Request.Life>%'"
+  },
+  {
+   "menu": "Ladle",
+   "page": "List_Page_Life_Tracking_Status_Typewise",
+   "list_view": "List_Life_Tracking_Status_Typewise",
+   "view": "XStudio_List_Life_Tracking_Status_Typewise_Vw",
+   "filter": "Life like '%<Request.Life>%'"
+  },
+  {
+   "menu": "BOM or Formula",
+   "page": "List_Page_XBatch_Formula_Mst_Tbl",
+   "list_view": "List_XBatch_Formula_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Formula_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "RM_Mill_Data",
+   "page": "RM_Mill_Data_List_Page",
+   "list_view": "RM_Mill_Data_List",
+   "view": "XStudio_RM_Mill_Data_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Measurement Units",
+   "page": "List_Page_XBatch_Measurement_Unit_Mst_Tbl",
+   "list_view": "List_XBatch_Measurement_Unit_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Measurement_Unit_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Recipes",
+   "page": "List_Page_XBatch_Recipe_Mst_Tbl",
+   "list_view": "List_XBatch_Recipe_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Recipe_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "CCMs",
+   "page": "CCM_Mst_Tbl_List_Page",
+   "list_view": "CCM_Mst_Tbl_List",
+   "view": "XStudio_CCM_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "LRF_SMS_5",
+   "page": "LRF_SMS_5_List_Page",
+   "list_view": "LRF_SMS_5_List",
+   "view": "XStudio_LRF_SMS_5_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Steel Grade Master",
+   "page": "List_Page_Steel_Grade_Master",
+   "list_view": "List_Steel_Grade_Master",
+   "view": "XStudio_List_Steel_Grade_Master_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Customers",
+   "page": "Page_List_XBatch_Customer_Mst_Tbl",
+   "list_view": "List_XBatch_Customer_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Customer_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "LRF Per Day Data",
+   "page": "List_Page_LRF_Per_Day_Data",
+   "list_view": "LRF_Summary_Day_List",
+   "view": "XStudio_LRF_Summary_Day_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Tundish",
+   "page": "List_Page_Life_Tracking_Status_Typewise",
+   "list_view": "List_Life_Tracking_Status_Typewise",
+   "view": "XStudio_List_Life_Tracking_Status_Typewise_Vw",
+   "filter": "Life like '%<Request.Life>%'"
+  },
+  {
+   "menu": "Inventory",
+   "page": "List_Page_XBatch_Material_Inventory_Mst_Tbl",
+   "list_view": "List_XBatch_Material_Inventory_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Material_Inventory_Mst_Tbl_Vw",
+   "filter": "PLantName='<request.PlantName>'"
+  },
+  {
+   "menu": "RM_Furnace_Logbook_Block",
+   "page": "RM_Furnace_Logbook_Block_List_Page",
+   "list_view": "RM_Furnace_Logbook_Block_List",
+   "view": "XStudio_RM_Furnace_Logbook_Block_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "RM_Rebar_Block",
+   "page": "RM_Rebar_Block_List_Page",
+   "list_view": "RM_Rebar_Block_List",
+   "view": "XStudio_RM_Rebar_Block_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Mapping",
+   "page": "RM_Furnace_Combustion_Tag_Mapping_Tbl_List_Page",
+   "list_view": "RM_Furnace_Combustion_Tag_Mapping_Tbl_List",
+   "view": "XStudio_RM_Furnace_Combustion_Tag_Mapping_Tbl_List_Vw",
+   "filter": "(IsXBatchTag=0 or IsXBatchTag is null)"
+  },
+  {
+   "menu": "Spectro Result Parameter Wise Data",
+   "page": "List_Page_Quality_Spectro_Result",
+   "list_view": "List_Quality_Spectro_Result",
+   "view": "XStudio_List_Quality_Spectro_Result_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Template",
+   "page": "CCM_SMS_Attribute_Tag_Template_Mst_Tbl_List_Page",
+   "list_view": "CCM_SMS_Attribute_Tag_Template_Mst_Tbl_List",
+   "view": "XStudio_CCM_SMS_Attribute_Tag_Template_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Equipments",
+   "page": "List_Page_XBatch_Unit_Equipment_Mst_Tbl",
+   "list_view": "List_XBatch_Unit_Equipment_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Unit_Equipment_Mst_Tbl_Vw",
+   "filter": "('<request.UETargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Unit_Mst_Tbl)) or\r\n('<request.UETargetType>' = 1 and ParentID in('<request.unitID>'))"
+  },
+  {
+   "menu": "Inventory Upload",
+   "page": "List_Page_Billet_Inventory_View",
+   "list_view": "Billet_Inventory_View",
+   "view": "XStudio_Billet_Inventory_View_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF Ladle Addition",
+   "page": "List_Page_EAF_LogSheet_Ladle_Addition",
+   "list_view": "List_EAF_LogSheet_Ladle_Addition",
+   "view": "XStudio_List_EAF_LogSheet_Ladle_Addition_Vw",
+   "filter": null
+  },
+  {
+   "menu": "View And Search",
+   "page": "Page_ViewANDSearch",
+   "list_view": "List_RM_Sales_Order_View",
+   "view": "XStudio_List_RM_Sales_Order_View_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Campaign PO Management",
+   "page": "Page_ViewANDSearch",
+   "list_view": "List_RM_Sales_Order_View",
+   "view": "XStudio_List_RM_Sales_Order_View_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Price Masters",
+   "page": "List_Page_Price_Mst_Tbl",
+   "list_view": "List_Price_Mst_Tbl",
+   "view": "XStudio_List_Price_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Batches",
+   "page": "List_Page_XBatch_Batch_Mst_Tbl",
+   "list_view": "List_XBatch_Batch_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Batch_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF_SMS_5",
+   "page": "EAF_SMS_5_List_Page",
+   "list_view": "EAF_SMS_5_List",
+   "view": "XStudio_EAF_SMS_5_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Template",
+   "page": "RM_Rebar_Attribute_Tag_Template_Mst_Tbl_List_Page",
+   "list_view": "RM_Rebar_Attribute_Tag_Template_Mst_Tbl_List",
+   "view": "XStudio_RM_Rebar_Attribute_Tag_Template_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "SMS DATA DASHBOARD",
+   "page": "List_Page_SMS_DATA_DASHBOARD",
+   "list_view": "List_SMS_DATA_DASHBOARD_Update_Data",
+   "view": "XStudio_List_SMS_DATA_DASHBOARD_Update_Data_Vw",
+   "filter": null
+  },
+  {
+   "menu": "CCM_Data",
+   "page": "CCM_Data_List_Page",
+   "list_view": "CCM_Data_List",
+   "view": "XStudio_CCM_Data_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Delay Trn Tbl",
+   "page": "List_Page_Delay_Trn_Tbl",
+   "list_view": "List_Delay_Trn_Tbl",
+   "view": "XStudio_List_Delay_Trn_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Spectro Result File Ingestion Transactions",
+   "page": "List_Page_Quality_Spectro_File",
+   "list_view": "List_Quality_Spectro_File",
+   "view": "XStudio_List_Quality_Spectro_File_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Transaction Logs",
+   "page": "List_Page_XMES_API_Transaction_Summary_Fact_Tbl",
+   "list_view": "List_XMES_API_Transaction_Summary_Fact_Tbl",
+   "view": "XStudio_List_XMES_API_Transaction_Summary_Fact_Tbl_Vw",
+   "filter": "((0 < len('<request.id>') and id='<request.id>') or (len('<request.id>')=0 and 0=0))"
+  },
+  {
+   "menu": "RM_Furnace_Combustions",
+   "page": "RM_Furnace_Combustion_Mst_Tbl_List_Page",
+   "list_view": "RM_Furnace_Combustion_Mst_Tbl_List",
+   "view": "XStudio_RM_Furnace_Combustion_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Material Types",
+   "page": "List_Page_XBatch_Material_Type_Mst_Tbl",
+   "list_view": "List_XBatch_Material_Type_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Material_Type_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Ladle Life for Each Heat",
+   "page": "List_Page_Laddle_Life_for_Each_Heat",
+   "list_view": "List_Laddle_Life_for_Each_Heat",
+   "view": "XStudio_List_Laddle_Life_for_Each_Heat_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Template",
+   "page": "RM_Furnace_Combustion_Attribute_Tag_Template_Mst_Tbl_List_Page",
+   "list_view": "RM_Furnace_Combustion_Attribute_Tag_Template_Mst_Tbl_List",
+   "view": "XStudio_RM_Furnace_Combustion_Attribute_Tag_Template_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "LadleAddition",
+   "page": "List_Page_LadleAddition",
+   "list_view": "List_LadleAddition",
+   "view": "XStudio_List_LadleAddition_Vw",
+   "filter": null
+  },
+  {
+   "menu": "CCM Per Day Data",
+   "page": "CCM_Summary_Day_List_Page",
+   "list_view": "CCM_Summary_Day_List",
+   "view": "XStudio_CCM_Summary_Day_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Billet Assignment",
+   "page": "Page_Billet Assignment",
+   "list_view": "List_RM_Rolling_Plan_Billet",
+   "view": "XStudio_List_RM_Rolling_Plan_Billet_Vw",
+   "filter": "Status not in  ('DRAFT')"
+  },
+  {
+   "menu": "Recipe Phase Groups",
+   "page": "List_Page_XBatch_Recipe_Phase_Group_Mst_Tbl",
+   "list_view": "List_XBatch_Recipe_Phase_Group_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Recipe_Phase_Group_Mst_Tbl_Vw",
+   "filter": "('<request.PGTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Recipe_Operation_Mst_Tbl)) or\r\n('<request.PGTargetType>' = 1 and ParentID in('<request.OperationID>'))"
+  },
+  {
+   "menu": "Organization",
+   "page": "Organization_Mst_Tbl_List_Page",
+   "list_view": "Organization_Mst_Tbl_List",
+   "view": "XStudio_Organization_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Make Up Water Reading Data",
+   "page": "List_Page_MES_Logbook_Water_Reading",
+   "list_view": "List_MES_Logbook_Water_Reading",
+   "view": "XStudio_List_MES_Logbook_Water_Reading_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Create Batch",
+   "page": "List_Page_XMES_SAP_CreateBatch_Mst_Tbl",
+   "list_view": "List_XMES_SAP_CreateBatch_Mst_Tbl",
+   "view": "XStudio_List_XMES_SAP_CreateBatch_Mst_Tbl_Vw",
+   "filter": "(Status='<request.SAPPostingStatus>' OR IIF('<request.SAPPostingStatus>'='',1,0)=1)"
+  },
+  {
+   "menu": "RM_WRM_Block",
+   "page": "RM_WRM_Block_List_Page",
+   "list_view": "RM_WRM_Block_List",
+   "view": "XStudio_RM_WRM_Block_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Customers",
+   "page": "List_Page_XBatch_Customer_Mst_Tbl",
+   "list_view": "List_XBatch_Customer_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Customer_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Tundish Life",
+   "page": "List_Page_Tundish_Life",
+   "list_view": "List_Tundish_Life",
+   "view": "XStudio_List_Tundish_Life_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF Per Heat Data",
+   "page": "Page_EAF_Per_Heat_Last_10_Heat",
+   "list_view": "List_EAF_PER_HEAT_Last_Ten_Heat",
+   "view": "XStudio_List_EAF_PER_HEAT_Last_Ten_Heat_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Ring No Master",
+   "page": "List_Page_RM_Ring_No_MST",
+   "list_view": "List_RM_Ring_No_MST",
+   "view": "XStudio_List_RM_Ring_No_MST_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Spectro Result Sample Details",
+   "page": "List_Page_Quality_Spectro_Sample",
+   "list_view": "List_Quality_Spectro_Sample",
+   "view": "XStudio_List_Quality_Spectro_Sample_Vw",
+   "filter": null
+  },
+  {
+   "menu": "GLS Vs Billet Vs End Product Grade Mapping",
+   "page": "List_Page_XMES_Billet_VS_GLS_Grade_Mapping",
+   "list_view": "List_XMES_Billet_VS_GLS_Grade_Mapping",
+   "view": "XStudio_List_XMES_Billet_VS_GLS_Grade_Mapping_Vw",
+   "filter": null
+  },
+  {
+   "menu": "SMS Production Shift",
+   "page": "SMS_Production_Summary_Shift_List_Page",
+   "list_view": "SMS_Production_Summary_Shift_List",
+   "view": "XStudio_SMS_Production_Summary_Shift_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "CCM Ladle Details",
+   "page": "List_Page_CCM_LogSheet_Ladle_Details",
+   "list_view": "List_CCM_LogSheet_Ladle_Details",
+   "view": "XStudio_List_CCM_LogSheet_Ladle_Details_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Mapping",
+   "page": "RM_Reheating_Furnace_Tag_Mapping_Tbl_List_Page",
+   "list_view": "RM_Reheating_Furnace_Tag_Mapping_Tbl_List",
+   "view": "XStudio_RM_Reheating_Furnace_Tag_Mapping_Tbl_List_Vw",
+   "filter": "(IsXBatchTag=0 or IsXBatchTag is null)"
+  },
+  {
+   "menu": "Mapping",
+   "page": "CCM_SMS_Tag_Mapping_Tbl_List_Page",
+   "list_view": "CCM_SMS_Tag_Mapping_Tbl_List",
+   "view": "XStudio_CCM_SMS_Tag_Mapping_Tbl_List_Vw",
+   "filter": "(IsXBatchTag=0 or IsXBatchTag is null)"
+  },
+  {
+   "menu": "Agency Wise Delay",
+   "page": "List_Page_Agency_Wise_Delay",
+   "list_view": "List_Agency_Wise_Delay",
+   "view": "XStudio_List_Agency_Wise_Delay_Vw",
+   "filter": "ParentID='<request.ID>'"
+  },
+  {
+   "menu": "Receive Billets",
+   "page": "Page_List_RM_SAP_Inventory_Billet",
+   "list_view": "List_RM_SAP_Inventory_Billet",
+   "view": null,
+   "filter": null
+  },
+  {
+   "menu": "Chemistry Deviation Quality Data",
+   "page": "List_Page_Chemistry_Deviation_Quality_Data",
+   "list_view": "List_Chemistry_Deviation_Quality_Data",
+   "view": "XStudio_List_Chemistry_Deviation_Quality_Data_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Create Campaign",
+   "page": "Page_Create Campaign",
+   "list_view": "List_RM_Sales_Order",
+   "view": "XStudio_List_RM_Sales_Order_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF Quality Data",
+   "page": "List_Page_EAF_LogSheet_Quantity",
+   "list_view": "List_EAF_LogSheet_Quantity",
+   "view": "XStudio_List_EAF_LogSheet_Quantity_Vw",
+   "filter": null
+  },
+  {
+   "menu": "RM_Reheating_Furnace_Data",
+   "page": "RM_Reheating_Furnace_Data_List_Page",
+   "list_view": "RM_Reheating_Furnace_Data_List",
+   "view": "XStudio_RM_Reheating_Furnace_Data_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "RM_Furnace_Logbook",
+   "page": "RM_Furnace_Logbook_List_Page",
+   "list_view": "RM_Furnace_Logbook_List",
+   "view": "XStudio_RM_Furnace_Logbook_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "SMS_Target_Summary_Day",
+   "page": "List_Page_SMS_Target_Summary_Day",
+   "list_view": "List_SMS_Target_Summary_Day",
+   "view": "XStudio_List_SMS_Target_Summary_Day_Vw",
+   "filter": null
+  },
+  {
+   "menu": "RM_Rebars",
+   "page": "RM_Rebar_Mst_Tbl_List_Page",
+   "list_view": "RM_Rebar_Mst_Tbl_List",
+   "view": "XStudio_RM_Rebar_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Material Masters",
+   "page": "List_Page_XBatch_Material_Mst_Tbl",
+   "list_view": "List_XBatch_Material_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Material_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "LRF Per Heat Data",
+   "page": "Page_LRF_Per_Heat_Last_10_Heat",
+   "list_view": "List_LRF_Per_Heat_Last_Ten_Heat",
+   "view": "XStudio_List_LRF_Per_Heat_Last_Ten_Heat_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Communication_System_Block",
+   "page": "Communication_System_Block_List_Page",
+   "list_view": "Communication_System_Block_List",
+   "view": "XStudio_Communication_System_Block_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Billets Position InFurnace",
+   "page": "List_Page_BilletsPosition_InFurnace",
+   "list_view": "List_BilletsPosition_InFurnace",
+   "view": "XStudio_List_BilletsPosition_InFurnace_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Plant",
+   "page": "Plant_Mst_Tbl_List_Page",
+   "list_view": "Plant_Mst_Tbl_List",
+   "view": "XStudio_Plant_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF Consumption Data",
+   "page": "List_Page_EAF_LogSheet_Consumption",
+   "list_view": "List_EAF_LogSheet_Consumption",
+   "view": "XStudio_List_EAF_LogSheet_Consumption_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Work Orders",
+   "page": "List_Page_XBatch_Work_Order_Mst_Tbl",
+   "list_view": "List_XBatch_Work_Order_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Work_Order_Mst_Tbl_Vw",
+   "filter": "SalesOrder='<Request.SalesOrder>'"
+  },
+  {
+   "menu": "Communication_System_Data",
+   "page": "Communication_System_Data_List_Page",
+   "list_view": "Communication_System_Data_List",
+   "view": "XStudio_Communication_System_Data_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Scrap Yard Charge Mix Data  ",
+   "page": "List_Page_SMS_EAF_Per_Heat_ChargeMix",
+   "list_view": "List_SMS_EAF_Per_Heat_ChargeMix",
+   "view": "XStudio_List_SMS_EAF_Per_Heat_ChargeMix_Vw",
+   "filter": null
+  },
+  {
+   "menu": "SMS EAF Per Heat Charge Mix",
+   "page": "List_Page_SMS_EAF_Per_Heat_ChargeMix",
+   "list_view": "List_SMS_EAF_Per_Heat_ChargeMix",
+   "view": "XStudio_List_SMS_EAF_Per_Heat_ChargeMix_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Historical Tag Configuration",
+   "page": "List_Page_Tag_Configuration",
+   "list_view": "List_Tag_Configuration",
+   "view": "XStudio_List_Tag_Configuration_Vw",
+   "filter": null
+  },
+  {
+   "menu": "LRF Per Heat Data",
+   "page": "List_Page_LRF_Per_Heat",
+   "list_view": "List_LRF_Per_Heat",
+   "view": "XStudio_List_LRF_Per_Heat_Vw",
+   "filter": "CAST(Dateyyyymmdd AS DATE) BETWEEN CAST(DATEADD(DAY, -7, GETDATE()) AS DATE)  AND CAST(GETDATE() AS DATE) and (Workorder='<request.WOId>' OR IIF('<request.WOId>'='',1,0)=1)"
+  },
+  {
+   "menu": "Units",
+   "page": "List_Page_XBatch_Unit_Mst_Tbl",
+   "list_view": "List_XBatch_Unit_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Unit_Mst_Tbl_Vw",
+   "filter": "('<request.UnitTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Process_Cell_Mst_Tbl)) or\r\n('<request.UnitTargetType>' = 1 and ParentID in('<request.CellID>'))"
+  },
+  {
+   "menu": "CCM Per Heat Data",
+   "page": "List_Page_CCM_Per_Heat",
+   "list_view": "List_CCM_Per_Heat",
+   "view": "XStudio_List_CCM_Per_Heat_Vw",
+   "filter": "CAST(HeatReportDate AS DATE) BETWEEN CAST(DATEADD(DAY, -45, GETDATE()) AS DATE)  AND CAST(GETDATE() AS DATE) and (Workorder='<request.WOId>' OR IIF('<request.WOId>'='',1,0)=1)"
+  },
+  {
+   "menu": "Billets InFurnace Tracking Trn",
+   "page": "List_Page_Billets_InFurnace_Tracking_Trn",
+   "list_view": "List_Billets_InFurnace_Tracking_Trn",
+   "view": "XStudio_List_Billets_InFurnace_Tracking_Trn_Vw",
+   "filter": "cast(Getdate()-7 as date)< cast(createdon as date)"
+  },
+  {
+   "menu": "RM_Reheating_Furnaces",
+   "page": "RM_Reheating_Furnace_Mst_Tbl_List_Page",
+   "list_view": "RM_Reheating_Furnace_Mst_Tbl_List",
+   "view": "XStudio_RM_Reheating_Furnace_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "CCM Per Heat Data",
+   "page": "Page_CCM_Per_Heat_Last_10_Heat",
+   "list_view": "List_CCM_Per_Heat_Last_Ten_Heat",
+   "view": "XStudio_List_CCM_Per_Heat_Last_Ten_Heat_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Template",
+   "page": "EAF_SMS_Attribute_Tag_Template_Mst_Tbl_List_Page",
+   "list_view": "EAF_SMS_Attribute_Tag_Template_Mst_Tbl_List",
+   "view": "XStudio_EAF_SMS_Attribute_Tag_Template_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "CCM ProcessTime",
+   "page": "List_Page_CCM_ProcessTime",
+   "list_view": "List_CCM_ProcessTime",
+   "view": "XStudio_List_CCM_ProcessTime_Vw",
+   "filter": null
+  },
+  {
+   "menu": "LRF Manual Entry",
+   "page": "List_Page_LRF_Manual_Entry",
+   "list_view": "List_LRF_Manual_Entry",
+   "view": "XStudio_List_LRF_Manual_Entry_Vw",
+   "filter": null
+  },
+  {
+   "menu": "LRF_SMSs",
+   "page": "LRF_SMS_Mst_Tbl_List_Page",
+   "list_view": "LRF_SMS_Mst_Tbl_List",
+   "view": "XStudio_LRF_SMS_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Trace Log",
+   "page": "List_Page_XMES_Log_Trn_Tbl",
+   "list_view": "List_XMES_Log_Trn_Tbl",
+   "view": "XStudio_List_XMES_Log_Trn_Tbl_Vw",
+   "filter": "cast(getdate() -1 as date) <= Reportdate"
+  },
+  {
+   "menu": "Sub Station Check List",
+   "page": "List_Page_Sub_Station_Check_List",
+   "list_view": "List_Sub_Station_Check_List",
+   "view": "XStudio_List_Sub_Station_Check_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Config parameters",
+   "page": "List_Page_XBatch_ConfigParameter_Mst_Tbl",
+   "list_view": "List_XBatch_ConfigParameter_Mst_Tbl",
+   "view": "XStudio_List_XBatch_ConfigParameter_Mst_Tbl_Vw",
+   "filter": "IsVisible = 1"
+  },
+  {
+   "menu": "Production Targets",
+   "page": "List_Page_financialyears",
+   "list_view": "List_financialyears",
+   "view": "XStudio_List_financialyears_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Batch Characteristics",
+   "page": "Page_SMS_BatchCharacteristics",
+   "list_view": "List_XMES_SAP_Batch_Characteristic_Trn_Tbl",
+   "view": "XStudio_List_XMES_SAP_Batch_Characteristic_Trn_Tbl_Vw",
+   "filter": "(HeatNo='<request.HeatNo>' OR IIF('<request.HeatNO>'='',1,0)=1)"
+  },
+  {
+   "menu": "Product Master",
+   "page": "List_Page_Product_Master",
+   "list_view": "List_Product_Master",
+   "view": "XStudio_List_Product_Master_Vw",
+   "filter": null
+  },
+  {
+   "menu": "FileUploader",
+   "page": "List_Page_fileuploader",
+   "list_view": "List_fileuploader",
+   "view": "XStudio_List_fileuploader_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Charging Plan",
+   "page": "Page_charging_Plan",
+   "list_view": "List_RM_Charging_Plan",
+   "view": "XStudio_List_RM_Charging_Plan_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Billets Tracking In Furnace",
+   "page": "List_Page_BilletsTracking_In_Furnace",
+   "list_view": "List_BilletsTracking_In_Furnace",
+   "view": "XStudio_List_BilletsTracking_In_Furnace_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Mapping",
+   "page": "Communication_System_Tag_Mapping_Tbl_List_Page",
+   "list_view": "Communication_System_Tag_Mapping_Tbl_List",
+   "view": "XStudio_Communication_System_Tag_Mapping_Tbl_List_Vw",
+   "filter": "(IsXBatchTag=0 or IsXBatchTag is null)"
+  },
+  {
+   "menu": "EAF Process Time",
+   "page": "List_Page_EAF_Process_Time",
+   "list_view": "List_EAF_ProcessTime",
+   "view": "XStudio_List_EAF_ProcessTime_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF Per Shift Data",
+   "page": "EAF_Summary_Shift_List_Page",
+   "list_view": "EAF_Summary_Shift_List",
+   "view": "XStudio_EAF_Summary_Shift_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "CCM_SMS_Block",
+   "page": "CCM_SMS_Block_List_Page",
+   "list_view": "CCM_SMS_Block_List",
+   "view": "XStudio_CCM_SMS_Block_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Template",
+   "page": "LRF_SMS_Attribute_Tag_Template_Mst_Tbl_List_Page",
+   "list_view": "LRF_SMS_Attribute_Tag_Template_Mst_Tbl_List",
+   "view": "XStudio_LRF_SMS_Attribute_Tag_Template_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Inventory_Xbatch_Material_Inventory_Trn_Tbl",
+   "page": "List_Page_Xbatch_Material_Inventory_Trn_Tbl",
+   "list_view": "List_Xbatch_Material_Inventory_Trn_Tbl",
+   "view": "XStudio_List_Xbatch_Material_Inventory_Trn_Tbl_Vw",
+   "filter": "(Plantcode in (select value from string_split('<request.Plant>',',') )OR IIF('<request.Plant>'='',1,0)=1) and (ItemType='<request.ItemType>' OR IIF('<request.ItemType>'='',1,0)=1) and (PostingMaterialType like'%<request.Type>%' OR IIF('<request.Type>'='',1,0)=1)"
+  },
+  {
+   "menu": "Communication_Systems",
+   "page": "Communication_System_Mst_Tbl_List_Page",
+   "list_view": "Communication_System_Mst_Tbl_List",
+   "view": "XStudio_Communication_System_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Sales Orders",
+   "page": "List_Page_XBatch_Sales_Order_Mst_Tbl",
+   "list_view": "List_XBatch_Sales_Order_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Sales_Order_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Consumptions_Day",
+   "page": "Consumptions_Summary_Day_List_Page",
+   "list_view": "Consumptions_Summary_Day_List",
+   "view": "XStudio_Consumptions_Summary_Day_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Mapping",
+   "page": "LRF_SMS_Tag_Mapping_Tbl_List_Page",
+   "list_view": "LRF_SMS_Tag_Mapping_Tbl_List",
+   "view": "XStudio_LRF_SMS_Tag_Mapping_Tbl_List_Vw",
+   "filter": "(IsXBatchTag=0 or IsXBatchTag is null)"
+  },
+  {
+   "menu": "Item Lot",
+   "page": "List_Page_XBatch_Material_Item_Mst_Tbl",
+   "list_view": "List_XBatch_Material_Item_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Material_Item_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Test",
+   "page": "List_Page_Test",
+   "list_view": "List_Test",
+   "view": "XStudio_List_Test_Vw",
+   "filter": null
+  },
+  {
+   "menu": "LRF_SMS_Data",
+   "page": "LRF_SMS_Data_List_Page",
+   "list_view": "LRF_SMS_Data_List",
+   "view": "XStudio_LRF_SMS_Data_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Work Order",
+   "page": "Page_List_XBatch_Work_Order_Mst_Tbl_RM",
+   "list_view": "List_XBatch_Work_Order_Mst_Tbl_RM",
+   "view": "XStudio_List_XBatch_Work_Order_Mst_Tbl_RM_Vw",
+   "filter": "Equipment='RM'"
+  },
+  {
+   "menu": "SMS Shift Operator Incharge",
+   "page": "List_Page_SMS_Shift_Operator_Incharge_Selection_Trn_Tbl",
+   "list_view": "List_SMS_Shift_Operator_Incharge_Selection_Trn_Tbl",
+   "view": "XStudio_List_SMS_Shift_Operator_Incharge_Selection_Trn_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Produced Items",
+   "page": "List_Page_XBatch_Material_Item_Prod_Trn_Tbl",
+   "list_view": "List_XBatch_Material_Item_Prod_Trn_Tbl",
+   "view": "XStudio_List_XBatch_Material_Item_Prod_Trn_Tbl_Vw",
+   "filter": "cast(getdate() -7 as date) < cast(createdon as date)"
+  },
+  {
+   "menu": "Process Cells",
+   "page": "List_Page_XBatch_Process_Cell_Mst_Tbl",
+   "list_view": "List_XBatch_Process_Cell_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Process_Cell_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Sales Order",
+   "page": "Page_List_XBatch_Planned_Sales_Order_Mst_Tbl_RM",
+   "list_view": "List_XBatch_Planned_Sales_Order_Mst_Tbl_RM",
+   "view": "XStudio_List_XBatch_Planned_Sales_Order_Mst_Tbl_RM_Vw",
+   "filter": "Status in ('New','Released')"
+  },
+  {
+   "menu": "Template",
+   "page": "Communication_System_Attribute_Tag_Template_Mst_Tbl_List_Page",
+   "list_view": "Communication_System_Attribute_Tag_Template_Mst_Tbl_List",
+   "view": "XStudio_Communication_System_Attribute_Tag_Template_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Process Timing",
+   "page": "List_Page_SMS_Plant_Process_Time",
+   "list_view": "List_SMS_Plant_Process_EventTime",
+   "view": "XStudio_List_SMS_Plant_Process_EventTime_Vw",
+   "filter": null
+  },
+  {
+   "menu": "CCM_5",
+   "page": "CCM_5_List_Page",
+   "list_view": "CCM_5_List",
+   "view": "XStudio_CCM_5_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Mapping",
+   "page": "CCM_Tag_Mapping_Tbl_List_Page",
+   "list_view": "CCM_Tag_Mapping_Tbl_List",
+   "view": "XStudio_CCM_Tag_Mapping_Tbl_List_Vw",
+   "filter": "(IsXBatchTag=0 or IsXBatchTag is null)"
+  },
+  {
+   "menu": "Billets Position Detals",
+   "page": "Page_Billet_InYard_InFurnace_Charged",
+   "list_view": "List_Billets_In_Yard",
+   "view": "XStudio_List_Billets_In_Yard_Vw",
+   "filter": "ToLocation Not in ('Mill','Furnace') AND BilletNo IS NOT NULL"
+  },
+  {
+   "menu": "LRF Per Heat Data",
+   "page": "List_Page_LRF_Per_Heat_Data",
+   "list_view": "List_LRF_Per_Heat",
+   "view": "XStudio_List_LRF_Per_Heat_Vw",
+   "filter": "CAST(Dateyyyymmdd AS DATE) BETWEEN CAST(DATEADD(DAY, -7, GETDATE()) AS DATE)  AND CAST(GETDATE() AS DATE) and (Workorder='<request.WOId>' OR IIF('<request.WOId>'='',1,0)=1)"
+  },
+  {
+   "menu": "Consumption",
+   "page": "Page_List_XBatch_Material_Item_Cons_Tbl",
+   "list_view": "List_XBatch_Material_Item_Cons_Tbl",
+   "view": "XStudio_List_XBatch_Material_Item_Cons_Tbl_Vw",
+   "filter": "cast(getdate() -7 as date) <= Cast(Createdon as date)"
+  },
+  {
+   "menu": "Shift Incharge Details",
+   "page": "List_Page_Shift_Operator_Incharge_Selection_Trn_Tbl",
+   "list_view": "List_Shift_Operator_Incharge_Selection_Trn_Tbl",
+   "view": "XStudio_List_Shift_Operator_Incharge_Selection_Trn_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Roll History Card",
+   "page": "List_Page_Roll_History_Card",
+   "list_view": "List_Roll_History_Card",
+   "view": "XStudio_List_Roll_History_Card_Vw",
+   "filter": null
+  },
+  {
+   "menu": "SAP MES Raw Material Consumptions Reconciliation Mapping",
+   "page": "ILG_Page_MES_Raw_Material_Consumptions_Mapping_Mst_Tbl",
+   "list_view": "List_MES_Raw_Material_Consumptions_Mapping_Mst_Tbl",
+   "view": "XStudio_List_MES_Raw_Material_Consumptions_Mapping_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Outward Location",
+   "page": "List_Page_XBatch_OutwardLocation_Mst_Tbl",
+   "list_view": "List_XBatch_OutwardLocation_Mst_Tbl",
+   "view": "XStudio_List_XBatch_OutwardLocation_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "RM_Mill_Block",
+   "page": "RM_Mill_Block_List_Page",
+   "list_view": "RM_Mill_Block_List",
+   "view": "XStudio_RM_Mill_Block_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Shift Configuration",
+   "page": "Xstudio_Shift_Mst_Tbl_List_Page",
+   "list_view": "Xstudio_Shift_Mst_Tbl_List",
+   "view": "XStudio_Xstudio_Shift_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "RM_Furnace_Combustion_Data",
+   "page": "RM_Furnace_Combustion_Data_List_Page",
+   "list_view": "RM_Furnace_Combustion_Data_List",
+   "view": "XStudio_RM_Furnace_Combustion_Data_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "RM_WRMs",
+   "page": "RM_WRM_Mst_Tbl_List_Page",
+   "list_view": "RM_WRM_Mst_Tbl_List",
+   "view": "XStudio_RM_WRM_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Ladle No Per Heat",
+   "page": "List_Page_LRF_Ladle_No_Per_Heat",
+   "list_view": "List_LRF_Ladle_No_Per_Heat",
+   "view": "XStudio_List_LRF_Ladle_No_Per_Heat_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF Ladle Details",
+   "page": "List_Page_EAF_LogSheet_Ladle_Details",
+   "list_view": "List_EAF_LogSheet_Ladle_Details",
+   "view": "XStudio_List_EAF_LogSheet_Ladle_Details_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Mapping",
+   "page": "EAF_SMS_Tag_Mapping_Tbl_List_Page",
+   "list_view": "EAF_SMS_Tag_Mapping_Tbl_List",
+   "view": "XStudio_EAF_SMS_Tag_Mapping_Tbl_List_Vw",
+   "filter": "(IsXBatchTag=0 or IsXBatchTag is null)"
+  },
+  {
+   "menu": "Billet Transaction History",
+   "page": "Page_List_XBatch_Billets_Transfer_History_Tbl",
+   "list_view": "List_XBatch_Billets_Transfer_History_Tbl_All",
+   "view": "XStudio_List_XBatch_Billets_Transfer_History_Tbl_All_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF Per Heat Data",
+   "page": "List_Page_EAF_PER_HEAT",
+   "list_view": "List_EAF_PER_HEAT",
+   "view": "XStudio_List_EAF_PER_HEAT_Vw",
+   "filter": "CAST(Dateyyyymmdd AS DATE) BETWEEN CAST(DATEADD(DAY, -120, GETDATE()) AS DATE)  AND CAST(GETDATE() AS DATE) and (Workorder='<request.WOId>' OR IIF('<request.WOId>'='',1,0)=1)"
+  },
+  {
+   "menu": "EAF Per Day Data",
+   "page": "List_Page_EAF_Per_Day_Data",
+   "list_view": "EAF_Summary_Day_List",
+   "view": "XStudio_EAF_Summary_Day_List_Vw",
+   "filter": "Reportdate is not null"
+  },
+  {
+   "menu": "RM_Mills",
+   "page": "RM_Mill_Mst_Tbl_List_Page",
+   "list_view": "RM_Mill_Mst_Tbl_List",
+   "view": "XStudio_RM_Mill_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF Per Heat Data",
+   "page": "List_Page_EAF_Per_Heat_Data",
+   "list_view": "List_EAF_PER_HEAT",
+   "view": "XStudio_List_EAF_PER_HEAT_Vw",
+   "filter": "CAST(Dateyyyymmdd AS DATE) BETWEEN CAST(DATEADD(DAY, -120, GETDATE()) AS DATE)  AND CAST(GETDATE() AS DATE) and (Workorder='<request.WOId>' OR IIF('<request.WOId>'='',1,0)=1)"
+  },
+  {
+   "menu": "Billets Position Detals",
+   "page": "Page_Billet_InYard_InFurnace_Charged",
+   "list_view": "List_Charged_Billets_InFurnace",
+   "view": "XStudio_List_Charged_Billets_InFurnace_Vw",
+   "filter": "BilletPosition='Out of Furnace' and HeatNo is not null and Cast(EntryDateTime as Date)=Cast(getdate() as date)"
+  },
+  {
+   "menu": "Template",
+   "page": "CCM_Attribute_Tag_Template_Mst_Tbl_List_Page",
+   "list_view": "CCM_Attribute_Tag_Template_Mst_Tbl_List",
+   "view": "XStudio_CCM_Attribute_Tag_Template_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Billets Position Detals",
+   "page": "Page_Billet_InYard_InFurnace_Charged",
+   "list_view": "List_Billets_InFurance",
+   "view": null,
+   "filter": null
+  },
+  {
+   "menu": "Inventory",
+   "page": "List_Page_Billet_Inventory",
+   "list_view": "List_Billet_Inventory",
+   "view": "XStudio_List_Billet_Inventory_Vw",
+   "filter": null
+  },
+  {
+   "menu": "LRF ProcessTime",
+   "page": "List_Page_LRF_ProcessTime",
+   "list_view": "List_LRF_ProcessTime",
+   "view": "XStudio_List_LRF_ProcessTime_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Equipment Wise Delay",
+   "page": "List_Page_Equipment_Wise_Delay",
+   "list_view": "List_Equipment_Wise_Delay",
+   "view": "XStudio_List_Equipment_Wise_Delay_Vw",
+   "filter": "ParentID='<Request.ID>'"
+  },
+  {
+   "menu": "OEE Calculation",
+   "page": "Page_List_SP_SMS_OEE_Daily_View",
+   "list_view": "List_SP_SMS_OEE_Daily_View",
+   "view": null,
+   "filter": null
+  },
+  {
+   "menu": "RM_Rebar_Data",
+   "page": "RM_Rebar_Data_List_Page",
+   "list_view": "RM_Rebar_Data_List",
+   "view": "XStudio_RM_Rebar_Data_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "RM Production Data",
+   "page": "List_Page_XMES_RM_Production_Summary",
+   "list_view": "List_XMES_RM_Production_Summary",
+   "view": "XStudio_List_XMES_RM_Production_Summary_Vw",
+   "filter": null
+  },
+  {
+   "menu": "LRF Quality Data",
+   "page": "List_Page_LRF_Chemical_Composition",
+   "list_view": "List_LRF_Chemical_Composition",
+   "view": "XStudio_List_LRF_Chemical_Composition_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Inventory as per SAP",
+   "page": "List_Page_MES_SAP_Inventory_Stock_Data_Tbl",
+   "list_view": "List_MES_SAP_Inventory_Stock_Tbl",
+   "view": "XStudio_List_MES_SAP_Inventory_Stock_Tbl_Vw",
+   "filter": "Plant='<request.Plant>'"
+  },
+  {
+   "menu": "Storage Locations",
+   "page": "List_Page_XBatch_Store_Mst_Tbl",
+   "list_view": "List_XBatch_Store_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Store_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "MES_SAP_UsageDecision_Trn_Tbl",
+   "page": "List_Page_MES_SAP_UsageDecision_Trn_Tbl",
+   "list_view": "List_MES_SAP_UsageDecision_Trn_Tbl",
+   "view": "XStudio_List_MES_SAP_UsageDecision_Trn_Tbl_Vw",
+   "filter": "SAPPostingStatus = 'Entered'"
+  },
+  {
+   "menu": "WRM",
+   "page": "List_Page_MES_WRM",
+   "list_view": "List_MES_WRM",
+   "view": "XStudio_List_MES_WRM_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF Manual Entry",
+   "page": "List_Page_EAF_Manual_Entry",
+   "list_view": "List_EAF_Manual_Entry",
+   "view": "XStudio_List_EAF_Manual_Entry_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Template",
+   "page": "RM_Reheating_Furnace_Attribute_Tag_Template_Mst_Tbl_List_Page",
+   "list_view": "RM_Reheating_Furnace_Attribute_Tag_Template_Mst_Tbl_List",
+   "view": "XStudio_RM_Reheating_Furnace_Attribute_Tag_Template_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Connections",
+   "page": "List_Page_XBatch_Connection_Mst_Tbl",
+   "list_view": "List_XBatch_Connection_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Connection_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Rolling Plan History",
+   "page": "RM_Rolling_Planing_History",
+   "list_view": "List_RM_Rolling_Plan_History",
+   "view": "XStudio_List_RM_Rolling_Plan_History_Vw",
+   "filter": null
+  },
+  {
+   "menu": "CCM Manual Entry",
+   "page": "List_Page_CCM_Manual_Entry",
+   "list_view": "List_CCM_Manual_Entry",
+   "view": "XStudio_List_CCM_Manual_Entry_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Rolling Plan",
+   "page": "Page_Rolling Plan",
+   "list_view": "List_RM_Sales_Order_Open_Campaign",
+   "view": "XStudio_List_RM_Sales_Order_Open_Campaign_Vw",
+   "filter": "Status = 'Open'"
+  },
+  {
+   "menu": "CCM_SMSs",
+   "page": "CCM_SMS_Mst_Tbl_List_Page",
+   "list_view": "CCM_SMS_Mst_Tbl_List",
+   "view": "XStudio_CCM_SMS_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Mapping",
+   "page": "RM_Rebar_Tag_Mapping_Tbl_List_Page",
+   "list_view": "RM_Rebar_Tag_Mapping_Tbl_List",
+   "view": "XStudio_RM_Rebar_Tag_Mapping_Tbl_List_Vw",
+   "filter": "(IsXBatchTag=0 or IsXBatchTag is null)"
+  },
+  {
+   "menu": "CCM Per Shift Data",
+   "page": "CCM_Summary_Shift_List_Page",
+   "list_view": "CCM_Summary_Shift_List",
+   "view": "XStudio_CCM_Summary_Shift_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Process Tracker Master",
+   "page": "List_Page_XMES_SMS_Event_Process_Tracker_Mst",
+   "list_view": "List_XMES_SMS_Event_Process_Tracker_Mst",
+   "view": "XStudio_List_XMES_SMS_Event_Process_Tracker_Mst_Vw",
+   "filter": null
+  },
+  {
+   "menu": "FG Production",
+   "page": "Page_List_MES_SAP_Production_Trn_Tbl_FG",
+   "list_view": "List_MES_SAP_Production_Trn_Tbl_FG",
+   "view": "XStudio_List_MES_SAP_Production_Trn_Tbl_FG_Vw",
+   "filter": "postingmaterialtype='FG'"
+  },
+  {
+   "menu": "SMS Temperature",
+   "page": "List_Page_SMS_Temperature_Per_Heat",
+   "list_view": "List_SMS_Temperature_Per_Heat",
+   "view": "XStudio_List_SMS_Temperature_Per_Heat_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Create Batch",
+   "page": "List_Page_XMES_SAP_CreateBatch_Mst_Tbl",
+   "list_view": "List_Creation_Batch_Pending",
+   "view": "XStudio_List_Creation_Batch_Pending_Vw",
+   "filter": "Status='Entered'"
+  },
+  {
+   "menu": "Recipe Unit Procedures",
+   "page": "List_Page_XBatch_Recipe_Unit_Procedure_Mst_Tbl",
+   "list_view": "List_XBatch_Recipe_Unit_Procedure_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Recipe_Unit_Procedure_Mst_Tbl_Vw",
+   "filter": "('<request.UpTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Recipe_Mst_Tbl)) or\r\n('<request.UpTargetType>' = 1 and ParentID in('<request.RecipeID>'))"
+  },
+  {
+   "menu": "Rolling Plan",
+   "page": "Page_Rolling Plan",
+   "list_view": "List_RM_Rolling_Plan",
+   "view": "XStudio_List_RM_Rolling_Plan_Vw",
+   "filter": "Status = 'Draft'"
+  },
+  {
+   "menu": "Area",
+   "page": "Area_Mst_Tbl_List_Page",
+   "list_view": "Area_Mst_Tbl_List",
+   "view": "XStudio_Area_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF Per Day Data",
+   "page": "EAF_Summary_Day_List_Page",
+   "list_view": "EAF_Summary_Day_List",
+   "view": "XStudio_EAF_Summary_Day_List_Vw",
+   "filter": "Reportdate is not null"
+  },
+  {
+   "menu": "Recipe Phase Parameters",
+   "page": "List_Page_XBatch_Recipe_Phase_Parameter_Mst_Tbl",
+   "list_view": "List_XBatch_Recipe_Phase_Parameter_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Recipe_Phase_Parameter_Mst_Tbl_Vw",
+   "filter": "('<request.PhaseParameterTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Recipe_Phase_Mst_Tbl)) or\r\n('<request.PhaseParameterTargetType>' = 1 and ParentID in('<request.PhaseID>'))"
+  },
+  {
+   "menu": "Template",
+   "page": "RM_WRM_Attribute_Tag_Template_Mst_Tbl_List_Page",
+   "list_view": "RM_WRM_Attribute_Tag_Template_Mst_Tbl_List",
+   "view": "XStudio_RM_WRM_Attribute_Tag_Template_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Material Grades",
+   "page": "List_Page_XBatch_Material_Grade_Mst_Tbl",
+   "list_view": "List_XBatch_Material_Grade_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Material_Grade_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF_SMSs",
+   "page": "EAF_SMS_Mst_Tbl_List_Page",
+   "list_view": "EAF_SMS_Mst_Tbl_List",
+   "view": "XStudio_EAF_SMS_Mst_Tbl_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Per Heat LadleNo",
+   "page": "List_Page_Per_Heat_LadleNo",
+   "list_view": "List_Per_Heat_LadleNo",
+   "view": "XStudio_List_Per_Heat_LadleNo_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Billet Wise WRM Parameters",
+   "page": "List_Page_Billet_Wise_WRMParameters",
+   "list_view": "List_Billet_Wise_WRMParameters",
+   "view": "XStudio_List_Billet_Wise_WRMParameters_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Batch Status",
+   "page": "List_Page_XBatch_Status_Mst_Tbl",
+   "list_view": "List_XBatch_Status_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Status_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "LRF Per Day Data",
+   "page": "LRF_Summary_Day_List_Page",
+   "list_view": "LRF_Summary_Day_List",
+   "view": "XStudio_LRF_Summary_Day_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Electricity Rate Band Master",
+   "page": "List_Page_Rate_Band_Master",
+   "list_view": "List_Rate_Band_Master",
+   "view": "XStudio_List_Rate_Band_Master_Vw",
+   "filter": null
+  },
+  {
+   "menu": "RM_Reheating_Furnace_Block",
+   "page": "RM_Reheating_Furnace_Block_List_Page",
+   "list_view": "RM_Reheating_Furnace_Block_List",
+   "view": "XStudio_RM_Reheating_Furnace_Block_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "EAF_Custom",
+   "page": "EAF_Custom_List_Page",
+   "list_view": "EAF_Custom_List",
+   "view": "XStudio_EAF_Custom_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Storage Areas",
+   "page": "List_Page_XBatch_Storage_Area_Mst_Tbl",
+   "list_view": "List_XBatch_Storage_Area_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Storage_Area_Mst_Tbl_Vw",
+   "filter": "('<request.SATargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Store_Mst_Tbl)) or\r\n('<request.SATargetType>' = 1 and ParentID in('<request.StoreID>'))"
+  },
+  {
+   "menu": "Billet Consumption",
+   "page": "Page_List_MES_SAP_Consumption_Trn_Tbl_billet",
+   "list_view": "List_MES_SAP_Consumption_Trn_Tbl_Billet",
+   "view": "XStudio_List_MES_SAP_Consumption_Trn_Tbl_Billet_Vw",
+   "filter": "(HeatNo='<request.Heat>' OR IIF('<request.Heat>'='',1,0)=1) and postingmaterialtype='Billet'"
+  },
+  {
+   "menu": "CCM_SMS_Data",
+   "page": "CCM_SMS_Data_List_Page",
+   "list_view": "CCM_SMS_Data_List",
+   "view": "XStudio_CCM_SMS_Data_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "RM_NGConsumption_Report",
+   "page": "RM_NGConsumption_Report_List_Page",
+   "list_view": "RM_NGConsumption_Report_List",
+   "view": "XStudio_RM_NGConsumption_Report_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Storage Subareas",
+   "page": "List_Page_XBatch_Storage_Rack_Mst_Tbl",
+   "list_view": "List_XBatch_Storage_Rack_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Storage_Rack_Mst_Tbl_Vw",
+   "filter": "('<request.SRTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Storage_Area_Mst_Tbl)) or\r\n('<request.SRTargetType>' = 1 and ParentID in('<request.StorageAreaID>'))"
+  },
+  {
+   "menu": "LRF_SMS_Block",
+   "page": "LRF_SMS_Block_List_Page",
+   "list_view": "LRF_SMS_Block_List",
+   "view": "XStudio_LRF_SMS_Block_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "RM_Billet_Weight_Block",
+   "page": "RM_Billet_Weight_Block_List_Page",
+   "list_view": "RM_Billet_Weight_Block_List",
+   "view": "XStudio_RM_Billet_Weight_Block_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "RM_WRM_Data",
+   "page": "RM_WRM_Data_List_Page",
+   "list_view": "RM_WRM_Data_List",
+   "view": "XStudio_RM_WRM_Data_List_Vw",
+   "filter": null
+  },
+  {
+   "menu": "Recipe Phases",
+   "page": "List_Page_XBatch_Recipe_Phase_Mst_Tbl",
+   "list_view": "List_XBatch_Recipe_Phase_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Recipe_Phase_Mst_Tbl_Vw",
+   "filter": "('<request.PhaseTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Recipe_Phase_Group_Mst_Tbl)) or\r\n('<request.PhaseTargetType>' = 1 and ParentID in('<request.PhaseGroupID>'))"
+  },
+  {
+   "menu": "Status Master",
+   "page": "List_Page_Status_Mst_Tbl",
+   "list_view": "List_Status_Mst_Tbl",
+   "view": "XStudio_List_Status_Mst_Tbl_Vw",
+   "filter": null
+  },
+  {
+   "menu": "LRF Per Shift Data",
+   "page": "List_Page_LRF_Per_Shift_Data",
+   "list_view": "LRF_Summary_Shift_List",
+   "view": "XStudio_LRF_Summary_Shift_List_Vw",
+   "filter": "Datetime is not null"
+  },
+  {
+   "menu": "RM_Furnace_Combustion_5",
+   "page": "RM_Furnace_Combustion_5_List_Page",
+   "list_view": "RM_Furnace_Combustion_5_List",
+   "view": "XStudio_RM_Furnace_Combustion_5_List_Vw",
+   "filter": "EntryDateTime <= GETDATE()"
+  },
+  {
+   "menu": "Recipe Operations",
+   "page": "List_Page_XBatch_Recipe_Operation_Mst_Tbl",
+   "list_view": "List_XBatch_Recipe_Operation_Mst_Tbl",
+   "view": "XStudio_List_XBatch_Recipe_Operation_Mst_Tbl_Vw",
+   "filter": "('<request.OperationTargetType>' = 0 and ParentID IN (SELECT ID From XStudio_XBatch.dbo.XBatch_Recipe_Unit_Procedure_Mst_Tbl)) or\r\n('<request.OperationTargetType>' = 1 and ParentID in('<request.ProcedureID>'))"
+  }
  ]
 }

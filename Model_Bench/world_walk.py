@@ -11,17 +11,18 @@ import re
 import sqlite3
 import sys
 import time
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import entity_resolver  # noqa: E402  (spans + SQL connection only)
-from world_links import Brain, all_pages  # noqa: E402
+from build_process_world import connect  # noqa: E402  (the world's SQL connection owner)
+from l2_gbrain import Brain  # noqa: E402  (the one GBrain owner)
 
 ROOT = Path(__file__).resolve().parent.parent
 WORLD = json.loads((ROOT / "Knowledge" / "process_world.json").read_text(encoding="utf-8"))
-LOG_INDEX = ROOT / ".cache" / "log_index.sqlite"
+WORLD_INDEX = ROOT / ".cache" / "world_index.sqlite"  # built by build_process_world.py
 OBJS = WORLD["schema"]["objects"]
 MAX_STEPS = 8            # mode 16
 MAX_OPTIONS = 60         # mode 14: beyond this Jev first picks the kind of step
@@ -47,64 +48,73 @@ def is_table(name: str) -> bool:
     return OBJS.get(name, {}).get("kind") == "table"
 
 
-# ---------- where an identifier lives (derived from the build, matched by value shape) ----------
-
-def _shape(value: str) -> str:
-    return re.sub(r"[A-Za-z]+", "A", re.sub(r"\d+", lambda m: f"9{{{len(m.group())}}}", value))
-
+# ---------- where an identifier lives (build-time value index over the world's keys) ----------
 
 # Shared keys plus identifiers held by one table only (e.g. a material document names one posting).
-# Only base tables are checked: a view's rows come from them, and views are joins (slow).
+# Only base tables: a view's rows come from them.
 KEY_COLUMNS = {k: [c for c in info["columns"] if is_table(c.split(".")[0])] for k, info in WORLD["keys"]["keys"].items()}
 KEY_COLUMNS.update({c: [c] for c in WORLD["keys"].get("identifiers", {}) if is_table(c.split(".")[0])})
-KEY_SHAPES = {k: {_shape(v) for v in info["example"]} for k, info in WORLD["keys"]["keys"].items()}
-KEY_SHAPES.update({c: {_shape(v) for v in ex} for c, ex in WORLD["keys"].get("identifiers", {}).items()})
 KEY_OF_COLUMN = {c: k for k, cols in KEY_COLUMNS.items() for c in cols}
 
 
-def holders(key: str, value: str, conn) -> list[str]:
-    """Columns of this key that hold the value. One query; if it times out, column by column (mode 6)."""
-    cols = KEY_COLUMNS.get(key, [])
-    if not cols:
+def _index(sql: str, *params) -> list[tuple]:
+    if not WORLD_INDEX.exists():
         return []
-    cur = conn.cursor()
-    part = "SELECT TOP 1 '{c}' c FROM dbo.[{t}] WHERE [{col}] = ?"
-    try:
-        cur.execute(" UNION ALL ".join(f"SELECT * FROM ({part.format(c=c, t=c.split('.')[0], col=c.split('.', 1)[1])}) x{i}"
-                                       for i, c in enumerate(cols)), [value] * len(cols))
-        return [r[0] for r in cur.fetchall()]
-    except Exception:
-        found = []
-        for c in cols:
-            try:
-                cur.execute(part.format(c=c, t=c.split(".")[0], col=c.split(".", 1)[1]), value)
-                found += [r[0] for r in cur.fetchall()]
-            except Exception:
-                continue  # one slow or type-mismatched column does not sink the rest
-        return found
+    db = sqlite3.connect(f"file:{WORLD_INDEX}?mode=ro", uri=True)
+    rows = db.execute(sql, params).fetchall()
+    db.close()
+    return rows
 
 
-def resolve(text: str, conn) -> list[dict[str, Any]]:
-    """Identifier spans -> keys whose value shape matches -> the columns that actually hold the value."""
+def holders(key: str, value: str) -> list[str]:
+    """Columns of this key that hold the value (value index; no live scan)."""
+    cols = set(KEY_COLUMNS.get(key, []))
+    return [c for (c,) in _index("SELECT colref FROM value_columns WHERE value = ?", value) if c in cols]
+
+
+_DATES = re.compile(r"\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?)?|\b\d{1,2}:\d{2}(?::\d{2})?\b")
+# A trailing full stop ends a sentence ("heat 1604014."); only ".<digit>" makes it a decimal.
+_SPAN = re.compile(r"(?<![\d.])(\d{7}_S\d+_\d+|\d{7,12})(?!\d|\.\d)")
+
+
+def spans(text: str) -> list[str]:
+    """Identifier-like spans: 7-12 digit numbers and billet codes, glued or not. Dates/times first
+    removed; decimals and short numbers never match (e2e/ENTITY_FAILURE_MODES.md modes 2, 6-8)."""
+    cleaned = _DATES.sub(" ", text)
+    cleaned = re.sub(r"(?i)\b(?:heat|ht|h|wo|doc)(?=\d)", " ", cleaned)  # heat1604015, H1604014
+    return list(dict.fromkeys(_SPAN.findall(cleaned)))[:6]
+
+
+def subject(text: str, entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Several identifiers confirmed (heat + material document): Jev picks the one the question is
+    about, the rest stay as related (ENTITY_FAILURE_MODES mode 3). Returns entities, subject first."""
+    if len({e["value"] for e in entities}) < 2:
+        return entities
+    options = {f"c{i}": f"{e['key']} {e['value']}" for i, e in enumerate(entities)}
+    a = jev({"ticket": text, "candidates": options},
+            {"subject": {"type": "choice", "criteria": options,
+                         "instructions": "Which item is the requester's question actually about? The others may be mentioned as context."}}
+            ).get("subject") or {}
+    first = int(a["choice"][1:]) if a.get("choice") in options else 0
+    return [entities[first]] + [e for i, e in enumerate(entities) if i != first]
+
+
+def resolve(text: str, conn=None) -> list[dict[str, Any]]:
+    """Identifier spans -> the key/identifier columns that hold each value (value index)."""
     found = []
-    for span in entity_resolver.spans(text):
-        for key, shapes in KEY_SHAPES.items():
-            if _shape(span) in shapes:
-                cols = holders(key, span, conn)
-                if cols:
-                    found.append({"value": span, "key": key, "holders": cols})
+    for span in spans(text):
+        by_key: dict[str, list[str]] = {}
+        for (colref,) in _index("SELECT colref FROM value_columns WHERE value = ?", span):
+            if colref in KEY_OF_COLUMN:
+                by_key.setdefault(KEY_OF_COLUMN[colref], []).append(colref)
+        found += [{"value": span, "key": k, "holders": cols} for k, cols in by_key.items()]
     return found
 
 
 # ---------- what ran for an identifier (build-time log index; the 3.5 GB log has no usable index) ----------
 
 def runs_for(value: str) -> list[dict[str, Any]]:
-    if not LOG_INDEX.exists():
-        return []
-    db = sqlite3.connect(f"file:{LOG_INDEX}?mode=ro", uri=True)
-    rows = db.execute("SELECT proc, param, calls, steps, error_steps, first_on, last_on FROM runs WHERE value = ?",
-                      (value,)).fetchall()
-    db.close()
+    rows = _index("SELECT proc, param, calls, steps, error_steps, first_on, last_on FROM runs WHERE value = ?", value)
     return [dict(zip(("proc", "param", "calls", "steps", "error_steps", "first_on", "last_on"), r)) for r in rows]
 
 
@@ -202,7 +212,87 @@ def look_procedure(name: str, value: str) -> dict[str, Any]:
                     f"It writes {writes or 'nothing known'}."}
 
 
-def look(node: dict[str, Any], value: str, conn) -> dict[str, Any]:
+# ---------- tickets without an identifier: time window and health (activity index) ----------
+
+_MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
+
+
+def window(text: str, today: date | None = None) -> date | None:
+    """Start of the period the requester means, parsed in code (Jev 1.13 is weak at dates).
+    None when the ticket names no period."""
+    today = today or date.today()
+    t = text.lower()
+    m = re.search(r"(?:since|after|from)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(?:of\s+)?([a-z]{3})[a-z]*)?", t)
+    if m:
+        day, named = int(m.group(1)), _MONTHS.get((m.group(2) or "")[:3])
+        if named:  # "8th July": this year unless that is still ahead
+            return date(today.year if (named, day) <= (today.month, today.day) else today.year - 1, named, day)
+        if day <= today.day:  # "since 8th": this month, or last month if the day is still ahead
+            return date(today.year, today.month, day)
+        prev = today.replace(day=1) - timedelta(days=1)
+        return prev.replace(day=min(day, prev.day))
+    if re.search(r"last night|yesterday", t):
+        return today - timedelta(days=1)
+    if re.search(r"this week|last few days|past few days|last week", t):
+        return today - timedelta(days=7)
+    if re.search(r"since morning|today|this morning|morning shift", t):
+        return today
+    return None
+
+
+def table_health(name: str, since: date | None) -> str:
+    """Rows arriving per day vs the table's own history, said in words; all arithmetic here."""
+    days = [(date.fromisoformat(d), n) for d, n in _index("SELECT day, rows FROM table_daily WHERE table_name = ? ORDER BY day", name)]
+    if not days:
+        return f"{name}: no dated rows (or not indexed)"
+    last_day = days[-1][0]
+    recent = [n for _, n in days[-30:]]
+    usual = sorted(recent)[len(recent) // 2]
+    text = f"{name}: last rows on {last_day} ({(date.today() - last_day).days} days ago); usually ~{usual} rows/day on active days"
+    if since:
+        in_window = sum(n for d, n in days if d >= since)
+        text += f"; {in_window} rows since {since}"
+        if since > last_day:
+            text += f" (nothing has arrived since {last_day})"
+    return text
+
+
+def proc_health(name: str, since: date | None) -> str:
+    days = _index("SELECT day, steps, error_steps FROM proc_daily WHERE proc = ? ORDER BY day", name)
+    if not days:
+        return f"procedure {name}: no runs in its log"
+    last = days[-1]
+    text = f"procedure {name}: last ran {last[0]}"
+    if since:
+        steps = sum(s for d, s, _ in days if d >= str(since))
+        errors = sum(e for d, _, e in days if d >= str(since))
+        text += f"; since {since}: {steps} steps, {errors} error steps"
+    return text
+
+
+def health(node: dict[str, Any], since: date | None) -> dict[str, Any]:
+    """What code can say about a page without an identifier: activity vs history, screen filters."""
+    kind, name = node["kind"], node["title"]
+    if kind == "table":
+        return {"text": table_health(name, since)}
+    if kind == "procedure":
+        return {"text": proc_health(name, since)}
+    if kind == "view":
+        bases = [t for t in OBJS.get(name, {}).get("reads", []) if is_table(t)][:4]
+        return {"text": f"view {name} reads " + "; ".join(table_health(t, since) for t in bases) if bases
+                        else f"view {name}: reads no table directly"}
+    if kind == "screen":
+        s = next((s for s in WORLD.get("screens", []) if s["menu"] == name), {})
+        bases = [t for t in OBJS.get(s.get("view") or "", {}).get("reads", []) if is_table(t)][:3]
+        return {"text": f"screen '{name}' shows {s.get('view')}; "
+                        + (f"filter: only rows where {s['filter']}" if s.get("filter") else "no filter")
+                        + "".join(f"; {table_health(t, since)}" for t in bases)}
+    return {"text": f"{kind} {name}: {node.get('summary', '')}"}
+
+
+def look(node: dict[str, Any], value: str | None, conn, since: date | None = None) -> dict[str, Any]:
+    if value is None:
+        return health(node, since)
     conn.timeout = QUERY_TIMEOUT_S
     kind, name = node["kind"], node["title"]
     try:
@@ -225,7 +315,7 @@ class World:
 
     def titles(self) -> dict[str, str]:
         if self._titles is None:
-            self._titles = {p.get("title"): p["slug"] for p in all_pages(self.brain)}
+            self._titles = {p.get("title"): p["slug"] for p in self.brain.all_pages()}
         return self._titles
 
     def page(self, slug: str) -> dict[str, Any]:
@@ -261,7 +351,7 @@ def step_options(world: World, here: str, obs: dict[str, Any], value: str, conn)
             if not seen or l["direction"] != "out":
                 continue
             key = KEY_OF_COLUMN.get(f"{me['title']}.{column}")
-            for colref in holders(key, seen, conn) if key else []:
+            for colref in holders(key, seen) if key else []:
                 table = colref.split(".")[0]
                 if table != me["title"] and table in world.titles():
                     options.append({"slug": world.titles()[table], "value": seen,
@@ -343,7 +433,8 @@ def trace_numbers(ticket: str, value: str, seen: list[dict]) -> dict[str, Any]:
     """Numbers the requester quotes -> every place they are stored among what was seen (code) ->
     which of those places the requester means (Jev, from their wording). Code never does arithmetic."""
     out, questions, options_by_n = {}, {}, {}
-    for n in dict.fromkeys(_NUMBER.findall(entity_resolver._DATES.sub(" ", ticket).replace(value, " "))):
+    text = _DATES.sub(" ", ticket)
+    for n in dict.fromkeys(_NUMBER.findall(text.replace(value, " ") if value else text)):
         sources = [f"{s['node']}.{c}" for s in seen for c, v in (s["obs"].get("numbers") or {}).items() if v == float(n)]
         sources += [f"{s['node']} (number of rows)" for s in seen if s["obs"].get("rows") == float(n)]
         sources = list(dict.fromkeys(sources))[:40]
@@ -365,26 +456,80 @@ def trace_numbers(ticket: str, value: str, seen: list[dict]) -> dict[str, Any]:
     return out
 
 
+ROUTES = {
+    "data": "XBatch data, a screen, a report or the SAP interface is missing, wrong, stuck or failing",
+    "how_to": "The requester asks how to do something in XBatch",
+    "access": "Login, password, permission or user account problem",
+    "infrastructure": "The system is slow, down or not reachable for everyone",
+    "hardware": "Printer, scanner, PC, network or other device problem",
+    "change_request": "A request to change, add or customise how XBatch works",
+}
+SCOPE_TYPES = ["screen", "table", "view", "procedure", "event", "api"]
+SCOPE_MIN = 0.30  # TypeSafe skill-suggestion cookbook: nothing fits below 0.30
+
+
+def understand(ticket: str) -> dict[str, Any]:
+    """What kind of escalation this is (route). One call; code acts on the answer."""
+    a = jev({"ticket": ticket}, {"route": {"type": "choice", "criteria": ROUTES,
+                                           "instructions": "What is the requester's problem about?"}}).get("route") or {}
+    return {"route": a.get("choice") or "data", "confidence": a.get("confidence")}
+
+
+def scope(world: World, ticket: str) -> list[dict[str, Any]]:
+    """User words -> world pages: GBrain hybrid search gives candidates, Jev scores each one
+    (reranking), the best few above the gate are the scope (skill-suggestion pattern)."""
+    hits = world.brain.call("search", query=ticket, limit=30, types=SCOPE_TYPES, source_id="xstudio-knowledge")
+    hits = hits if isinstance(hits, list) else hits.get("results") or hits.get("hits") or []
+    pages = [world.page(h["slug"]) for h in hits if h.get("slug", "").startswith("knowledge/world/")]
+    pages = list({p["slug"]: p for p in pages}.values())
+    if not pages:
+        return []
+    cands = {f"c{i}": f"{p['kind']} {p['title']}: {p['summary']}" for i, p in enumerate(pages)}
+    answers = jev({"ticket": ticket, "candidates": cands},
+                  {f"fit_{k}": {"type": "noul", "instructions": {
+                      "task": "Is this the screen, report, table or process the requester is talking about, "
+                              "or where the data they describe is kept?",
+                      "ticket_path": "ticket", "candidate_path": f"candidates.{k}"}} for k in cands})
+    scored = sorted(((float((answers.get(f"fit_{k}") or {}).get("noul") or 0), p) for k, p in zip(cands, pages)),
+                    key=lambda x: -x[0])
+    return [dict(p, fit=round(s, 2)) for s, p in scored[:5] if s >= SCOPE_MIN]
+
+
 def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
     started = time.perf_counter()
     world = world or World()
-    conn = conn or entity_resolver._connect()
+    conn = conn or connect()
     conn.timeout = QUERY_TIMEOUT_S * 3
-    entities = resolve(ticket, conn)
-    if not entities:
-        return {"entities": [], "trail": [], "stopped": "no identifier from the ticket exists in XBatch",
+    intent = understand(ticket)
+    if intent["route"] != "data":  # not an L2 data investigation: route it
+        return {"route": intent["route"], "data": False, "trail": [], "stopped": f"routed: {intent['route']}",
                 "seconds": round(time.perf_counter() - started, 1)}
-    value = entities[0]["value"]
+    entities = subject(ticket, resolve(ticket, conn))
+    if spans(ticket) and not entities:  # names an identifier XBatch does not hold: ask, don't guess
+        return {"route": "data", "data": True, "entities": [], "trail": [],
+                "stopped": "no identifier from the ticket exists in XBatch", "seconds": round(time.perf_counter() - started, 1)}
+    since = window(ticket)
+    value = entities[0]["value"] if entities else None
     trail: list[dict[str, Any]] = []
     visited: set[str] = set()
-    tables, frontier = survey(world, entities, conn)
-    observed = [t for t in tables if t["obs"].get("observed", True)]
-    for t, role in zip(observed, judge_all(ticket, [t["obs"]["text"] for t in observed])):
-        visited.add(t["slug"])
+    if entities:
+        tables, frontier = survey(world, entities, conn)
+        starts = [{"slug": t["slug"], "node": t["table"], "kind": "table", "value": t["value"], "obs": t["obs"]} for t in tables]
+    else:  # no identifier: scope from the requester's words, evidence from activity and screen filters
+        tables, frontier = [], []
+        starts = [{"slug": p["slug"], "node": p["title"], "kind": p["kind"], "value": None, "obs": health(p, since)}
+                  for p in scope(world, ticket)]
+        if not starts:
+            return {"route": "data", "data": True, "entities": [], "trail": [], "since": str(since),
+                    "stopped": "nothing in the world matches the requester's words: ask them which screen or report",
+                    "seconds": round(time.perf_counter() - started, 1)}
+    observed = [s for s in starts if s["obs"].get("observed", True)]
+    for s, role in zip(observed, judge_all(ticket, [s["obs"]["text"] for s in observed])):
+        visited.add(s["slug"])
         if role["role"] != "unrelated":
-            trail.append({"step": "survey", "node": t["table"], "kind": "table", "value": t["value"],
-                          "observation": t["obs"], **role})
-            frontier += step_options(world, t["slug"], t["obs"], t["value"], conn)
+            trail.append({"step": "survey", "node": s["node"], "kind": s["kind"], "value": s["value"],
+                          "observation": s["obs"], **role})
+            frontier += step_options(world, s["slug"], s["obs"], s["value"], conn)
     stopped = f"step limit {MAX_STEPS}"
     for _ in range(MAX_STEPS):
         options = [o for o in frontier if o["slug"] not in visited]  # mode 13
@@ -397,7 +542,7 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
             break
         visited.add(pick["slug"])
         node = world.page(pick["slug"])
-        obs = look(node, pick["value"], conn)
+        obs = look(node, pick["value"], conn, since)
         if obs.get("columns"):
             keep = pick_columns(ticket, obs)
             obs["text"] += "; " + "; ".join(f"{c}={obs['columns'][c]}" for c in keep)
@@ -406,10 +551,10 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
         trail.append({"step": pick["label"], "node": node["title"], "kind": node["kind"], "value": pick["value"],
                       "observation": obs, **role})
         frontier += step_options(world, pick["slug"], obs, pick["value"], conn)
-    seen = [{"node": t["table"], "obs": t["obs"]} for t in tables] + [{"node": s["node"], "obs": s["observation"]} for s in trail]
-    numbers = trace_numbers(ticket, value, seen)
-    return {"entities": entities, "trail": trail, "stopped": stopped, "numbers": numbers,
-            "surveyed": len(tables), "seconds": round(time.perf_counter() - started, 1)}
+    seen = [{"node": s["node"], "obs": s["obs"]} for s in starts] + [{"node": s["node"], "obs": s["observation"]} for s in trail]
+    numbers = trace_numbers(ticket, value or "", seen)
+    return {"route": "data", "data": True, "entities": entities, "since": str(since), "trail": trail, "stopped": stopped,
+            "numbers": numbers, "surveyed": len(starts), "seconds": round(time.perf_counter() - started, 1)}
 
 
 if __name__ == "__main__":

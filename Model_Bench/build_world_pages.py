@@ -73,6 +73,20 @@ def build(world: dict) -> tuple[dict[str, str], list[dict]]:
         lines += [f"- {c}" for c in obj["columns"]]
         pages[me] = front(obj["kind"], name, built) + "\n".join(lines) + "\n"
 
+    # Screens: the names users use, the view behind each, and the filter that hides rows.
+    for s in world.get("screens", []):
+        me = page_path("screen", s["menu"])
+        n = 1
+        while me in pages:  # the same menu name can appear under several parents
+            n += 1
+            me = page_path("screen", f"{s['menu']}-{n}")
+        lines = [f"XStudio screen (menu '{s['menu']}', page {s['page']}, list view {s['list_view']})."]
+        if s["view"]:
+            lines.append(f"Shows rows of {s['view']}.")
+            link(me, page_path("view", s["view"]), "shows", s["filter"] or "")
+        lines.append(f"Filter: only rows where {s['filter']}" if s["filter"] else "No filter: shows every row of its view.")
+        pages[me] = front("screen", s["menu"], built) + "\n".join(lines) + "\n"
+
     # Procedures.
     for name, p in sorted(world["procedures"].items()):
         me = page_path("procedure", name)
