@@ -118,6 +118,9 @@ WSL helpers used this session (scratch copies are in Claude's scratchpad; recrea
 
 ### 7. Live state at handoff (17:10 IST) — first thing to check
 
+**Update:** SQL answered again at 16:48 IST and the preflight passed (`{"preflight": "ok"}`), so the scout
+resumes claiming on its own. Step 8.1 below is done; start at 8.2 (verify the first processed ticket).
+
 - **The SQL server `10.2.6.204` stopped answering logins ~16:30 IST** (TCP 1433 open; every client,
   ODBC 18 and unencrypted SqlClient, Windows and WSL, times out in prelogin). Nothing of ours was
   running. Earlier in the day it intermittently reset TLS prelogin handshakes. Needs whoever runs that
