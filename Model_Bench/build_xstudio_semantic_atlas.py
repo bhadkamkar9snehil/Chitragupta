@@ -220,106 +220,15 @@ def _bounded_block_pages(blocks: list[list[str]], max_body_bytes: int = 24_000) 
     return pages
 
 
-def render_gbrain_pages(atlas: dict[str, Any]) -> dict[str, str]:
-    """Render compact searchable pages; the model never receives them wholesale."""
-    pages: dict[str, str] = {}
-    for database, data in atlas["databases"].items():
-        schema_groups: dict[str, list[list[str]]] = {}
-        for name, item in data["objects"].items():
-            columns = ", ".join(f"{col['name']}:{col['type']}" for col in item["columns"])
-            key = name[0].lower() if name[:1].isalnum() else "other"
-            schema_groups.setdefault(key, []).append([f"## dbo.{name}", columns or "No exported columns.", ""])
-        for key, blocks in schema_groups.items():
-            for part, lines in enumerate(_bounded_block_pages(blocks), start=1):
-                header = [
-                    "---", "type: note", "subtype: schema-reference", f"database: {database}",
-                    "authority: static-advisory", "---",
-                    f"# {database} schema atlas: {key.upper()} part {part}", "",
-                    "Static routing knowledge generated from the authoritative export. Current ticket facts require live SQL.", "",
-                ]
-                pages[f"{database.lower()}-schema-{key}-{part:02d}-atlas.md"] = "\n".join(header + lines).rstrip() + "\n"
-
-        sp_groups: dict[str, list[list[str]]] = {}
-        for name, item in data["procedures"].items():
-            params = ", ".join(f"@{p['name']}:{p['type']}" for p in item["parameters"]) or "none"
-            refs = ", ".join(item["referenced_objects"]) or "none detected"
-            key = name[0].lower() if name[:1].isalnum() else "other"
-            sp_groups.setdefault(key, []).append([
-                f"## dbo.{name}", f"Safety: {item['safety']}", f"Parameters: {params}",
-                f"Referenced objects: {refs}", "",
-            ])
-        for key, blocks in sp_groups.items():
-            for part, lines in enumerate(_bounded_block_pages(blocks), start=1):
-                header = [
-                    "---", "type: note", "subtype: procedure-reference", f"database: {database}",
-                    "authority: static-advisory", "---",
-                    f"# {database} stored-procedure atlas: {key.upper()} part {part}", "",
-                    "Safety is fail-closed. Only READ_ONLY_REVIEWED procedures may be exposed as diagnostics.", "",
-                ]
-                pages[f"{database.lower()}-procedure-{key}-{part:02d}-atlas.md"] = "\n".join(header + lines).rstrip() + "\n"
-
-    relationship_groups: dict[str, list[list[str]]] = {}
-    for edge in atlas.get("relationships", []):
-        source = edge["source"]
-        target = edge["target"]
-        key = re.sub(r"[^a-z0-9]+", "-", source["object"].casefold()).strip("-") or "other"
-        relationship_groups.setdefault(key, []).append([
-            f"## {source['object']}.{source['attribute']} -> {target['object']}.{target['attribute']}",
-            f"Databases: {source['database']} -> {target['database']}",
-            f"Cardinality: {edge['cardinality']['source']} -> {edge['cardinality']['target']}",
-            f"Relation: {edge.get('name') or edge['id']}",
-            f"Provenance: {edge['provenance']['kind']} ({edge['provenance']['source_row_count']} source row(s))",
-            "",
-        ])
-    for key, blocks in relationship_groups.items():
-        for part, lines in enumerate(_bounded_block_pages(blocks), start=1):
-            header = [
-                "---", "type: note", "subtype: configured-relationship",
-                "database: XStudio_Configuration_Xbatch",
-                "authority: configuration-observed", "---",
-                f"# XBatch configured relationships: {key} part {part}", "",
-                "Configured joins and cardinality. They are routing knowledge; verify current ticket rows live.", "",
-            ]
-            pages[f"xstudio_xbatch-relationship-{key}-{part:02d}-atlas.md"] = (
-                "\n".join(header + lines).rstrip() + "\n"
-            )
-
-    for recipe in atlas.get("recipes", []):
-        evidence = ", ".join(item["category"] for item in recipe.get("required_evidence", [])) or "none"
-        probes = ", ".join(item["tool"] for item in recipe.get("probes", [])) or "none"
-        lines = [
-            "---", "type: note", "subtype: investigation-recipe", f"route: {recipe['route']}",
-            "authority: harness-contract", "---", f"# {recipe['description']}", "",
-            f"Recipe ID: {recipe['recipe_id']}", f"Typed probes: {probes}",
-            f"Required evidence: {evidence}", "", "## Interpretation rules",
-            *[f"- {item}" for item in recipe.get("interpretation_rules", [])],
-            "", "## Stop conditions", *[f"- {item}" for item in recipe.get("stop_conditions", [])],
-            "", "## Escalation conditions", *[f"- {item}" for item in recipe.get("escalation_conditions", [])], "",
-        ]
-        pages[f"xstudio_xbatch-recipe-{recipe['route'].replace('_', '-')}.md"] = "\n".join(lines).rstrip() + "\n"
-    return pages
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=ROOT / "Knowledge" / "xstudio_semantic_atlas.json")
-    parser.add_argument("--markdown-dir", type=Path, default=ROOT / "Knowledge" / "atlas")
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     rendered = json.dumps(build(), indent=2, sort_keys=True) + "\n"
-    pages = render_gbrain_pages(build())
     if args.check:
-        json_ok = args.output.exists() and args.output.read_text(encoding="utf-8") == rendered
-        pages_ok = all((args.markdown_dir / name).exists() and
-                       (args.markdown_dir / name).read_text(encoding="utf-8") == content
-                       for name, content in pages.items())
-        return 0 if json_ok and pages_ok else 1
+        return 0 if args.output.exists() and args.output.read_text(encoding="utf-8") == rendered else 1
     args.output.write_text(rendered, encoding="utf-8", newline="\n")
-    args.markdown_dir.mkdir(parents=True, exist_ok=True)
-    for stale in args.markdown_dir.glob("*-atlas.md"):
-        stale.unlink()
-    for name, content in pages.items():
-        (args.markdown_dir / name).write_text(content, encoding="utf-8", newline="\n")
     return 0
 
 

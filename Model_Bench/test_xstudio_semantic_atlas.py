@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from Model_Bench.build_xstudio_semantic_atlas import build, load_relationships, render_gbrain_pages
+from Model_Bench.build_xstudio_semantic_atlas import build, load_relationships
 from Model_Bench.export_xbatch_relationships import trust_server_certificate_value
 
 
@@ -82,24 +82,6 @@ class SemanticAtlasTests(unittest.TestCase):
         self.assertEqual(10, len(self.atlas["domains"]))
         self.assertEqual(10, len(self.atlas["recipes"]))
         self.assertEqual("xbatch.sap-posting.v1", self.atlas["domains"]["sap_posting"]["recipe_id"])
-
-    def test_gbrain_pages_include_relationships_and_recipe_contracts(self):
-        pages = render_gbrain_pages(self.atlas)
-        relationship_text = "\n".join(value for key, value in pages.items() if "relationship" in key)
-        recipe_text = "\n".join(value for key, value in pages.items() if "recipe" in key)
-        self.assertIn("Billet_Inventory.GradeID", relationship_text)
-        self.assertIn("XBatch_Material_Grade_Mst_Tbl.ID", relationship_text)
-        self.assertIn("xbatch.sap-posting.v1", recipe_text)
-        self.assertIn("Required evidence", recipe_text)
-
-    def test_gbrain_pages_use_canonical_type_and_stay_bounded(self):
-        pages = render_gbrain_pages(self.atlas)
-        self.assertTrue(pages)
-        self.assertTrue(all("type: note" in content for content in pages.values()))
-        self.assertLessEqual(
-            max(len(content.encode("utf-8")) for content in pages.values()),
-            30_000,
-        )
 
 
 if __name__ == "__main__":
