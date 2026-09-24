@@ -714,22 +714,17 @@ class PipelineContractTests(unittest.TestCase):
             mod._context_budget_for_mode("COMPOSE_ONLY"),
         )
 
-    def test_jev_disabled_still_builds_deterministic_context_chunks(self):
+    def test_jev_disabled_still_builds_context_chunks(self):
         with patch.dict(
             mod.os.environ,
             {"CHITRAGUPTA_JEV_FIRST_INVESTIGATION_ENABLED": "0"},
             clear=False,
-        ), patch.object(mod, "_run_jev_workflow") as jev, patch.object(
-            mod, "_run_xstudio_bridge"
-        ) as probe:
+        ), patch.object(mod, "_run_jev_workflow") as jev:
             package = mod._jev_first_investigation(
                 ticket={"HeatNo": "H1"},
                 ticket_context={"TicketNo": "T1", "HeatNo": "H1", "BriefDetails": "heat issue"},
                 run_id="r1",
                 ticket_id="t1",
-                suggested_tables=[
-                    {"database": "XStudio_Xbatch", "table": "dbo.Heat_A", "matched_columns": ["HeatNo"]},
-                ],
                 kb_retrieval={
                     "solutions": [{"kb_id": "solution:1", "title": "Known issue"}],
                     "ticket_characterization": {},
@@ -739,7 +734,6 @@ class PipelineContractTests(unittest.TestCase):
                 prior_attempts=[{"ProcessStatus": "FAILED"}],
             )
         jev.assert_not_called()
-        probe.assert_not_called()
         self.assertFalse(package["enabled"])
         self.assertEqual(package["local_model_scope"], "FOCUSED_REASONING")
         self.assertEqual(package["max_additional_live_reads"], 3)
@@ -747,7 +741,6 @@ class PipelineContractTests(unittest.TestCase):
         self.assertIn("ticket", chunk_ids)
         self.assertIn("routing", chunk_ids)
         self.assertIn("prior_ledger", chunk_ids)
-        self.assertIn("candidate_backlog", chunk_ids)
         view = mod._compile_model_context(
             package["context_chunks"], package["assessment"], budget_chars=5000
         )

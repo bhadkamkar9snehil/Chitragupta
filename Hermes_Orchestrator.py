@@ -257,119 +257,6 @@ def build_query_mechanically(table: str, columns: List[str], where: Optional[str
     return result
 
 
-_STOPWORDS = {
-    "the", "a", "an", "is", "was", "were", "are", "be", "been", "and", "or",
-    "but", "for", "with", "this", "that", "these", "those", "on", "in", "at",
-    "to", "of", "it", "its", "as", "by", "from", "has", "have", "had", "not",
-    "no", "does", "did", "do", "why", "what", "when", "where", "how", "which",
-    "there", "here", "any", "some", "all", "than", "then", "so", "if", "into",
-}
-_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
-
-
-def _tokenize(text: str) -> List[str]:
-    """Lowercase word tokens, splitting on non-alphanumerics (camelCase/
-    underscore identifiers included), stopwords and very short tokens
-    dropped. Deliberately dumb -- no stemming/embeddings -- because this
-    only needs to overlap with equally-dumb table/column name tokens
-    below, not do real semantic matching."""
-    return [t.lower() for t in _TOKEN_RE.findall(text or "") if len(t) > 2 and t.lower() not in _STOPWORDS]
-
-
-def _split_identifier(name: str) -> List[str]:
-    """dbo.XBatch_Delay_Analysis_Vw -> ['xbatch', 'delay', 'analysis', 'vw'];
-    handles underscore and camelCase boundaries."""
-    name = name.split(".")[-1]
-    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)  # camelCase -> camel_Case
-    return [p.lower() for p in re.split(r"[_\W]+", name) if p]
-
-
-_DOMAIN_INDEX_PATH = Path(__file__).parent / "Knowledge" / "table_keyword_index.json"
-
-
-def suggest_tables_mechanically(text: str, top: int = 8, database: Optional[str] = None) -> Dict[str, Any]:
-    """Narrow ~1200 real tables down to the handful actually relevant to a
-    ticket's own text, mechanically -- no LLM, no embeddings. Exists because
-    dumping the full schema_allowlist.json at a 9B model (or even listing
-    all ~1200 names) wastes most of its context on irrelevant tables and
-    increases the chance it latches onto a wrong-but-plausible one; this
-    project already root-caused hallucinated identifiers as a real failure
-    mode (see build_query_mechanically's docstring). Scoring is deliberately
-    transparent (token overlap with table/column names, boosted by an
-    optional curated domain-keyword index), not a black box -- the caller
-    can always fall back to --find-sql-objects or --build-query if a
-    relevant table isn't in the top N.
-
-    Returns {"ok": True, "candidates": [{"table", "database", "score",
-    "matched_columns"}]} sorted by score descending, or {"ok": False,
-    "error": ...} if the schema allowlist itself is missing.
-    """
-    if not _SCHEMA_ALLOWLIST_PATH.exists():
-        return {"ok": False, "error": "schema_allowlist.json not found", "candidates": []}
-    allowlist = json.loads(_SCHEMA_ALLOWLIST_PATH.read_text(encoding="utf-8"))
-
-    domain_index: Dict[str, List[str]] = {}
-    if _DOMAIN_INDEX_PATH.exists():
-        try:
-            domain_index = json.loads(_DOMAIN_INDEX_PATH.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            domain_index = {}
-
-    query_tokens = set(_tokenize(text))
-    if not query_tokens:
-        return {"ok": True, "candidates": [], "note": "No usable keywords extracted from input text."}
-
-    # Domain-index keyword hits contribute bonus candidate tables even if
-    # the ticket text never literally contains the table/column name itself
-    # (e.g. "unattributed stoppage" -> a curated hint pointing at
-    # XBatch_Delay_Analysis_Vw, whose own name shares no tokens with that
-    # phrase at all).
-    text_lower = f" {text.lower()} "
-    domain_boost: Dict[str, int] = {}
-    for keyword, tables in domain_index.items():
-        keyword_lower = keyword.lower()
-        # Single-word keyword: token-set match (handles punctuation/case
-        # variance). Multi-word keyword phrase: substring match against the
-        # raw text (a token set has no notion of adjacency/order).
-        matched = (keyword_lower in query_tokens) if " " not in keyword_lower else (keyword_lower in text_lower)
-        if matched:
-            for t in tables:
-                domain_boost[t.lower()] = domain_boost.get(t.lower(), 0) + 3
-
-    scored: List[tuple] = []
-    for db, tables in allowlist.items():
-        if database and db.lower() != database.lower():
-            continue
-        for qname, cols in tables.items():
-            name_tokens = set(_split_identifier(qname))
-            name_overlap = len(query_tokens & name_tokens)
-            # Score by the SET of distinct query tokens matched across all
-            # columns, not the count of matching columns -- otherwise a
-            # table whose columns all share one repeated prefix word (e.g.
-            # 20 columns all starting 'Rebar_Quality_Data_') racks up a
-            # huge score from a single common token, drowning out a more
-            # specifically relevant table with fewer, more varied matches.
-            # Confirmed live: 'delay'/'heat'/'reason' ticket text matched
-            # Temp_Rebar_Quality_Data_* highest purely via the word 'data'
-            # repeated across every column, ahead of the actually-relevant
-            # ShiftDelayEntry tables.
-            matched_columns = []
-            matched_col_tokens: set = set()
-            for c in cols:
-                c_tokens = set(_split_identifier(c)) & query_tokens
-                if c_tokens:
-                    matched_col_tokens |= c_tokens
-                    matched_columns.append(c)
-            score = name_overlap * 5 + len(matched_col_tokens) * 2 + domain_boost.get(qname.lower(), 0)
-            if score > 0:
-                scored.append((score, db, qname, matched_columns[:10]))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    candidates = [
-        {"table": qname, "database": db, "score": score, "matched_columns": cols}
-        for score, db, qname, cols in scored[:top]
-    ]
-    return {"ok": True, "candidates": candidates}
 
 # A ticket Description/reply field can carry an inline base64 image
 # (<img src="data:image/png;base64,...">) pasted by a user in the source
@@ -977,8 +864,7 @@ _WRITE_KEYWORDS = re.compile(
 )
 
 
-def build_investigation_bundle(client: "HermesL2Client", ticket_id: str,
-                                top_tables: int = 8) -> Dict[str, Any]:
+def build_investigation_bundle(client: "HermesL2Client", ticket_id: str) -> Dict[str, Any]:
     """Everything an investigation needs to START, in ONE call.
 
     Why this exists: token cost per ticket is driven by TURN COUNT, not by
@@ -1013,20 +899,6 @@ def build_investigation_bundle(client: "HermesL2Client", ticket_id: str,
         # get_ticket_context shape varies by SP version; accept either the
         # row directly or a wrapper containing it.
         ticket_row = t.get("ticket") if isinstance(t.get("ticket"), dict) else t
-
-    # --- candidate tables, scored against this ticket's own words ---------
-    try:
-        text = " ".join(str(ticket_row.get(k) or "") for k in
-                        ("BriefDetails", "Description", "ProblemCategory", "SuspectedCause"))
-        src = (ticket_row.get("SourceSystem") or "").strip().lower()
-        db = "XStudio_Xbatch" if src in ("xbatch", "xstudio_xbatch") else (
-             "XStudio_Helpdesk" if src in ("helpdesk", "xstudio_helpdesk") else None)
-        bundle["suggested_tables"] = (
-            suggest_tables_mechanically(text, top=top_tables, database=db).get("candidates", [])
-            if text.strip() else []
-        )
-    except Exception as e:
-        bundle["suggested_tables"] = {"error": f"{type(e).__name__}: {e}"}
 
     # --- what a PRIOR attempt on this same ticket already established -----
     try:
@@ -1300,7 +1172,7 @@ def _cli_save_ledger(args: argparse.Namespace, parser: argparse.ArgumentParser, 
 
 def _cli_investigate_bundle(args: argparse.Namespace, client: "HermesL2Client") -> None:
     print(json.dumps(
-        build_investigation_bundle(client, args.investigate_bundle, top_tables=8),
+        build_investigation_bundle(client, args.investigate_bundle),
         indent=2, default=str,
     ))
 
@@ -1570,14 +1442,12 @@ def build_parser() -> argparse.ArgumentParser:
                               "--publish-response (stored in the same InvestigationJson column "
                               "on the terminal response row).")
     parser.add_argument("--investigate-bundle", default=None, metavar="TICKET_ID",
-                         help="ONE call returning everything an investigation needs to start: "
-                              "ticket context, mechanically-narrowed candidate tables with real "
-                              "column names, any prior attempt's ledger, recent prior attempts, "
-                              "and known solution articles for the route. Use this INSTEAD of "
-                              "chaining --get-ticket-context/--suggest-tables/--get-ledger/"
-                              "--search-solutions: each separate tool call resends the entire "
-                              "conversation, which is what actually drives token cost per ticket. "
-                              "Sections degrade independently -- a failure in one returns an "
+                         help="ONE call returning the current ticket plus prior investigation state. "
+                              "Schema discovery is owned by world_walk and reusable solution retrieval "
+                              "is owned by kb_retrieval; this bundle does not duplicate either. "
+                              "Use it instead of chaining context/history calls: each separate tool call "
+                              "resends the conversation. Sections degrade independently -- a failure "
+                              "in one returns an "
                               "'error' note for that key without losing the rest.")
     parser.add_argument("--reply-text", default=None)
     parser.add_argument("--problem-summary", default=None)

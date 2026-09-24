@@ -1391,7 +1391,6 @@ def _make_context_chunks(
     routing_context: dict[str, Any],
     prior_ledger: Any,
     prior_attempts: Any,
-    candidates: list[dict[str, Any]],
     known_solutions: list[dict[str, Any]],
     evidence_plan: dict[str, Any],
     probes: list[dict[str, Any]],
@@ -1431,11 +1430,6 @@ def _make_context_chunks(
     add(
         "evidence_plan", "jev_plan", "SEMANTIC_GUIDANCE", "Current Jev evidence plan",
         "evidence_plan", evidence_plan, fallback_level=1,
-    )
-    add(
-        "candidate_backlog", "schema_candidates", "DISCOVERY_CANDIDATES",
-        "Deterministic real table/view candidates", "candidate_backlog", candidates,
-        fallback_level=0, recover_with="xstudio_read_table",
     )
     for index, solution in enumerate(known_solutions[:8]):
         compact = _solution_context_compact(solution)
@@ -1695,13 +1689,11 @@ def _jev_first_investigation(
     ticket_context: dict[str, Any],
     run_id: str | None,
     ticket_id: str,
-    suggested_tables: list[dict[str, Any]],
     kb_retrieval: dict[str, Any],
     prior_ledger: Any = None,
     prior_attempts: Any = None,
 ) -> dict[str, Any]:
     """Classify -> choose real evidence -> gather bounded live data -> assess it."""
-    candidates = [row for row in suggested_tables if isinstance(row, dict)][:12]
     known_solutions = [
         row for row in (kb_retrieval.get("solutions") or []) if isinstance(row, dict)
     ][:8]
@@ -1719,7 +1711,6 @@ def _jev_first_investigation(
             routing_context=routing_context,
             prior_ledger=prior_ledger,
             prior_attempts=prior_attempts,
-            candidates=candidates,
             known_solutions=known_solutions,
             evidence_plan={"ok": False, "reason": "Jev-first investigation disabled"},
             probes=[],
@@ -1763,7 +1754,6 @@ def _jev_first_investigation(
         routing_context=routing_context,
         prior_ledger=prior_ledger,
         prior_attempts=prior_attempts,
-        candidates=candidates,
         known_solutions=known_solutions,
         evidence_plan=plan,
         probes=probes,
@@ -1786,7 +1776,6 @@ def _jev_first_investigation(
         "route_candidates": routing_context["route_candidates"],
         "prior_ledger": prior_ledger,
         "prior_attempts": prior_attempts,
-        "candidate_backlog": candidates,
         "known_solutions": known_solutions,
         "evidence_plan": plan,
         "live_probes": probes,
@@ -3601,13 +3590,11 @@ def _investigation_bundle(
     bundle = _load_investigation_bundle(args, ticket_id, fallback_ticket)
     kb = _as_dict(_run_kb_retrieval(args, fallback_ticket, ticket_id=ticket_id, run_id=run_id))
     bundle["kb_retrieval"] = kb
-    suggested_tables = bundle.get("suggested_tables")
     investigation = _as_dict(_jev_first_investigation(
         ticket=fallback_ticket,
         ticket_context=_as_dict(bundle.get("ticket")) or fallback_ticket,
         run_id=run_id,
         ticket_id=ticket_id,
-        suggested_tables=suggested_tables if isinstance(suggested_tables, list) else [],
         kb_retrieval=kb,
         prior_ledger=bundle.get("prior_ledger"),
         prior_attempts=bundle.get("prior_attempts"),
