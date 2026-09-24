@@ -44,11 +44,11 @@ def main() -> int:
     only = set(sys.argv[1:])
     cases = [json.loads(l) for l in (HERE / "general_cases.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
     cases = [c for c in cases if not only or c["id"] in only]
-    world, passed = world_walk.World(), 0
+    world, conn, passed = world_walk.World(), world_walk.connect(), 0
     for case in cases:
         start = time.perf_counter()
         try:
-            got = world_walk.walk(case["text"], world)
+            got = world_walk.walk(case["text"], world, conn)
         except Exception as exc:  # the thermometer reports, never crashes
             got = {"trail": [], "error": f"{type(exc).__name__}: {exc}"}
         notes = score(case["expect"], got)

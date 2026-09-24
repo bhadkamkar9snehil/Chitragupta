@@ -56,10 +56,11 @@ def main() -> int:
     cases = [c for c in cases if not only or c["id"] in only]
     passed = 0
     world = world_walk.World()  # one gbrain serve session for all cases
+    conn = world_walk.connect()  # and one SQL connection
     for case in cases:
         start = time.perf_counter()
         try:
-            got = world_walk.walk(case["text"], world)
+            got = world_walk.walk(case["text"], world, conn)
         except Exception as exc:  # the thermometer reports, never crashes
             got = {"trail": [], "error": f"{type(exc).__name__}: {exc}"}
         ok, notes = score(case["expect"], got)

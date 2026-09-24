@@ -68,13 +68,16 @@ in `Complaint_Mst_Tbl`). The L2 engineer then:
 
 | Index | What it answers | Built from | Status |
 |---|---|---|---|
-| World graph (GBrain) | What is this, what touches it | catalog, procedure code, runtime log, events, API log | built, E2E 19/19 |
+| World graph (GBrain, 2,406 pages, 4,805 typed links) | What is this, what touches it | catalog, procedure code, runtime log, events, API log | built, E2E 19/19 |
 | Keys + identifiers | Where does this value live | shared values, membership, distinctness | built |
-| Log index | What ran for this value | 216k distinct procedure calls | built |
-| **Screen layer** | Which data does "the X screen" show, with which filter | XStudio menu/page/grid/list-view config | to build |
-| **Health index** | Is this table/procedure/interface normal right now | per-day rows, last write, per-day errors, event flags, baselines | to build |
-| **Time log index** | What ran and failed in a time window | log grouped by procedure and day | to build |
+| Value index (`.cache/world_index.sqlite`) | Which columns hold this exact value | DISTINCT scan of 349 key columns, 1.23M values | built (resolution 30-80 s -> 1-28 ms) |
+| Log index (same file) | What ran for this value | 216k distinct procedure calls | built |
+| Screen layer | Which data does "the X screen" show, with which filter | XStudio list views (579; 270 with filters) + menus | built |
+| Activity index (same file) | Is this table/procedure normal: last rows vs usual cadence | rows per table per day, log steps/errors per procedure per day | built |
 | Lessons (GBrain takes + timelines) | What we learned last time | resolved tickets | to build |
+
+Tests on 2026-09-24: identifier tickets 8/8 (`run_walk.py`), general L1-escalation tickets 8/8 with the
+key fact required in the answer (`run_general.py`), identifier resolution 12/12 (`run_entity.py`).
 
 `XStudio_DataSource_Mst_Tbl` stores database credentials in plain text; the builders never copy
 that table into the world.

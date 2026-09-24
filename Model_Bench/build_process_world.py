@@ -53,13 +53,23 @@ ACCEPTANCE = [
 ]
 
 
-def connect() -> pyodbc.Connection:
-    conn = pyodbc.connect(
-        "DRIVER={ODBC Driver 18 for SQL Server};SERVER=" + os.environ.get("MSSQL_MCP_SERVER", "10.2.6.204")
-        + ";UID=" + os.environ.get("MSSQL_MCP_USER", "sa") + ";PWD=" + os.environ["MSSQL_MCP_PASSWORD"]
-        + f";TrustServerCertificate=yes;Connection Timeout=120;DATABASE={DB};", autocommit=True)
-    conn.timeout = 0  # offline build: the 4.8M-row log aggregation takes minutes
-    return conn
+def connect(attempts: int = 4) -> pyodbc.Connection:
+    """The shared SQL server intermittently resets the TLS prelogin handshake (seen 2026-09-24:
+    minutes of 'prelogin'/'login timeout' failures while other clients were fine); retry with backoff."""
+    import time
+
+    for attempt in range(attempts):
+        try:
+            conn = pyodbc.connect(
+                "DRIVER={ODBC Driver 18 for SQL Server};SERVER=" + os.environ.get("MSSQL_MCP_SERVER", "10.2.6.204")
+                + ";UID=" + os.environ.get("MSSQL_MCP_USER", "sa") + ";PWD=" + os.environ["MSSQL_MCP_PASSWORD"]
+                + f";TrustServerCertificate=yes;Connection Timeout=30;DATABASE={DB};", autocommit=True)
+            conn.timeout = 0  # offline build: the 4.8M-row log aggregation takes minutes
+            return conn
+        except pyodbc.OperationalError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(10 * (attempt + 1))
 
 
 def rows(cur, sql: str, *params) -> list[dict]:
