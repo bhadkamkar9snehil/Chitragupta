@@ -1,3 +1,5 @@
+> **Superseded for live L2 investigation (2026-09-24).** The handcrafted deterministic route/context path described here was retired by Ponytail cleanup issue #10. Current first-pass and rework investigation both use `Model_Bench/world_walk.py`; this file is retained only as historical design context.
+
 # Deterministic Knowledge Harness Design
 
 **Status:** Proposed  

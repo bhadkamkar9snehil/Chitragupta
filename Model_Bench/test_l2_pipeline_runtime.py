@@ -362,8 +362,8 @@ class PipelineContractTests(unittest.TestCase):
                 patch.object(mod, "_build_and_persist_stage_context", return_value=("", "", "/tmp/r.json")), \
                 patch.object(mod, "_load_context_receipt", return_value=self.ENVELOPE), \
                 patch.object(mod, "_ticket_snapshot", return_value={}), \
-                patch.object(mod, "_persist_rejected_ledger", return_value=""), \
-                patch.object(mod, "_dispatch_route_context", return_value=""), \
+                patch.object(mod, "_rejected_attempt_context", return_value=""), \
+                patch.object(mod, "_run_world_walk", return_value={}), \
                 patch.object(mod, "list_tasks", return_value=[]):
             if builder == "review":
                 chunks = mod.stage_context_chunks(mod.default_args(), stage="review", source_task=source,
@@ -437,97 +437,6 @@ class PipelineContractTests(unittest.TestCase):
             {call[call.index("--assignee") + 1] for call in calls},
             mod.INVESTIGATOR_PROFILES | mod.REVIEWER_PROFILES,
         )
-
-    def test_deterministic_route_extracts_heat_from_ticket_entities(self):
-        ticket = {"ProblemCategory": "SAP_INTEGRATION", "SourceSystem": "Xbatch",
-                  "ExtractedEntitiesJson": json.dumps({"HeatNo": "H1602522"})}
-        route = mod.deterministic_ticket_route(ticket)
-        self.assertEqual(route["domain"], "heat_sap")
-        self.assertEqual(route["heat"], "1602522")
-        self.assertEqual(route["recommended_tool"], "xstudio_heat_context")
-
-    def test_deterministic_route_recognizes_billet_genealogy(self):
-        route = mod.deterministic_ticket_route({
-            "ProblemCategory": "PRODUCTION_STATE",
-            "ConversationSummary": "Billet strand sequence is out of order for Heat H99707",
-            "ExtractedEntitiesJson": {"HeatNo": "H99707"},
-        })
-        self.assertEqual("billet_genealogy", route["domain"])
-        self.assertEqual("99707", route["heat"])
-        self.assertEqual("xstudio_heat_context", route["recommended_tool"])
-
-    def test_deterministic_route_maps_inventory_api_ticket_without_heat(self):
-        ticket = {
-            "ProblemCategory": "SAP_INTEGRATION",
-            "BriefDetails": "SAP inventory sync missing for Plant/Storage on Batch B99402",
-            "Description": "Was the inventory-sync API call ever made?",
-            "ExtractedEntitiesJson": json.dumps({"Batch": "B99402"}),
-        }
-        route = mod.deterministic_ticket_route(ticket)
-        self.assertEqual("sap_api", route["domain"])
-        self.assertEqual("Inventory", route["api_type"])
-        self.assertEqual("B99402", route["identifier"])
-        self.assertEqual("xstudio_sap_api_context", route["recommended_tool"])
-
-    def test_sap_production_posting_with_work_order_routes_to_production_api(self):
-        route = mod.deterministic_ticket_route({
-            "ProblemCategory": "SAP_INTEGRATION",
-            "BriefDetails": "SAP posting stuck pending for Heat 1900001 / WO 199000000001",
-            "Description": (
-                "SAP production posting for Heat 1900001 (Work Order 199000000001) is pending; "
-                "check whether the API call was sent."
-            ),
-            "ExtractedEntitiesJson": json.dumps({
-                "HeatNo": "1900001", "WorkOrder": "199000000001"
-            }),
-        })
-        self.assertEqual("sap_api", route["domain"])
-        self.assertEqual("Production", route["api_type"])
-
-    def test_deterministic_route_maps_work_order_and_campaign(self):
-        ticket = {
-            "ProblemCategory": "WORK_ORDER",
-            "ExtractedEntitiesJson": json.dumps({
-                "WorkOrder": "WO-99402", "Campaign": "CMP-9902"
-            }),
-        }
-        route = mod.deterministic_ticket_route(ticket)
-        self.assertEqual("work_order", route["domain"])
-        self.assertEqual("WO-99402", route["work_order"])
-        self.assertEqual("CMP-9902", route["campaign"])
-        self.assertEqual("xstudio_work_order_context", route["recommended_tool"])
-
-    def test_dispatch_route_context_uses_inventory_api_recipe(self):
-        ticket = {
-            "ProblemCategory": "SAP_INTEGRATION",
-            "Description": "Was the inventory sync API call ever made?",
-            "ExtractedEntitiesJson": json.dumps({"Batch": "B99402"}),
-        }
-        completed = type("Completed", (), {"returncode": 0, "stderr": "",
-                    "stdout": json.dumps({"ok": True, "evidence_refs": [{"action_id": "api-1"}]})})()
-        with patch.object(mod.subprocess, "run", return_value=completed) as bridge:
-            rendered = mod._dispatch_route_context("run-1", "ticket-1", ticket)
-        request = json.loads(bridge.call_args.kwargs["input"])
-        self.assertEqual(request, {
-            "operation": "sap_api_context", "database": "XStudio_Xbatch",
-            "run_id": "run-1", "ticket_id": "ticket-1", "api_type": "Inventory",
-            "identifier": "B99402", "evidence_role": "investigator",
-        })
-        self.assertIn('"action_id":"api-1"', rendered)
-
-    def test_dispatch_route_context_uses_typed_heat_context_with_run_provenance(self):
-        ticket = {"ExtractedEntitiesJson": json.dumps({"HeatNo": "1602522"})}
-        completed = type("Completed", (), {"returncode": 0, "stderr": "",
-                    "stdout": json.dumps({"ok": True, "evidence_refs": [{"action_id": "a-1"}]})})()
-        with patch.object(mod.subprocess, "run", return_value=completed) as bridge:
-            rendered = mod._dispatch_route_context("run-1", "ticket-1", ticket)
-        request = json.loads(bridge.call_args.kwargs["input"])
-        self.assertEqual(request, {"operation": "heat_context", "database": "XStudio_Xbatch",
-                                   "run_id": "run-1", "ticket_id": "ticket-1", "heat": "1602522",
-                                   "evidence_role": "investigator"})
-        self.assertIn('"action_id":"a-1"', rendered)
-
-
 
     def test_priority_closes_work_before_new_claim(self):
         self.assertGreater(mod.REVIEW_PRIORITY, mod.REWORK_PRIORITY)
@@ -1454,8 +1363,9 @@ class PipelineContractTests(unittest.TestCase):
             captured["spec"] = spec
             return {"QueueStatus": "QUEUED"}
 
-        with patch.object(mod, "_persist_rejected_ledger", return_value=""), \
+        with patch.object(mod, "_rejected_attempt_context", return_value=""), \
              patch.object(mod, "_source_has_rework", return_value=False), \
+             patch.object(mod, "_run_world_walk", return_value={"ok": True, "route": "data", "trail": []}), \
              patch.object(mod, "run_orchestrator", side_effect=RuntimeError("no live SQL in a unit test")), \
              patch.object(mod, "_build_and_persist_stage_context", return_value=("", "", None)), \
              patch.object(mod, "_queue_local_model_task", side_effect=fake_queue):
@@ -1914,20 +1824,29 @@ class PipelineContractTests(unittest.TestCase):
         instructions = mod._query_instructions("run-1", "ticket-1")
         self.assertIn("xstudio_submit_proposal", instructions)  # operations live in tool schemas
 
-    def test_rework_card_repeats_typed_context_contract(self):
+    def test_rework_card_uses_world_walk_as_its_fresh_investigation_owner(self):
         task = {"id": "review-1", "body": "run_id: r\nticket_id: t\nticket_no: T1\nreview_cycle: 0"}
+        walk = {
+            "ok": True, "route": "data", "stopped": "enough_evidence",
+            "trail": [{"role": "cause", "confidence": 0.9, "node": "Heat",
+                       "observation": {"text": "Current heat evidence", "probe": {"action_id": "A-1"}}}],
+        }
+        args = mod.default_args()
         with patch.object(mod, "list_tasks", return_value=[]), \
-                patch.object(mod, "_ticket_for_route", return_value={"ExtractedEntitiesJson": '{"HeatNo":"1602522"}'}), \
-                patch.object(mod, "_dispatch_route_context", return_value="\n--- Deterministic live route/context ---\n{}\n") as route, \
+                patch.object(mod, "_ticket_for_rework", return_value={"BriefDetails": "heat issue"}) as ticket, \
+                patch.object(mod, "_run_world_walk", return_value=walk) as world_walk, \
+                patch.object(mod, "_run_evidence_snapshot", return_value=[{"ID": "A-1"}]), \
                 patch.object(mod, "_queue_local_model_task", return_value={"QueueStatus": "QUEUED"}) as queue, \
                 patch.object(mod, "run_orchestrator", side_effect=RuntimeError("no live SQL in a unit test")), \
                 patch.object(mod, "_build_and_persist_stage_context", return_value=("", "", None)):
-            mod.create_rework_card(mod.default_args(), source_task=task, reason="missing evidence",
+            mod.create_rework_card(args, source_task=task, reason="missing evidence",
                                    investigation_task_id="investigation-1")
         body = queue.call_args.kwargs["spec"]["body"]
         self.assertEqual(body.count("--- Typed XStudio investigation contract ---"), 1)
-        self.assertIn("Deterministic live route/context", body)
-        route.assert_called_once_with("r", "t", {"ExtractedEntitiesJson": '{"HeatNo":"1602522"}'})
+        self.assertIn("rework_world_walk", body)
+        self.assertIn("Current heat evidence", body)
+        ticket.assert_called_once_with(args, "t")
+        world_walk.assert_called_once_with({"BriefDetails": "heat issue"}, "r", "t")
 
     def test_reviewer_card_contains_claim_verification_instruction(self):
         task = {"id": "inv-1", "body": "run_id: r\nticket_id: t\nticket_no: T1\nreview_cycle: 0"}

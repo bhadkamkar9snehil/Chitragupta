@@ -62,7 +62,6 @@ WINDOWS_PYTHON = "/mnt/c/Python314/python.exe"
 ORCHESTRATOR_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Hermes_Orchestrator.py"
 KB_RETRIEVER_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\kb_retrieval.py"
 JEV_WORKFLOW_BRIDGE_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\jev_workflow_bridge.py"
-XSTUDIO_TOOL_BRIDGE_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\xstudio_l2_tool_bridge.py"
 DEFAULT_SERVER = "10.2.6.204"
 DEFAULT_DATABASE = "XStudio_Helpdesk"
 DEFAULT_USER = "sa"
@@ -286,10 +285,6 @@ def _kb_retriever_path() -> str:
 
 def _jev_bridge_path() -> str:
     return JEV_WORKFLOW_BRIDGE_WIN if _is_windows() else str(REPO_ROOT_WSL / "Model_Bench" / "jev_workflow_bridge.py")
-
-
-def _xstudio_bridge_path() -> str:
-    return XSTUDIO_TOOL_BRIDGE_WIN if _is_windows() else str(REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py")
 
 
 def _base_orchestrator_args(args: argparse.Namespace) -> list[str]:
@@ -1040,25 +1035,6 @@ def _run_jev_workflow(
         data["ok"] = False
         data["error"] = f"Jev bridge exited {proc.returncode}"
     return data
-
-
-def _run_xstudio_bridge(request: dict[str, Any], *, timeout: int = 45) -> dict[str, Any]:
-    """Invoke the guarded Windows typed-tool bridge directly from lifecycle code."""
-    try:
-        proc = subprocess.run(
-            [_orch_python(), _xstudio_bridge_path()],
-            input=json.dumps(request, separators=(",", ":"), default=str),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {"ok": False, "error": f"xstudio bridge unavailable: {type(exc).__name__}: {exc}"}
-    try:
-        data = json.loads((proc.stdout or "").strip() or "{}")
-    except json.JSONDecodeError:
-        return {"ok": False, "error": "xstudio bridge returned invalid JSON"}
-    return data if isinstance(data, dict) else {"ok": False, "error": "xstudio bridge returned non-object JSON"}
 
 
 WORLD_WALK_TIMEOUT_S = int(os.environ.get("L2_WORLD_WALK_TIMEOUT", "240"))
@@ -2572,7 +2548,8 @@ def process_jev_primary_reviews(
 # Rework/escalation
 # ---------------------------------------------------------------------------
 
-def _persist_rejected_ledger(args: argparse.Namespace, investigation_task_id: Optional[str], run_id: str) -> str:
+def _rejected_attempt_context(investigation_task_id: Optional[str]) -> str:
+    """Compact rejected attempt for the next card; current InvestigationJson belongs to world_walk."""
     if not investigation_task_id:
         return ""
     done = [r for r in get_runs(investigation_task_id) if r.get("status") == "done"]
@@ -2586,10 +2563,6 @@ def _persist_rejected_ledger(args: argparse.Namespace, investigation_task_id: Op
         "summary": (last.get("summary") or "").strip(),
         **{k: md[k] for k in ("response_type", "reply_text", "findings", "root_cause", "resolution") if md.get(k)},
     }
-    try:
-        run_orchestrator(args, ["--save-ledger", run_id, "--ledger", json.dumps(ledger)], timeout=45)
-    except RuntimeError:
-        pass
     return json.dumps(ledger, separators=(",", ":"), default=str)[:3000]
 
 
@@ -2669,21 +2642,39 @@ def create_rework_card(
     if _source_has_rework(source_tasks, source_task["id"]):
         return None
 
-    prior = "" if dry_run else _persist_rejected_ledger(args, investigation_task_id, run_id)
-    # Rework is a fresh investigation stage.  It must receive the same compact,
-    # current route evidence as an initial card rather than being pushed back
-    # into schema discovery just because a reviewer rejected the first proposal.
-    route_ticket = _ticket_for_route(args, ticket_id)
-    route_context = _dispatch_route_context(run_id, ticket_id, route_ticket)
+    prior = "" if dry_run else _rejected_attempt_context(investigation_task_id)
+    rework_ticket = {} if dry_run else _ticket_for_rework(args, ticket_id)
+    walk = {} if dry_run else _run_world_walk(rework_ticket, run_id, ticket_id)
     ticket_no = body_field(source_task.get("body"), "ticket_no") or ticket_id
 
-    # Same compiler and Jev scores as the review that produced this rework; the full
-    # current-run evidence replaces the review's claim-cited subset.
+    # Rework uses the same current-world investigator as the first pass. The walk runs
+    # before the evidence snapshot so all audited reads it adds are present in the pinned
+    # current-run evidence. The rejected attempt remains card/history context; the current
+    # InvestigationJson stays owned by world_walk.
     evidence = [] if dry_run else _run_evidence_snapshot(args, run_id)
     chunks = [c for c in (context_chunks or stage_context_chunks(
         args, stage="rework", source_task=source_task, run_id=run_id, ticket_id=ticket_id,
         evidence=evidence, dry_run=dry_run,
     )) if c["id"] != "current_run_evidence"]
+    if walk:
+        walk_summary = {
+            "source": "world_walk",
+            "ok": bool(walk.get("ok")),
+            "route": walk.get("route"),
+            "stopped": walk.get("stopped"),
+            "missing": walk.get("missing"),
+            "entities": walk.get("entities") or [],
+            "numbers": walk.get("numbers"),
+            "findings": _walk_findings(walk),
+        }
+        walk_chunk = context_chunk(
+            "rework_world_walk", "live_evidence", "LIVE_SQL_EVIDENCE",
+            "Fresh world-walk investigation for this rework",
+            "stage_context.rework_world_walk", walk_summary, index=len(chunks),
+            minimum_level=2, fallback_level=3,
+        )
+        if walk_chunk:
+            chunks.append(walk_chunk)
     pinned = context_chunk(
         "current_run_evidence", "run_evidence", "CURRENT_RUN_EVIDENCE", "SQL actions for this run",
         "stage_context.current_run_evidence", evidence, index=len(chunks),
@@ -2705,7 +2696,6 @@ def create_rework_card(
         "Address this exact rejected/invalid point using current live evidence. Reuse prior verified "
         "findings; do not restart the entire investigation unless the objection invalidates them. "
         "Complete with the full structured metadata contract.\n"
-        + route_context
     )
     if prior:
         body += f"\nPRIOR FINDINGS (verbatim):\n{prior}\n"
@@ -3635,7 +3625,7 @@ def _investigation_bundle(
             mode)
 
 
-def _ticket_for_route(args: argparse.Namespace, ticket_id: str) -> dict[str, Any]:
+def _ticket_for_rework(args: argparse.Namespace, ticket_id: str) -> dict[str, Any]:
     """Read just the authoritative ticket row needed for a rework route.
 
     A rejected card deliberately contains only frozen prior findings.  Fetching
@@ -3651,170 +3641,6 @@ def _ticket_for_route(args: argparse.Namespace, ticket_id: str) -> dict[str, Any
     ticket = context.get("ticket")
     return ticket if isinstance(ticket, dict) else context
 
-
-_SAP_API_TYPES = (
-    (("BATCH CHARACTERISTIC",), "BatchCharacteristics"),
-    (("BATCH CREATION",), "BatchCreation"),
-    (("RESULT RECORDING",), "ResultRecording"),
-    (("USAGE DECISION",), "UsageDecision"),
-    (("INVENTORY", "STORAGE LOCATION"), "Inventory"),
-    (("CONSUMPTION",), "Consumption"),
-    (("BY PRODUCT", "BYPRODUCT"), "ByProduct"),
-    (("REVERSAL",), "Reversal"),
-    (("PRODUCTION POSTING", "PRODUCTION"), "Production"),
-    (("WORK ORDER CREATION", "PROCESS ORDER CREATE", "PROCESS ORDER CREATION"), "WorkOrderCreation"),
-)
-
-
-def _route_sap_api(entities: dict[str, Any], normalized_text: str) -> Optional[dict[str, Any]]:
-    api_type = next((value for phrases, value in _SAP_API_TYPES if any(p in normalized_text for p in phrases)), None)
-    explicit_api = "API" in normalized_text or "SAP INTEGRATION" in normalized_text
-    named_sap_operation = "SAP" in normalized_text and api_type is not None
-    if not (explicit_api or named_sap_operation) or not api_type:
-        return None
-    identifier = next((entities.get(key) for key in (
-        "Batch", "BatchNo", "SAPTransactionID", "TransactionID", "InspectionLot",
-        "ManufacturingOrder", "WorkOrderNumber", "HeatNo",
-    ) if entities.get(key) not in (None, "")), None)
-    return {
-        "domain": "sap_api", "api_type": api_type,
-        "identifier": str(identifier) if identifier is not None else None,
-        "recommended_tool": "xstudio_sap_api_context",
-        "reason": "The ticket explicitly asks about a reviewed SAP API family; route directly to its live diagnostic.",
-    }
-
-
-def _route_work_order(entities: dict[str, Any], summary: str) -> Optional[dict[str, Any]]:
-    work_order = next((entities.get(key) for key in (
-        "WorkOrderNumber", "WorkOrder", "ManufacturingOrder", "MESWorkOrderNumber"
-    ) if entities.get(key) not in (None, "")), None)
-    if work_order is None:
-        match = re.search(r"\b(?:work\s*order|wo)\s*[:#-]?\s*([A-Z0-9][A-Z0-9_.-]{2,99})\b", summary, re.I)
-        work_order = match.group(1) if match else None
-    if not work_order or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", str(work_order)):
-        return None
-    campaign = next((entities.get(key) for key in ("CampaignNo", "Campaign")
-                     if entities.get(key) not in (None, "")), None)
-    if campaign is None:
-        match = re.search(r"\bcampaign\s*[:#-]?\s*([A-Z0-9][A-Z0-9_.-]{2,99})\b", summary, re.I)
-        campaign = match.group(1) if match else None
-    return {
-        "domain": "work_order", "work_order": str(work_order),
-        "campaign": str(campaign) if campaign else None,
-        "recommended_tool": "xstudio_work_order_context",
-        "reason": "Work-order and campaign identifiers route directly to canonical fixed live projections.",
-    }
-
-
-def _route_heat(entities: dict[str, Any], summary: str, category: str) -> Optional[dict[str, Any]]:
-    raw_heat = next((entities.get(key) for key in ("HeatNo", "HeatID", "Heat") if entities.get(key) is not None), None)
-    if raw_heat is None:
-        match = re.search(r"\bheat\s+(?:H\s*)?(\d{4,})\b", summary, re.I)
-        raw_heat = match.group(1) if match else None
-    heat_match = re.fullmatch(r"\s*[Hh]?(\d+)\s*", str(raw_heat or ""))
-    if not heat_match:
-        return None
-    sap = "SAP" in category or "SAP" in summary.upper()
-    billet = "BILLET" in category or "BILLET" in summary.upper() or "STRAND" in summary.upper()
-    return {
-        "domain": "heat_sap" if sap else ("billet_genealogy" if billet else "heat_execution"),
-        "heat": heat_match.group(1),
-        "recommended_tool": "xstudio_heat_context",
-        "reason": "Canonical EAF/LRF/CCM, billet genealogy, work-order and SAP production surfaces are harness-routed for this heat.",
-    }
-
-
-def deterministic_ticket_route(ticket: dict[str, Any]) -> dict[str, Any]:
-    """Extract a small, auditable first evidence path from ticket-owned fields."""
-    entities: dict[str, Any] = {}
-    raw_entities = ticket.get("ExtractedEntitiesJson")
-    if isinstance(raw_entities, dict):
-        entities = raw_entities
-    elif raw_entities:
-        try:
-            parsed = json.loads(str(raw_entities))
-            entities = parsed if isinstance(parsed, dict) else {}
-        except json.JSONDecodeError:
-            entities = {}
-    category = str(ticket.get("ProblemCategory") or "").upper()
-    summary = " ".join(str(ticket.get(key) or "") for key in (
-        "BriefDetails", "Description", "ConversationSummary"
-    ))
-    normalized_text = re.sub(r"[^A-Z0-9]+", " ", (category + " " + summary).upper())
-
-    for route in (
-        _route_sap_api(entities, normalized_text),
-        _route_work_order(entities, summary),
-        _route_heat(entities, summary, category),
-    ):
-        if route is not None:
-            return route
-
-    return {"domain": "generic", "recommended_tool": None, "reason": "No unambiguous numeric heat identifier."}
-
-
-def _dispatch_route_context(run_id: str, ticket_id: str, ticket: dict[str, Any],
-                            *, evidence_role: str = "investigator") -> str:
-    """Collect the smallest deterministic live evidence package before dispatch.
-
-    This is a trusted harness call, not model-generated SQL. It records the
-    same per-surface action rows as the named tool and gives the investigator a
-    bounded first read instead of making Qwen rediscover stable joins.
-    """
-    route = deterministic_ticket_route(ticket)
-    rendered: dict[str, Any] = {"route": route}
-    if route.get("recommended_tool") == "xstudio_heat_context":
-        bridge = REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py"
-        request = {"operation": "heat_context", "database": "XStudio_Xbatch",
-                   "run_id": run_id, "ticket_id": ticket_id, "heat": route["heat"],
-                   "evidence_role": evidence_role}
-        try:
-            result = subprocess.run([sys.executable, str(bridge)], input=json.dumps(request),
-                                    capture_output=True, text=True, timeout=45)
-            if result.returncode:
-                raise RuntimeError(result.stderr.strip() or f"bridge exit {result.returncode}")
-            rendered["live_context"] = json.loads(result.stdout)
-        except (OSError, subprocess.TimeoutExpired, RuntimeError, json.JSONDecodeError) as exc:
-            rendered["live_context_warning"] = f"Deterministic heat context unavailable: {type(exc).__name__}: {exc}"
-    elif route.get("recommended_tool") == "xstudio_sap_api_context":
-        bridge = REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py"
-        request = {"operation": "sap_api_context", "database": "XStudio_Xbatch",
-                   "run_id": run_id, "ticket_id": ticket_id, "api_type": route["api_type"],
-                   "evidence_role": evidence_role}
-        if route.get("identifier"):
-            request["identifier"] = route["identifier"]
-        try:
-            result = subprocess.run([sys.executable, str(bridge)], input=json.dumps(request),
-                                    capture_output=True, text=True, timeout=45)
-            if result.returncode:
-                raise RuntimeError(result.stderr.strip() or f"bridge exit {result.returncode}")
-            rendered["live_context"] = json.loads(result.stdout)
-        except (OSError, subprocess.TimeoutExpired, RuntimeError, json.JSONDecodeError) as exc:
-            rendered["live_context_warning"] = f"Deterministic SAP API context unavailable: {type(exc).__name__}: {exc}"
-    elif route.get("recommended_tool") == "xstudio_work_order_context":
-        bridge = REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py"
-        request = {"operation": "work_order_context", "database": "XStudio_Xbatch",
-                   "run_id": run_id, "ticket_id": ticket_id,
-                   "work_order": route["work_order"], "evidence_role": evidence_role}
-        if route.get("campaign"):
-            request["campaign"] = route["campaign"]
-        try:
-            result = subprocess.run([sys.executable, str(bridge)], input=json.dumps(request),
-                                    capture_output=True, text=True, timeout=45)
-            if result.returncode:
-                raise RuntimeError(result.stderr.strip() or f"bridge exit {result.returncode}")
-            rendered["live_context"] = json.loads(result.stdout)
-        except (OSError, subprocess.TimeoutExpired, RuntimeError, json.JSONDecodeError) as exc:
-            rendered["live_context_warning"] = f"Deterministic work-order context unavailable: {type(exc).__name__}: {exc}"
-    text = json.dumps(rendered, separators=(",", ":"), default=str)  # compact: card size
-    if len(text) > 9000:
-        text = text[:9000] + "\n... [route/world context truncated at 9,000 chars]"
-    return (
-        "\n--- Deterministic live route/context ---\n"
-        "This is current live evidence collected by the harness. Interpret only the returned rows; "
-        "use the evidence_refs action IDs for VERIFIED claims. Absence does not establish causation.\n"
-        f"{text}\n"
-    )
 
 
 def _query_instructions(run_id: str, ticket_id: str) -> str:
