@@ -3496,8 +3496,6 @@ def _load_investigation_bundle(args: argparse.Namespace, ticket_id: str,
                   "bundle_warning": f"Dispatcher could not assemble investigation bundle: {exc}"}
     if not isinstance(bundle, dict):
         bundle = {"ticket_id": ticket_id, "ticket": fallback_ticket, "bundle_warning": "Unexpected bundle shape."}
-    # The orchestrator's old route-only solution lookup must never compete with KB retrieval.
-    bundle.pop("known_solutions", None)
     return bundle
 
 

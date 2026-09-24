@@ -872,7 +872,7 @@ def build_investigation_bundle(client: "HermesL2Client", ticket_id: str) -> Dict
     tool calls and a 65K window a ticket burned ~425K tokens even after
     wall-clock dropped 14x. Measured live, the opening turns were almost
     entirely context assembly -- fetch the ticket, hunt for relevant tables,
-    look for prior attempts, check for known solutions -- each one a full
+    look for prior attempts -- each one a full
     context resend before any actual investigation happened.
 
     Collapsing that into a single call removes those resends outright. It
@@ -919,23 +919,6 @@ def build_investigation_bundle(client: "HermesL2Client", ticket_id: str) -> Dict
         bundle["prior_attempts"] = _rows_as_dicts(cur)
     except Exception as e:
         bundle["prior_attempts"] = {"error": f"{type(e).__name__}: {e}"}
-
-    # --- already-known solutions for this route ---------------------------
-    try:
-        route = (ticket_row.get("HermesAreaName") or ticket_row.get("ProblemCategory") or "").strip()
-        if route:
-            cur = client.conn.cursor()
-            cur.execute(
-                "SELECT TOP 5 Title, LEFT(ISNULL(ResolutionSteps,''),500) AS ResolutionSteps "
-                "FROM dbo.Hermes_Solution_Article_Mst_Tbl "
-                "WHERE IsDeleted = 0 AND (Route = ? OR Tags LIKE ?) ORDER BY CreatedOn DESC;",
-                (route, f"%{route}%"),
-            )
-            bundle["known_solutions"] = _rows_as_dicts(cur)
-        else:
-            bundle["known_solutions"] = []
-    except Exception as e:
-        bundle["known_solutions"] = {"error": f"{type(e).__name__}: {e}"}
 
     return bundle
 
