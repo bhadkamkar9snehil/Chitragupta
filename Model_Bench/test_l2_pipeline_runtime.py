@@ -686,10 +686,15 @@ class PipelineContractTests(unittest.TestCase):
     def test_preflight_runs_without_the_lifecycle_lock_and_fails_loudly(self):
         # Live: under the lock a busy scout made preflight print LIFECYCLE_BUSY yet exit 0.
         with patch.object(mod, "lifecycle_lock", side_effect=AssertionError("preflight must not lock")), \
-                patch.object(mod, "check_worker_dependencies"):
+                patch.object(mod, "check_worker_dependencies"), patch.object(mod, "check_gbrain_dependency"):
             self.assertEqual(mod.cli(["preflight"]), 0)
         with patch.object(mod, "lifecycle_lock", side_effect=AssertionError("preflight must not lock")), \
                 patch.object(mod, "check_worker_dependencies", side_effect=RuntimeError("WORKER_DEPENDENCY_UNAVAILABLE")):
+            self.assertEqual(mod.cli(["preflight"]), 1)
+        # Live 2026-09-24: preflight passed while the scout's GBrain check crashed; it must fail too.
+        with patch.object(mod, "lifecycle_lock", side_effect=AssertionError("preflight must not lock")), \
+                patch.object(mod, "check_worker_dependencies"), \
+                patch.object(mod, "check_gbrain_dependency", side_effect=RuntimeError("WORKER_DEPENDENCY_UNAVAILABLE")):
             self.assertEqual(mod.cli(["preflight"]), 1)
 
     def test_scout_dependency_check_accepts_the_toolsets_deploy_writes(self):

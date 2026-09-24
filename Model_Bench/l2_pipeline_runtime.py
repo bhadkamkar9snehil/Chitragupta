@@ -4053,8 +4053,11 @@ def cli(argv: Optional[list[str]] = None) -> int:
     if args.mode == "preflight":
         # Read-only, so it never takes the lifecycle lock: under the lock a busy scout made the
         # post-deploy check print LIFECYCLE_BUSY yet exit 0, i.e. a false "preflight OK".
+        # Exactly the scout's claim checks: on 2026-09-24 the preflight passed while the scout's GBrain
+        # check crashed (kb_retrieval NameError) and no ticket was claimed for hours.
         try:
             check_worker_dependencies()
+            check_gbrain_dependency(args)
         except Exception as exc:
             print(json.dumps({"ok": False, "mode": "preflight", "error": f"{type(exc).__name__}: {exc}"}))
             return 1
