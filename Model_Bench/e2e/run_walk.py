@@ -56,7 +56,7 @@ def main() -> int:
     cases = [c for c in cases if not only or c["id"] in only]
     passed = 0
     world = world_walk.World()  # one gbrain serve session for all cases
-    conn = world_walk.connect()  # and one SQL connection
+    conn = world_walk._plain_sql_connection()  # and one SQL connection
     for case in cases:
         start = time.perf_counter()
         try:

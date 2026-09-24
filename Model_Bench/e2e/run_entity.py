@@ -20,7 +20,7 @@ def main() -> int:
     only = set(sys.argv[1:])
     cases = [json.loads(line) for line in (HERE / "entity_cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
     cases = [c for c in cases if not only or c["id"] in only]
-    conn = world_walk.connect()
+    conn = world_walk._plain_sql_connection()
     passed = 0
     for case in cases:
         start = time.perf_counter()
