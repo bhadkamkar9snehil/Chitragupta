@@ -17,8 +17,13 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_process_world import connect  # noqa: E402  (the world's SQL connection owner)
 from l2_gbrain import Brain  # noqa: E402  (the one GBrain owner)
+
+
+def _plain_sql_connection():
+    """Standalone/E2E transport only. Live runs use the audited typed SQL bridge."""
+    from build_process_world import connect
+    return connect()
 
 ROOT = Path(__file__).resolve().parent.parent
 WORLD = json.loads((ROOT / "Knowledge" / "process_world.json").read_text(encoding="utf-8"))
@@ -177,6 +182,8 @@ def _read(conn, sql: str, table: str, column: str, value: str) -> tuple[list[dic
                                               table=table, sql=sql, operation="world_walk",
                                               filter_column=column, filter_value=value)
         return [r for r in rows if isinstance(r, dict)], action_id
+    if conn is None:
+        raise RuntimeError("plain SQL connection is required outside an audited run")
     cur = conn.cursor()
     cur.execute(sql)
     names = [d[0] for d in cur.description]
@@ -361,7 +368,8 @@ def health(node: dict[str, Any], since: date | None) -> dict[str, Any]:
 def look(node: dict[str, Any], value: str | None, conn, since: date | None = None) -> dict[str, Any]:
     if value is None:
         return health(node, since)
-    conn.timeout = QUERY_TIMEOUT_S
+    if conn is not None:
+        conn.timeout = QUERY_TIMEOUT_S
     kind, name = node["kind"], node["title"]
     try:
         if kind in ("table", "view"):
@@ -470,7 +478,8 @@ def survey(world: World, entities: list[dict], conn) -> tuple[list[dict], list[d
             if table not in titles:
                 continue
             try:
-                conn.timeout = QUERY_TIMEOUT_S
+                if conn is not None:
+                    conn.timeout = QUERY_TIMEOUT_S
                 obs = look_table(table, e["value"], conn)
             except Exception as exc:
                 obs = {"text": f"{table}: could not read ({type(exc).__name__})", "observed": False}
@@ -566,8 +575,10 @@ def scope(world: World, ticket: str) -> list[dict[str, Any]]:
 def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
     started = time.perf_counter()
     world = world or World()
-    conn = conn or connect()
-    conn.timeout = QUERY_TIMEOUT_S * 3
+    if conn is None and not _AUDIT:
+        conn = _plain_sql_connection()
+    if conn is not None:
+        conn.timeout = QUERY_TIMEOUT_S * 3
     intent = understand(ticket)
     if intent["route"] != "data":  # not an L2 data investigation: route it
         return {"route": intent["route"], "data": False, "trail": [], "stopped": f"routed: {intent['route']}",
