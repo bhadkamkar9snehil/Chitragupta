@@ -21,3 +21,10 @@ Each failure mode below has at least one E2E case in `walk_cases.jsonl`.
    arithmetic.
 8. **Jev unavailable.** Return the hits unranked and say so; the case fails honestly.
 9. **Heat not in XBatch.** No hits: the answer is "not found", not a guess.
+10. **Forced single choice.** One pick out of ~30 findings cannot describe a chain (what the user sees,
+    then the stuck record, then the error behind it) and pushes Jev into swapping cause and effect.
+    Every finding gets its own role judgement in one batched call.
+11. **Two numbers from two sources** ("report says 42, tracking shows 41"). Each number must be traced
+    to where it is stored (a column value or a row count); Jev matches each source to the requester's
+    wording; code compares. Picking one table cannot answer it.
+12. **Requester's number not stored anywhere.** Say so; do not attach it to the nearest table.

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,6 @@ WORLD = Path(__file__).resolve().parent.parent / "Knowledge" / "process_world.js
 HEAT_COLUMNS = ("HeatID", "HeatNo", "ActualHeatID", "Batch", "HeatNumber")  # mode 2
 SIGNAL = re.compile(r"(?i)error|message|status|processed|count$")
 TABLE_TIMEOUT_S = 4   # mode 6: one slow table cannot sink the walk
-NONE = "none"
 
 
 def heat_tables(conn) -> dict[str, list[str]]:
@@ -58,12 +58,14 @@ def scan(heat: str, conn) -> list[dict[str, Any]]:
             hits.append({"table": table, "error": f"{type(exc).__name__}: {str(exc)[:120]}"})
             continue
         names = [d[0] for d in rows[0].cursor_description]
-        signals = []
+        signals, numbers = [], {}
         for row in rows:
             for name, value in zip(names, row):
+                if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool) and name not in numbers:
+                    numbers[name] = float(value)
                 if SIGNAL.search(name) and value not in (None, "", 0) and f"{name}={_clean(value)}" not in signals:
                     signals.append(f"{name}={_clean(value)}")
-        hits.append({"table": table, "rows": count, "signals": signals[:6]})
+        hits.append({"table": table, "rows": count, "signals": signals[:6], "numbers": numbers})
     return hits
 
 
@@ -74,29 +76,73 @@ def finding(hit: dict[str, Any]) -> str:
     return f"{hit['table']}: {hit['rows']} row(s)" + (f"; {'; '.join(hit['signals'])}" if hit["signals"] else "")
 
 
-def jev_pick(text: str, hits: list[dict[str, Any]], symptom: str | None = None) -> tuple[str | None, float | None]:
-    """Hop 1 (symptom is None): which finding matches the complaint. Hop 2: which finding causes the symptom."""
+ROLES = {
+    "sees": "What the requester is seeing or complaining about (the missing or wrong result)",
+    "stuck": "A record of this same failure that is stuck, pending or failed, but is not itself the reason",
+    "cause": "The error or failure that made it happen (an error message that explains the problem)",
+    "unrelated": "Not part of this problem",
+}
+# Letters glued to digits make a code ("HHMNB500B"), not a quantity.
+_NUMBER = re.compile(r"(?<![\w.])\d{1,6}(?:\.\d+)?(?![\w])")
+
+
+def _system_one(state: dict[str, Any], questions: dict[str, Any]) -> dict[str, Any] | None:
     try:
         from jev.client import system_one
     except ImportError:
-        return None, None
-    options = {f"c{i}": finding(h) for i, h in enumerate(hits)}
-    if symptom is None:
-        options[NONE] = "None of these explains it: the question is not about wrong or missing data"
-        inputs = {"ticket": text, "findings": options}
-        instructions = "Which finding explains what the requester is complaining about?"
-    else:
-        options[NONE] = "None of these: the symptom is itself the error message, or no cause for it is shown"
-        inputs = {"ticket": text, "symptom": symptom, "findings": options}
-        instructions = "Which finding is the cause of the symptom (an error or failure that made it happen)?"
-    result = system_one(inputs, {"explains": {"type": "choice", "instructions": instructions, "criteria": options}})
-    answer = ((result or {}).get("answers") or {}).get("explains") or {}
-    choice = answer.get("choice")
-    if choice == NONE:
-        return NONE, answer.get("confidence")
-    if choice not in options:
-        return None, None
-    return hits[int(choice[1:])]["table"], answer.get("confidence")
+        return None
+    return system_one(state, questions)
+
+
+def judge_roles(text: str, hits: list[dict[str, Any]]) -> dict[str, dict[str, Any]] | None:
+    """One batched call: each finding gets its own role judgement (mode 10), never one forced pick."""
+    findings = {f"f{i}": finding(h) for i, h in enumerate(hits)}
+    questions = {f"role_{k}": {"type": "choice", "criteria": ROLES,
+                               "instructions": {"task": "What part does this finding play in the requester's problem?",
+                                                "ticket_path": "ticket", "finding_path": f"findings.{k}"}}
+                 for k in findings}
+    result = _system_one({"ticket": text, "findings": findings}, questions)
+    answers = (result or {}).get("answers") or {}
+    if not answers:
+        return None
+    return {hits[int(k[1:])]["table"]: {"role": (answers.get(f"role_{k}") or {}).get("choice"),
+                                        "confidence": (answers.get(f"role_{k}") or {}).get("confidence")}
+            for k in findings}
+
+
+def ticket_numbers(text: str, entity_value: str | None) -> list[str]:
+    cleaned = entity_resolver._DATES.sub(" ", text)
+    if entity_value:
+        cleaned = cleaned.replace(str(entity_value), " ")
+    return list(dict.fromkeys(_NUMBER.findall(cleaned)))[:4]
+
+
+def trace_numbers(text: str, numbers: list[str], hits: list[dict[str, Any]]) -> dict[str, Any]:
+    """Mode 11: code finds every place each number is stored; Jev matches a place to the requester's words."""
+    traced: dict[str, Any] = {}
+    questions, options_by_n = {}, {}
+    for n in numbers:
+        value = float(n)
+        sources = [f"{h['table']} (number of rows)" for h in hits if h["rows"] == value]
+        sources += [f"{h['table']}.{col}" for h in hits for col, v in h["numbers"].items() if v == value]
+        if not sources:
+            traced[n] = {"source": None, "reason": "not stored in any table for this heat"}  # mode 12
+            continue
+        options = {f"s{i}": src for i, src in enumerate(sources[:40])}
+        options["none"] = "None of these is where the requester's number comes from"
+        options_by_n[n] = options
+        questions[f"source_{n.replace('.', '_')}"] = {
+            "type": "choice", "criteria": options,
+            "instructions": f"The requester mentions the number {n}. Which stored value is the one they are "
+                            "describing (match the screen or report they name)?"}
+    if questions:
+        answers = ((_system_one({"ticket": text}, questions) or {}).get("answers")) or {}
+        for n, options in options_by_n.items():
+            a = answers.get(f"source_{n.replace('.', '_')}") or {}
+            pick = a.get("choice")
+            traced[n] = {"source": options.get(pick) if pick != "none" else None,
+                         "confidence": a.get("confidence"), "candidates": len(options) - 1}
+    return traced
 
 
 def walk(text: str, conn=None) -> dict[str, Any]:
@@ -105,21 +151,21 @@ def walk(text: str, conn=None) -> dict[str, Any]:
     entity = entity_resolver.resolve(text, conn)
     out: dict[str, Any] = {"entity": {k: entity.get(k) for k in ("kind", "value", "exists")}}
     if entity.get("kind") not in ("heat", "billet") or not entity.get("exists"):
-        out.update(pick=NONE, reason="no heat found in XBatch", hits=[])  # mode 9
+        out.update(chain={}, reason="no heat found in XBatch", hits=[])  # mode 9
         return out
     heat = str(entity["value"]).split("_")[0]
     hits = [h for h in scan(heat, conn) if "error" not in h]
     out["hits"] = [finding(h) for h in hits]
-    out["scan_s"] = round(time.perf_counter() - start, 1)
-    pick, confidence = jev_pick(text, hits)
-    out.update(pick=pick, confidence=confidence, ranked_by="jev" if pick else "unranked (Jev unavailable)")
-    picked = next((h for h in hits if h["table"] == pick), None)
-    if picked and any(s.startswith("ErrorMessage=") for s in picked["signals"]):
-        out.update(cause=pick, cause_confidence=None)  # the symptom already carries its error: no hop needed
-    elif picked:
-        rest = [h for h in hits if h is not picked]
-        cause, cause_conf = jev_pick(text, rest, symptom=finding(picked))
-        out.update(cause=cause, cause_confidence=cause_conf)
+    roles = judge_roles(text, hits)
+    if roles is None:
+        out.update(chain=None, ranked_by="unranked (Jev unavailable)")  # mode 8
+        return out
+    out["chain"] = {role: [t for t, r in roles.items() if r["role"] == role] for role in ("sees", "stuck", "cause")}
+    out["roles"] = roles
+    numbers = ticket_numbers(text, entity.get("value"))
+    if numbers:
+        out["numbers"] = trace_numbers(text, numbers, hits)
+    out["seconds"] = round(time.perf_counter() - start, 1)
     return out
 
 

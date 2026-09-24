@@ -16,6 +16,28 @@ sys.path.insert(0, str(HERE.parent))
 import evidence_walk  # noqa: E402
 
 
+def score(expect: dict, got: dict) -> tuple[bool, list[str]]:
+    """The whole chain must be right: the cause found, the involved records kept, the numbers traced."""
+    chain = got.get("chain") or {}
+    flagged = {t for tables in chain.values() for t in tables}
+    notes = []
+    if expect.get("none"):
+        if flagged:
+            notes.append(f"expected no data fault, flagged {sorted(flagged)}")
+        return not notes, notes
+    for table in expect.get("cause", []):
+        if table not in chain.get("cause", []):
+            notes.append(f"cause {table} not judged as cause")
+    for table in expect.get("involved", []):
+        if table not in flagged:
+            notes.append(f"{table} dropped from the chain")
+    for n, sources in expect.get("numbers", {}).items():
+        src = ((got.get("numbers") or {}).get(n) or {}).get("source") or ""
+        if not any(src.startswith(s) for s in sources):
+            notes.append(f"number {n} traced to {src or 'nothing'}, want {sources}")
+    return not notes, notes
+
+
 def main() -> int:
     only = set(sys.argv[1:])
     cases = [json.loads(l) for l in (HERE / "walk_cases.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
@@ -27,16 +49,15 @@ def main() -> int:
             got = evidence_walk.walk(case["text"])
         except Exception as exc:  # the thermometer reports, never crashes
             got = {"pick": None, "error": f"{type(exc).__name__}: {exc}"}
-        want = case["expect"] or [evidence_walk.NONE]
-        # The explaining table may be the symptom (hop 1) or its cause (hop 2): the chain must reach it.
-        ok = got.get("pick") in want or (got.get("pick") != evidence_walk.NONE and got.get("cause") in want)
+        ok, notes = score(case["expect"], got)
         passed += ok
         print(f"{'PASS' if ok else 'FAIL'} {case['id']:20} {time.perf_counter() - start:5.1f}s  "
-              f"pick={got.get('pick')} conf={got.get('confidence')} cause={got.get('cause')} hits={len(got.get('hits', []))}  want={want}"
-              + (f"  {got['error']}" if got.get("error") else ""))
+              f"chain={got.get('chain')} numbers={ {n: v.get('source') for n, v in (got.get('numbers') or {}).items()} }"
+              + (f"  {got['error']}" if got.get("error") else "") + (f"\n       MISSED: {notes}" if notes else ""))
         if only or not ok:
-            for line in got.get("hits", []):
-                print("      ", line)
+            for table, r in (got.get("roles") or {}).items():
+                if r["role"] != "unrelated":
+                    print(f"       {r['role']:6} {r['confidence']}  {table}")
     print(f"\n{passed}/{len(cases)} passed")
     return 0 if passed == len(cases) else 1
 
