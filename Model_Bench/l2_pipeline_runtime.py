@@ -1731,7 +1731,7 @@ def _jev_first_investigation(
     # Jev review three times ("overstates certainty") and escalated to L3.
     if direct is None and run_id and walk.get("stopped") == "stop_explained":
         subject = ", ".join(str(e.get("value")) for e in (walk.get("entities") or [])[:1]) or None
-        direct = direct_answer.cause_proposal(plan["findings"], run_id=str(run_id), ticket_id=ticket_id,
+        direct = direct_answer.cause_proposal(walk_summary["findings"], run_id=str(run_id), ticket_id=ticket_id,
                                               ticket=ticket, subject=subject)
         if direct is not None:
             direct_record = {**direct_record, "reason": "cause proven by audited world-walk reads"}
