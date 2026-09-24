@@ -527,27 +527,7 @@ class PipelineContractTests(unittest.TestCase):
                                    "evidence_role": "investigator"})
         self.assertIn('"action_id":"a-1"', rendered)
 
-    def test_dispatch_context_includes_bounded_world_recipe_and_relationships(self):
-        ticket = {
-            "BriefDetails": "Billet missing from yard for heat H99328",
-            "ExtractedEntitiesJson": json.dumps({"HeatNo": "H99328"}),
-        }
-        completed = type("Completed", (), {"returncode": 0, "stderr": "",
-                    "stdout": json.dumps({"ok": True, "evidence_refs": []})})()
-        with patch.object(mod.subprocess, "run", return_value=completed):
-            rendered = mod._dispatch_route_context("run-1", "ticket-1", ticket)
-        self.assertIn('"recipe_id":"xbatch.billet-inventory.v1"', rendered)
-        self.assertIn('"object":"Billet_Inventory"', rendered)
-        self.assertIn('"object":"XBatch_Material_Grade_Mst_Tbl"', rendered)
-        self.assertLessEqual(len(rendered), 12000)
 
-    def test_generic_dispatch_context_abstains_to_discover_recipe_without_bridge(self):
-        with patch.object(mod.subprocess, "run") as bridge:
-            rendered = mod._dispatch_route_context(
-                "run-1", "ticket-1", {"BriefDetails": "unclassified behaviour"}
-            )
-        bridge.assert_not_called()
-        self.assertIn('"recipe_id":"xbatch.discover.v1"', rendered)
 
     def test_priority_closes_work_before_new_claim(self):
         self.assertGreater(mod.REVIEW_PRIORITY, mod.REWORK_PRIORITY)
@@ -693,67 +673,6 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(review["action"], "REWORK")
         self.assertEqual(review["reason_code"], "EVIDENCE_GAP")
 
-    def test_jev_first_investigation_gathers_only_selected_bounded_probe(self):
-        plan = {
-            "ok": True,
-            "answers": {
-                "inspect_c0": {"type": "noul", "noul": 0.95},
-                "value_c0": {"type": "score", "score": 2.7, "confidence": 0.9},
-                "inspect_c1": {"type": "noul", "noul": 0.20},
-                "value_c1": {"type": "score", "score": 1.0, "confidence": 0.8},
-                "needs_local_reasoning_before_probe": {"type": "noul", "noul": 0.1},
-                "plan_complexity": {"type": "score", "score": 0.8, "confidence": 0.9},
-            },
-        }
-        assessment = {
-            "ok": True,
-            "answers": {
-                "evidence_sufficient": {"type": "noul", "noul": 0.95},
-                "response_type": {
-                    "type": "choice", "choice": "UPDATE", "confidence": 0.95,
-                    "probabilities": {"UPDATE": 0.95},
-                },
-                "execution_mode": {
-                    "type": "choice", "choice": "COMPOSE_ONLY", "confidence": 0.95,
-                    "probabilities": {"COMPOSE_ONLY": 0.95},
-                },
-                "needs_additional_probe": {"type": "noul", "noul": 0.10},
-                "needs_local_model": {"type": "noul", "noul": 0.10},
-                "needs_route_skill": {"type": "noul", "noul": 0.10},
-                "human_action_required": {"type": "noul", "noul": 0.10},
-                "confidence_quality": {"type": "score", "score": 2.5, "confidence": 0.95},
-            },
-        }
-
-        def fake_jev(workflow, state, **kwargs):
-            if workflow == "evidence_plan":
-                # A real plan scores only the candidates it is shown; round 2 sees Heat_B alone.
-                return {"ok": True, "result": plan if len(state["candidates"]) == 2 else {"ok": True, "answers": {}}}
-            if workflow == "investigation_assessment":
-                self.assertEqual(len(state["live_probes"]), 1)
-                return {"ok": True, "result": assessment}
-            if workflow == "direct_answer":  # the probe row names no ticket field -> Qwen path
-                return {"ok": True, "result": {"answers": {}}}
-            raise AssertionError(workflow)
-
-        with patch.object(mod, "_run_jev_workflow", side_effect=fake_jev), \
-             patch.object(mod, "_run_xstudio_bridge", return_value={"ok": True, "probe_possible": True, "rows": [{"HeatNo": "H1"}]}) as probe:
-            package = mod._jev_first_investigation(
-                ticket={"HeatNo": "H1"},
-                ticket_context={"TicketNo": "T1", "HeatNo": "H1", "BriefDetails": "heat issue"},
-                run_id="r1",
-                ticket_id="t1",
-                suggested_tables=[
-                    {"database": "XStudio_Xbatch", "table": "dbo.Heat_A", "matched_columns": ["HeatNo"]},
-                    {"database": "XStudio_Xbatch", "table": "dbo.Heat_B", "matched_columns": ["HeatNo"]},
-                ],
-                kb_retrieval={"solutions": [], "ticket_characterization": {}, "route_candidates": []},
-            )
-        self.assertEqual(probe.call_count, 1)
-        self.assertEqual(package["execution_mode"], "COMPOSE_ONLY")
-        self.assertEqual(package["local_model_scope"], "COMPOSE_ONLY")
-        self.assertEqual(package["max_additional_live_reads"], 0)
-        self.assertFalse(package["load_route_skill"])
 
     def test_execution_contract_loads_route_skill_only_when_jev_says_it_matters(self):
         assessment = {
@@ -848,37 +767,6 @@ class PipelineContractTests(unittest.TestCase):
         review.assert_not_called()
         publish.assert_called_once()
 
-    def test_evidence_loop_reads_more_tables_until_jev_says_the_facts_answer(self):
-        tables = [{"database": "XStudio_Xbatch", "table": f"dbo.T{i}", "matched_columns": []} for i in range(4)]
-        plan = {"ok": True, "answers": {"inspect_c0": {"type": "noul", "noul": 0.9},
-                                        "value_c0": {"type": "score", "score": 3}}}
-        rounds = []
-
-        def fake_jev(workflow, state, **kwargs):
-            if workflow == "evidence_plan":
-                rounds.append([c["table"] for c in state["candidates"]])
-                return {"ok": True, "result": plan}
-            if workflow == "direct_answer":  # answerable only once two tables were read
-                ok = len(rounds) >= 2
-                return {"ok": True, "result": {"answers": {
-                    "outcome": {"type": "choice", "choice": "ANSWERED",
-                                "probabilities": {"ANSWERED": 0.9 if ok else 0.1, "NEEDS_REASONING": 0.1 if ok else 0.9}},
-                    "facts_answer_question": {"type": "noul", "noul": 0.9 if ok else 0.1}}}}
-            return {"ok": True, "result": {"ok": True, "answers": {}}}
-
-        probe = {"ok": True, "probe_possible": True, "action_id": "A1", "table": "dbo.T",
-                 "identifier": {"column": "HeatNo", "value": "1"}, "rows": [{"HeatNo": "1", "ArcingTime": "21"}]}
-        with patch.object(mod, "_run_jev_workflow", side_effect=fake_jev), \
-                patch.object(mod, "_run_xstudio_bridge", return_value=probe), \
-                patch.object(mod, "load_world", return_value={"atlas": {}}):
-            package = mod._jev_first_investigation(
-                ticket={"Description": "ArcingTime of 21"}, ticket_context={"TicketNo": "T1"},
-                run_id="r1", ticket_id="t1", suggested_tables=tables,
-                kb_retrieval={"solutions": [], "ticket_characterization": {}, "route_candidates": []},
-            )
-        self.assertEqual(rounds, [["dbo.T0", "dbo.T1", "dbo.T2", "dbo.T3"], ["dbo.T1", "dbo.T2", "dbo.T3"]])
-        self.assertEqual(package["execution_mode"], "QWEN_FREE")
-        self.assertEqual(package["direct_answer"]["evidence_rounds"], 2)
 
     def test_writer_card_has_no_data_tool_procedure(self):
         text = mod._query_instructions("run-1", "ticket-1")
@@ -2053,76 +1941,23 @@ class PipelineContractTests(unittest.TestCase):
         self.assertIn("claims_contract_version", body)
         self.assertIn("VERIFIED", body)
 
-class RelationshipHopTests(unittest.TestCase):
-    def test_available_hops_only_includes_edges_this_row_can_actually_follow(self):
-        relationships = [
-            {"source": {"object": "EAF_PER_HEAT", "attribute": "SteelGrade"},
-             "target": {"database": "XStudio_Xbatch", "object": "Grade_Master", "attribute": "GradeName"},
-             "cardinality": {"source": "Many", "target": "One"}},
-            {"source": {"object": "EAF_PER_HEAT", "attribute": "WorkOrder"},
-             "target": {"database": "XStudio_Xbatch", "object": "XBatch_Work_Order_Mst_Tbl", "attribute": "ID"},
-             "cardinality": {"source": "Many", "target": "One"}},
-            {"source": {"object": "SomeOtherTable", "attribute": "X"},
-             "target": {"database": "XStudio_Xbatch", "object": "Y", "attribute": "ID"},
-             "cardinality": {"source": "Many", "target": "One"}},
-        ]
-        # WorkOrder is present but NULL on this row -- must not produce a hop.
-        row = {"SteelGrade": "S355", "WorkOrder": None, "HeatNo": "1604015"}
-        hops = mod._available_relationship_hops("XStudio_Xbatch", "dbo.EAF_PER_HEAT", row, relationships)
-        self.assertEqual(len(hops), 1)
-        self.assertEqual(hops[0]["target_table"], "Grade_Master")
-        self.assertEqual(hops[0]["source_value"], "S355")
-
-    def test_run_relationship_hops_executes_only_jev_selected_hops(self):
-        relationships = [
-            {"source": {"object": "EAF_PER_HEAT", "attribute": "SteelGrade"},
-             "target": {"database": "XStudio_Xbatch", "object": "Grade_Master", "attribute": "GradeName"},
-             "cardinality": {}},
-        ]
-        row = {"SteelGrade": "S355"}
-        selected_hop = {
-            "source_column": "SteelGrade", "source_value": "S355", "target_database": "XStudio_Xbatch",
-            "target_table": "Grade_Master", "target_column": "GradeName", "jev_worth_fetching": 0.9,
-        }
-        with patch.object(mod, "_run_jev_workflow", return_value={
-                "ok": True, "result": {"selected": [selected_hop]}}) as jev_call, \
-             patch.object(mod, "_run_xstudio_bridge", return_value={
-                "ok": True, "rows": [{"GradeName": "S355", "Spec": "..."}]}) as bridge_call:
-            executed = mod._run_relationship_hops(
-                ticket={"BriefDetails": "x"}, run_id="r", ticket_id="t",
-                database="XStudio_Xbatch", table="dbo.EAF_PER_HEAT", row=row,
-                relationships=relationships,
-            )
-        jev_call.assert_called_once()
-        self.assertEqual(jev_call.call_args.args[0], "relationship_hops")
-        bridge_call.assert_called_once()
-        bridge_args = bridge_call.call_args.args[0]
-        self.assertEqual(bridge_args["operation"], "probe_related_table")
-        self.assertEqual(bridge_args["table"], "Grade_Master")
-        self.assertEqual(bridge_args["filter_column"], "GradeName")
-        self.assertEqual(bridge_args["filter_value"], "S355")
-        self.assertEqual(len(executed), 1)
-
-    def test_run_relationship_hops_with_no_edges_never_calls_jev(self):
-        with patch.object(mod, "_run_jev_workflow") as jev_call:
-            executed = mod._run_relationship_hops(
-                ticket={}, run_id="r", ticket_id="t", database="XStudio_Xbatch",
-                table="dbo.Unrelated_Table", row={"X": "1"}, relationships=[],
-            )
-        jev_call.assert_not_called()
-        self.assertEqual(executed, [])
 
 
 class PipelineStallDetectionTests(unittest.TestCase):
-    def _row(self, waiting, last_claim, server_now):
-        return [{"WaitingCount": waiting, "LastClaimOn": last_claim, "ServerNow": server_now}]
+    def _orch(self, waiting, last_claim, server_now):
+        """Waiting = what --candidates (the claim procedure) returns; the query gives the clock."""
+        def fake(args, extra, **kwargs):
+            if "--candidates" in extra:
+                return [{"ID": str(i)} for i in range(waiting)]
+            return [{"LastClaimOn": last_claim, "ServerNow": server_now}]
+        return fake
 
     def test_empty_wip_with_waiting_work_and_long_gap_is_a_stall(self):
         now = datetime(2026, 9, 22, 23, 0, 0)
         last_claim = now - timedelta(minutes=42)
         with patch.object(mod, "query_active_runs", return_value=[]), \
              patch.object(mod, "load_workflow_binding", return_value={"eligible_ticket_status": "Enter"}), \
-             patch.object(mod, "run_orchestrator", return_value=self._row(12, last_claim, now)), \
+             patch.object(mod, "run_orchestrator", side_effect=self._orch(12, last_claim, now)), \
              patch.object(mod, "_write_stall_alert", return_value=True) as write_alert:
             result = mod.check_pipeline_stall(mod.default_args())
         self.assertTrue(result["stalled"])
@@ -2134,7 +1969,7 @@ class PipelineStallDetectionTests(unittest.TestCase):
         now = datetime(2026, 9, 22, 23, 0, 0)
         with patch.object(mod, "query_active_runs", return_value=[]), \
              patch.object(mod, "load_workflow_binding", return_value={"eligible_ticket_status": "Enter"}), \
-             patch.object(mod, "run_orchestrator", return_value=self._row(0, now - timedelta(minutes=42), now)), \
+             patch.object(mod, "run_orchestrator", side_effect=self._orch(0, now - timedelta(minutes=42), now)), \
              patch.object(mod, "_write_stall_alert") as write_alert:
             result = mod.check_pipeline_stall(mod.default_args())
         self.assertFalse(result["stalled"])
@@ -2144,7 +1979,7 @@ class PipelineStallDetectionTests(unittest.TestCase):
         now = datetime(2026, 9, 22, 23, 0, 0)
         with patch.object(mod, "query_active_runs", return_value=[]), \
              patch.object(mod, "load_workflow_binding", return_value={"eligible_ticket_status": "Enter"}), \
-             patch.object(mod, "run_orchestrator", return_value=self._row(5, now - timedelta(minutes=3), now)), \
+             patch.object(mod, "run_orchestrator", side_effect=self._orch(5, now - timedelta(minutes=3), now)), \
              patch.object(mod, "_write_stall_alert") as write_alert:
             result = mod.check_pipeline_stall(mod.default_args())
         self.assertFalse(result["stalled"])
@@ -2154,7 +1989,7 @@ class PipelineStallDetectionTests(unittest.TestCase):
         now = datetime(2026, 9, 22, 23, 0, 0)
         with patch.object(mod, "query_active_runs", return_value=[{"ID": "run-1"}]), \
              patch.object(mod, "load_workflow_binding", return_value={"eligible_ticket_status": "Enter"}), \
-             patch.object(mod, "run_orchestrator", return_value=self._row(20, now - timedelta(hours=2), now)), \
+             patch.object(mod, "run_orchestrator", side_effect=self._orch(20, now - timedelta(hours=2), now)), \
              patch.object(mod, "_write_stall_alert") as write_alert:
             result = mod.check_pipeline_stall(mod.default_args())
         self.assertFalse(result["stalled"])

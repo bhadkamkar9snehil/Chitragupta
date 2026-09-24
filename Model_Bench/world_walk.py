@@ -150,6 +150,32 @@ def _status_like(v: Any) -> bool:
     return isinstance(v, str) and 2 < len(v.strip()) <= 30 and re.search(r"[A-Za-z]", v) and not re.search(r"\d", v)
 
 
+# Inside a live run the runtime passes run_id: every read then goes through the bridge's audited read
+# (Hermes_L2_Execute_SQL_Usp), so each finding carries an action ID the reviewer can verify.
+# ponytail: module state, because the CLI runs one ticket per process.
+_AUDIT: dict[str, Any] = {}
+
+
+def _literal(table: str, column: str, value: str) -> str:
+    decl = next((c for c in OBJS.get(table, {}).get("columns", []) if c.split(" ")[0] == column), "")
+    numeric = decl.split(" ")[1].split("(")[0] in _INT_LIMITS if " " in decl else False
+    return value if numeric else "N'" + value.replace("'", "''") + "'"  # numeric: _can_hold checked digits
+
+
+def _read(conn, sql: str, table: str, column: str, value: str) -> tuple[list[dict[str, Any]], str | None]:
+    """One read of `sql`: audited (rows + action ID) inside a run, plain otherwise (tests)."""
+    if _AUDIT:
+        from xstudio_l2_tool_bridge import _audited_probe_read
+        rows, action_id = _audited_probe_read(_AUDIT["client"], run_id=_AUDIT["run_id"], database="XStudio_Xbatch",
+                                              table=table, sql=sql, operation="world_walk",
+                                              filter_column=column, filter_value=value)
+        return [r for r in rows if isinstance(r, dict)], action_id
+    cur = conn.cursor()
+    cur.execute(sql)
+    names = [d[0] for d in cur.description]
+    return [dict(zip(names, r)) for r in cur.fetchall()], None
+
+
 def look_table(name: str, value: str, conn) -> dict[str, Any]:
     cols = sorted({c.split(".", 1)[1] for cs in KEY_COLUMNS.values() for c in cs if c.split(".", 1)[0] == name}
                   | {c.split(".", 1)[1] for k, info in WORLD["keys"]["keys"].items() for c in info["columns"]
@@ -157,15 +183,16 @@ def look_table(name: str, value: str, conn) -> dict[str, Any]:
     cols = [c for c in cols if _can_hold(name, c, value)]
     if not cols:
         return {"text": f"{name}: holds no identifier column for a value like {value}", "observed": False}
-    cur = conn.cursor()
-    where = " OR ".join(f"[{c}] = ?" for c in cols)
-    cur.execute(f"SELECT COUNT(*) FROM dbo.[{name}] WHERE {where}", [value] * len(cols))
-    count = cur.fetchone()[0]
+    where = " OR ".join(f"[{c}] = {_literal(name, c, value)}" for c in cols)
+    rows, action_id = _read(conn, f"SELECT TOP 3 *, COUNT(*) OVER () AS [__rows] FROM dbo.[{name}] WHERE {where}",
+                            name, cols[0], value)
+    count = int(rows[0].pop("__rows")) if rows else 0
+    for row in rows[1:]:
+        row.pop("__rows", None)
+    probe = {"ok": True, "probe_possible": True, "table": name, "database": "XStudio_Xbatch",
+             "identifier": {cols[0]: value}, "rows": rows, "action_id": action_id}
     if not count:
-        return {"text": f"{name}: no rows for {value}", "rows": 0}
-    cur.execute(f"SELECT TOP 3 * FROM dbo.[{name}] WHERE {where}", [value] * len(cols))
-    names = [d[0] for d in cur.description]
-    rows = [dict(zip(names, r)) for r in cur.fetchall()]
+        return {"text": f"{name}: no rows for {value}", "rows": 0, "probe": probe}
     shown = {}
     for row in rows:
         for col, v in row.items():
@@ -176,7 +203,7 @@ def look_table(name: str, value: str, conn) -> dict[str, Any]:
                                 if c.lower() not in FRAMEWORK and _status_like(v)))[:6]
     numbers = {c: float(v) for row in rows for c, v in row.items()
                if isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)}
-    return {"rows": count, "columns": shown, "numbers": numbers, "messages": messages,
+    return {"rows": count, "columns": shown, "numbers": numbers, "messages": messages, "probe": probe,
             "text": f"{name}: {count} row(s) for {value}" + (f"; says: {' | '.join(messages)}" if messages else "")
                     + (f"; {', '.join(states)}" if states else "")}
 
@@ -290,15 +317,16 @@ def code_presence(tables: list[str], found_codes: list[str], conn) -> list[dict[
         if not cols:
             continue
         for code in found_codes:
+            sql = f"SELECT TOP 1 * FROM dbo.[{table}] WHERE " + " OR ".join(f"[{c}] = {_literal(table, c, code)}" for c in cols)
             try:
-                cur = conn.cursor()
-                cur.execute(f"SELECT TOP 1 * FROM dbo.[{table}] WHERE " + " OR ".join(f"[{c}] = ?" for c in cols), [code] * len(cols))
-                row = cur.fetchone()
+                rows, action_id = _read(conn, sql, table, cols[0], code)
             except Exception:
                 continue
-            text = (f"{code} is in {table}" if row else
+            text = (f"{code} is in {table}" if rows else
                     f"{code} is not in {table} (checked {', '.join(cols[:6])}{'...' if len(cols) > 6 else ''})")
-            out.append({"slug": None, "node": table, "kind": "table", "value": None, "obs": {"text": text}})
+            probe = {"ok": True, "probe_possible": True, "table": table, "database": "XStudio_Xbatch",
+                     "identifier": {cols[0]: code}, "rows": rows, "action_id": action_id}
+            out.append({"slug": None, "node": table, "kind": "table", "value": None, "obs": {"text": text, "probe": probe}})
     return out
 
 
@@ -539,7 +567,7 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
                 "seconds": round(time.perf_counter() - started, 1)}
     entities = subject(ticket, resolve(ticket, conn))
     if spans(ticket) and not entities:  # names an identifier XBatch does not hold: ask, don't guess
-        return {"route": "data", "data": True, "entities": [], "trail": [],
+        return {"route": "data", "data": True, "entities": [], "trail": [], "missing": spans(ticket),
                 "stopped": "no identifier from the ticket exists in XBatch", "seconds": round(time.perf_counter() - started, 1)}
     since = window(ticket)
     value = entities[0]["value"] if entities else None
@@ -593,9 +621,33 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
         frontier += step_options(world, pick["slug"], obs, pick["value"], conn)
     seen = [{"node": s["node"], "obs": s["obs"]} for s in starts] + [{"node": s["node"], "obs": s["observation"]} for s in trail]
     numbers = trace_numbers(ticket, value or "", seen)
+    # Every read, in the shape the runtime's evidence consumers (direct_answer, reviewer) already use.
+    probes = [{"probe": s["obs"]["probe"]} for s in seen if s["obs"].get("probe")]
     return {"route": "data", "data": True, "entities": entities, "since": str(since), "trail": trail, "stopped": stopped,
-            "numbers": numbers, "surveyed": len(starts), "seconds": round(time.perf_counter() - started, 1)}
+            "numbers": numbers, "surveyed": len(starts), "probes": probes,
+            "seconds": round(time.perf_counter() - started, 1)}
+
+
+def main() -> int:
+    """Runtime entry: JSON request on stdin {"ticket_text", "run_id"}; JSON result on stdout.
+    With a run_id every SQL read is audited against that run. Debug: world_walk.py "<ticket text>"."""
+    if len(sys.argv) > 1:
+        print(json.dumps(walk(" ".join(sys.argv[1:])), indent=1, default=str))
+        return 0
+    req = json.loads(sys.stdin.read() or "{}")
+    if req.get("run_id"):
+        from xstudio_l2_tool_bridge import _client
+        _AUDIT.update(client=_client(), run_id=str(req["run_id"]))
+    try:
+        result = walk(str(req.get("ticket_text") or ""))
+    except Exception as exc:  # the runtime falls back to its own path; never a traceback on stdout
+        result = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+    finally:
+        if _AUDIT.get("client"):
+            _AUDIT["client"].close()
+    print(json.dumps({"ok": "error" not in result, **result}, default=str))
+    return 0
 
 
 if __name__ == "__main__":
-    print(json.dumps(walk(" ".join(sys.argv[1:])), indent=1, default=str))
+    raise SystemExit(main())

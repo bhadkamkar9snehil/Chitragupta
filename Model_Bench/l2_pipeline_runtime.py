@@ -46,10 +46,8 @@ from typing import Any, Iterable, Optional
 
 try:
     from Model_Bench import direct_answer
-    from Model_Bench.xbatch_world import load_world, select_recipes, world_context
-except ImportError:  # deployed scripts live beside xbatch_world.py
+except ImportError:  # deployed scripts live beside direct_answer.py
     import direct_answer
-    from xbatch_world import load_world, select_recipes, world_context
 
 
 def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
@@ -1063,6 +1061,32 @@ def _run_xstudio_bridge(request: dict[str, Any], *, timeout: int = 45) -> dict[s
     return data if isinstance(data, dict) else {"ok": False, "error": "xstudio bridge returned non-object JSON"}
 
 
+WORLD_WALK_TIMEOUT_S = int(os.environ.get("L2_WORLD_WALK_TIMEOUT", "240"))
+
+
+def _run_world_walk(ticket: dict[str, Any], run_id: str | None) -> dict[str, Any]:
+    """Investigate the ticket over the XBatch world (Model_Bench/world_walk.py, repo-resident like the
+    other bridges). Reads are audited against run_id. Failure is fail-open: the caller keeps going."""
+    try:
+        proc = subprocess.run(
+            [_orch_python(), str(REPO_ROOT_WSL / "Model_Bench" / "world_walk.py")],
+            input=json.dumps({"ticket_text": direct_answer.ticket_text(ticket), "run_id": run_id}, default=str),
+            capture_output=True, text=True, timeout=WORLD_WALK_TIMEOUT_S,
+        )
+        data = json.loads((proc.stdout or "").strip() or "{}")
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+        return {"ok": False, "error": f"world walk unavailable: {type(exc).__name__}: {exc}"}
+    return data if isinstance(data, dict) else {"ok": False, "error": "world walk returned non-object JSON"}
+
+
+def _walk_findings(walk: dict[str, Any]) -> list[dict[str, Any]]:
+    """The walk's judged findings, compact, for the model context and the proposal's evidence."""
+    return [{"role": s.get("role"), "confidence": s.get("confidence"), "where": s.get("node"),
+             "finding": (s.get("observation") or {}).get("text"),
+             "action_id": ((s.get("observation") or {}).get("probe") or {}).get("action_id")}
+            for s in walk.get("trail") or [] if s.get("role") not in ("unrelated", "not_observed")]
+
+
 def _noul_answer(result: dict[str, Any], name: str, default: float = 0.0) -> float:
     try:
         answer = (result.get("answers") or {}).get(name) or {}
@@ -1687,126 +1711,6 @@ def _assessment_for_model(assessment: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _available_relationship_hops(
-    database: str, table: str, row: dict[str, Any], relationships: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Real atlas edges whose source is this table and whose source column
-    is present with a non-null value on the row a probe already returned.
-    Never invented, never a guessed column -- only edges the semantic atlas
-    itself already asserts, filtered to ones this specific row can actually
-    follow right now.
-    """
-    bare_table = str(table).split(".")[-1].strip("[]").lower()
-    hops: list[dict[str, Any]] = []
-    row_lookup = {str(k).lower(): v for k, v in row.items()}
-    for edge in relationships:
-        src = edge.get("source") or {}
-        tgt = edge.get("target") or {}
-        src_table = str(src.get("object") or "").split(".")[-1].strip("[]").lower()
-        if src_table != bare_table:
-            continue
-        src_col = str(src.get("attribute") or "")
-        value = row_lookup.get(src_col.lower())
-        if value in (None, "", "NULL"):
-            continue
-        hops.append({
-            "source_column": src_col,
-            "source_value": str(value),
-            "target_database": tgt.get("database") or database,
-            "target_table": tgt.get("object"),
-            "target_column": tgt.get("attribute"),
-            "cardinality": edge.get("cardinality"),
-        })
-    return hops
-
-
-def _run_relationship_hops(
-    *, ticket: dict[str, Any], run_id: str | None, ticket_id: str,
-    database: str, table: str, row: dict[str, Any], relationships: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    available = _available_relationship_hops(database, table, row, relationships)
-    if not available:
-        return []
-    hop_call = _run_jev_workflow(
-        "relationship_hops",
-        {
-            "ticket": ticket, "primary_table": table, "primary_row": row,
-            "available_hops": available,
-        },
-        ticket_id=ticket_id, run_id=run_id, audit_stage="JEV_RELATIONSHIP_HOPS",
-    )
-    hop_result = hop_call.get("result") if hop_call.get("ok") else {}
-    selected = hop_result.get("selected") if isinstance(hop_result, dict) else []
-    executed: list[dict[str, Any]] = []
-    for hop in (selected if isinstance(selected, list) else [])[:5]:
-        target_table = hop.get("target_table")
-        if not target_table:
-            continue
-        probe = _run_xstudio_bridge({
-            "operation": "probe_related_table",
-            "database": hop.get("target_database") or database,
-            "table": target_table,
-            "filter_column": hop.get("target_column"),
-            "filter_value": hop.get("source_value"),
-            "run_id": run_id,
-        })
-        executed.append({"hop": hop, "probe": probe})
-    return executed
-
-
-EVIDENCE_ROUNDS = int(os.environ.get("L2_EVIDENCE_ROUNDS", "3"))
-
-
-def _plan_evidence_round(
-    *, ticket: dict[str, Any], pool: list[tuple[int, dict[str, Any]]], known_solutions: list[Any],
-    kb_retrieval: dict[str, Any], ticket_id: str, run_id: str | None,
-) -> tuple[dict[str, Any], list[tuple[float, float, int, dict[str, Any]]]]:
-    """Jev evidence plan over the not-yet-read candidates; returns (plan, top-3 selections)."""
-    if not pool:
-        return {"ok": False, "reason": "no unread candidates"}, []
-    call = _run_jev_workflow(
-        "evidence_plan",
-        {"ticket": ticket, "candidates": [c for _, c in pool], "known_solutions": known_solutions,
-         "triage": kb_retrieval.get("ticket_characterization") or {},
-         "route_candidates": kb_retrieval.get("route_candidates") or []},
-        ticket_id=ticket_id, run_id=run_id, audit_stage="JEV_EVIDENCE_PLAN",
-    )
-    plan = call.get("result") if call.get("ok") else {
-        "ok": False, "reason": call.get("error") or "evidence plan unavailable"}
-    if not (isinstance(plan, dict) and plan.get("ok")):
-        return plan, []
-    selected = [(_score_answer(plan, f"value_c{j}", 0.0), _noul_answer(plan, f"inspect_c{j}", 0.0), i, c)
-                for j, (i, c) in enumerate(pool)]
-    selected = [row for row in selected if row[1] >= 0.60]
-    selected.sort(key=lambda row: (-row[0], -row[1], row[2]))
-    return plan, selected[:3]
-
-
-def _probe_selected(
-    selected: list[tuple[float, float, int, dict[str, Any]]], *, ticket: dict[str, Any],
-    ticket_id: str, run_id: str | None, relationships: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Audited reads of the selected tables, plus the relationship hops Jev picks from each row."""
-    probes = []
-    for value, inspect, i, candidate in selected:
-        database, table = candidate.get("database"), candidate.get("table")
-        if not database or not table:
-            continue
-        probe = _run_xstudio_bridge({
-            "operation": "probe_table", "database": database, "table": table, "ticket": ticket,
-            "run_id": run_id, "ticket_id": ticket_id,
-            "matched_columns": candidate.get("matched_columns") or [], "top": 20,
-        })
-        first_row = (probe.get("rows") or [{}])[0] if probe.get("probe_possible") else None
-        hops = _run_relationship_hops(
-            ticket=ticket, run_id=run_id, ticket_id=ticket_id, database=str(database),
-            table=str(table), row=first_row, relationships=relationships,
-        ) if isinstance(first_row, dict) and relationships else []
-        probes.append({"candidate_index": i, "candidate": candidate, "plan_inspect_probability": inspect,
-                       "plan_value_score": value, "probe": probe, "relationship_hops": hops})
-    return probes
-
-
 def _jev_first_investigation(
     *,
     ticket: dict[str, Any],
@@ -1857,35 +1761,25 @@ def _jev_first_investigation(
             "qwen_free_proposal": None,
         }
 
-    try:
-        atlas_relationships = load_world()["atlas"].get("relationships") or []
-    except (OSError, ValueError, KeyError, json.JSONDecodeError):
-        atlas_relationships = []
-
-    # Bounded evidence loop: Jev picks tables from the not-yet-read candidates, the harness
-    # reads them (and the relationship hops Jev picks), and Jev re-judges whether the facts
-    # answer the ticket. Generic over every table the atlas knows; no per-concept code.
-    remaining = list(enumerate(candidates))
-    probes: list[dict[str, Any]] = []
-    plan: dict[str, Any] | None = None
-    direct, direct_record = None, {"reason": "no evidence round ran"}
-    for _round in range(EVIDENCE_ROUNDS):
-        round_plan, selected = _plan_evidence_round(
-            ticket=ticket, pool=remaining, known_solutions=known_solutions,
-            kb_retrieval=kb_retrieval, ticket_id=ticket_id, run_id=run_id,
-        )
-        plan = plan or round_plan
-        if not selected:
-            break
-        probes += _probe_selected(selected, ticket=ticket, ticket_id=ticket_id, run_id=run_id,
-                                  relationships=atlas_relationships)
-        read = {i for _, _, i, _ in selected}
-        remaining = [(i, c) for i, c in remaining if i not in read]
-        direct, direct_record = _jev_direct_answer(ticket=ticket, probes=probes, run_id=run_id,
-                                                   ticket_id=ticket_id)
-        if direct is not None:
-            break
-    direct_record["evidence_rounds"] = _round + 1 if candidates else 0
+    # The L2 engineer (Knowledge/L2_ENGINEER_DESIGN.md): understand the ask, find what it is about
+    # (identifier or words), look at audited live evidence, judge every finding, follow the world's
+    # links. Its reads are audited against run_id, in the probe shape direct_answer already uses.
+    walk = _run_world_walk(ticket, run_id)
+    probes: list[dict[str, Any]] = walk.get("probes") or []
+    plan: dict[str, Any] = {
+        "ok": bool(walk.get("ok")), "source": "world_walk", "route": walk.get("route"),
+        "stopped": walk.get("stopped"), "entities": walk.get("entities"), "since": walk.get("since"),
+        "findings": _walk_findings(walk), "numbers": walk.get("numbers"), "error": walk.get("error"),
+    }
+    direct, direct_record = None, {"reason": "world walk gathered no audited evidence"}
+    if walk.get("ok") and run_id and walk.get("route") not in (None, "data"):
+        direct = direct_answer.routed_proposal(str(walk["route"]), run_id=str(run_id), ticket_id=ticket_id, ticket=ticket)
+        direct_record = {"reason": f"routed as {walk['route']}"}
+    elif walk.get("ok") and run_id and walk.get("missing"):
+        direct = direct_answer.not_found_proposal(walk["missing"], run_id=str(run_id), ticket_id=ticket_id, ticket=ticket)
+        direct_record = {"reason": "identifier not in XBatch"}
+    elif probes:
+        direct, direct_record = _jev_direct_answer(ticket=ticket, probes=probes, run_id=run_id, ticket_id=ticket_id)
     chunks = _make_context_chunks(
         ticket_context=ticket_context,
         routing_context=routing_context,
@@ -3910,12 +3804,6 @@ def _dispatch_route_context(run_id: str, ticket_id: str, ticket: dict[str, Any],
             rendered["live_context"] = json.loads(result.stdout)
         except (OSError, subprocess.TimeoutExpired, RuntimeError, json.JSONDecodeError) as exc:
             rendered["live_context_warning"] = f"Deterministic work-order context unavailable: {type(exc).__name__}: {exc}"
-    try:
-        world = load_world()
-        selection = select_recipes(ticket, world)
-        rendered["world_knowledge"] = world_context(selection, world, max_chars=2500)
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
-        rendered["world_knowledge_warning"] = f"World knowledge unavailable: {type(exc).__name__}: {exc}"
     text = json.dumps(rendered, separators=(",", ":"), default=str)  # compact: card size
     if len(text) > 9000:
         text = text[:9000] + "\n... [route/world context truncated at 9,000 chars]"

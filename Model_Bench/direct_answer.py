@@ -212,6 +212,34 @@ def proposal_for(outcome: str, table: dict[str, Any], *, run_id: str, ticket_id:
                      summary=resolution, resolution=resolution)
 
 
+_ROUTED = {  # world walk decided this is not an L2 data investigation (world_walk.ROUTES)
+    "how_to": "This is a how-to question rather than a data problem. It has been passed to the XBatch support team, who will guide you through the steps.",
+    "access": "This is a login or permission problem. It has been passed to the team that manages XBatch user access.",
+    "infrastructure": "This looks like a system-wide availability or performance problem, not a data problem. It has been passed to the infrastructure team.",
+    "hardware": "This is a device problem (printer, scanner, PC or network). It has been passed to the IT hardware team.",
+    "change_request": "This is a request to change how XBatch works. It has been passed to the change process for evaluation.",
+}
+
+
+def routed_proposal(route: str, *, run_id: str, ticket_id: str, ticket: dict[str, Any]) -> dict[str, Any] | None:
+    """No-Qwen handoff for escalations that are not data problems: named team, human action."""
+    reply = _ROUTED.get(route)
+    if reply is None:
+        return None
+    return _proposal(run_id, ticket_id, ticket, "NEEDS_HUMAN_ACTION", reply=reply, claims=[],
+                     summary=f"Routed as {route}: not an L2 data investigation")
+
+
+def not_found_proposal(values: list[str], *, run_id: str, ticket_id: str, ticket: dict[str, Any]) -> dict[str, Any]:
+    """The ticket names identifiers XBatch does not hold (checked against the world value index)."""
+    named = ", ".join(values)
+    return _proposal(run_id, ticket_id, ticket, "QUESTION",
+                     reply=(f"We could not find {named} anywhere in XBatch. Please confirm the exact heat / work "
+                            "order / billet / document number and the approximate time of the event."),
+                     claims=[], summary=f"Identifier(s) not present in XBatch: {named}",
+                     requester_question="Please confirm the exact identifier and time of the event.")
+
+
 def _proposal(run_id: str, ticket_id: str, ticket: dict[str, Any], response_type: str, *,
               reply: str, claims: list[dict[str, Any]], summary: str, **extra: str) -> dict[str, Any]:
     source = ticket.get("ticket") if isinstance(ticket.get("ticket"), dict) else ticket
