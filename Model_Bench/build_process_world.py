@@ -270,7 +270,11 @@ KEY_QUERY_TIMEOUT_S = 20
 KEY_MIN_SHARED = 10          # world mode 1: one shared value is coincidence
 KEY_MIN_SHARED_RATIO = 0.2   # ... and it must be a real fraction of the smaller column
 FRAMEWORK_TABLE_SHARE = 0.3  # world mode 3: a column on >30% of tables is framework, not a key
-IDENTIFIER_DISTINCT_RATIO = 0.9  # a single-table column is an identifier when ~every row has its own value
+# A single-table column is an identifier when it has many distinct values (statuses and codes have
+# few) and they are not decimal measurements. Not "every row distinct": one consumption material
+# document posts several material lines, so the same document repeats across rows.
+IDENTIFIER_DISTINCT_RATIO = 0.1
+_DECIMAL = re.compile(r"^-?\d+\.\d+$")
 # Dates, clock times and durations ("00:13", "01:14", "0*:0*") are values, not identifiers.
 _DATE_LIKE = re.compile(r"^\d{4}-\d{2}-\d{2}|^[\d*]{1,3}:[\d*]{2}(?::[\d*]{2})?$")
 
@@ -368,7 +372,8 @@ def keys(cur) -> dict:
     # sampled row has its own value. Not keys (nothing to join), but a ticket can still name one.
     keyed = {c for info in out.values() for c in info["columns"]}
     identifiers = {c: sorted(v)[:3] for c, v in values.items()
-                   if c not in keyed and len(v) >= KEY_MIN_SHARED and len(v) >= IDENTIFIER_DISTINCT_RATIO * non_null[c]}
+                   if c not in keyed and len(v) >= KEY_MIN_SHARED and len(v) >= IDENTIFIER_DISTINCT_RATIO * non_null[c]
+                   and sum(1 for x in v if _DECIMAL.match(x)) < 0.5 * len(v)}
     return {"keys": out, "identifiers": identifiers, "links": links, "contained": contained,
             "skipped": skipped, "unordered": unordered,
             "framework_columns": sorted(framework)}

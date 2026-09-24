@@ -64,7 +64,6 @@
 {"from": "table/Heat_Chemistry_Quality_Data", "to": "key/HeatSequence", "type": "holds", "context": "HeatSequence"}
 {"from": "table/Heat_Chemistry_Quality_Data", "to": "key/InspectionLot", "type": "holds", "context": "InspectionLot"}
 {"from": "table/Heat_Chemistry_Quality_Data", "to": "key/SAPTransactionID", "type": "holds", "context": "SAPTransactionID"}
-{"from": "table/Heat_Chemistry_Quality_Data", "to": "key/SampleName", "type": "holds", "context": "SampleName"}
 {"from": "table/Heat_End_Selection_Trn_Tbl", "to": "key/HeatNo", "type": "holds", "context": "FirstHeatNo"}
 {"from": "table/Heat_End_Selection_Trn_Tbl", "to": "key/HeatNo", "type": "holds", "context": "LastHeatNo"}
 {"from": "view/LRF_Overview_Pannel_Dashboard", "to": "table/LRF_SMS_Data", "type": "reads", "context": ""}
@@ -101,7 +100,6 @@
 {"from": "table/Power_Meter_Reading_Time", "to": "key/TechnicianName", "type": "holds", "context": "EngineerName"}
 {"from": "table/Power_Meter_Reading_Time", "to": "key/TechnicianName", "type": "holds", "context": "TechnicianName"}
 {"from": "table/Quality_Spectro_Sample", "to": "key/HeatNo", "type": "holds", "context": "HeatNo"}
-{"from": "table/Quality_Spectro_Sample", "to": "key/SampleName", "type": "holds", "context": "SampleName"}
 {"from": "table/RM_Charging_Plan", "to": "key/SublotNumber", "type": "holds", "context": "BilletNo"}
 {"from": "table/RM_Consumption_Summary_Day", "to": "key/NGCons_MTD", "type": "holds", "context": "NGCons_MTD"}
 {"from": "table/RM_Furnace_Combustion_Attribute_Tag_Template_Dtl_Tbl", "to": "key/Attribute-7", "type": "holds", "context": "Attribute"}
@@ -1014,11 +1012,9 @@
 {"from": "view/XStudio_List_Quality_Deviation_Master_Vw", "to": "table/Size_Nominal_Wt_Value_Master", "type": "reads", "context": ""}
 {"from": "view/XStudio_List_Quality_Spectro_File_Vw", "to": "table/Quality_Spectro_File", "type": "reads", "context": ""}
 {"from": "view/XStudio_List_Quality_Spectro_Result_Vw", "to": "key/HeatNo", "type": "holds", "context": "HeatNo"}
-{"from": "view/XStudio_List_Quality_Spectro_Result_Vw", "to": "key/SampleName", "type": "holds", "context": "SampleName"}
 {"from": "view/XStudio_List_Quality_Spectro_Result_Vw", "to": "table/Quality_Spectro_Result", "type": "reads", "context": ""}
 {"from": "view/XStudio_List_Quality_Spectro_Result_Vw", "to": "table/Quality_Spectro_Sample", "type": "reads", "context": ""}
 {"from": "view/XStudio_List_Quality_Spectro_Sample_Vw", "to": "key/HeatNo", "type": "holds", "context": "HeatNo"}
-{"from": "view/XStudio_List_Quality_Spectro_Sample_Vw", "to": "key/SampleName", "type": "holds", "context": "SampleName"}
 {"from": "view/XStudio_List_Quality_Spectro_Sample_Vw", "to": "table/Quality_Spectro_Sample", "type": "reads", "context": ""}
 {"from": "view/XStudio_List_RMDelayEntry_CAPA_Vw", "to": "table/DelayAgency_Master", "type": "reads", "context": ""}
 {"from": "view/XStudio_List_RMDelayEntry_CAPA_Vw", "to": "table/Equipment", "type": "reads", "context": ""}

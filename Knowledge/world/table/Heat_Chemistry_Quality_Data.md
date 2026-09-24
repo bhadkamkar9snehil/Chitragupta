@@ -14,7 +14,6 @@ Table in XStudio_Xbatch. Rows: 23,023.
 - HeatSequence: same values as key `HeatSequence`
 - InspectionLot: same values as key `InspectionLot`
 - SAPTransactionID: same values as key `SAPTransactionID`
-- SampleName: same values as key `SampleName`
 
 ## Written by
 

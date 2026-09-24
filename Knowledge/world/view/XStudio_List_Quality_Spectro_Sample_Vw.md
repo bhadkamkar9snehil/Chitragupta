@@ -11,7 +11,6 @@ View in XStudio_Xbatch. Rows: unknown.
 ## Identifiers it holds
 
 - HeatNo: same values as key `HeatNo`
-- SampleName: same values as key `SampleName`
 
 ## Reads
 

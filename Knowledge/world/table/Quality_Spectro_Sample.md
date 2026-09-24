@@ -11,7 +11,6 @@ Table in XStudio_Xbatch. Rows: 23,023.
 ## Identifiers it holds
 
 - HeatNo: same values as key `HeatNo`
-- SampleName: same values as key `SampleName`
 
 ## Written by
 
