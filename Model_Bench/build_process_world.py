@@ -31,7 +31,6 @@ import pyodbc
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "Knowledge" / "process_world.json"
 DB = "XStudio_Xbatch"
-EVENT_AREAS = ("EAF_SMS", "LRF_SMS", "CCM", "CCM_SMS", "RM_Mill", "RM_Reheating_Furnace", "RM_WRM", "RM_Rebar")
 DYNAMIC_SQL = re.compile(r"sp_executesql|EXEC\s*\(|EXECUTE\s*\(", re.I)
 PARAM = re.compile(r"@(\w+)\s*=\s*('(?:[^']|'')*'|[^,\s]+)")
 STEP_NO = re.compile(r"^\s*(\d+)\s")
@@ -171,7 +170,10 @@ def runtime_log(cur) -> dict[str, dict]:
 def events(cur) -> list[dict]:
     """Event -> table, its states (conditions over tags, workflow flags) and tag -> column mappings."""
     out = []
-    for area in EVENT_AREAS:
+    # Areas come from the catalog: every <Area>_Event_Configuration_Mst_Tbl that exists.
+    areas = [r["name"][:-len("_Event_Configuration_Mst_Tbl")] for r in
+             rows(cur, "SELECT name FROM sys.tables WHERE name LIKE '%[_]Event[_]Configuration[_]Mst[_]Tbl' ORDER BY name")]
+    for area in areas:
         try:
             configs = rows(cur, f"SELECT ID, Name, TransactionEntity, IsActive, EventMstID FROM dbo.{area}_Event_Configuration_Mst_Tbl "
                                 "WHERE ISNULL(IsDeleted,0)=0")
@@ -234,6 +236,121 @@ def _merge_tables(bag: dict, canon) -> dict[str, list[str]]:
     for table, cols in bag.items():
         merged[canon(table)].update(cols)
     return {t: sorted(c) for t, c in merged.items()}
+
+
+def schema(cur) -> dict:
+    """Catalog facts per table/view (columns, rows) and per procedure (parameters); views' sources."""
+    objs = {}
+    for r in rows(cur, """SELECT o.name, o.type, c.name col, ty.name typ, c.max_length len, c.column_id
+            FROM sys.objects o JOIN sys.columns c ON c.object_id=o.object_id JOIN sys.types ty ON ty.user_type_id=c.user_type_id
+            WHERE o.type IN ('U','V') ORDER BY o.name, c.column_id"""):
+        o = objs.setdefault(r["name"], {"kind": "table" if r["type"].strip() == "U" else "view", "columns": [], "rows": None})
+        o["columns"].append(f"{r['col']} {r['typ']}" + (f"({r['len']})" if r["typ"] in ("varchar", "nvarchar", "char") else ""))
+    for r in rows(cur, """SELECT OBJECT_NAME(object_id) name, SUM(row_count) n FROM sys.dm_db_partition_stats
+                          WHERE index_id IN (0,1) GROUP BY object_id"""):
+        if r["name"] in objs:
+            objs[r["name"]]["rows"] = int(r["n"])
+    for v in [n for n, o in objs.items() if o["kind"] == "view"]:
+        try:
+            refs = rows(cur, "SELECT DISTINCT referenced_entity_name e FROM sys.dm_sql_referenced_entities(?, 'OBJECT')", f"dbo.{v}")
+            objs[v]["reads"] = sorted({r["e"] for r in refs if r["e"] in objs and r["e"] != v})
+        except pyodbc.Error:
+            objs[v]["reads"] = []
+    params = defaultdict(list)
+    for r in rows(cur, """SELECT OBJECT_NAME(p.object_id) proc_name, p.name, ty.name typ FROM sys.parameters p
+                          JOIN sys.types ty ON ty.user_type_id=p.user_type_id
+                          WHERE OBJECTPROPERTY(p.object_id,'IsProcedure')=1 ORDER BY p.object_id, p.parameter_id"""):
+        params[r["proc_name"]].append(f"{r['name']} {r['typ']}")
+    return {"objects": objs, "parameters": dict(params)}
+
+
+KEY_TYPES = ("int", "bigint", "varchar", "nvarchar", "char", "nchar")
+KEY_SAMPLE_ROWS = 500
+KEY_QUERY_TIMEOUT_S = 20
+KEY_MIN_SHARED = 10          # world mode 1: one shared value is coincidence
+KEY_MIN_SHARED_RATIO = 0.2   # ... and it must be a real fraction of the smaller column
+FRAMEWORK_TABLE_SHARE = 0.3  # world mode 3: a column on >30% of tables is framework, not a key
+_DATE_LIKE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+def keys(cur) -> dict:
+    """Which columns hold the same identifier, derived from shared values (world modes 1-5)."""
+    cols = rows(cur, """SELECT t.name tbl, c.name col, ty.name typ, c.max_length len
+        FROM sys.columns c JOIN sys.tables t ON t.object_id=c.object_id JOIN sys.types ty ON ty.user_type_id=c.user_type_id""")
+    n_tables = len({c["tbl"] for c in cols})
+    per_col = defaultdict(set)
+    for c in cols:
+        per_col[c["col"].lower()].add(c["tbl"])
+    framework = {name for name, tbls in per_col.items() if len(tbls) > FRAMEWORK_TABLE_SHARE * n_tables}
+    by_table = defaultdict(list)
+    recency = {}
+    for c in cols:
+        if c["col"].lower() in ("modifiedon", "createdon") and c["tbl"] not in recency:
+            recency[c["tbl"]] = c["col"]
+        if (c["typ"] in KEY_TYPES and c["col"].lower() not in framework
+                and (c["typ"] in ("int", "bigint") or 0 < c["len"] <= 120)):
+            by_table[c["tbl"]].append(c["col"])
+    values = {}  # "table.column" -> set of distinct sampled values
+    skipped, unordered = [], []
+    # World mode 9: one unindexed sort cannot stall the build. pyodbc applies the connection timeout
+    # to cursors created after it is set, so sampling uses a fresh cursor.
+    cur.connection.timeout = KEY_QUERY_TIMEOUT_S
+    cur = cur.connection.cursor()
+    for tbl, tcols in sorted(by_table.items()):
+        select = f"SELECT TOP {KEY_SAMPLE_ROWS} {', '.join(f'[{c}]' for c in tcols)} FROM dbo.[{tbl}]"
+        try:
+            sample = rows(cur, select + (f" ORDER BY [{recency[tbl]}] DESC" if tbl in recency else ""))
+        except pyodbc.Error:
+            try:  # too slow to sort: sample anyway, and say the window may not line up (mode 2)
+                sample = rows(cur, select)
+                unordered.append(tbl)
+            except pyodbc.Error as exc:
+                skipped.append(f"{tbl}: {str(exc)[:80]}")
+                continue
+        for col in tcols:
+            vals = {str(r[col]).strip() for r in sample if r[col] is not None}
+            vals = {v for v in vals if len(v) >= 5 and not _DATE_LIKE.match(v)}  # modes 1, 2
+            if vals:
+                values[f"{tbl}.{col}"] = vals
+    owners = defaultdict(set)
+    for colref, vals in values.items():
+        for v in vals:
+            owners[v].add(colref)
+    shared = defaultdict(int)
+    for v, refs in owners.items():
+        refs = sorted(refs)
+        for i, a in enumerate(refs):
+            for b in refs[i + 1:]:
+                if a.split(".")[0] != b.split(".")[0]:
+                    shared[(a, b)] += 1
+    parent = {c: c for c in values}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    links = []
+    for (a, b), n in shared.items():
+        if n >= KEY_MIN_SHARED and n >= KEY_MIN_SHARED_RATIO * min(len(values[a]), len(values[b])):
+            links.append({"a": a, "b": b, "shared": n})
+            parent[find(a)] = find(b)
+    groups = defaultdict(list)
+    for colref in values:
+        if any(colref in (l["a"], l["b"]) for l in links):
+            groups[find(colref)].append(colref)
+    out = {}
+    for members in groups.values():
+        names = defaultdict(int)
+        for m in members:
+            names[m.split(".", 1)[1]] += 1
+        label = max(sorted(names), key=lambda n: names[n])
+        while label in out:
+            label += "_"
+        out[label] = {"columns": sorted(members), "example": sorted(values[members[0]])[:3]}
+    return {"keys": out, "links": links, "skipped": skipped, "unordered": unordered,
+            "framework_columns": sorted(framework)}
 
 
 def assemble(static: dict, runtime: dict, evts: list, jbs: list, txt: dict, api: dict, canon) -> dict:
@@ -336,6 +453,9 @@ def main() -> None:
     canon = lambda t: names.get(str(t).lower(), t)  # noqa: E731
     world = assemble(static_references(cur, types), runtime_log(cur), events(cur), jobs(cur),
                      text_writes(cur, types), api_writes(cur), canon)
+    world["schema"] = schema(cur)
+    world["keys"] = keys(cur)
+    world["jobs"] = [j for j in world["jobs"] if j["procedures"]]  # jobs that run none of our procedures add nothing
     world["coverage"] = coverage(world)
     world["acceptance"] = [{"check": c, "passed": ok} for c, ok in acceptance(world)]
     OUT.write_text(json.dumps(world, indent=1, default=str), encoding="utf-8")
