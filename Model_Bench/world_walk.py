@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import sys
 import time
 from decimal import Decimal
@@ -18,9 +19,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import entity_resolver  # noqa: E402  (spans + SQL connection only)
 from world_links import Brain, all_pages  # noqa: E402
 
-WORLD = json.loads((Path(__file__).resolve().parent.parent / "Knowledge" / "process_world.json").read_text(encoding="utf-8"))
+ROOT = Path(__file__).resolve().parent.parent
+WORLD = json.loads((ROOT / "Knowledge" / "process_world.json").read_text(encoding="utf-8"))
+LOG_INDEX = ROOT / ".cache" / "log_index.sqlite"
+OBJS = WORLD["schema"]["objects"]
 MAX_STEPS = 8            # mode 16
-MAX_OPTIONS = 60         # mode 14: beyond this Jev first picks the kind of link
+MAX_OPTIONS = 60         # mode 14: beyond this Jev first picks the kind of step
 STOP_EXPLAINED = "stop_explained"
 STOP_NOT_DATA = "stop_not_data"
 ROLES = {
@@ -39,70 +43,110 @@ def jev(state: dict[str, Any], questions: dict[str, Any]) -> dict[str, Any]:
     return ((system_one(state, questions) or {}).get("answers")) or {}
 
 
-# ---------- start: which key holds the ticket's identifier (derived from the world, not typed) ----------
+def is_table(name: str) -> bool:
+    return OBJS.get(name, {}).get("kind") == "table"
+
+
+# ---------- where an identifier lives (derived from the build, matched by value shape) ----------
 
 def _shape(value: str) -> str:
     return re.sub(r"[A-Za-z]+", "A", re.sub(r"\d+", lambda m: f"9{{{len(m.group())}}}", value))
 
 
+# Shared keys plus identifiers held by one table only (e.g. a material document names one posting).
+# Only base tables are checked: a view's rows come from them, and views are joins (slow).
+KEY_COLUMNS = {k: [c for c in info["columns"] if is_table(c.split(".")[0])] for k, info in WORLD["keys"]["keys"].items()}
+KEY_COLUMNS.update({c: [c] for c in WORLD["keys"].get("identifiers", {}) if is_table(c.split(".")[0])})
 KEY_SHAPES = {k: {_shape(v) for v in info["example"]} for k, info in WORLD["keys"]["keys"].items()}
+KEY_SHAPES.update({c: {_shape(v) for v in ex} for c, ex in WORLD["keys"].get("identifiers", {}).items()})
+KEY_OF_COLUMN = {c: k for k, cols in KEY_COLUMNS.items() for c in cols}
+
+
+def holders(key: str, value: str, conn) -> list[str]:
+    """Columns of this key that hold the value. One query; if it times out, column by column (mode 6)."""
+    cols = KEY_COLUMNS.get(key, [])
+    if not cols:
+        return []
+    cur = conn.cursor()
+    part = "SELECT TOP 1 '{c}' c FROM dbo.[{t}] WHERE [{col}] = ?"
+    try:
+        cur.execute(" UNION ALL ".join(f"SELECT * FROM ({part.format(c=c, t=c.split('.')[0], col=c.split('.', 1)[1])}) x{i}"
+                                       for i, c in enumerate(cols)), [value] * len(cols))
+        return [r[0] for r in cur.fetchall()]
+    except Exception:
+        found = []
+        for c in cols:
+            try:
+                cur.execute(part.format(c=c, t=c.split(".")[0], col=c.split(".", 1)[1]), value)
+                found += [r[0] for r in cur.fetchall()]
+            except Exception:
+                continue  # one slow or type-mismatched column does not sink the rest
+        return found
 
 
 def resolve(text: str, conn) -> list[dict[str, Any]]:
-    """Identifier spans -> keys whose value shape matches -> confirmed in the key's columns (one query per key)."""
+    """Identifier spans -> keys whose value shape matches -> the columns that actually hold the value."""
     found = []
-    cur = conn.cursor()
     for span in entity_resolver.spans(text):
         for key, shapes in KEY_SHAPES.items():
-            if _shape(span) not in shapes:
-                continue
-            cols = WORLD["keys"]["keys"][key]["columns"]
-            parts = [f"SELECT TOP 1 '{c}' c FROM dbo.[{c.split('.')[0]}] WHERE [{c.split('.', 1)[1]}] = ?" for c in cols]
-            try:
-                cur.execute(" UNION ALL ".join(f"SELECT * FROM ({p}) x{i}" for i, p in enumerate(parts)), [span] * len(parts))
-                holders = [r[0] for r in cur.fetchall()]
-            except Exception as exc:  # the walk reports, never crashes
-                holders, key = [], f"{key} (check failed: {str(exc)[:80]})"
-            if holders:
-                found.append({"value": span, "key": key, "holders": holders})
+            if _shape(span) in shapes:
+                cols = holders(key, span, conn)
+                if cols:
+                    found.append({"value": span, "key": key, "holders": cols})
     return found
+
+
+# ---------- what ran for an identifier (build-time log index; the 3.5 GB log has no usable index) ----------
+
+def runs_for(value: str) -> list[dict[str, Any]]:
+    if not LOG_INDEX.exists():
+        return []
+    db = sqlite3.connect(f"file:{LOG_INDEX}?mode=ro", uri=True)
+    rows = db.execute("SELECT proc, param, calls, steps, error_steps, first_on, last_on FROM runs WHERE value = ?",
+                      (value,)).fetchall()
+    db.close()
+    return [dict(zip(("proc", "param", "calls", "steps", "error_steps", "first_on", "last_on"), r)) for r in rows]
 
 
 # ---------- look: live data for the chosen node ----------
 
-def _rows_for(table: str, columns: list[str], value: str, conn) -> tuple[int, list[dict[str, Any]]]:
-    cur = conn.cursor()
-    where = " OR ".join(f"[{c}] = ?" for c in columns)
-    cur.execute(f"SELECT COUNT(*) FROM dbo.[{table}] WHERE {where}", [value] * len(columns))
-    count = cur.fetchone()[0]
-    cur.execute(f"SELECT TOP 3 * FROM dbo.[{table}] WHERE {where}", [value] * len(columns))
-    names = [d[0] for d in cur.description]
-    return count, [dict(zip(names, r)) for r in cur.fetchall()]
-
-
 def _fmt(v: Any) -> str:
     if isinstance(v, Decimal):
         v = float(v)
-    text = re.sub(r"(?s).*Response Error Message:", "", str(v)).strip()
-    return text[:140]
+    return re.sub(r"(?s).*Response Error Message:", "", str(v)).strip()[:140]
+
+
+def _message_like(v: Any) -> bool:
+    """Sentences (errors, statuses, messages): generic, not chosen by column name."""
+    return (isinstance(v, str) and len(v.strip()) >= 15 and " " in v.strip() and re.search(r"[A-Za-z]{3}", v)
+            and not v.lstrip().startswith(("Body", "{", "<", "EXEC", "SELECT")))
 
 
 def look_table(name: str, value: str, conn) -> dict[str, Any]:
-    cols = [c.split(".", 1)[1] for k in WORLD["keys"]["keys"].values() for c in k["columns"] if c.split(".", 1)[0] == name]
+    cols = sorted({c.split(".", 1)[1] for cs in KEY_COLUMNS.values() for c in cs if c.split(".", 1)[0] == name}
+                  | {c.split(".", 1)[1] for k, info in WORLD["keys"]["keys"].items() for c in info["columns"]
+                     if c.split(".", 1)[0] == name})
     if not cols:
         return {"text": f"{name}: holds no identifier column, so its rows cannot be matched to {value}", "observed": False}
-    count, rows = _rows_for(name, cols, value, conn)
+    cur = conn.cursor()
+    where = " OR ".join(f"[{c}] = ?" for c in cols)
+    cur.execute(f"SELECT COUNT(*) FROM dbo.[{name}] WHERE {where}", [value] * len(cols))
+    count = cur.fetchone()[0]
     if not count:
         return {"text": f"{name}: no rows for {value}", "rows": 0}
+    cur.execute(f"SELECT TOP 3 * FROM dbo.[{name}] WHERE {where}", [value] * len(cols))
+    names = [d[0] for d in cur.description]
+    rows = [dict(zip(names, r)) for r in cur.fetchall()]
     shown = {}
     for row in rows:
         for col, v in row.items():
             if col.lower() not in FRAMEWORK and v not in (None, "") and col not in shown:
                 shown[col] = _fmt(v)
+    messages = list(dict.fromkeys(_fmt(v) for row in rows for v in row.values() if _message_like(v)))[:3]
     numbers = {c: float(v) for row in rows for c, v in row.items()
                if isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)}
-    return {"rows": count, "columns": shown, "numbers": numbers,
-            "text": f"{name}: {count} row(s) for {value}"}
+    return {"rows": count, "columns": shown, "numbers": numbers, "messages": messages,
+            "text": f"{name}: {count} row(s) for {value}" + (f"; says: {' | '.join(messages)}" if messages else "")}
 
 
 def pick_columns(ticket: str, observation: dict[str, Any]) -> list[str]:
@@ -119,58 +163,45 @@ def pick_columns(ticket: str, observation: dict[str, Any]) -> list[str]:
     return [c for score, c in scored if score >= 0.60][:15]  # same threshold as jev/relationship_hops.py
 
 
-LOG_SCAN_TIMEOUT_S = 90
-
-
-def log_runs(value: str, conn) -> dict[str, list[tuple[str, str]]]:
-    """Every procedure log step that mentions this identifier: one scan per ticket.
-
-    XMES_Log_Trn_Tbl (4.8M rows) has no index on Name, so a per-procedure lookup is a 10 s full scan
-    each time. One scan for the value, cached, answers every procedure step of the walk (mode 18)."""
-    conn.timeout = LOG_SCAN_TIMEOUT_S
-    cur = conn.cursor()
-    cur.execute("""SELECT Name, CreatedOn, Status FROM dbo.XMES_Log_Trn_Tbl
-                   WHERE ExecutionQuery LIKE ? ORDER BY CreatedOn DESC""", f"%{value}%")
-    runs: dict[str, list[tuple[str, str]]] = {}
-    for r in cur.fetchall():
-        runs.setdefault(r.Name, []).append((str(r.CreatedOn)[:19], str(r.Status or "")))
-    return runs
-
-
-def look_procedure(name: str, value: str, runs_by_proc: dict[str, list[tuple[str, str]]]) -> dict[str, Any]:
+def look_procedure(name: str, value: str) -> dict[str, Any]:
     """What the procedure's own log shows for this identifier (mode 18: none logged is evidence too)."""
-    runs = [type("Run", (), {"CreatedOn": t, "Status": s}) for t, s in runs_by_proc.get(name, [])[:12]]
     info = WORLD["procedures"].get(name, {})
     writes = ", ".join(f"{t} ({', '.join(c[:6])})" if c else t for t, c in list(info.get("writes", {}).items())[:6])
-    if not runs:
-        logged = "it keeps a log, but no runs mention" if info.get("runtime") else "it keeps no log, so runs for"
-        return {"text": f"procedure {name}: {logged} {value}. It writes {writes or 'nothing known'}."}
-    steps = [f"{str(r.CreatedOn)[:19]} {r.Status}" for r in runs]
-    errors = [s for s in steps if re.search(r"error|fail|exception", s, re.I)]
-    return {"text": f"procedure {name}: {len(runs)} logged steps for {value}, latest {steps[0]}"
-                    + (f"; error steps: {'; '.join(errors[:4])}" if errors else "; no error steps")
-                    + f". It writes {writes or 'nothing known'}.", "steps": steps}
+    mine = [r for r in runs_for(value) if r["proc"] == name]
+    if not mine:
+        seen = "its log has no calls with" if info.get("runtime") else "it keeps no log, so its runs cannot be seen for"
+        return {"text": f"procedure {name}: {seen} {value}. It writes {writes or 'nothing known'}."}
+    r = mine[0]
+    return {"text": f"procedure {name}: called {r['calls']} time(s) with @{r['param']}={value}, "
+                    f"{str(r['first_on'])[:16]} to {str(r['last_on'])[:16]}, {r['error_steps']} error step(s). "
+                    f"It writes {writes or 'nothing known'}."}
 
 
-def look(node: dict[str, Any], value: str, conn, runs_by_proc: dict) -> dict[str, Any]:
+def look(node: dict[str, Any], value: str, conn) -> dict[str, Any]:
     conn.timeout = QUERY_TIMEOUT_S
     kind, name = node["kind"], node["title"]
     try:
         if kind in ("table", "view"):
             return look_table(name, value, conn)
         if kind == "procedure":
-            return look_procedure(name, value, runs_by_proc)
+            return look_procedure(name, value)
     except Exception as exc:
         return {"text": f"{kind} {name}: could not read ({type(exc).__name__}: {str(exc)[:100]})", "observed": False}
     return {"text": f"{kind} {name}: {node.get('summary', '')}"}
 
 
-# ---------- step: the options are the links of everything visited so far ----------
+# ---------- the world in GBrain ----------
 
 class World:
     def __init__(self) -> None:
         self.brain = Brain()
         self.pages: dict[str, dict[str, Any]] = {}
+        self._titles: dict[str, str] | None = None
+
+    def titles(self) -> dict[str, str]:
+        if self._titles is None:
+            self._titles = {p.get("title"): p["slug"] for p in all_pages(self.brain)}
+        return self._titles
 
     def page(self, slug: str) -> dict[str, Any]:
         if slug not in self.pages:
@@ -181,41 +212,55 @@ class World:
                                 "summary": re.sub(r"(?s)^.*?\n# [^\n]*\n\n", "", body)[:200].replace("\n", " ")}
         return self.pages[slug]
 
-    def titles(self) -> dict[str, str]:
-        if not hasattr(self, "_titles"):
-            self._titles = {p.get("title"): p["slug"] for p in all_pages(self.brain)}
-        return self._titles
-
-    def neighbours(self, slug: str) -> list[dict[str, Any]]:
+    def links(self, slug: str) -> list[dict[str, Any]]:
         out = []
         for direction, tool, end in (("out", "get_links", "to_slug"), ("in", "get_backlinks", "from_slug")):
             res = self.brain.call(tool, slug=slug)
             for l in res if isinstance(res, list) else res.get("links", []):
-                other = l.get(end) or l.get("to") or l.get("from") or l.get("slug")
-                if other:
-                    out.append({"slug": other, "type": l.get("link_type") or l.get("type"), "direction": direction,
+                if l.get(end):
+                    out.append({"slug": l[end], "type": l.get("link_type"), "direction": direction,
                                 "context": l.get("context") or ""})
         return out
 
 
-def describe(world: World, here: str, link: dict[str, Any]) -> str:
-    a, b = world.page(here)["title"], world.page(link["slug"])
-    verb = link["type"] if link["direction"] == "out" else f"is {link['type']} by" if link["type"] in ("writes", "reads", "calls") else f"<-{link['type']}-"
-    ctx = f" ({link['context'][:80]})" if link["context"] else ""
-    return f"{a} {verb} {b['kind']} {b['title']}{ctx}"
+def step_options(world: World, here: str, obs: dict[str, Any], value: str, conn) -> list[dict[str, Any]]:
+    """Next steps from a visited node. Links to key pages become connectors: the other tables that
+    hold the identifier value seen in this node's rows (mode 13: key pages themselves show nothing)."""
+    me = world.page(here)
+    options = []
+    for l in world.links(here):
+        other = world.page(l["slug"])
+        if other["kind"] == "key":
+            column = l["context"]
+            seen = (obs.get("columns") or {}).get(column)
+            if not seen or l["direction"] != "out":
+                continue
+            key = KEY_OF_COLUMN.get(f"{me['title']}.{column}")
+            for colref in holders(key, seen, conn) if key else []:
+                table = colref.split(".")[0]
+                if table != me["title"] and table in world.titles():
+                    options.append({"slug": world.titles()[table], "value": seen,
+                                    "label": f"{colref} also holds {column} {seen} (seen in {me['title']})"})
+            continue
+        verb = l["type"] if l["direction"] == "out" else {"writes": "is written by", "reads": "is read by",
+                                                           "calls": "is called by", "records_to": "is filled by event"}.get(l["type"], l["type"])
+        ctx = f" ({l['context'][:80]})" if l["context"] else ""
+        options.append({"slug": l["slug"], "value": value, "label": f"{me['title']} {verb} {other['kind']} {other['title']}{ctx}"})
+    return options
 
 
 def choose(world: World, ticket: str, trail: list[dict], options: list[dict]) -> dict | str:
     seen = [f"step {i + 1}: {s['observation']['text']}" for i, s in enumerate(trail)]
-    if len(options) > MAX_OPTIONS:  # mode 14: pick the kind of link first
-        kinds = sorted({o["label"].split(" ")[1] + " " + world.page(o["slug"])["kind"] for o in options})
-        crit = {f"k{i}": k for i, k in enumerate(kinds)}
+    if len(options) > MAX_OPTIONS:  # mode 14: pick the kind of step first
+        kind_of = lambda o: world.page(o["slug"])["kind"]  # noqa: E731
+        kinds = sorted({kind_of(o) for o in options})
+        crit = {f"k{i}": f"look at a {k}" for i, k in enumerate(kinds)}
         a = jev({"ticket": ticket, "evidence_so_far": seen},
                 {"kind": {"type": "choice", "criteria": crit,
-                          "instructions": "Which kind of connection should the investigation follow next?"}}).get("kind") or {}
-        wanted = crit.get(a.get("choice"))
-        if wanted:
-            options = [o for o in options if o["label"].split(" ")[1] + " " + world.page(o["slug"])["kind"] == wanted][:250]
+                          "instructions": "Which kind of place should the investigation look at next?"}}).get("kind") or {}
+        if a.get("choice") in crit:
+            wanted = kinds[int(a["choice"][1:])]
+            options = [o for o in options if kind_of(o) == wanted][:250]
     crit = {f"o{i}": o["label"] for i, o in enumerate(options)}
     crit[STOP_EXPLAINED] = "Stop: the evidence so far already shows why this happened"
     crit[STOP_NOT_DATA] = "Stop: this is not a problem with the data (how-to, access, hardware)"
@@ -233,6 +278,28 @@ def judge(ticket: str, observation: str) -> dict[str, Any]:
     return {"role": a.get("choice"), "confidence": a.get("confidence")}
 
 
+def start_options(world: World, entities: list[dict], conn) -> list[dict[str, Any]]:
+    """First steps: every table holding the identifier, previewed (rows + what they say), and every
+    procedure the log index says ran for it."""
+    options, titles = [], world.titles()
+    for e in entities:
+        for table in dict.fromkeys(h.split(".")[0] for h in e["holders"]):
+            if table not in titles:
+                continue
+            try:
+                conn.timeout = QUERY_TIMEOUT_S
+                preview = look_table(table, e["value"], conn)["text"]
+            except Exception:
+                preview = f"{table} holds {e['value']}"
+            options.append({"slug": titles[table], "value": e["value"], "label": f"start: {preview}"})
+        for r in runs_for(e["value"]):
+            if r["proc"] in titles:
+                options.append({"slug": titles[r["proc"]], "value": e["value"],
+                                "label": f"start: procedure {r['proc']} ran {r['calls']} time(s) for {e['value']}, "
+                                         f"{r['error_steps']} error step(s), last {str(r['last_on'])[:16]}"})
+    return options
+
+
 def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
     started = time.perf_counter()
     world = world or World()
@@ -240,17 +307,12 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
     conn.timeout = QUERY_TIMEOUT_S * 3
     entities = resolve(ticket, conn)
     if not entities:
-        return {"entities": [], "trail": [], "stopped": "no identifier from the ticket exists in XBatch"}
+        return {"entities": [], "trail": [], "stopped": "no identifier from the ticket exists in XBatch",
+                "seconds": round(time.perf_counter() - started, 1)}
     value = entities[0]["value"]
-    runs_by_proc = log_runs(value, conn)
     trail: list[dict[str, Any]] = []
     visited: set[str] = set()
-    by_title = world.titles()
-    frontier = [{"slug": by_title[h.split(".")[0]], "label": f"start: {h} holds {value}"}
-                for e in entities for h in e["holders"] if h.split(".")[0] in by_title]
-    # What actually ran for this identifier, from the procedures' own log, is a start too.
-    frontier += [{"slug": by_title[p], "label": f"start: procedure {p} logged {len(r)} steps for {value}"}
-                 for p, r in runs_by_proc.items() if p in by_title]
+    frontier = start_options(world, entities, conn)
     stopped = f"step limit {MAX_STEPS}"
     for _ in range(MAX_STEPS):
         options = [o for o in frontier if o["slug"] not in visited]  # mode 13
@@ -263,14 +325,15 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
             break
         visited.add(pick["slug"])
         node = world.page(pick["slug"])
-        obs = look(node, value, conn, runs_by_proc)
+        obs = look(node, pick["value"], conn)
         if obs.get("columns"):
             keep = pick_columns(ticket, obs)
             obs["text"] += "; " + "; ".join(f"{c}={obs['columns'][c]}" for c in keep)
         # Nothing was seen (no identifier column, unreadable): record that, never ask Jev to judge nothing.
         role = judge(ticket, obs["text"]) if obs.get("observed", True) else {"role": "not_observed", "confidence": None}
-        trail.append({"step": pick["label"], "node": node["title"], "kind": node["kind"], "observation": obs, **role})
-        frontier += [{"slug": l["slug"], "label": describe(world, pick["slug"], l)} for l in world.neighbours(pick["slug"])]
+        trail.append({"step": pick["label"], "node": node["title"], "kind": node["kind"], "value": pick["value"],
+                      "observation": obs, **role})
+        frontier += step_options(world, pick["slug"], obs, pick["value"], conn)
     numbers = {}
     for n in dict.fromkeys(_NUMBER.findall(entity_resolver._DATES.sub(" ", ticket).replace(value, " "))):
         numbers[n] = [f"{s['node']}.{c}" for s in trail for c, v in (s["observation"].get("numbers") or {}).items() if v == float(n)] \
@@ -280,5 +343,4 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    result = walk(" ".join(sys.argv[1:]))
-    print(json.dumps(result, indent=1, default=str))
+    print(json.dumps(walk(" ".join(sys.argv[1:])), indent=1, default=str))

@@ -41,3 +41,4 @@ L2_JEV_Validation_Output.txt
 *_Validation_Output.txt
 
 Model_Bench/results/ticket_resets/
+.cache/

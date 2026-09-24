@@ -270,6 +270,7 @@ KEY_QUERY_TIMEOUT_S = 20
 KEY_MIN_SHARED = 10          # world mode 1: one shared value is coincidence
 KEY_MIN_SHARED_RATIO = 0.2   # ... and it must be a real fraction of the smaller column
 FRAMEWORK_TABLE_SHARE = 0.3  # world mode 3: a column on >30% of tables is framework, not a key
+IDENTIFIER_DISTINCT_RATIO = 0.9  # a single-table column is an identifier when ~every row has its own value
 # Dates, clock times and durations ("00:13", "01:14", "0*:0*") are values, not identifiers.
 _DATE_LIKE = re.compile(r"^\d{4}-\d{2}-\d{2}|^[\d*]{1,3}:[\d*]{2}(?::[\d*]{2})?$")
 
@@ -297,6 +298,7 @@ def keys(cur) -> dict:
                 and (c["typ"] in ("int", "bigint") or 0 < c["len"] <= 120)):
             by_table[c["tbl"]].append(c["col"])
     values = {}  # "table.column" -> set of distinct sampled values
+    non_null: dict[str, int] = {}  # "table.column" -> sampled rows with a value
     skipped, unordered = [], []
     # World mode 9: one unindexed sort cannot stall the build. pyodbc applies the connection timeout
     # to cursors created after it is set, so sampling uses a fresh cursor.
@@ -314,10 +316,11 @@ def keys(cur) -> dict:
                 skipped.append(f"{tbl}: {str(exc)[:80]}")
                 continue
         for col in tcols:
-            vals = {str(r[col]).strip() for r in sample if r[col] is not None}
-            vals = {v for v in vals if len(v) >= 5 and not _DATE_LIKE.match(v)}  # modes 1, 2
+            present = [str(r[col]).strip() for r in sample if r[col] is not None]
+            vals = {v for v in present if len(v) >= 5 and not _DATE_LIKE.match(v)}  # modes 1, 2
             if vals:
                 values[f"{tbl}.{col}"] = vals
+                non_null[f"{tbl}.{col}"] = len(present)
     owners = defaultdict(set)
     for colref, vals in values.items():
         for v in vals:
@@ -361,8 +364,55 @@ def keys(cur) -> dict:
             n += 1
             label = f"{base}-{n}"
         out[label] = {"columns": sorted(members), "example": sorted(values[members[0]])[:3]}
-    return {"keys": out, "links": links, "contained": contained, "skipped": skipped, "unordered": unordered,
+    # Identifiers held by one table only (a material document names one posting): nearly every
+    # sampled row has its own value. Not keys (nothing to join), but a ticket can still name one.
+    keyed = {c for info in out.values() for c in info["columns"]}
+    identifiers = {c: sorted(v)[:3] for c, v in values.items()
+                   if c not in keyed and len(v) >= KEY_MIN_SHARED and len(v) >= IDENTIFIER_DISTINCT_RATIO * non_null[c]}
+    return {"keys": out, "identifiers": identifiers, "links": links, "contained": contained,
+            "skipped": skipped, "unordered": unordered,
             "framework_columns": sorted(framework)}
+
+
+LOG_INDEX = ROOT / ".cache" / "log_index.sqlite"
+_GUID = re.compile(r"^[0-9a-fA-F-]{36}$")
+
+
+def log_index(cur) -> dict:
+    """Identifier value -> procedures that ran for it, from XMES_Log_Trn_Tbl (3.5 GB, no usable index).
+
+    A live LIKE scan per ticket takes 54-94 s. Every step of one call repeats the same ExecutionQuery,
+    so grouping by (Name, ExecutionQuery) gives the distinct calls (~216k, one 200 s scan); their
+    parameter values are parsed here. Written to .cache/log_index.sqlite (derived, not in git)."""
+    import sqlite3
+
+    calls = rows(cur, """SELECT Name, ExecutionQuery q, COUNT(*) steps, MIN(CreatedOn) first_on, MAX(CreatedOn) last_on,
+                                SUM(CASE WHEN Status LIKE '%error%' OR Status LIKE '%fail%' THEN 1 ELSE 0 END) error_steps
+                         FROM dbo.XMES_Log_Trn_Tbl WHERE ExecutionQuery LIKE '%@%=%' GROUP BY Name, ExecutionQuery""")
+    LOG_INDEX.parent.mkdir(exist_ok=True)
+    tmp = LOG_INDEX.with_suffix(".tmp")
+    tmp.unlink(missing_ok=True)
+    db = sqlite3.connect(tmp)
+    db.execute("CREATE TABLE runs (value TEXT, proc TEXT, param TEXT, calls INT, steps INT, error_steps INT, first_on TEXT, last_on TEXT)")
+    agg: dict[tuple[str, str, str], list] = {}
+    for c in calls:
+        for param, raw in PARAM.findall(c["q"] or ""):
+            value = raw.strip("'").strip()
+            if len(value) < 5 or _DATE_LIKE.match(value) or value.upper() == "NULL":
+                continue
+            k = (value, c["Name"], param)
+            a = agg.setdefault(k, [0, 0, 0, str(c["first_on"]), str(c["last_on"])])
+            a[0] += 1
+            a[1] += c["steps"]
+            a[2] += c["error_steps"] or 0
+            a[3] = min(a[3], str(c["first_on"]))
+            a[4] = max(a[4], str(c["last_on"]))
+    db.executemany("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?)", [(*k, *v) for k, v in agg.items()])
+    db.execute("CREATE INDEX runs_value ON runs(value)")
+    db.commit()
+    db.close()
+    tmp.replace(LOG_INDEX)
+    return {"calls": len(calls), "values": len({k[0] for k in agg}), "rows": len(agg), "path": str(LOG_INDEX)}
 
 
 def add_view_keys(world: dict) -> int:
@@ -555,6 +605,9 @@ def coverage(world: dict) -> dict:
 
 def main() -> None:
     cur = connect().cursor()
+    if "--log-index-only" in os.sys.argv:
+        print(json.dumps(log_index(cur)))
+        return
     if "--keys-only" in os.sys.argv or "--view-keys-only" in os.sys.argv:  # rest of the build takes ~20 min
         world = json.loads(OUT.read_text(encoding="utf-8"))
         if "--keys-only" in os.sys.argv:
@@ -574,6 +627,7 @@ def main() -> None:
     world["schema"] = schema(cur)
     world["keys"] = keys(cur)
     add_view_keys(world)
+    world["log_index"] = log_index(cur)
     world["jobs"] = [j for j in world["jobs"] if j["procedures"]]  # jobs that run none of our procedures add nothing
     world["coverage"] = coverage(world)
     world["acceptance"] = [{"check": c, "passed": ok} for c, ok in acceptance(world)]

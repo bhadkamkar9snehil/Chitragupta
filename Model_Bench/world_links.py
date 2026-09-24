@@ -81,9 +81,21 @@ def all_pages(brain: Brain, page_size: int = 100) -> list[dict]:
         offset += page_size
 
 
+def prune(brain: Brain) -> int:
+    """GBrain sync adds and updates pages but keeps pages whose files were removed (a key merged away).
+    The world is generated, so a world page with no file is stale: delete it."""
+    world_dir = LINKS.parent
+    files = {("knowledge/world/" + str(p.relative_to(world_dir).with_suffix(""))).lower() for p in world_dir.rglob("*.md")}
+    stale = [p["slug"] for p in all_pages(brain) if p["slug"].startswith("knowledge/world/") and p["slug"].lower() not in files]
+    for slug in stale:
+        brain.call("delete_page", slug=slug, purge=True)
+    return len(stale)
+
+
 def main() -> int:
     links = [json.loads(l) for l in LINKS.read_text(encoding="utf-8").splitlines() if l.strip()]
     brain = Brain()
+    print(f"stale world pages removed {prune(brain)}")
     by_path = slugs(brain)
     added = missing = 0
     for l in links:

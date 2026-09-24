@@ -24,17 +24,23 @@ def score(expect: dict, got: dict) -> tuple[bool, list[str]]:
     for step in got.get("trail", []):
         chain.setdefault(step.get("role"), []).append(step["node"])
     chain.pop("unrelated", None)
+    chain.pop("not_observed", None)
     flagged = {t for tables in chain.values() for t in tables}
     notes = []
+
+    def covers(nodes, table: str) -> bool:
+        # A view that reads the table shows the same rows (world: view -> reads -> table).
+        return any(n == table or table in world_walk.OBJS.get(n, {}).get("reads", []) for n in nodes)
+
     if expect.get("none"):
         if flagged:
             notes.append(f"expected no data fault, flagged {sorted(flagged)}")
         return not notes, notes
     for table in expect.get("cause", []):
-        if table not in chain.get("cause", []):
+        if not covers(chain.get("cause", []), table):
             notes.append(f"cause {table} not judged as cause")
     for table in expect.get("involved", []):
-        if table not in flagged:
+        if not covers(flagged, table):
             notes.append(f"{table} dropped from the chain")
     for n, sources in expect.get("numbers", {}).items():
         found = (got.get("numbers") or {}).get(n) or []

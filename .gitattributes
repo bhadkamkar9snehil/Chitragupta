@@ -1,3 +1,5 @@
 *.sh text eol=lf
 *.sql text eol=lf
 *.py text eol=lf
+Knowledge/world/** text eol=lf
+deploy/gbrain/** text eol=lf
