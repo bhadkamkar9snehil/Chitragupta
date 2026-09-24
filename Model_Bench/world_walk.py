@@ -122,12 +122,31 @@ def _message_like(v: Any) -> bool:
             and not v.lstrip().startswith(("Body", "{", "<", "EXEC", "SELECT")))
 
 
+_INT_LIMITS = {"int": 2**31 - 1, "bigint": 2**63 - 1, "smallint": 2**15 - 1, "tinyint": 255}
+
+
+def _can_hold(table: str, column: str, value: str) -> bool:
+    """Whether the column's type can hold the value: an 11-digit inspection lot overflows an int column."""
+    decl = next((c for c in OBJS.get(table, {}).get("columns", []) if c.split(" ")[0] == column), "")
+    typ = decl.split(" ")[1].split("(")[0] if " " in decl else ""
+    if typ in _INT_LIMITS:
+        return value.isdigit() and int(value) <= _INT_LIMITS[typ]
+    return True
+
+
+def _status_like(v: Any) -> bool:
+    """Short words that describe state (Entered, OnHold, Reversal Failed, PRODUCED): text with letters,
+    not an identifier (no digits) and not a sentence. Generic, not chosen by column name."""
+    return isinstance(v, str) and 2 < len(v.strip()) <= 30 and re.search(r"[A-Za-z]", v) and not re.search(r"\d", v)
+
+
 def look_table(name: str, value: str, conn) -> dict[str, Any]:
     cols = sorted({c.split(".", 1)[1] for cs in KEY_COLUMNS.values() for c in cs if c.split(".", 1)[0] == name}
                   | {c.split(".", 1)[1] for k, info in WORLD["keys"]["keys"].items() for c in info["columns"]
                      if c.split(".", 1)[0] == name})
+    cols = [c for c in cols if _can_hold(name, c, value)]
     if not cols:
-        return {"text": f"{name}: holds no identifier column, so its rows cannot be matched to {value}", "observed": False}
+        return {"text": f"{name}: holds no identifier column for a value like {value}", "observed": False}
     cur = conn.cursor()
     where = " OR ".join(f"[{c}] = ?" for c in cols)
     cur.execute(f"SELECT COUNT(*) FROM dbo.[{name}] WHERE {where}", [value] * len(cols))
@@ -143,10 +162,13 @@ def look_table(name: str, value: str, conn) -> dict[str, Any]:
             if col.lower() not in FRAMEWORK and v not in (None, "") and col not in shown:
                 shown[col] = _fmt(v)
     messages = list(dict.fromkeys(_fmt(v) for row in rows for v in row.values() if _message_like(v)))[:3]
+    states = list(dict.fromkeys(f"{c}={v.strip()}" for row in rows for c, v in row.items()
+                                if c.lower() not in FRAMEWORK and _status_like(v)))[:6]
     numbers = {c: float(v) for row in rows for c, v in row.items()
                if isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)}
     return {"rows": count, "columns": shown, "numbers": numbers, "messages": messages,
-            "text": f"{name}: {count} row(s) for {value}" + (f"; says: {' | '.join(messages)}" if messages else "")}
+            "text": f"{name}: {count} row(s) for {value}" + (f"; says: {' | '.join(messages)}" if messages else "")
+                    + (f"; {', '.join(states)}" if states else "")}
 
 
 def pick_columns(ticket: str, observation: dict[str, Any]) -> list[str]:
@@ -169,8 +191,11 @@ def look_procedure(name: str, value: str) -> dict[str, Any]:
     writes = ", ".join(f"{t} ({', '.join(c[:6])})" if c else t for t, c in list(info.get("writes", {}).items())[:6])
     mine = [r for r in runs_for(value) if r["proc"] == name]
     if not mine:
-        seen = "its log has no calls with" if info.get("runtime") else "it keeps no log, so its runs cannot be seen for"
-        return {"text": f"procedure {name}: {seen} {value}. It writes {writes or 'nothing known'}."}
+        if not info.get("runtime"):  # no log at all: nothing was seen, so nothing to judge
+            return {"text": f"procedure {name}: keeps no log, so its runs cannot be seen. It writes {writes or 'nothing known'}.",
+                    "observed": False}
+        return {"text": f"procedure {name}: its log has no calls with {value} (it did not run for it). "
+                        f"It writes {writes or 'nothing known'}."}
     r = mine[0]
     return {"text": f"procedure {name}: called {r['calls']} time(s) with @{r['param']}={value}, "
                     f"{str(r['first_on'])[:16]} to {str(r['last_on'])[:16]}, {r['error_steps']} error step(s). "
@@ -278,26 +303,66 @@ def judge(ticket: str, observation: str) -> dict[str, Any]:
     return {"role": a.get("choice"), "confidence": a.get("confidence")}
 
 
-def start_options(world: World, entities: list[dict], conn) -> list[dict[str, Any]]:
-    """First steps: every table holding the identifier, previewed (rows + what they say), and every
-    procedure the log index says ran for it."""
-    options, titles = [], world.titles()
+def survey(world: World, entities: list[dict], conn) -> tuple[list[dict], list[dict]]:
+    """Every table holding the identifier, looked at once (rows, messages, states, numbers), and every
+    procedure the log index says ran for it. Returns (table surveys, procedure start options)."""
+    tables, procs, titles = [], [], world.titles()
     for e in entities:
         for table in dict.fromkeys(h.split(".")[0] for h in e["holders"]):
             if table not in titles:
                 continue
             try:
                 conn.timeout = QUERY_TIMEOUT_S
-                preview = look_table(table, e["value"], conn)["text"]
-            except Exception:
-                preview = f"{table} holds {e['value']}"
-            options.append({"slug": titles[table], "value": e["value"], "label": f"start: {preview}"})
+                obs = look_table(table, e["value"], conn)
+            except Exception as exc:
+                obs = {"text": f"{table}: could not read ({type(exc).__name__})", "observed": False}
+            tables.append({"slug": titles[table], "table": table, "value": e["value"], "obs": obs})
         for r in runs_for(e["value"]):
             if r["proc"] in titles:
-                options.append({"slug": titles[r["proc"]], "value": e["value"],
-                                "label": f"start: procedure {r['proc']} ran {r['calls']} time(s) for {e['value']}, "
-                                         f"{r['error_steps']} error step(s), last {str(r['last_on'])[:16]}"})
-    return options
+                procs.append({"slug": titles[r["proc"]], "value": e["value"],
+                              "label": f"procedure {r['proc']} ran {r['calls']} time(s) for {e['value']}, "
+                                       f"{r['error_steps']} error step(s), last {str(r['last_on'])[:16]}"})
+    return tables, procs
+
+
+def judge_all(ticket: str, texts: list[str]) -> list[dict[str, Any]]:
+    """One batched Jev call: each finding gets its own role (never one forced pick among many)."""
+    if not texts:
+        return []
+    findings = {f"f{i}": t for i, t in enumerate(texts)}
+    answers = jev({"ticket": ticket, "findings": findings},
+                  {f"role_{k}": {"type": "choice", "criteria": ROLES,
+                                 "instructions": {"task": "What part does this finding play in the requester's problem?",
+                                                  "ticket_path": "ticket", "finding_path": f"findings.{k}"}}
+                   for k in findings})
+    return [{"role": (answers.get(f"role_{k}") or {}).get("choice"),
+             "confidence": (answers.get(f"role_{k}") or {}).get("confidence")} for k in findings]
+
+
+def trace_numbers(ticket: str, value: str, seen: list[dict]) -> dict[str, Any]:
+    """Numbers the requester quotes -> every place they are stored among what was seen (code) ->
+    which of those places the requester means (Jev, from their wording). Code never does arithmetic."""
+    out, questions, options_by_n = {}, {}, {}
+    for n in dict.fromkeys(_NUMBER.findall(entity_resolver._DATES.sub(" ", ticket).replace(value, " "))):
+        sources = [f"{s['node']}.{c}" for s in seen for c, v in (s["obs"].get("numbers") or {}).items() if v == float(n)]
+        sources += [f"{s['node']} (number of rows)" for s in seen if s["obs"].get("rows") == float(n)]
+        sources = list(dict.fromkeys(sources))[:40]
+        if not sources:
+            out[n] = {"source": None, "candidates": [], "reason": "not stored in anything looked at"}
+            continue
+        options = {f"s{i}": s for i, s in enumerate(sources)}
+        options["none"] = "None of these is where the requester's number comes from"
+        options_by_n[n] = options
+        questions[f"n{len(questions)}"] = {"type": "choice", "criteria": options,
+                                           "instructions": f"The requester quotes the number {n}. Which stored value is "
+                                                           "the one they are looking at (match the screen or report they name)?"}
+    if questions:
+        answers = jev({"ticket": ticket}, questions)
+        for (n, options), q in zip(options_by_n.items(), questions):
+            a = answers.get(q) or {}
+            out[n] = {"source": options.get(a.get("choice")) if a.get("choice") != "none" else None,
+                      "confidence": a.get("confidence"), "candidates": [v for k, v in options.items() if k != "none"]}
+    return out
 
 
 def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
@@ -312,7 +377,14 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
     value = entities[0]["value"]
     trail: list[dict[str, Any]] = []
     visited: set[str] = set()
-    frontier = start_options(world, entities, conn)
+    tables, frontier = survey(world, entities, conn)
+    observed = [t for t in tables if t["obs"].get("observed", True)]
+    for t, role in zip(observed, judge_all(ticket, [t["obs"]["text"] for t in observed])):
+        visited.add(t["slug"])
+        if role["role"] != "unrelated":
+            trail.append({"step": "survey", "node": t["table"], "kind": "table", "value": t["value"],
+                          "observation": t["obs"], **role})
+            frontier += step_options(world, t["slug"], t["obs"], t["value"], conn)
     stopped = f"step limit {MAX_STEPS}"
     for _ in range(MAX_STEPS):
         options = [o for o in frontier if o["slug"] not in visited]  # mode 13
@@ -334,12 +406,10 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
         trail.append({"step": pick["label"], "node": node["title"], "kind": node["kind"], "value": pick["value"],
                       "observation": obs, **role})
         frontier += step_options(world, pick["slug"], obs, pick["value"], conn)
-    numbers = {}
-    for n in dict.fromkeys(_NUMBER.findall(entity_resolver._DATES.sub(" ", ticket).replace(value, " "))):
-        numbers[n] = [f"{s['node']}.{c}" for s in trail for c, v in (s["observation"].get("numbers") or {}).items() if v == float(n)] \
-            + [f"{s['node']} (number of rows)" for s in trail if s["observation"].get("rows") == float(n)]
+    seen = [{"node": t["table"], "obs": t["obs"]} for t in tables] + [{"node": s["node"], "obs": s["observation"]} for s in trail]
+    numbers = trace_numbers(ticket, value, seen)
     return {"entities": entities, "trail": trail, "stopped": stopped, "numbers": numbers,
-            "seconds": round(time.perf_counter() - started, 1)}
+            "surveyed": len(tables), "seconds": round(time.perf_counter() - started, 1)}
 
 
 if __name__ == "__main__":

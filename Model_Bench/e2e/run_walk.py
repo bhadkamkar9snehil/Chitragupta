@@ -43,9 +43,10 @@ def score(expect: dict, got: dict) -> tuple[bool, list[str]]:
         if not covers(flagged, table):
             notes.append(f"{table} dropped from the chain")
     for n, sources in expect.get("numbers", {}).items():
-        found = (got.get("numbers") or {}).get(n) or []
-        if not any(f.startswith(s) for f in found for s in sources):
-            notes.append(f"number {n} traced to {found or 'nothing'}, want {sources}")
+        traced = (got.get("numbers") or {}).get(n) or {}
+        src = traced.get("source") or ""
+        if not any(src.startswith(s) for s in sources):
+            notes.append(f"number {n}: Jev chose {src or 'nothing'} of {traced.get('candidates')}, want {sources}")
     return not notes, notes
 
 

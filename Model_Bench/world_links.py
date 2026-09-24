@@ -87,9 +87,14 @@ def prune(brain: Brain) -> int:
     world_dir = LINKS.parent
     files = {("knowledge/world/" + str(p.relative_to(world_dir).with_suffix(""))).lower() for p in world_dir.rglob("*.md")}
     stale = [p["slug"] for p in all_pages(brain) if p["slug"].startswith("knowledge/world/") and p["slug"].lower() not in files]
+    removed = 0
     for slug in stale:
-        brain.call("delete_page", slug=slug, purge=True)
-    return len(stale)
+        try:
+            brain.call("delete_page", slug=slug)  # soft delete, same as sync does for removed files
+            removed += 1
+        except RuntimeError as exc:
+            print(f"could not delete stale page {slug}: {exc}")
+    return removed
 
 
 def main() -> int:
