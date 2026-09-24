@@ -6,6 +6,6 @@ built: "2026-09-24T11:36:36"
 
 # Mapping
 
-XStudio screen (menu 'Mapping', page LRF_SMS_Tag_Mapping_Tbl_List_Page, list view LRF_SMS_Tag_Mapping_Tbl_List).
-Shows rows of XStudio_LRF_SMS_Tag_Mapping_Tbl_List_Vw.
+XStudio screen 'Mapping' (RM Rebar Tag Mapping List; page RM_Rebar_Tag_Mapping_Tbl_List_Page, list view RM_Rebar_Tag_Mapping_Tbl_List).
+Shows rows of XStudio_RM_Rebar_Tag_Mapping_Tbl_List_Vw.
 Filter: only rows where (IsXBatchTag=0 or IsXBatchTag is null)

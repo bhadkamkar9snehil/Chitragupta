@@ -6,6 +6,6 @@ built: "2026-09-24T11:36:36"
 
 # Billets Position Detals
 
-XStudio screen (menu 'Billets Position Detals', page Page_Billet_InYard_InFurnace_Charged, list view List_Billets_In_Yard).
-Shows rows of XStudio_List_Billets_In_Yard_Vw.
-Filter: only rows where ToLocation Not in ('Mill','Furnace') AND BilletNo IS NOT NULL
+XStudio screen 'Billets Position Detals' (Charged Billets InFurnace; page Page_Billet_InYard_InFurnace_Charged, list view List_Charged_Billets_InFurnace).
+Shows rows of XStudio_List_Charged_Billets_InFurnace_Vw.
+Filter: only rows where BilletPosition='Out of Furnace' and HeatNo is not null and Cast(EntryDateTime as Date)=Cast(getdate() as date)

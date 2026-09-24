@@ -23,7 +23,11 @@ def score(expect: dict, got: dict) -> list[str]:
     kept = [s for s in got.get("trail", []) if s.get("role") not in ("unrelated", "not_observed")]
     # Reached = judged relevant itself, or named in a relevant finding (a screen/view finding names its tables).
     hit = [t for t in expect["scope_any"] if any(t == s["node"] or t in s["observation"]["text"] for s in kept)]
-    return [] if hit else [f"scope {expect['scope_any']} not reached"]
+    notes = [] if hit else [f"scope {expect['scope_any']} not reached"]
+    # The answer must contain the fact, not just touch the right table.
+    said = " | ".join(s["observation"]["text"] for s in kept)
+    notes += [f"never said '{m}'" for m in expect.get("must_say", []) if m not in said]
+    return notes
 
 
 def check_window() -> None:

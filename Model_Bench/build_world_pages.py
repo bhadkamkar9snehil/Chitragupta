@@ -80,7 +80,9 @@ def build(world: dict) -> tuple[dict[str, str], list[dict]]:
         while me in pages:  # the same menu name can appear under several parents
             n += 1
             me = page_path("screen", f"{s['menu']}-{n}")
-        lines = [f"XStudio screen (menu '{s['menu']}', page {s['page']}, list view {s['list_view']})."]
+        # Plain words for search: "List_XMES_Live_Billet_Charging_Bed" -> "Live Billet Charging Bed".
+        words = re.sub(r"^(?:List|Page)\s+|\b(?:XMES|XBatch|XStudio|Mst|Trn|Tbl|Vw)\b", " ", s["list_view"].replace("_", " "))
+        lines = [f"XStudio screen '{s['menu']}' ({' '.join(words.split())}; page {s['page']}, list view {s['list_view']})."]
         if s["view"]:
             lines.append(f"Shows rows of {s['view']}.")
             link(me, page_path("view", s["view"]), "shows", s["filter"] or "")

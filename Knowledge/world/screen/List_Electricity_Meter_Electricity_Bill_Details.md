@@ -1,0 +1,11 @@
+---
+type: screen
+title: "List_Electricity_Meter_Electricity_Bill_Details"
+built: "2026-09-24T11:36:36"
+---
+
+# List_Electricity_Meter_Electricity_Bill_Details
+
+XStudio screen 'List_Electricity_Meter_Electricity_Bill_Details' (Electricity Meter Electricity Bill Details; page List_Page_Electricity_Meter_Electricity_Bill_Details, list view List_Electricity_Meter_Electricity_Bill_Details).
+Shows rows of XStudio_List_Electricity_Meter_Electricity_Bill_Details_Vw.
+Filter: only rows where (MonthNumber ='<request.mn>' OR IIF('<request.mn>'='',1,0)=1) AND (FeederName='<request.FeederName>') AND Year='<request.year>'

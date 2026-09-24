@@ -257,10 +257,11 @@ def table_health(name: str, since: date | None) -> str:
     return text
 
 
-def proc_health(name: str, since: date | None) -> str:
+def proc_health(name: str, since: date | None) -> str | None:
+    """None when the procedure keeps no log: nothing was seen, so there is nothing to judge."""
     days = _index("SELECT day, steps, error_steps FROM proc_daily WHERE proc = ? ORDER BY day", name)
     if not days:
-        return f"procedure {name}: no runs in its log"
+        return None
     last = days[-1]
     text = f"procedure {name}: last ran {last[0]}"
     if since:
@@ -270,13 +271,45 @@ def proc_health(name: str, since: date | None) -> str:
     return text
 
 
+_CODE = re.compile(r"\b(?=[\w/-]*[A-Za-z])(?=[\w/-]*\d)[\w/-]{4,24}\b")
+MASTER_MAX_ROWS = 200_000  # only look codes up in master-sized tables; bigger ones need an identifier
+
+
+def codes(text: str) -> list[str]:
+    """Codes the requester names (grade B500SX, material HHMNB500B_GLS): letters and digits mixed,
+    not a plain number (those are identifiers, handled by the value index)."""
+    return [c for c in dict.fromkeys(_CODE.findall(text)) if not c.isdigit()][:4]
+
+
+def code_presence(tables: list[str], found_codes: list[str], conn) -> list[dict[str, Any]]:
+    """Is each code present in the text columns of the in-scope tables? Code checks; Jev judges."""
+    out = []
+    for table in dict.fromkeys(t for t in tables if is_table(t) and (OBJS[t].get("rows") or 0) <= MASTER_MAX_ROWS):
+        cols = [c.split(" ")[0] for c in OBJS[table]["columns"]
+                if c.split(" ")[1].split("(")[0] in ("varchar", "nvarchar", "char") and c.split(" ")[0].lower() not in FRAMEWORK]
+        if not cols:
+            continue
+        for code in found_codes:
+            try:
+                cur = conn.cursor()
+                cur.execute(f"SELECT TOP 1 * FROM dbo.[{table}] WHERE " + " OR ".join(f"[{c}] = ?" for c in cols), [code] * len(cols))
+                row = cur.fetchone()
+            except Exception:
+                continue
+            text = (f"{code} is in {table}" if row else
+                    f"{code} is not in {table} (checked {', '.join(cols[:6])}{'...' if len(cols) > 6 else ''})")
+            out.append({"slug": None, "node": table, "kind": "table", "value": None, "obs": {"text": text}})
+    return out
+
+
 def health(node: dict[str, Any], since: date | None) -> dict[str, Any]:
     """What code can say about a page without an identifier: activity vs history, screen filters."""
     kind, name = node["kind"], node["title"]
     if kind == "table":
         return {"text": table_health(name, since)}
     if kind == "procedure":
-        return {"text": proc_health(name, since)}
+        text = proc_health(name, since)
+        return {"text": text} if text else {"text": f"procedure {name}: keeps no log", "observed": False}
     if kind == "view":
         bases = [t for t in OBJS.get(name, {}).get("reads", []) if is_table(t)][:4]
         return {"text": f"view {name} reads " + "; ".join(table_health(t, since) for t in bases) if bases
@@ -517,19 +550,26 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
         starts = [{"slug": t["slug"], "node": t["table"], "kind": "table", "value": t["value"], "obs": t["obs"]} for t in tables]
     else:  # no identifier: scope from the requester's words, evidence from activity and screen filters
         tables, frontier = [], []
+        pages = scope(world, ticket)
         starts = [{"slug": p["slug"], "node": p["title"], "kind": p["kind"], "value": None, "obs": health(p, since)}
-                  for p in scope(world, ticket)]
+                  for p in pages]
+        if codes(ticket):  # "grade B500SX not in dropdown": is the code in the scope's master tables?
+            in_scope = [t for p in pages for t in [p["title"]] + OBJS.get(p["title"], {}).get("reads", [])
+                        + OBJS.get(next((s["view"] for s in WORLD.get("screens", []) if s["menu"] == p["title"]), ""), {}).get("reads", [])]
+            starts += code_presence(in_scope, codes(ticket), conn)
         if not starts:
             return {"route": "data", "data": True, "entities": [], "trail": [], "since": str(since),
                     "stopped": "nothing in the world matches the requester's words: ask them which screen or report",
                     "seconds": round(time.perf_counter() - started, 1)}
     observed = [s for s in starts if s["obs"].get("observed", True)]
     for s, role in zip(observed, judge_all(ticket, [s["obs"]["text"] for s in observed])):
-        visited.add(s["slug"])
+        if s["slug"]:
+            visited.add(s["slug"])
         if role["role"] != "unrelated":
             trail.append({"step": "survey", "node": s["node"], "kind": s["kind"], "value": s["value"],
                           "observation": s["obs"], **role})
-            frontier += step_options(world, s["slug"], s["obs"], s["value"], conn)
+            if s["slug"]:  # a code check is a finding, not a place to go from
+                frontier += step_options(world, s["slug"], s["obs"], s["value"], conn)
     stopped = f"step limit {MAX_STEPS}"
     for _ in range(MAX_STEPS):
         options = [o for o in frontier if o["slug"] not in visited]  # mode 13

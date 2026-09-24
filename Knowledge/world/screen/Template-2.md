@@ -6,6 +6,6 @@ built: "2026-09-24T11:36:36"
 
 # Template
 
-XStudio screen (menu 'Template', page CCM_SMS_Attribute_Tag_Template_Mst_Tbl_List_Page, list view CCM_SMS_Attribute_Tag_Template_Mst_Tbl_List).
-Shows rows of XStudio_CCM_SMS_Attribute_Tag_Template_Mst_Tbl_List_Vw.
+XStudio screen 'Template' (RM Furnace Combustion Attribute Tag Template List; page RM_Furnace_Combustion_Attribute_Tag_Template_Mst_Tbl_List_Page, list view RM_Furnace_Combustion_Attribute_Tag_Template_Mst_Tbl_List).
+Shows rows of XStudio_RM_Furnace_Combustion_Attribute_Tag_Template_Mst_Tbl_List_Vw.
 No filter: shows every row of its view.

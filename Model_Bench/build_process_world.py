@@ -485,16 +485,26 @@ def screens(cur, objs: dict) -> list[dict]:
     list view's filter (e.g. "only Status='Open'", "only the last 7 days"). 252 of 256 grids map to a
     view named XStudio_<list view>_Vw. Reads only names and filters from the config database (its
     data-source table holds credentials and is never read)."""
-    found = rows(cur, """SELECT m.Name menu, pg.Name page, lv.Name list_view, lv.FilterCondition filter
-        FROM XStudio_Configuration_Xbatch.dbo.XStudio_Menu_Mst_Tbl m
-        JOIN XStudio_Configuration_Xbatch.dbo.XStudio_Page_Mst_Tbl pg ON pg.ID = m.PageID AND ISNULL(pg.IsDeleted,0) = 0
-        JOIN XStudio_Configuration_Xbatch.dbo.XStudio_PageControls_Mst_Tbl pc
-             ON pc.ParentID = pg.ID AND ISNULL(pc.IsDeleted,0) = 0 AND pc.ControlType = 'grid'
-        JOIN XStudio_Configuration_Xbatch.dbo.XStudio_LV_Mst_Tbl lv ON lv.ID = pc.ControlID AND ISNULL(lv.IsDeleted,0) = 0
-        WHERE ISNULL(m.IsDeleted,0) = 0 AND ISNULL(m.IsVisible,1) = 1""")
-    return [{"menu": r["menu"], "page": r["page"], "list_view": r["list_view"],
-             "view": f"XStudio_{r['list_view']}_Vw" if f"XStudio_{r['list_view']}_Vw" in objs else None,
-             "filter": (r["filter"] or "").strip() or None} for r in found]
+    # From the list view side: some list views (e.g. the charging bed's, filter Status='Entered') are
+    # used on SCADA/dashboard pages that no menu points to. Menu names are added where they exist.
+    found = rows(cur, """SELECT m.Name menu, pg.Name page, lv.Name list_view, lv.DisplayName display, lv.FilterCondition filter
+        FROM XStudio_Configuration_Xbatch.dbo.XStudio_LV_Mst_Tbl lv
+        LEFT JOIN XStudio_Configuration_Xbatch.dbo.XStudio_PageControls_Mst_Tbl pc
+             ON pc.ControlID = lv.ID AND ISNULL(pc.IsDeleted,0) = 0 AND pc.ControlType = 'grid'
+        LEFT JOIN XStudio_Configuration_Xbatch.dbo.XStudio_Page_Mst_Tbl pg ON pg.ID = pc.ParentID AND ISNULL(pg.IsDeleted,0) = 0
+        LEFT JOIN XStudio_Configuration_Xbatch.dbo.XStudio_Menu_Mst_Tbl m
+             ON m.PageID = pg.ID AND ISNULL(m.IsDeleted,0) = 0 AND ISNULL(m.IsVisible,1) = 1
+        WHERE ISNULL(lv.IsDeleted,0) = 0""")
+    out = {}
+    for r in found:
+        view = f"XStudio_{r['list_view']}_Vw"
+        if view not in objs:
+            continue  # nothing in the world to point at
+        name = r["menu"] or r["display"] or r["list_view"]
+        if (name, view) not in out or r["menu"]:
+            out[(name, view)] = {"menu": name, "page": r["page"], "list_view": r["list_view"], "view": view,
+                                 "filter": (r["filter"] or "").strip() or None}
+    return list(out.values())
 
 
 def add_view_keys(world: dict) -> int:
