@@ -348,7 +348,6 @@ Every System One call is also written to the existing Hermes_Agent_Trace_Trn_Tbl
 ~~~text
 Model_Bench/jev/client.py                    one System One transport adapter
 Model_Bench/jev/ticket_triage.py            ticket characterization/routing
-Model_Bench/jev/evidence_plan.py            bounded evidence selection
 Model_Bench/jev/investigation_assessment.py structured evidence interpretation + meta-attention
 Model_Bench/jev/reviewer.py                 primary semantic reviewer
 Model_Bench/jev/kb_applicability.py         KB applicability
