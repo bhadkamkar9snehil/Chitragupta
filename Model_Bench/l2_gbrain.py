@@ -175,11 +175,12 @@ class Brain:
 
 
 def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT,
-        cwd: Path | None = None) -> tuple[int, str, str]:
+        cwd: Path | None = None, runner=None) -> tuple[int, str, str]:
     """Run one GBrain command inside the dedicated Chitragupta brain home."""
     env = _env()
+    execute = runner or subprocess.run
     try:
-        proc = subprocess.run(
+        proc = execute(
             [binary(), *args],
             cwd=str(cwd) if cwd else None,
             capture_output=True,
@@ -196,6 +197,41 @@ def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT,
 
 def parse_json(text: str) -> Any:
     return json.loads(text or "null")
+
+
+def source_status(source_id: str, *, timeout: int = DEFAULT_TIMEOUT, runner=None) -> dict[str, Any]:
+    """Read one source's raw status through the canonical GBrain process transport."""
+    rc, out, err = run(["sources", "status", "--json"], timeout=timeout, runner=runner)
+    if rc != 0:
+        return {"ok": False, "error": (err or out).strip() or f"gbrain status exited {rc}"}
+    try:
+        payload = parse_json(out)
+        source = next(row for row in (payload.get("sources") or [])
+                      if isinstance(row, dict) and row.get("source_id") == source_id)
+    except (AttributeError, StopIteration, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: source status unavailable"}
+    return {"ok": True, "source": source}
+
+
+def search_source(query: str, *, source_id: str, limit: int, timeout: int = DEFAULT_TIMEOUT,
+                  snippet_chars: int | None = None, runner=None) -> dict[str, Any]:
+    """Search exactly one GBrain source; callers own ranking/filtering policy."""
+    args = ["search", query, "--source-id", source_id, "--limit", str(max(1, int(limit)))]
+    if snippet_chars is not None:
+        args += ["--snippet-chars", str(max(1, int(snippet_chars))),
+                 "--mode", "balanced", "--salience", "off", "--recency", "off"]
+    args.append("--json")
+    rc, out, err = run(args, timeout=timeout, runner=runner)
+    if rc != 0:
+        return {"ok": False, "error": (err or out).strip() or f"gbrain search exited {rc}"}
+    try:
+        payload = parse_json(out)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {"ok": False, "error": "gbrain returned non-JSON output"}
+    rows = payload if isinstance(payload, list) else (payload.get("results") or [] if isinstance(payload, dict) else [])
+    if not isinstance(rows, list):
+        return {"ok": False, "error": "gbrain search returned a non-list"}
+    return {"ok": True, "results": [row for row in rows if isinstance(row, dict)]}
 
 
 def sources_for_scope(scope: str) -> tuple[str, ...]:
@@ -261,29 +297,16 @@ def search(query: str, *, scope: str = "trusted", mode: str = "hybrid",
     merged_rows: list[dict[str, Any]] = []
     last_hard_error: str | None = None
     for source_id in sources:
-        rc, out, err = run([
-            "search", query,
-            "--source-id", source_id,
-            "--limit", str(bounded_limit),
-            "--json",
-        ])
-        if rc != 0:
-            message = (err or out).strip()
+        result = search_source(query, source_id=source_id, limit=bounded_limit)
+        if not result.get("ok"):
+            message = str(result.get("error") or "")
             if "unknown_source" in message or "does not exist" in message:
                 missing.append(source_id)
                 continue
-            last_hard_error = message[-1000:] or f"gbrain search exited {rc}"
-            continue
-        try:
-            payload = parse_json(out)
-        except Exception:
-            last_hard_error = "gbrain returned non-JSON output"
+            last_hard_error = message[-1000:] or "gbrain search failed"
             continue
         queried.append(source_id)
-        rows = payload if isinstance(payload, list) else payload.get("results") or []
-        for row in rows:
-            if isinstance(row, dict):
-                merged_rows.append(row)
+        merged_rows.extend(result["results"])
 
     if not queried and not automatic and not last_hard_error and scope != "knowledge":
         # Explicit recall into a lane nobody has populated yet (no curated cases/facts/solutions)

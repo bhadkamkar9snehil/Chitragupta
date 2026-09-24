@@ -79,12 +79,14 @@ class GBrainAdapterTests(unittest.TestCase):
         status = kb.get_gbrain_status(self.cfg, runner=lambda *a, **k: _Result(json.dumps(payload)))
         self.assertEqual(status["status"], "READY")
 
-    def test_gbrain_runner_adds_bun_to_non_login_path(self):
-        seen = {}
-        def runner(cmd, **kwargs):
-            seen.update(kwargs); return _Result('{"sources":[]}')
-        kb.get_gbrain_status(self.cfg, runner=runner)
-        self.assertTrue(seen["env"]["PATH"].startswith("/home/snehil/.bun/bin:"))
+    def test_gbrain_status_uses_canonical_adapter_transport(self):
+        payload = {"sources": [{"source_id": "xstudio-knowledge", "embed_coverage_pct": 100,
+                    "failed_jobs_24h": 0, "queue_depth": 0}]}
+        with patch.object(kb.gbrain, "source_status",
+                          return_value={"ok": True, "source": payload["sources"][0]}) as status:
+            result = kb.get_gbrain_status(self.cfg)
+        self.assertEqual(result["status"], "READY")
+        status.assert_called_once_with("xstudio-knowledge", timeout=20, runner=None)
 
     def test_status_reports_incomplete_embeddings(self):
         payload = {"sources": [{"source_id": "xstudio-knowledge", "total_pages": 142,
@@ -108,14 +110,13 @@ class GBrainAdapterTests(unittest.TestCase):
         self.assertEqual(calls[0][calls[0].index("--limit") + 1], "12")
         self.assertEqual([h["slug"] for h in result["hits"]], ["knowledge/xbatch-investigation-surfaces"])
 
-    def test_search_uses_current_direct_gbrain_cli_contract(self):
-        calls = []
-        def runner(cmd, **kwargs):
-            calls.append(cmd); return _Result("[]")
-        kb.retrieve_gbrain("SAP posting pending", self.cfg, runner=runner)
-        self.assertEqual(calls[0][1:3], ["search", "SAP posting pending"])
-        self.assertIn("--source-id", calls[0])
-        self.assertIn("--json", calls[0])
+    def test_search_uses_canonical_adapter_transport(self):
+        with patch.object(kb.gbrain, "search_source", return_value={"ok": True, "results": []}) as search:
+            kb.retrieve_gbrain("SAP posting pending", self.cfg)
+        search.assert_called_once_with(
+            "SAP posting pending", source_id="xstudio-knowledge", limit=12,
+            snippet_chars=600, timeout=20, runner=None,
+        )
 
     def test_search_failure_and_weak_neighbour_abstain(self):
         failed = kb.retrieve_gbrain("SAP", self.cfg, runner=lambda *a, **k: _Result(stderr="closed", returncode=1))

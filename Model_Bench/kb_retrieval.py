@@ -21,10 +21,7 @@ import argparse
 import hashlib
 import json
 import math
-import os
-import posixpath
 import re
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +29,7 @@ from jev import policy as jev_policy
 from jev.audit import persist_rows, rows_for_result
 from jev.kb_applicability import assess_kb_candidates
 from jev.ticket_triage import assess_ticket
+import l2_gbrain as gbrain
 
 try:
     import pyodbc
@@ -41,8 +39,6 @@ except ImportError:  # pure routing/scoring tests do not need the live driver
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = ROOT / "Knowledge" / "manifest.json"
 MIN_MATCHED_TERMS = 2
-GBRAIN_BIN = os.environ.get("GBRAIN_BIN", "/home/snehil/.bun/bin/gbrain")
-GBRAIN_HOME = os.environ.get("GBRAIN_HOME", "/home/snehil/.hermes/xstudio-gbrain")
 
 STOPWORDS = {
     "the", "a", "an", "is", "was", "were", "are", "be", "been", "and", "or",
@@ -91,31 +87,22 @@ def load_manifest() -> dict[str, Any]:
     return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
 
-def _run_gbrain(argv: list[str], *, timeout: int, runner=None):
-    run = runner or subprocess.run
-    env = os.environ.copy()
-    env["GBRAIN_HOME"] = GBRAIN_HOME
-    env["PATH"] = f"{posixpath.dirname(GBRAIN_BIN)}:{env.get('PATH', '')}"
-    return run([GBRAIN_BIN, *argv], capture_output=True, text=True, timeout=timeout, env=env)
 
 
 def get_gbrain_status(config: dict, runner=None) -> dict:
-    try:
-        result = _run_gbrain(["sources", "status", "--json"], timeout=int(config["timeout_seconds"]), runner=runner)
-        if result.returncode:
-            raise RuntimeError(result.stderr.strip() or f"exit {result.returncode}")
-        payload = json.loads(result.stdout)
-        source = next(row for row in payload.get("sources", []) if row.get("source_id") == config["source_id"])
-        coverage = float(source.get("embed_coverage_pct") or 0)
-        ready = (coverage >= float(config["min_embedding_coverage_pct"])
-                 and int(source.get("failed_jobs_24h") or 0) == 0
-                 and int(source.get("queue_depth") or 0) == 0)
-        return {"status": "READY" if ready else "DEGRADED", "source_id": config["source_id"],
-                "pages": int(source.get("total_pages") or 0), "chunks": int(source.get("total_chunks") or 0),
-                "embedded_chunks": int(source.get("embedded_chunks") or 0), "embedding_coverage_pct": coverage,
-                "reason": None if ready else f"embedding coverage {coverage:g}% is below {config['min_embedding_coverage_pct']:g}% or GBrain jobs are not drained"}
-    except (OSError, subprocess.TimeoutExpired, RuntimeError, StopIteration, ValueError, TypeError, json.JSONDecodeError) as exc:
-        return {"status": "UNAVAILABLE", "source_id": config.get("source_id"), "reason": f"{type(exc).__name__}: {exc}"}
+    result = gbrain.source_status(config["source_id"], timeout=int(config["timeout_seconds"]), runner=runner)
+    if not result.get("ok"):
+        return {"status": "UNAVAILABLE", "source_id": config.get("source_id"),
+                "reason": f"GBrain status unavailable: {result.get('error') or 'unknown error'}"}
+    source = result["source"]
+    coverage = float(source.get("embed_coverage_pct") or 0)
+    ready = (coverage >= float(config["min_embedding_coverage_pct"])
+             and int(source.get("failed_jobs_24h") or 0) == 0
+             and int(source.get("queue_depth") or 0) == 0)
+    return {"status": "READY" if ready else "DEGRADED", "source_id": config["source_id"],
+            "pages": int(source.get("total_pages") or 0), "chunks": int(source.get("total_chunks") or 0),
+            "embedded_chunks": int(source.get("embedded_chunks") or 0), "embedding_coverage_pct": coverage,
+            "reason": None if ready else f"embedding coverage {coverage:g}% is below {config['min_embedding_coverage_pct']:g}% or GBrain jobs are not drained"}
 
 
 def _slug_allowed(slug: str, config: dict) -> bool:
@@ -151,21 +138,17 @@ def retrieve_gbrain(query: str, config: dict, runner=None) -> dict:
         return {"status": "READY", "source_id": config["source_id"], "hits": [], "abstained": True,
                 "abstention_reason": "Query has no XStudio/Hermes domain signal."}
     try:
-        result = _run_gbrain([
-            "search", query,
-            "--limit", str(int(config["candidate_limit"])),
-            "--source-id", config["source_id"],
-            "--snippet-chars", str(int(config["snippet_chars"])),
-            "--mode", "balanced",
-            "--salience", "off",
-            "--recency", "off",
-            "--json",
-        ], timeout=int(config["timeout_seconds"]), runner=runner)
-        if result.returncode:
-            raise RuntimeError(result.stderr.strip() or f"exit {result.returncode}")
-        rows = json.loads(result.stdout)
-        if not isinstance(rows, list):
-            raise ValueError("gbrain search returned a non-list")
+        result = gbrain.search_source(
+            query,
+            source_id=config["source_id"],
+            limit=int(config["candidate_limit"]),
+            snippet_chars=int(config["snippet_chars"]),
+            timeout=int(config["timeout_seconds"]),
+            runner=runner,
+        )
+        if not result.get("ok"):
+            raise RuntimeError(result.get("error") or "gbrain search failed")
+        rows = result["results"]
         candidates = []
         for row in rows:
             slug, score = str(row.get("slug") or ""), float(row.get("score") or 0)
@@ -189,7 +172,7 @@ def retrieve_gbrain(query: str, config: dict, runner=None) -> dict:
                 for _, _, score, slug, row in candidates[:int(config["return_limit"])]]
         return {"status": "READY", "source_id": config["source_id"], "hits": hits, "abstained": not hits,
                 "abstention_reason": None if hits else "GBrain returned no allowed knowledge hit."}
-    except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError) as exc:
         return {"status": "UNAVAILABLE", "source_id": config.get("source_id"), "hits": [], "abstained": True,
                 "abstention_reason": f"GBrain retrieval failed: {type(exc).__name__}: {exc}"}
 

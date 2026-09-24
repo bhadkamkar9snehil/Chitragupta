@@ -25,6 +25,28 @@ class GBrainAdapterTests(unittest.TestCase):
         self.assertTrue(trusted.isdisjoint(mod.sources_for_scope("candidates")))
         self.assertTrue(trusted.isdisjoint(mod.sources_for_scope("approved_cases")))
 
+    def test_source_search_owns_cli_shape_and_environment(self):
+        completed = mock.Mock(returncode=0, stdout='[{"slug":"knowledge/x","score":0.8}]', stderr="")
+        with mock.patch("subprocess.run", return_value=completed) as subprocess_run:
+            result = mod.search_source("heat issue", source_id="xstudio-knowledge", limit=12,
+                                       snippet_chars=600, timeout=20)
+        self.assertTrue(result["ok"])
+        command = subprocess_run.call_args.args[0]
+        self.assertEqual(command[1:3], ["search", "heat issue"])
+        self.assertEqual(command[command.index("--source-id") + 1], "xstudio-knowledge")
+        self.assertEqual(command[command.index("--limit") + 1], "12")
+        self.assertIn("--snippet-chars", command)
+        self.assertEqual(subprocess_run.call_args.kwargs["env"]["GBRAIN_HOME"],
+                         str(mod.gbrain_home()))
+
+    def test_source_status_uses_same_process_owner(self):
+        payload = '{"sources":[{"source_id":"xstudio-knowledge","embed_coverage_pct":100}]}'
+        completed = mock.Mock(returncode=0, stdout=payload, stderr="")
+        with mock.patch("subprocess.run", return_value=completed):
+            result = mod.source_status("xstudio-knowledge", timeout=20)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"]["source_id"], "xstudio-knowledge")
+
     def test_search_always_names_explicit_sources(self):
         # The installed gbrain CLI scopes one `search` call to exactly one
         # --source-id (no combined multi-source syntax), so a scope with N
