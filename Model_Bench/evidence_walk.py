@@ -86,7 +86,7 @@ def jev_pick(text: str, hits: list[dict[str, Any]], symptom: str | None = None) 
         inputs = {"ticket": text, "findings": options}
         instructions = "Which finding explains what the requester is complaining about?"
     else:
-        options[NONE] = "None of these: no cause for it is shown"
+        options[NONE] = "None of these: the symptom is itself the error message, or no cause for it is shown"
         inputs = {"ticket": text, "symptom": symptom, "findings": options}
         instructions = "Which finding is the cause of the symptom (an error or failure that made it happen)?"
     result = system_one(inputs, {"explains": {"type": "choice", "instructions": instructions, "criteria": options}})
@@ -113,8 +113,10 @@ def walk(text: str, conn=None) -> dict[str, Any]:
     out["scan_s"] = round(time.perf_counter() - start, 1)
     pick, confidence = jev_pick(text, hits)
     out.update(pick=pick, confidence=confidence, ranked_by="jev" if pick else "unranked (Jev unavailable)")
-    if pick and pick != NONE:
-        picked = next(h for h in hits if h["table"] == pick)
+    picked = next((h for h in hits if h["table"] == pick), None)
+    if picked and any(s.startswith("ErrorMessage=") for s in picked["signals"]):
+        out.update(cause=pick, cause_confidence=None)  # the symptom already carries its error: no hop needed
+    elif picked:
         rest = [h for h in hits if h is not picked]
         cause, cause_conf = jev_pick(text, rest, symptom=finding(picked))
         out.update(cause=cause, cause_confidence=cause_conf)
