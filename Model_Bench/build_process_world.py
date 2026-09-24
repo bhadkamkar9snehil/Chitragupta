@@ -270,7 +270,8 @@ KEY_QUERY_TIMEOUT_S = 20
 KEY_MIN_SHARED = 10          # world mode 1: one shared value is coincidence
 KEY_MIN_SHARED_RATIO = 0.2   # ... and it must be a real fraction of the smaller column
 FRAMEWORK_TABLE_SHARE = 0.3  # world mode 3: a column on >30% of tables is framework, not a key
-_DATE_LIKE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+# Dates, clock times and durations ("00:13", "01:14", "0*:0*") are values, not identifiers.
+_DATE_LIKE = re.compile(r"^\d{4}-\d{2}-\d{2}|^[\d*]{1,3}:[\d*]{2}(?::[\d*]{2})?$")
 
 
 def keys(cur) -> dict:
@@ -283,10 +284,15 @@ def keys(cur) -> dict:
         per_col[c["col"].lower()].add(c["tbl"])
     framework = {name for name, tbls in per_col.items() if len(tbls) > FRAMEWORK_TABLE_SHARE * n_tables}
     by_table = defaultdict(list)
-    recency = {}
+    stamps = defaultdict(dict)
     for c in cols:
-        if c["col"].lower() in ("modifiedon", "createdon") and c["tbl"] not in recency:
-            recency[c["tbl"]] = c["col"]
+        if c["col"].lower() in ("modifiedon", "createdon"):
+            stamps[c["tbl"]][c["col"].lower()] = c["col"]
+    # "Most recent" = ModifiedOn falling back to CreatedOn: file-imported tables (e.g.
+    # Rebar_Coil_Quality_Data, 50,593 rows) never set ModifiedOn, so ordering by it alone is arbitrary.
+    recency = {t: (f"COALESCE([{s['modifiedon']}], [{s['createdon']}])" if len(s) == 2 else f"[{next(iter(s.values()))}]")
+               for t, s in stamps.items()}
+    for c in cols:
         if (c["typ"] in KEY_TYPES and c["col"].lower() not in framework
                 and (c["typ"] in ("int", "bigint") or 0 < c["len"] <= 120)):
             by_table[c["tbl"]].append(c["col"])
@@ -299,7 +305,7 @@ def keys(cur) -> dict:
     for tbl, tcols in sorted(by_table.items()):
         select = f"SELECT TOP {KEY_SAMPLE_ROWS} {', '.join(f'[{c}]' for c in tcols)} FROM dbo.[{tbl}]"
         try:
-            sample = rows(cur, select + (f" ORDER BY [{recency[tbl]}] DESC" if tbl in recency else ""))
+            sample = rows(cur, select + (f" ORDER BY {recency[tbl]} DESC" if tbl in recency else ""))
         except pyodbc.Error:
             try:  # too slow to sort: sample anyway, and say the window may not line up (mode 2)
                 sample = rows(cur, select)
@@ -340,17 +346,118 @@ def keys(cur) -> dict:
     for colref in values:
         if any(colref in (l["a"], l["b"]) for l in links):
             groups[find(colref)].append(colref)
+    groups = sorted(groups.values(), key=len, reverse=True)
+    contained = _containment_pass(cur, groups, values)  # mode 2: windows that never overlapped
     out = {}
-    for members in groups.values():
+    for members in groups:
+        if not members:
+            continue
         names = defaultdict(int)
         for m in members:
             names[m.split(".", 1)[1]] += 1
-        label = max(sorted(names), key=lambda n: names[n])
-        while label in out:
-            label += "_"
+        base = max(sorted(names), key=lambda n: names[n])
+        label, n = base, 1
+        while label in out:  # distinct page names for distinct keys
+            n += 1
+            label = f"{base}-{n}"
         out[label] = {"columns": sorted(members), "example": sorted(values[members[0]])[:3]}
-    return {"keys": out, "links": links, "skipped": skipped, "unordered": unordered,
+    return {"keys": out, "links": links, "contained": contained, "skipped": skipped, "unordered": unordered,
             "framework_columns": sorted(framework)}
+
+
+def add_view_keys(world: dict) -> int:
+    """A view column holds a key when a table the view reads has a same-named column in that key.
+
+    Views are what the XStudio screens list ("billet tracking screen"), so the walk must be able to
+    match their rows too. Derived from the catalog (view -> tables it reads, column names)."""
+    objs, added = world["schema"]["objects"], 0
+    for view, obj in objs.items():
+        if obj["kind"] != "view":
+            continue
+        view_cols = {c.split(" ")[0] for c in obj["columns"]}
+        for info in world["keys"]["keys"].values():
+            for ref in list(info["columns"]):
+                table, col = ref.split(".", 1)
+                if table in obj.get("reads", []) and col in view_cols and f"{view}.{col}" not in info["columns"]:
+                    info["columns"].append(f"{view}.{col}")
+                    added += 1
+    return added
+
+
+def _shape(value: str) -> str:
+    return re.sub(r"[A-Za-z]+", "A", re.sub(r"\d+", lambda m: f"9{{{len(m.group())}}}", value))
+
+
+KEY_CONTAIN_RATIO = 0.5   # half of a column's sampled values exist in the key's biggest tables
+KEY_CONTAIN_SAMPLE = 200
+KEY_ANCHORS = 3
+
+
+def _containment_pass(cur, groups: list[list[str]], values: dict[str, set[str]]) -> list[dict]:
+    """Join columns (and smaller keys) to a larger key when their values exist in the key's biggest tables.
+
+    Membership, not sample overlap, so a table whose rows are months older still joins. Candidates are
+    limited to keys whose value shapes match (shapes come from the sampled values). Merges in place.
+    """
+    shapes = [{_shape(v) for m in g for v in values[m]} for g in groups]
+    keyed = {m for g in groups for m in g}
+    # Candidates: every unkeyed column, then every member of every smaller key (tested as a whole key).
+    candidates = [([c], None) for c in values if c not in keyed] + [(g, i) for i, g in enumerate(groups)]
+    distinct: dict[str, int] = {}
+
+    def breadth(colref: str) -> int:
+        """Distinct values in the column: the widest columns are the key's most complete record.
+        (Largest tables are billet-level logs holding only recent values; EAF_PER_HEAT holds all heats.)"""
+        if colref not in distinct:
+            table, col = colref.split(".", 1)
+            try:
+                cur.execute(f"SELECT COUNT(DISTINCT [{col}]) FROM dbo.[{table}]")
+                distinct[colref] = int(cur.fetchone()[0])
+            except pyodbc.Error:
+                distinct[colref] = 0  # too slow to count: not used as an anchor
+        return distinct[colref]
+
+    def contained(sample: list[str], g: list[str]) -> tuple[int, str] | None:
+        anchors = sorted(g, key=lambda c: -breadth(c))[:KEY_ANCHORS]
+        exists = " OR ".join(f"EXISTS (SELECT 1 FROM dbo.[{a.split('.')[0]}] WHERE [{a.split('.', 1)[1]}] = v.x)"
+                             for a in anchors)
+        try:
+            cur.execute(f"SELECT COUNT(*) FROM (VALUES {','.join('(?)' for _ in sample)}) v(x) WHERE {exists}", sample)
+            hit = cur.fetchone()[0]
+        except pyodbc.Error:
+            return None  # type mismatch or too slow: no evidence, no join
+        ok = hit >= KEY_MIN_SHARED and hit >= KEY_CONTAIN_RATIO * len(sample)
+        return (hit, anchors[0]) if ok else None
+
+    def sample_of(cols: list[str]) -> list[str]:
+        # Evenly spread over the sorted values: the first N sorted are the oldest identifiers, which
+        # may predate the key's tables entirely (rebar coil heats 1260xxx vs EAF from 1504334).
+        vals = sorted({v for c in cols for v in values[c]})
+        step = max(1, len(vals) // KEY_CONTAIN_SAMPLE)
+        return vals[::step][:KEY_CONTAIN_SAMPLE]
+
+    merged = []
+    for cols, own in candidates:
+        if own is not None and not groups[own]:
+            continue  # already merged away
+        sample = sample_of(cols)
+        col_shapes = {_shape(v) for v in sample}
+        for i, g in enumerate(groups):
+            if i == own or not g or not col_shapes <= shapes[i]:
+                continue
+            if own is None and len(g) < 2:
+                continue
+            # Either side may hold the wider date range: a key of old+new heats contains a key of recent
+            # heats but not the reverse, so keys are tested in both directions (world mode 2).
+            found = contained(sample, g) or (contained(sample_of(g), groups[own]) if own is not None else None)
+            if found:
+                merged.append({"columns": cols, "into": g[0], "found": found[0], "of": len(sample)})
+                groups[i].extend(c for c in cols if c not in groups[i])
+                shapes[i] |= col_shapes
+                if own is not None:
+                    groups[own] = []
+                break
+    return merged
 
 
 def assemble(static: dict, runtime: dict, evts: list, jbs: list, txt: dict, api: dict, canon) -> dict:
@@ -448,6 +555,17 @@ def coverage(world: dict) -> dict:
 
 def main() -> None:
     cur = connect().cursor()
+    if "--keys-only" in os.sys.argv or "--view-keys-only" in os.sys.argv:  # rest of the build takes ~20 min
+        world = json.loads(OUT.read_text(encoding="utf-8"))
+        if "--keys-only" in os.sys.argv:
+            world["keys"] = keys(cur)
+        print(f"view key columns added {add_view_keys(world)}")
+        OUT.write_text(json.dumps(world, indent=1, default=str), encoding="utf-8")
+        k = world["keys"]
+        print(f"keys {len(k['keys'])}, contained joins {len(k['contained'])}, unordered {k['unordered']}")
+        for c in k["contained"]:
+            print(f"  joined {c['columns'][:3]} into {c['into']} ({c['found']}/{c['of']})")
+        return
     types = object_types(cur)
     names = {r["name"].lower(): r["name"] for r in rows(cur, "SELECT name FROM sys.objects WHERE type IN ('U','V')")}
     canon = lambda t: names.get(str(t).lower(), t)  # noqa: E731
@@ -455,6 +573,7 @@ def main() -> None:
                      text_writes(cur, types), api_writes(cur), canon)
     world["schema"] = schema(cur)
     world["keys"] = keys(cur)
+    add_view_keys(world)
     world["jobs"] = [j for j in world["jobs"] if j["procedures"]]  # jobs that run none of our procedures add nothing
     world["coverage"] = coverage(world)
     world["acceptance"] = [{"check": c, "passed": ok} for c, ok in acceptance(world)]

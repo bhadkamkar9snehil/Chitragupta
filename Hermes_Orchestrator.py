@@ -1260,6 +1260,15 @@ def _cli_poll(args: argparse.Namespace, parser: argparse.ArgumentParser, client:
     print(json.dumps(result, indent=2, default=str))
 
 
+def _cli_candidates(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
+    """Read-only: the tickets --poll could claim right now (same procedure, nothing claimed).
+    The stall check counts these, so "waiting" means exactly what the scout can take."""
+    if not args.eligible_status:
+        parser.error("--eligible-status is required with --candidates")
+    rows = client.get_candidate_tickets(args.eligible_status, batch_size=50)
+    print(json.dumps([{"ID": r.get("ID"), "TicketNo": r.get("TicketNo")} for r in rows], default=str))
+
+
 def _cli_log_activity(args: argparse.Namespace, parser: argparse.ArgumentParser, client: "HermesL2Client") -> None:
     if not args.ticket_id or not args.activity_type:
         parser.error("--log-activity requires --ticket-id and --activity-type")
@@ -1492,6 +1501,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--discover-workflow", action="store_true",
                          help="Print live Status/AskStatus combinations and exit -- run this "
                               "before choosing --eligible-status.")
+    parser.add_argument("--candidates", action="store_true",
+                         help="Print the tickets --poll could claim now (read-only; claims nothing).")
     parser.add_argument("--poll", action="store_true",
                          help="Claim one eligible ticket and print its full context as JSON, "
                               "then stop (no investigation/write). For an LLM agent driving "
@@ -1641,6 +1652,7 @@ _OPERATIONS = (
     ("discover_workflow", lambda a, p, c: _cli_discover_workflow(c)),
     ("local_model_action", lambda a, p, c: _cli_local_model_action(a, p, c)),
     ("poll", lambda a, p, c: _cli_poll(a, p, c)),
+    ("candidates", lambda a, p, c: _cli_candidates(a, p, c)),
     ("log_activity", lambda a, p, c: _cli_log_activity(a, p, c)),
     ("get_run_actions", lambda a, p, c: _cli_get_run_actions(a, c)),
     ("get_ticket_context", lambda a, p, c: _cli_get_ticket_context(a, c)),

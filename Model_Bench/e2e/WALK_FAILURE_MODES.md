@@ -28,3 +28,17 @@ Each failure mode below has at least one E2E case in `walk_cases.jsonl`.
     to where it is stored (a column value or a row count); Jev matches each source to the requester's
     wording; code compares. Picking one table cannot answer it.
 12. **Requester's number not stored anywhere.** Say so; do not attach it to the nearest table.
+
+## Step-by-step walk over the GBrain world (Jev picks one step at a time)
+
+13. **Loops.** Jev revisits a node it has already seen. Visited nodes never reappear as options.
+14. **Too many options.** A table read by 60 procedures gives 60+ options; Jev's choice tops out at
+    255 and gets worse long before that. Options are the links of visited nodes only; if still too
+    many, Jev first picks the link type (writes / reads / calls / holds / events) and then the node.
+15. **Stopping too early.** Jev stops at the first stuck record without reaching the error behind it.
+    The stop option is judged like any other option, and the trail keeps every role so the test can
+    see a missing cause.
+16. **Never stopping.** A hard step limit ends the walk and says so in the trail.
+17. **Dead end.** A node with no unvisited links: the walk continues from the other open links.
+18. **A step the data cannot show.** A procedure with no runtime log for this identifier: the
+    observation says "no runs logged for this value", which is itself evidence, not an error.

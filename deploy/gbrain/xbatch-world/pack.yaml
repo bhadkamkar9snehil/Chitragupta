@@ -1,0 +1,69 @@
+api_version: gbrain-schema-pack-v1
+name: xbatch-world
+version: 0.0.1
+description: "XBatch world: page types and link verbs for the generated plant graph (Knowledge/world). Installed by Model_Bench/sync_gbrain_knowledge.sh."
+gbrain_min_version: 0.39.0
+extends: gbrain-base
+borrow_from: []
+page_types:
+  - name: table
+    primitive: entity
+    path_prefixes:
+      - knowledge/world/table/
+    aliases: []
+    extractable: false
+    expert_routing: false
+  - name: view
+    primitive: entity
+    path_prefixes:
+      - knowledge/world/view/
+    aliases: []
+    extractable: false
+    expert_routing: false
+  - name: procedure
+    primitive: entity
+    path_prefixes:
+      - knowledge/world/procedure/
+    aliases: []
+    extractable: false
+    expert_routing: false
+  - name: event
+    primitive: entity
+    path_prefixes:
+      - knowledge/world/event/
+    aliases: []
+    extractable: false
+    expert_routing: false
+  - name: key
+    primitive: entity
+    path_prefixes:
+      - knowledge/world/key/
+    aliases: []
+    extractable: false
+    expert_routing: false
+  - name: api
+    primitive: entity
+    path_prefixes:
+      - knowledge/world/api/
+    aliases: []
+    extractable: false
+    expert_routing: false
+link_types:
+  - name: writes
+    inverse: written_by
+  - name: reads
+    inverse: read_by
+  - name: calls
+    inverse: called_by
+  - name: holds
+    inverse: held_by
+  - name: records_to
+    inverse: recorded_by
+frontmatter_links: []
+takes_kinds:
+  - fact
+  - take
+  - bet
+  - hunch
+enrichable_types: []
+filing_rules: []

@@ -1,0 +1,254 @@
+---
+type: table
+title: "EAF_PER_HEAT"
+built: "2026-09-24T11:36:36"
+---
+
+# EAF_PER_HEAT
+
+Table in XStudio_Xbatch. Rows: 7,541.
+
+## Identifiers it holds
+
+- HeatID: same values as key `HeatNo`
+
+## Written by
+
+- XBatch_Add_Default_Heat_start_end_Usp
+- XBatch_Add_Heat_start_end_Usp
+- XMES_BackCalculation_GLS_Usp
+- XMES_BackCalculation_Validation_GLS_Usp
+- XMES_EAF_SprayCoolingFlowDuration_USP
+- XMES_I_SAP_GLS_LS_Production_Trn_Usp
+- XMES_I_SAP_LS_Production_Trn
+- XMES_SMS_Temperature_Per_Heat_USP (text)
+- XSTUDIO_WORKFLOW_2F446F30-57E6-4AC7-A199-42928FC388E2_SP (text)
+- XSTUDIO_WORKFLOW_CB83D9D0-0256-44F8-BC97-461935B736D8_SP
+- Xstudio_EAF_PER_HEAT_USP
+
+## Read by
+
+- DelayEntry_EBTFilling_USP
+- SMS_Data_list_View
+- SMS_GET_EAF_HeatIDList
+- SMS_Ladle_Life_Tracking
+- SP_GET_AREAWISE_TAG_TREND
+- SP_SMS_Producation_Summary
+- XBatch_Add_Default_Heat_start_end_Usp
+- XBatch_Add_Heat_start_end_Usp
+- XBatch_I_Material_Consume_NoBOM_USP
+- XBatch_I_Material_Produce_NoBOM_USP
+- XBatch_PERDAY_Heat_Summary_Report
+- XBatch_Recalculate_Summary_EAF_Usp
+- XMES_AUTO_WO_AND_SO_CALCULATION
+- XMES_AUTO_WO_AND_SO_CALCULATION_old
+- XMES_BackCalculation_GLS_Usp
+- XMES_BackCalculation_Validation_GLS_Usp
+- XMES_EAF_SprayCoolingFlowDuration_USP
+- XMES_I_SAP_GLS_LS_Consumption_Trn_Usp
+- XMES_I_SAP_GLS_LS_Production_Trn_Usp
+- XMES_I_SAP_LS_Production_Trn
+- XMES_Missing_Heat_Entry_USP
+- XMES_RM_Raw_Material_Entry_Usp
+- XMES_Recalculate_heat_Usp
+- XMES_SMS_Dashboard_Delay_USP
+- XMES_entry_for_RAW_Material_Consumption_Usp
+- XSTUDIO_WORKFLOW_1A5F9D1B-7093-4BA2-9EAA-4ACD7371B992_SP
+- XSTUDIO_WORKFLOW_2F446F30-57E6-4AC7-A199-42928FC388E2_SP
+- XSTUDIO_WORKFLOW_69C53936-AFB3-44F8-874A-FE2336FB0279_SP
+- XSTUDIO_WORKFLOW_6F954B26-CB87-40FC-8B73-26EE001C55DC_SP
+- XSTUDIO_WORKFLOW_94F414DB-7BB1-4CCF-B50D-65A1E6101382_SP
+- XSTUDIO_WORKFLOW_B4724DFC-A609-44DA-A6D1-899EF9A79C90_SP
+- XSTUDIO_WORKFLOW_CB83D9D0-0256-44F8-BC97-461935B736D8_SP
+- Xbatch_LastSevenDay_HEAT_Tracking
+- Xbatch_SMS_WorkOrder_Wise_Consumption_Usp
+- Xstudio_Day_EAF_Usp
+- Xstudio_EAF_PER_HEAT_USP
+- Xstudio_Historian_EAF_Custom_usp
+- Xstudio_Shift_EAF_Usp
+
+## Rows created by events
+
+- EAF_SMS:HeatIDChange
+
+## Columns
+
+- ID varchar(36)
+- Name varchar(100)
+- ParentID varchar(36)
+- CreatedBy varchar(36)
+- ModifiedBy varchar(36)
+- CreatedOn datetime
+- ModifiedOn datetime
+- IsDeleted bit
+- IsSystem bit
+- AssignedUserID varchar(36)
+- HostAddress varchar(100)
+- DbSyncStatus varchar(500)
+- MobileSyncStatus varchar(100)
+- Source varchar(20)
+- EquipmentID varchar(36)
+- StartTime datetime
+- EndTime datetime
+- Status varchar(100)
+- HeatID int
+- CopexScrapCH1 decimal
+- CopexScrapCH2 decimal
+- BundleLMSCH1 decimal
+- BundleLMSCH2 decimal
+- HMS12CH1 decimal
+- HMS12CH2 decimal
+- HMS1CH1 decimal
+- HMS1CH2 decimal
+- EndCutsCH1 decimal
+- EndCutsCH2 decimal
+- ScullCH1 decimal
+- ScullCH2 decimal
+- BriquetteCH1 decimal
+- BriquetteCH2 decimal
+- HBIDRICH1 decimal
+- HBIDRICH2 decimal
+- ShreeddedCH1 decimal
+- ShreeddedCH2 decimal
+- PowerMWH decimal
+- PowerKWHPerTon decimal
+- OxygenConsumption decimal
+- PowerOnTime varchar(100)
+- PowerOffTime varchar(100)
+- HeatTime varchar(100)
+- NGConsumption decimal
+- Lime decimal
+- DoloLime decimal
+- TrunageofHeat decimal
+- ChargeWeight decimal
+- TaptoTapTime decimal
+- CopexScrap decimal
+- HMS12 decimal
+- HMS1 decimal
+- BundleLMS decimal
+- EndCuts decimal
+- Scull decimal
+- Briquette decimal
+- HeatTimeMinute decimal
+- Shredded decimal
+- ArcingTime decimal
+- Tapping1 decimal
+- Tapping2 decimal
+- HeatTimeSecond decimal
+- PowerOnTimeSecond decimal
+- PowerOnTimeMinute decimal
+- PowerOFFTimeMinute decimal
+- PowerOFFTimeSecond decimal
+- EntryDateTime datetime
+- ReportDate varchar(100)
+- IsProcessed bit
+- BIN1LimeConsumption decimal
+- BIN2DoloConsumption decimal
+- BIN3Consumption decimal
+- BIN4Consumption decimal
+- ChargeMixWeight decimal
+- HeattimeTotalSeconds decimal
+- PoweronTimeTotalSeconds decimal
+- PowerOffTimeTotalSeconds decimal
+- Statusworkflow varchar(50)
+- SteelGrade varchar(100)
+- TotalChargeWeightMT decimal
+- TapTimeMinute decimal
+- TapStart datetime
+- HeatStart datetime
+- HBIDRI decimal
+- Shreedded decimal
+- LiquidMetalWeight decimal
+- YieldPerHeat decimal
+- NGconsumptionpertonofsteel decimal
+- Limepertonofsteel decimal
+- Dololimepertonofsteel decimal
+- PowerPerTonofSteel decimal
+- BIN3Name varchar(100)
+- BIN4Name varchar(100)
+- CarbonConsumption decimal
+- LadleAdditionLime decimal
+- LadleAdditionDolo decimal
+- LadleAdditionSiMn decimal
+- LadleAdditionFeSi decimal
+- Avg_LiquidMetalWeight decimal
+- LadleAdditionSiMnn decimal
+- Avg_PoweronTIme decimal
+- Avg_PoweroffTIme decimal
+- Avg_PowerMW decimal
+- Avg_TTT decimal
+- HeatReportDate date
+- WorkOrder varchar(100)
+- CalcLiquidMetalWeight decimal
+- SAPWorkflowStatus varchar(50)
+- LSDELTA decimal
+- ManualLadleAdditionLime decimal
+- ManualLadleAdditionDolo decimal
+- ManualLadleAdditionFesi decimal
+- ManualLadleAdditionSimn decimal
+- AutoLadleAdditionLime decimal
+- AutoLadleAdditionDolo decimal
+- AutoLadleAdditionFesi decimal
+- AutoLadleAdditionSiMn decimal
+- TempTips decimal
+- EBTFilter decimal
+- RamMass decimal
+- GunningMass decimal
+- FettlingMass decimal
+- ElectrodeConsumption1Kg decimal
+- ElectrodeConsumption2Kg decimal
+- ElectrodeConsumption3Kg decimal
+- RejectedBilletWeightTon decimal
+- NutCokeKgPerTon decimal
+- TapTemp decimal
+- ThroughputTPH decimal
+- PowerOnCharge decimal
+- CokeInjection decimal
+- TotalElectrodeConsumption decimal
+- CopexScrapAuto decimal
+- CopexScrapManual decimal
+- HMS1Auto decimal
+- HMS1Manual decimal
+- HMS12Auto decimal
+- HMS12Manual decimal
+- EndCutsAuto decimal
+- EndCutsManual decimal
+- BriquetteAuto decimal
+- BriquetteManual decimal
+- BundleLMSAuto decimal
+- BundleLMSManual decimal
+- HBIDRIAuto decimal
+- HBIDRIManual decimal
+- ShreddedAuto decimal
+- ShreddedManual decimal
+- SkullAuto decimal
+- SkullManual decimal
+- HBIConsumption decimal
+- CdriConsumption decimal
+- CopexScrapCH3 decimal
+- CopexScrapCH4 decimal
+- BundleLMSCH3 decimal
+- BundleLMSCH4 decimal
+- HMS12CH3 decimal
+- HMS12CH4 decimal
+- HMS1CH3 decimal
+- HMS1CH4 decimal
+- EndCutsCH3 decimal
+- EndCutsCH4 decimal
+- ScullCH3 decimal
+- ScullCH4 decimal
+- BriquetteCH3 decimal
+- BriquetteCH4 decimal
+- HBIDRICH3 decimal
+- HBIDRICH4 decimal
+- ShreeddedCH3 decimal
+- ShreeddedCH4 decimal
+- HerausTemp decimal
+- HerausManualPPM decimal
+- EAFTemperature decimal
+- E1SprayCoolingFlowAvg decimal
+- E2SprayCoolingFlowAvg decimal
+- E3SprayCoolingFlowAvg decimal
+- E1SprayCollingFlowDurationSec int
+- E2SprayCollingFlowDurationSec int
+- E3SprayCollingFlowDurationSec int

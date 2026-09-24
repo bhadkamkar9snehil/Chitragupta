@@ -1,0 +1,17 @@
+---
+type: procedure
+title: "Xstudio_SMS_EAF_Per_Heat_ChargeMix_USP"
+built: "2026-09-24T11:36:36"
+---
+
+# Xstudio_SMS_EAF_Per_Heat_ChargeMix_USP
+
+Parameters: @ID varchar, @Mode varchar.
+
+## Writes
+
+- SMS_EAF_Per_Heat_ChargeMix: EAFBriquettesWeightAutoTotal, EAFBriquettesWeightManualTotal, EAFBundlesLMSWeightAutoTotal, EAFBundlesLMSWeightManualTotal, EAFCopexScrapWeightAutoTotal, EAFCopexScrapWeightManualTotal, EAFEndCutsWeightAutoTotal, EAFEndCutsWeightManualTotal, EAFHBIDRIWeightAutoTotal, EAFHBIDRIWeightManualTotal, EAFHMS12WeightAutoTotal, EAFHMS12WeightManualTotal, EAFHMS1WeightAutoTotal, EAFHMS1WeightManualTotal, EAFShreddedWeightAutoTotal, EAFShreddedWeightManualTotal, EAFSkullWeightAutoTotal, EAFSkullWeightManualTotal, Source
+
+## Reads
+
+- SMS_EAF_Per_Heat_ChargeMix: EAFBriquettesCharge1Weight, EAFBriquettesCharge1WeightManual, EAFBriquettesCharge2Weight, EAFBriquettesCharge2WeightManual, EAFBriquettesCharge3Weight, EAFBriquettesCharge4Weight, EAFBundlesLMSCharge1Weight, EAFBundlesLMSCharge1WeightManual, EAFBundlesLMSCharge2Weight, EAFBundlesLMSCharge2WeightManual, EAFBundlesLMSCharge3Weight, EAFBundlesLMSCharge4Weight, EAFCopexScrapCharge1Weight, EAFCopexScrapCharge1WeightManual, EAFCopexScrapCharge2Weight, EAFCopexScrapCharge2WeightManual, EAFCopexScrapCharge3Weight, EAFCopexScrapCharge4Weight, EAFEndCutsCharge1Weight, EAFEndCutsCharge1WeightManual, EAFEndCutsCharge2Weight, EAFEndCutsCharge2WeightManual, EAFEndCutsCharge3Weight, EAFEndCutsCharge4Weight, EAFHBIDRICharge1Weight, EAFHBIDRICharge1WeightManual, EAFHBIDRICharge2Weight, EAFHBIDRICharge2WeightManual, EAFHBIDRICharge3Weight, EAFHBIDRICharge4Weight, EAFHMS12Charge1Weight, EAFHMS12Charge1WeightManual, EAFHMS12Charge2Weight, EAFHMS12Charge2WeightManual, EAFHMS12Charge3Weight, EAFHMS12Charge4Weight, EAFHMS1Charge1Weight, EAFHMS1Charge1WeightManual, EAFHMS1Charge2Weight, EAFHMS1Charge2WeightMaual, EAFHMS1Charge3Weight, EAFHMS1Charge4Weight, EAFShreddedCharge1Weight, EAFShreddedCharge1WeightManual, EAFShreddedCharge2Weight, EAFShreddedCharge2WeightManual, EAFShreddedCharge3Weight, EAFShreddedCharge4Weight, EAFSkullCharge1Weight, EAFSkullCharge1WeightManual, EAFSkullCharge2Weight, EAFSkullCharge2WeightManual, EAFSkullCharge3Weight, EAFSkullCharge4Weight, ID

@@ -1,0 +1,236 @@
+---
+type: table
+title: "XBatch_Work_Order_Mst_Tbl"
+built: "2026-09-24T11:36:36"
+---
+
+# XBatch_Work_Order_Mst_Tbl
+
+Table in XStudio_Xbatch. Rows: 54.
+
+## Identifiers it holds
+
+- MaterialName: same values as key `Material`
+- WorkOrderNumber: same values as key `ManufacturingOrder`
+
+## Written by
+
+- Billet_Furnace_Movement
+- MES_M_Sect2_to_Furnace
+- MES_M_Sect2_to_Furnace_Billet_Tracking (text)
+- MES_M_Strand
+- MES_M_Strand_TMT (text)
+- MES_M_Strand_WRM (text)
+- XBatch_Campaign_Plan_Modified_Status_Usp
+- XBatch_I_WO_USP
+- XBatch_U_WO_USP
+- XBatch_WO_Create_Batch_AI_Usp
+- XMES_AUTO_WO_AND_SO_CALCULATION
+- XMES_AUTO_WO_AND_SO_CALCULATION_old
+- XMES_I_SAP_Billet_Production_Trn
+- XMES_RM_Campaign_Plan_WorkOrders_Creation
+- XMES_SAP_Create_Process_Order_Usp
+- XMES_WorkOrders_Creation
+- XSTUDIO_WORKFLOW_186ECADD-2234-409C-B747-5CC09F854A60_SP
+- XSTUDIO_WORKFLOW_21B64647-6F2C-4089-AEA4-54D9482E3A83_SP
+- XSTUDIO_WORKFLOW_29CCAEB2-7671-407A-8BC3-A40164145BD2_SP
+- XSTUDIO_WORKFLOW_2AF85FD5-BE15-4380-9504-341EE986C74D_SP
+- XSTUDIO_WORKFLOW_61A5C1A4-855A-43C6-81EB-11574448AE84_SP (text)
+- XSTUDIO_WORKFLOW_64B14ECC-2663-434D-B0DC-FF705136AA3A_SP
+- XSTUDIO_WORKFLOW_9B20AE0B-2E34-4BF8-9875-BB52B5C007E0_SP
+- XSTUDIO_WORKFLOW_A1B200C6-5046-41BE-9CD1-84454600575D_SP
+- XSTUDIO_WORKFLOW_A6D3AC4F-60D5-4423-8936-0F59CEEA2C39_SP
+- XSTUDIO_WORKFLOW_C18D4DFF-8ADA-4080-9F2F-91DE212A1257_SP
+- XSTUDIO_WORKFLOW_C2B0C95A-B3B7-466F-9BFE-CDCC5017EB57_SP
+- XSTUDIO_WORKFLOW_CBDD76F9-AF65-4113-B5FE-987066DC8DDD_SP
+- XSTUDIO_WORKFLOW_FF0AE3BF-1A32-4635-B431-3BA6931332AA_SP
+- Xstudio_XBatch_Work_Order_Mst_Tbl_USP
+- campaignplan_released_workflow_usp
+
+## Read by
+
+- Billet_Furnace_Movement
+- Billet_Furnace_Movement_Billet_Tracking
+- Billet_Furnace_Movement_GradeGap
+- Billet_Furnace_Movement_HeatGap
+- MES_M_Sect2_to_Furnace
+- MES_M_Sect2_to_Furnace_Billet_Tracking
+- MES_M_Strand
+- SAP_Posting_Data_ByHeat_Usp
+- XBatch_Campaign_Plan_Modified_Status_Usp
+- XBatch_GetRemaningHeat_Usp
+- XBatch_I_Material_Consume_NoBOM_USP
+- XBatch_U_WO_USP
+- XBatch_WO_Create_Batch_AI_Usp
+- XBatch_WO_Get_Process_Cell_Usp
+- XMES_AUTO_WO_AND_SO_CALCULATION
+- XMES_AUTO_WO_AND_SO_CALCULATION_old
+- XMES_BackCalculation_GLS_Usp
+- XMES_BackCalculation_Validation_GLS_Usp
+- XMES_CCM_BILLET_MASTER_CREATE_USP
+- XMES_DisplayCampaignPlanDetails_usp
+- XMES_Get_Billet_Count_USP
+- XMES_I_Billets_Tracking_Usp
+- XMES_I_ByProduct_Trn_Usp
+- XMES_I_PlantToPlantTransfer_Usp
+- XMES_I_SAP_Billet_Production_Trn
+- XMES_I_SAP_GLS_LS_Consumption_Trn_Usp
+- XMES_I_SAP_GLS_LS_Production_Trn_Usp
+- XMES_I_SAP_GLS_Production_Trn
+- XMES_I_SAP_LS_Production_Trn
+- XMES_Missing_Heat_Entry_USP
+- XMES_Nested_heat_selection_usp
+- XMES_RM_Production_Summary_Usp
+- XMES_RM_Raw_Material_Entry_Usp
+- XMES_SAP_I_EndProduct_Production_Usp
+- XMES_SAP_I_RM_By_Product_Prod_Cons_Trn_Usp
+- XMES_SAP_Posting_Sequence_Usp
+- XMES_SAP_WorkOrder_Creation_API_Error_Usp
+- XMES_U_SAP_Billet_Production_Trn_Usp
+- XMES_WO_Trn_VW
+- XMES_entry_for_RAW_Material_Consumption_Usp
+- XMES_heat_selection_usp
+- XSTUDIO_WORKFLOW_186ECADD-2234-409C-B747-5CC09F854A60_SP
+- XSTUDIO_WORKFLOW_1A5F9D1B-7093-4BA2-9EAA-4ACD7371B992_SP
+- XSTUDIO_WORKFLOW_21B64647-6F2C-4089-AEA4-54D9482E3A83_SP
+- XSTUDIO_WORKFLOW_29CCAEB2-7671-407A-8BC3-A40164145BD2_SP
+- XSTUDIO_WORKFLOW_2AF85FD5-BE15-4380-9504-341EE986C74D_SP
+- XSTUDIO_WORKFLOW_2F446F30-57E6-4AC7-A199-42928FC388E2_SP
+- XSTUDIO_WORKFLOW_61A5C1A4-855A-43C6-81EB-11574448AE84_SP
+- XSTUDIO_WORKFLOW_64B14ECC-2663-434D-B0DC-FF705136AA3A_SP
+- XSTUDIO_WORKFLOW_69C53936-AFB3-44F8-874A-FE2336FB0279_SP
+- XSTUDIO_WORKFLOW_98A73AE1-1D20-4959-B45E-121B93225279_SP
+- XSTUDIO_WORKFLOW_9B20AE0B-2E34-4BF8-9875-BB52B5C007E0_SP
+- XSTUDIO_WORKFLOW_A1B200C6-5046-41BE-9CD1-84454600575D_SP
+- XSTUDIO_WORKFLOW_A6D3AC4F-60D5-4423-8936-0F59CEEA2C39_SP
+- XSTUDIO_WORKFLOW_C18D4DFF-8ADA-4080-9F2F-91DE212A1257_SP
+- XSTUDIO_WORKFLOW_C2B0C95A-B3B7-466F-9BFE-CDCC5017EB57_SP
+- XSTUDIO_WORKFLOW_CBDD76F9-AF65-4113-B5FE-987066DC8DDD_SP
+- Xbatch_SMS_WorkOrder_Wise_Consumption_Usp
+- Xstudio_XBatch_Work_Order_Mst_Tbl_USP
+
+## Columns
+
+- ID varchar(36)
+- Name varchar(100)
+- ParentID varchar(36)
+- CreatedBy varchar(36)
+- ModifiedBy varchar(36)
+- CreatedOn datetime
+- ModifiedOn datetime
+- IsDeleted bit
+- IsSystem bit
+- AssignedUserID varchar(36)
+- HostAddress varchar(100)
+- DbSyncStatus varchar(500)
+- MobileSyncStatus varchar(100)
+- Source varchar(20)
+- WorkOrderNumber varchar(100)
+- SerialNumber int
+- Quantity decimal
+- UnitID varchar(36)
+- ItemID varchar(36)
+- Status varchar(50)
+- Description varchar(1000)
+- HeatNo varchar(36)
+- SalesOrder varchar(36)
+- Equipment varchar(-1)
+- StartTime datetime
+- EndTime datetime
+- ProgressTonnage decimal
+- ProgressDuration decimal
+- RemainingTonnage decimal
+- ProgressPercentage decimal
+- ManufacturingOrderCategory varchar(100)
+- ManufacturingOrderType varchar(100)
+- ManufacturingOrderImportance varchar(100)
+- OrderIsCreated varchar(100)
+- OrderIsReleased varchar(100)
+- OrderIsPrinted varchar(100)
+- OrderIsConfirmed varchar(100)
+- OrderIsPartiallyConfirmed varchar(100)
+- OrderIsDelivered varchar(100)
+- OrderIsDeleted varchar(100)
+- OrderIsPreCosted varchar(100)
+- SettlementRuleIsCreated varchar(100)
+- OrderIsPartiallyReleased varchar(100)
+- OrderIsLocked varchar(100)
+- OrderIsTechnicallyCompleted varchar(100)
+- OrderIsClosed varchar(100)
+- OrderIsPartiallyDelivered varchar(100)
+- OrderIsMarkedForDeletion varchar(100)
+- SettlementRuleIsCrtedManually varchar(100)
+- OrderIsScheduled varchar(100)
+- OrderHasGeneratedOperations varchar(100)
+- OrderIsToBeHandledInBatches varchar(100)
+- MaterialAvailyIsNotChecked varchar(100)
+- MfgOrderCreationDate datetime
+- MfgOrderCreationTime time
+- LastChangeDateTime datetime
+- StorageLocation varchar(100)
+- GoodsRecipientName varchar(100)
+- UnloadingPointName varchar(100)
+- InventoryUsabilityCode varchar(100)
+- MaterialGoodsReceiptDuration int
+- QuantityDistributionKey varchar(100)
+- StockSegment varchar(100)
+- OrderInternalBillOfOperations varchar(100)
+- ProductionPlant int
+- Plant varchar(100)
+- MRPArea varchar(100)
+- MRPController varchar(100)
+- ProductionSupervisor varchar(100)
+- ProductionVersion varchar(100)
+- PlannedOrder varchar(100)
+- SalesOrderItem varchar(100)
+- BasicSchedulingType varchar(100)
+- ManufacturingObject varchar(100)
+- ProductConfiguration varchar(100)
+- OrderSequenceNumber varchar(100)
+- BusinessArea varchar(100)
+- CompanyCode int
+- ProfitCenter varchar(100)
+- ActualCostsCostingVariant varchar(100)
+- PlannedCostsCostingVariant varchar(100)
+- FunctionalArea varchar(100)
+- MfgOrderPlannedStartDate datetime
+- MfgOrderPlannedStartTime time
+- MfgOrderPlannedEndDate datetime
+- MfgOrderPlannedEndTime time
+- MfgOrderScheduledStartDate datetime
+- MfgOrderScheduledStartTime time
+- MfgOrderScheduledEndDate datetime
+- MfgOrderScheduledEndTime time
+- MfgOrderActualReleaseDate varchar(100)
+- ProductionUnit varchar(100)
+- ProductionUnitISOCode varchar(100)
+- ProductionUnitSAPCode varchar(100)
+- MfgOrderPlannedScrapQty decimal
+- MfgOrderConfirmedYieldQty decimal
+- CustomerName varchar(100)
+- WBSElementExternalID varchar(100)
+- OrderLongText varchar(100)
+- ColourCode varchar(50)
+- Sn int
+- MaterialName varchar(100)
+- SalesOrderName varchar(100)
+- ReleasedDate datetime
+- ActualCompletionDate datetime
+- SAPTransactionID varchar(100)
+- Grade varchar(100)
+- CampaignId varchar(100)
+- Length decimal
+- Size varchar(100)
+- MinBundles decimal
+- MaxBundles decimal
+- MinQtyToRoll decimal
+- NoOfPiecesInBundles int
+- BilletsRolled int
+- BilletsCobble int
+- BilletsHotout int
+- BilletDischarged int
+- BilletsRemaining int
+- TotalBillets int
+- BilletDischargedWeight decimal
+- BundlesProduce int
+- BundlesRemaining int

@@ -63,12 +63,22 @@ class Brain:
 def slugs(brain: Brain) -> dict[str, str]:
     """Our page path (kind/name) -> the slug GBrain assigned, found from the synced pages themselves."""
     out = {}
-    for kind in ("table", "view", "procedure", "event", "key", "api"):
-        listed = brain.call("list_pages", type=kind, limit=5000)
-        for page in listed if isinstance(listed, list) else listed.get("pages", []):
-            slug = page["slug"]
-            out[f"{kind}/{slug.rsplit('/', 1)[-1]}".lower()] = slug
+    for page in all_pages(brain):
+        slug = page["slug"]
+        out[f"{page.get('type')}/{slug.rsplit('/', 1)[-1]}".lower()] = slug
     return out
+
+
+def all_pages(brain: Brain, page_size: int = 100) -> list[dict]:
+    """list_pages caps each call, so page through with offset."""
+    pages, offset = [], 0
+    while True:
+        listed = brain.call("list_pages", limit=page_size, offset=offset)
+        batch = listed if isinstance(listed, list) else listed.get("pages", [])
+        pages += batch
+        if len(batch) < page_size:
+            return pages
+        offset += page_size
 
 
 def main() -> int:

@@ -632,18 +632,14 @@ def check_pipeline_stall(args: argparse.Namespace) -> dict[str, Any]:
     active = query_active_runs(args)
     binding = load_workflow_binding()
     eligible = str(binding.get("eligible_ticket_status") or args.eligible_status or DEFAULT_ELIGIBLE_STATUS)
-    safe_eligible = eligible.replace("'", "''")
-    sql = (
-        "SELECT "
-        "(SELECT COUNT(*) FROM dbo.Complaint_Mst_Tbl c "
-        " LEFT JOIN dbo.Hermes_L2_Response_Trn_Tbl r ON r.TicketID = c.ID AND r.IsDeleted = 0 AND r.IsActive = 1 "
-        f" WHERE ISNULL(c.IsDeleted,0) = 0 AND c.Status = '{safe_eligible}' AND r.ID IS NULL) AS WaitingCount, "
-        "(SELECT MAX(ClaimedOn) FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE IsDeleted = 0) AS LastClaimOn, "
-        "GETDATE() AS ServerNow"
-    )
+    # "Waiting" = exactly what the claim procedure would hand the scout. Counting Status='Enter'
+    # without an active run also counted open-L3 and answered-awaiting-requester tickets, which
+    # raised a false 230-minute stall on 2026-09-24 (29 open L3 + 11 awaiting input, 0 claimable).
+    waiting_count = len(run_orchestrator(args, ["--candidates", "--eligible-status", eligible]) or [])
+    sql = ("SELECT (SELECT MAX(ClaimedOn) FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE IsDeleted = 0) AS LastClaimOn, "
+           "GETDATE() AS ServerNow")
     rows = run_orchestrator(args, ["--query", sql])
     row = rows[0] if rows else {}
-    waiting_count = int(row.get("WaitingCount") or 0)
     last_claim = row.get("LastClaimOn")
     server_now = row.get("ServerNow")
 

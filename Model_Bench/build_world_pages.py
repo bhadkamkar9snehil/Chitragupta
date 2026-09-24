@@ -118,10 +118,15 @@ def build(world: dict) -> tuple[dict[str, str], list[dict]]:
             link(me, page_path(objs.get(t, {}).get("kind", "table"), t), "writes", "API insert")
         pages[me] = front("api", name.removeprefix("api:"), built) + "Inserts into:\n" + "".join(f"- {t}\n" for t in targets)
 
-    # Events.
+    # Events. Two CCM events differ only by case (CCM_Per_Heat, CCM_PER_HEAT); GBrain slugs and the
+    # Windows filesystem are case-insensitive, so the second gets a distinct name.
     for ev in world["events"]:
         name = f"{ev['area']}/{ev['event']}"
         me = page_path("event", f"{ev['area']}.{ev['event']}")
+        n = 1
+        while any(existing.lower() == me.lower() for existing in pages):
+            n += 1
+            me = page_path("event", f"{ev['area']}.{ev['event']}-{n}")
         lines = [f"Area {ev['area']}. " + ("Active." if ev["active"] else "Inactive.")]
         if ev["table"]:
             lines.append(f"Creates and updates rows in {ev['table']}.")
@@ -157,7 +162,7 @@ def main() -> None:
     for rel, text in pages.items():
         path = OUT / f"{rel}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        path.write_text(text, encoding="utf-8", newline="\n")  # LF: GBrain and WSL read these
     meta = links.pop()
     (OUT / "links.jsonl").write_text("".join(json.dumps(l) + "\n" for l in links), encoding="utf-8")
     kinds = defaultdict(int)

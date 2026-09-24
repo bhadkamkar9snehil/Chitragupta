@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""E2E thermometer for the evidence walk: realistic ticket text -> resolver -> world scan on live XBatch -> real Jev.
+"""E2E thermometer for the world walk: realistic ticket -> Jev steps through the GBrain world -> live XBatch.
+
+Runs in WSL (GBrain lives there).
 
     python Model_Bench/e2e/run_walk.py              # all cases
     python Model_Bench/e2e/run_walk.py ud_access    # one case, prints the findings Jev saw
@@ -13,12 +15,15 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-import evidence_walk  # noqa: E402
+import world_walk  # noqa: E402
 
 
 def score(expect: dict, got: dict) -> tuple[bool, list[str]]:
     """The whole chain must be right: the cause found, the involved records kept, the numbers traced."""
-    chain = got.get("chain") or {}
+    chain = {}
+    for step in got.get("trail", []):
+        chain.setdefault(step.get("role"), []).append(step["node"])
+    chain.pop("unrelated", None)
     flagged = {t for tables in chain.values() for t in tables}
     notes = []
     if expect.get("none"):
@@ -32,9 +37,9 @@ def score(expect: dict, got: dict) -> tuple[bool, list[str]]:
         if table not in flagged:
             notes.append(f"{table} dropped from the chain")
     for n, sources in expect.get("numbers", {}).items():
-        src = ((got.get("numbers") or {}).get(n) or {}).get("source") or ""
-        if not any(src.startswith(s) for s in sources):
-            notes.append(f"number {n} traced to {src or 'nothing'}, want {sources}")
+        found = (got.get("numbers") or {}).get(n) or []
+        if not any(f.startswith(s) for f in found for s in sources):
+            notes.append(f"number {n} traced to {found or 'nothing'}, want {sources}")
     return not notes, notes
 
 
@@ -43,21 +48,21 @@ def main() -> int:
     cases = [json.loads(l) for l in (HERE / "walk_cases.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
     cases = [c for c in cases if not only or c["id"] in only]
     passed = 0
+    world = world_walk.World()  # one gbrain serve session for all cases
     for case in cases:
         start = time.perf_counter()
         try:
-            got = evidence_walk.walk(case["text"])
+            got = world_walk.walk(case["text"], world)
         except Exception as exc:  # the thermometer reports, never crashes
-            got = {"pick": None, "error": f"{type(exc).__name__}: {exc}"}
+            got = {"trail": [], "error": f"{type(exc).__name__}: {exc}"}
         ok, notes = score(case["expect"], got)
         passed += ok
         print(f"{'PASS' if ok else 'FAIL'} {case['id']:20} {time.perf_counter() - start:5.1f}s  "
-              f"chain={got.get('chain')} numbers={ {n: v.get('source') for n, v in (got.get('numbers') or {}).items()} }"
+              f"steps={len(got.get('trail', []))} stopped={got.get('stopped')}"
               + (f"  {got['error']}" if got.get("error") else "") + (f"\n       MISSED: {notes}" if notes else ""))
-        if only or not ok:
-            for table, r in (got.get("roles") or {}).items():
-                if r["role"] != "unrelated":
-                    print(f"       {r['role']:6} {r['confidence']}  {table}")
+        for i, step in enumerate(got.get("trail", []), 1):
+            print(f"       {i}. [{step.get('role')} {step.get('confidence')}] {step['step'][:110]}\n"
+                  f"          saw: {step['observation']['text'][:220]}")
     print(f"\n{passed}/{len(cases)} passed")
     return 0 if passed == len(cases) else 1
 
