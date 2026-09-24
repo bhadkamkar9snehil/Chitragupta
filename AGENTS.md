@@ -362,9 +362,8 @@ Jev is the default bounded semantic layer for L2. The deterministic runtime rema
 ~~~text
 claim
 -> Jev triage
--> deterministic real candidates
--> Jev evidence plan
--> deterministic identifier-bounded probes
+-> world_walk over the generated XBatch world
+-> audited live SQL reads + Jev typed relevance/step choices
 -> Jev investigation assessment + per-chunk meta-attention Scores
 -> deterministic context compiler (whole chunks; pinned current/live evidence)
 -> QWEN_FREE direct bounded handoff OR persist exact local-model work package

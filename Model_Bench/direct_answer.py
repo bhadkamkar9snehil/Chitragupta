@@ -95,16 +95,13 @@ def _best_row(rows: list[dict[str, Any]], text: str) -> dict[str, Any] | None:
 
 
 def _audited_reads(probes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Every successful read: the table probes and the relationship hops followed from them."""
-    reads = []
-    for item in probes:
-        if not isinstance(item, dict):
-            continue
-        for probe in [item.get("probe")] + [h.get("probe") for h in item.get("relationship_hops") or []
-                                            if isinstance(h, dict)]:
-            if isinstance(probe, dict) and probe.get("ok") and probe.get("probe_possible", True):
-                reads.append(probe)
-    return reads
+    """Every successful audited read selected by world_walk."""
+    return [
+        probe
+        for item in probes if isinstance(item, dict)
+        for probe in [item.get("probe")]
+        if isinstance(probe, dict) and probe.get("ok") and probe.get("probe_possible", True)
+    ]
 
 
 def build_facts(ticket: dict[str, Any], probes: list[dict[str, Any]]) -> dict[str, Any]:

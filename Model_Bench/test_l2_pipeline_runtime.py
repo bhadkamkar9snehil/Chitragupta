@@ -111,8 +111,8 @@ class PipelineContractTests(unittest.TestCase):
         }
         chunks = mod._make_context_chunks(
             ticket_context={"ID": "t1"}, routing_context={}, prior_ledger=None,
-            prior_attempts=None, candidates=[], known_solutions=[],
-            evidence_plan={}, probes=[], gbrain=gbrain,
+            prior_attempts=None, known_solutions=[],
+            world_walk={}, probes=[], gbrain=gbrain,
         )
         gbrain_chunks = [c for c in chunks if c["id"] == "gbrain_hit_0"]
         self.assertEqual(len(gbrain_chunks), 1)
@@ -126,8 +126,8 @@ class PipelineContractTests(unittest.TestCase):
                   "abstention_reason": "GBrain retrieval failed: timeout"}
         chunks = mod._make_context_chunks(
             ticket_context={"ID": "t1"}, routing_context={}, prior_ledger=None,
-            prior_attempts=None, candidates=[], known_solutions=[],
-            evidence_plan={}, probes=[], gbrain=gbrain,
+            prior_attempts=None, known_solutions=[],
+            world_walk={}, probes=[], gbrain=gbrain,
         )
         abstained = [c for c in chunks if c["id"] == "gbrain_abstained"]
         self.assertEqual(len(abstained), 1)

@@ -1289,35 +1289,13 @@ def _ticket_context_compact(ticket: dict[str, Any]) -> dict[str, Any]:
     return _bounded_context_value(compact, 2)
 
 
-def _relationship_hops_compact(hops: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    compact = []
-    for entry in hops if isinstance(hops, list) else []:
-        hop = entry.get("hop") or {}
-        probe = entry.get("probe") or {}
-        rows = probe.get("rows") if isinstance(probe, dict) else []
-        compact.append({
-            "via_column": hop.get("source_column"),
-            "target_table": f"{hop.get('target_database')}.{hop.get('target_table')}",
-            "jev_worth_fetching": hop.get("jev_worth_fetching"),
-            "row_count": len(rows) if isinstance(rows, list) else None,
-            "rows": _bounded_context_value(rows if isinstance(rows, list) else [], 2),
-            "error": probe.get("error"),
-        })
-    return compact
-
-
 def _probe_context_compact(item: dict[str, Any]) -> dict[str, Any]:
-    candidate = item.get("candidate") or {}
+    """Compact one audited world-walk read for model context."""
     probe = item.get("probe") or {}
     rows = probe.get("rows") if isinstance(probe, dict) else []
     return {
-        "candidate": {
-            "database": candidate.get("database"),
-            "table": candidate.get("table"),
-            "matched_columns": candidate.get("matched_columns") or [],
-        },
-        "plan_inspect_probability": item.get("plan_inspect_probability"),
-        "plan_value_score": item.get("plan_value_score"),
+        "database": probe.get("database"),
+        "table": probe.get("table"),
         "probe_possible": probe.get("probe_possible"),
         "action_id": probe.get("action_id"),
         "identifier": probe.get("identifier"),
@@ -1325,7 +1303,6 @@ def _probe_context_compact(item: dict[str, Any]) -> dict[str, Any]:
         "row_count": len(rows) if isinstance(rows, list) else None,
         "rows": _bounded_context_value(rows if isinstance(rows, list) else [], 2),
         "error": probe.get("error"),
-        "relationship_hops": _relationship_hops_compact(item.get("relationship_hops") or []),
     }
 
 
@@ -1392,7 +1369,7 @@ def _make_context_chunks(
     prior_ledger: Any,
     prior_attempts: Any,
     known_solutions: list[dict[str, Any]],
-    evidence_plan: dict[str, Any],
+    world_walk: dict[str, Any],
     probes: list[dict[str, Any]],
     gbrain: dict[str, Any] | None = None,
     fact_table: list[dict[str, Any]] | None = None,
@@ -1428,8 +1405,8 @@ def _make_context_chunks(
         recover_with="XStudio_Helpdesk Hermes_L2_Response_Trn_Tbl",
     )
     add(
-        "evidence_plan", "jev_plan", "SEMANTIC_GUIDANCE", "Current Jev evidence plan",
-        "evidence_plan", evidence_plan, fallback_level=1,
+        "world_walk", "investigation", "SEMANTIC_GUIDANCE", "Current world-walk investigation",
+        "world_walk", world_walk, fallback_level=1,
     )
     for index, solution in enumerate(known_solutions[:8]):
         compact = _solution_context_compact(solution)
@@ -1482,26 +1459,26 @@ def _make_context_chunks(
             minimum_level=3,
             fallback_level=3,
         )
-    for index, probe in enumerate(probes[:9]):
-        compact = _probe_context_compact(probe)
-        candidate = probe.get("candidate") or {}
+    for index, item in enumerate(probes[:9]):
+        compact = _probe_context_compact(item)
+        source = ".".join(part for part in (compact.get("database"), compact.get("table")) if part)
         add(
             f"live_probe_{index}", "live_evidence", "LIVE_SQL_EVIDENCE",
-            f"{candidate.get('database')}.{candidate.get('table')}",
-            f"live_probes[{index}]", probe,
+            source or "world_walk audited read",
+            f"live_probes[{index}]", item,
             compact=compact,
             summary={
-                "table": candidate.get("table"),
-                "database": candidate.get("database"),
-                "identifier": (probe.get("probe") or {}).get("identifier"),
+                "table": compact.get("table"),
+                "database": compact.get("database"),
+                "identifier": compact.get("identifier"),
                 "row_count": compact.get("row_count"),
                 "probe_possible": compact.get("probe_possible"),
+                "action_id": compact.get("action_id"),
                 "error": compact.get("error"),
-                "relationship_hops_fetched": len(compact.get("relationship_hops") or []),
             },
             minimum_level=2,
             fallback_level=3,
-            recover_with="xstudio_l2 bounded live read",
+            recover_with="current run audited evidence",
         )
     return chunks
 
@@ -1712,7 +1689,7 @@ def _jev_first_investigation(
             prior_ledger=prior_ledger,
             prior_attempts=prior_attempts,
             known_solutions=known_solutions,
-            evidence_plan={"ok": False, "reason": "Jev-first investigation disabled"},
+            world_walk={"ok": False, "reason": "Jev-first investigation disabled"},
             probes=[],
             gbrain=gbrain,
         )
@@ -1735,7 +1712,7 @@ def _jev_first_investigation(
     # links. Its reads are audited against run_id, in the probe shape direct_answer already uses.
     walk = _run_world_walk(ticket, run_id, ticket_id)
     probes: list[dict[str, Any]] = walk.get("probes") or []
-    plan: dict[str, Any] = {
+    walk_summary: dict[str, Any] = {
         "ok": bool(walk.get("ok")), "source": "world_walk", "route": walk.get("route"),
         "stopped": walk.get("stopped"), "entities": walk.get("entities"), "since": walk.get("since"),
         "findings": _walk_findings(walk), "numbers": walk.get("numbers"), "error": walk.get("error"),
@@ -1755,14 +1732,14 @@ def _jev_first_investigation(
         prior_ledger=prior_ledger,
         prior_attempts=prior_attempts,
         known_solutions=known_solutions,
-        evidence_plan=plan,
+        world_walk=walk_summary,
         probes=probes,
         gbrain=gbrain,
         fact_table=direct_answer.writer_facts(direct_answer.build_facts(ticket, probes)),
     )
     if direct is not None:
         return {
-            "enabled": True, "evidence_plan": plan, "selected_candidate_count": len(probes),
+            "enabled": True, "world_walk": walk_summary, "live_probe_count": len(probes),
             "live_probes": probes, "assessment": {"ok": False, "reason": "answered directly by Jev"},
             "context_chunks": chunks, "execution_contract": {"execution_mode": "QWEN_FREE"},
             "execution_mode": "QWEN_FREE", "local_model_scope": "COMPOSE_ONLY",
@@ -1777,7 +1754,7 @@ def _jev_first_investigation(
         "prior_ledger": prior_ledger,
         "prior_attempts": prior_attempts,
         "known_solutions": known_solutions,
-        "evidence_plan": plan,
+        "world_walk": walk_summary,
         "live_probes": probes,
         "context_chunks": _context_chunk_metadata(chunks),
     }
@@ -1797,8 +1774,8 @@ def _jev_first_investigation(
     )
     return {
         "enabled": True,
-        "evidence_plan": plan,
-        "selected_candidate_count": len(probes),
+        "world_walk": walk_summary,
+        "live_probe_count": len(probes),
         "live_probes": probes,
         "assessment": assessment,
         "context_chunks": chunks,

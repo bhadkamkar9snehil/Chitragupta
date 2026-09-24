@@ -251,10 +251,8 @@ Jev is now a **primary semantic control layer** inside Chitragupta. It is not a 
 SQL claim
   -> Jev ticket triage
        route / ambiguity / complexity / domain / known-issue likelihood
-  -> deterministic candidate generation
-       real tables/views/SPs/KB only
-  -> Jev evidence plan + candidate rerank
-  -> deterministic identifier-bounded live probes
+  -> world_walk over the generated XBatch world
+       GBrain scope/links + audited live SQL reads + Jev typed relevance/step choices
   -> Jev investigation assessment + meta-attention + execution depth
        evidence sufficiency / response type / known-solution fit /
        root-cause family / human-action need / local-reasoning need /
