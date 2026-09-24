@@ -1,0 +1,12 @@
+{"id": "arc_heat", "text": "LRF report says arcing 25 min for heat 1604014. We noted power on at 30 and off at 27. Which one is correct?", "expect": {"kind": "heat", "value": "1604014"}}
+{"id": "ht_abbrev", "text": "Arc time ht 1604013 not matching, quality is asking", "expect": {"kind": "heat", "value": "1604013"}}
+{"id": "heat_glued", "text": "power on time for heat1604015 looks too high on the energy dashboard", "expect": {"kind": "heat", "value": "1604015"}}
+{"id": "no_id", "text": "arcing time on the LRF shift report for one of last night's heats shows 23 min, operator says it ran longer. can someone check?", "expect": {"kind": null}}
+{"id": "billet", "text": "Yard says billet 1604014_S1_29 was cut around 2026-07-08 19:08 but the torch timing doesnt look right", "expect": {"kind": "billet", "value": "1604014_S1_29"}}
+{"id": "wo", "text": "Planning screen shows WO 120000102353 with 100 t. Is this order still open or closed?", "expect": {"kind": "work_order", "value": "120000102353"}}
+{"id": "matdoc_and_heat", "text": "Finance says production for heat 1604014 is not showing in SAP stock. Mat doc on our side is 5003509957. Did it post or not?", "expect": {"kind": "material_document", "value": "5003509957"}}
+{"id": "vague_symptom", "text": "EAF heat report power on times look wrong since morning shift, some heats are too high. Kindly check.", "expect": {"kind": null}}
+{"id": "nonexistent_heat", "text": "heat 1699999 missing from the CCM screen, please check", "expect": {"kind": "heat", "value": "1699999", "exists": false}}
+{"id": "strand_only", "text": "one billet from strand S5 is not showing in the genealogy screen, yard can see it physically", "expect": {"kind": null}}
+{"id": "chemistry", "text": "lab says carbon 0.07 and silicon 0.003 for heat 1604014 F1 sample, is that what system has?", "expect": {"kind": "heat", "value": "1604014"}}
+{"id": "billet_count", "text": "CCM shows 37 billets for heat 1603945 but genealogy has fewer, which is right", "expect": {"kind": "heat", "value": "1603945"}}
