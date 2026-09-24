@@ -123,4 +123,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    try:  # local call trace (Model_Bench/l2_calltrace.py); L2_CALLTRACE=0 disables
+        import l2_calltrace
+        l2_calltrace.install()
+    except ImportError:
+        pass
     raise SystemExit(main())
