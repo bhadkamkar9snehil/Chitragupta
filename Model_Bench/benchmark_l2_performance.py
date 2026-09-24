@@ -274,6 +274,23 @@ _EXPECTED_TYPES = {"CONFIRMED": {"RESOLUTION"}, "CORRECTED": {"RESOLUTION"}, "AN
                    "QUESTION": {"QUESTION"}, "L3_ESCALATION": {"L3_ESCALATION", "NEEDS_HUMAN_ACTION"}}
 
 
+def _case_expectation(facts: dict[str, Any], got: str | None, reply: str) -> tuple[str, bool | None]:
+    """walk/general E2E cases run live: what counts as the right outcome, from the case file's facts."""
+    if isinstance(facts, list):  # walk cases seeded before 2026-09-24 kept a list of explaining tables
+        facts = {} if facts else {"none": True}
+    if facts.get("route"):  # how-to / access / infrastructure: routed to the right team
+        want = {"NEEDS_HUMAN_ACTION"}
+    elif facts.get("none"):  # no data fault, or identifier absent: ask or hand over, never L3/resolve
+        want = {"QUESTION", "NEEDS_HUMAN_ACTION"}
+    else:  # a data fault the walk can explain: resolved or handed over with evidence, not escalated
+        want = {"RESOLUTION", "NEEDS_HUMAN_ACTION"}
+    label = "/".join(sorted(want))
+    if not got:
+        return label, None
+    ok = got in want and all(m in reply for m in facts.get("must_say", []))
+    return label + (" + key fact" if facts.get("must_say") else ""), ok
+
+
 def expectation_score(cur) -> dict[str, Any]:
     """Human-style seeded tickets: latest published response type vs the recorded expected outcome."""
     if not os.path.exists(EXPECTATIONS_PATH):
@@ -284,7 +301,7 @@ def expectation_score(cur) -> dict[str, Any]:
         return {"scored": 0, "rows": []}
     marks = ",".join("?" * len(expected))
     rows = _rows(cur, f"""
-        SELECT c.TicketNo, r.ResponseType, r.LocalModelPurpose, LEFT(r.ReplyText, 160) AS Reply
+        SELECT c.TicketNo, r.ResponseType, r.LocalModelPurpose, LEFT(r.ReplyText, 160) AS Reply, r.ReplyText AS FullReply
         FROM dbo.Complaint_Mst_Tbl c
         OUTER APPLY (SELECT TOP 1 * FROM dbo.Hermes_L2_Response_Trn_Tbl x WHERE x.TicketID = c.ID
                      AND x.IsDeleted = 0 AND x.ProcessStatus IN ('COMPLETED', 'WAITING_USER')
@@ -292,10 +309,14 @@ def expectation_score(cur) -> dict[str, Any]:
         WHERE c.TicketNo IN ({marks})""", *expected)
     out = []
     for row in rows:
-        want = expected[row["TicketNo"]]["expected"]
-        row["Expected"] = want
-        row["Case"] = expected[row["TicketNo"]]["case"]
-        row["Pass"] = None if not row["ResponseType"] else row["ResponseType"] in _EXPECTED_TYPES.get(want, set())
+        exp = expected[row["TicketNo"]]
+        row["Case"] = exp["case"]
+        got, reply = row["ResponseType"], row.pop("FullReply") or ""
+        if ":" not in exp["case"]:  # human-style tickets: expected outcome label
+            row["Expected"] = exp["expected"]
+            row["Pass"] = None if not got else got in _EXPECTED_TYPES.get(exp["expected"], set())
+        else:  # walk:/general: E2E cases seeded live: the case's own facts decide
+            row["Expected"], row["Pass"] = _case_expectation(exp.get("facts") or {}, got, reply)
         out.append(row)
     done = [r for r in out if r["Pass"] is not None]
     return {"scored": len(done), "passed": sum(1 for r in done if r["Pass"]), "pending": len(out) - len(done),

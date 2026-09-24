@@ -1726,6 +1726,15 @@ def _jev_first_investigation(
         direct_record = {"reason": "identifier not in XBatch"}
     elif probes:
         direct, direct_record = _jev_direct_answer(ticket=ticket, probes=probes, run_id=run_id, ticket_id=ticket_id)
+    # A cause the walk proved with audited reads is handed over as written evidence, no Qwen: live on
+    # 2026-09-24 the walk found the SAP rejection for every identifier ticket, and Qwen's prose then failed
+    # Jev review three times ("overstates certainty") and escalated to L3.
+    if direct is None and run_id and walk.get("stopped") == "stop_explained":
+        subject = ", ".join(str(e.get("value")) for e in (walk.get("entities") or [])[:1]) or None
+        direct = direct_answer.cause_proposal(plan["findings"], run_id=str(run_id), ticket_id=ticket_id,
+                                              ticket=ticket, subject=subject)
+        if direct is not None:
+            direct_record = {**direct_record, "reason": "cause proven by audited world-walk reads"}
     chunks = _make_context_chunks(
         ticket_context=ticket_context,
         routing_context=routing_context,

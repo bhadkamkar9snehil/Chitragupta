@@ -227,6 +227,48 @@ def routed_proposal(route: str, *, run_id: str, ticket_id: str, ticket: dict[str
                      summary=f"Routed as {route}: not an L2 data investigation")
 
 
+CAUSE_MIN_CONFIDENCE = 0.70
+
+
+def cause_proposal(findings: list[dict[str, Any]], *, run_id: str, ticket_id: str, ticket: dict[str, Any],
+                   subject: str | None) -> dict[str, Any] | None:
+    """No-Qwen handoff when the world walk proved the cause with audited reads.
+
+    The cause is a recorded failure (an SAP rejection, a missing master row, ...) that someone must act
+    on, so the outcome is NEEDS_HUMAN_ACTION with the evidence quoted, never a claimed fix. Only
+    findings Jev judged 'cause' with confidence >= 0.70 AND backed by an audited action ID qualify."""
+    def sentence(f: dict[str, Any]) -> str:
+        # One line, without the table name the finding already starts with or a raw request body.
+        text = str(f.get("finding") or "").split("\n")[0].split("; Body=")[0]
+        text = text[len(f"{f['where']}: "):] if text.startswith(f"{f['where']}: ") else text
+        return f"{f['where']}: {text[:260]}"
+
+    def said(f: dict[str, Any]) -> str:  # the recorded message, to drop a view repeating its table
+        return str(f.get("finding") or "").split("says: ")[-1].split(";")[0]
+
+    causes, seen = [], set()
+    for f in findings:
+        if (f.get("role") == "cause" and f.get("action_id") and float(f.get("confidence") or 0) >= CAUSE_MIN_CONFIDENCE
+                and said(f) not in seen):
+            causes.append(f)
+            seen.add(said(f))
+    if not causes:
+        return None
+    causes = causes[:2]
+    related = [f for f in findings if f.get("role") == "stuck" and f.get("action_id")
+               and float(f.get("confidence") or 0) >= 0.5][:2]
+    about = f" for {subject}" if subject else ""
+    reply = (f"We checked XBatch{about}. The records show why this happened:\n"
+             + "\n".join(f"- {sentence(f)}" for f in causes)
+             + ("\nRelated records still waiting on it:\n" + "\n".join(f"- {sentence(f)}" for f in related) if related else "")
+             + "\nThis needs action by the responsible team (SAP / quality / master data); it has been handed over "
+               "with these records.")
+    claims = [{"id": f"C{i}", "material": True, "status": "VERIFIED", "claim": sentence(f),
+               "evidence": [{"action_id": f["action_id"]}]} for i, f in enumerate(causes + related, 1)]
+    return _proposal(run_id, ticket_id, ticket, "NEEDS_HUMAN_ACTION", reply=reply, claims=claims,
+                     summary="Cause found in live records: " + "; ".join(sentence(f) for f in causes))
+
+
 def not_found_proposal(values: list[str], *, run_id: str, ticket_id: str, ticket: dict[str, Any]) -> dict[str, Any]:
     """The ticket names identifiers XBatch does not hold (checked against the world value index)."""
     named = ", ".join(values)
