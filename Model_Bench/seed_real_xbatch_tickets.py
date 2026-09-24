@@ -458,7 +458,7 @@ def main():
     ap.add_argument("--username", default="sa")
     ap.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--style", choices=["template", "human", "walk", "general"], default="template",
+    ap.add_argument("--style", choices=["template", "human", "walk", "general", "live"], default="template",
                     help="human: tickets written the way plant users write them, with expected outcomes recorded aside.")
     ap.add_argument("--offset", type=int, default=0,
                      help="Skip the first N real entities per category (each entity list "
@@ -474,8 +474,8 @@ def main():
     finally:
         conn_xbatch.close()
 
-    human = args.style in ("human", "walk", "general")
-    if args.style in ("walk", "general"):
+    human = args.style in ("human", "walk", "general", "live")
+    if args.style in ("walk", "general", "live"):
         tickets = generate_case_tickets(args.style)
     else:
         tickets = generate_human_tickets(entities, offset=args.offset) if human else generate_tickets(entities, offset=args.offset)
