@@ -621,8 +621,11 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
         frontier += step_options(world, pick["slug"], obs, pick["value"], conn)
     seen = [{"node": s["node"], "obs": s["obs"]} for s in starts] + [{"node": s["node"], "obs": s["observation"]} for s in trail]
     numbers = trace_numbers(ticket, value or "", seen)
-    # Every read, in the shape the runtime's evidence consumers (direct_answer, reviewer) already use.
-    probes = [{"probe": s["obs"]["probe"]} for s in seen if s["obs"].get("probe")]
+    # The reads Jev judged relevant, in the shape the runtime's evidence consumers (direct_answer,
+    # reviewer) already use. Every other read is still in the audit trail; the local model's context
+    # keeps each live probe at COMPACT or more, so 38 surveyed tables would flood it.
+    probes = [{"probe": s["observation"]["probe"]} for s in trail
+              if s["observation"].get("probe") and s.get("role") not in ("unrelated", "not_observed")]
     return {"route": "data", "data": True, "entities": entities, "since": str(since), "trail": trail, "stopped": stopped,
             "numbers": numbers, "surveyed": len(starts), "probes": probes,
             "seconds": round(time.perf_counter() - started, 1)}

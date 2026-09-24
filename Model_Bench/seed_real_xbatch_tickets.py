@@ -325,18 +325,21 @@ def _human_case(i: int) -> str:
     return ("MATCH", "MISMATCH", "MISSING_ID", "MATCH", "VAGUE")[i % 5]
 
 
-def generate_walk_tickets() -> list[dict]:
-    """The evidence-walk E2E cases (Model_Bench/e2e/walk_cases.jsonl) as live tickets: real faults, known cause."""
-    cases_path = Path(__file__).resolve().parent / "e2e" / "walk_cases.jsonl"
+def generate_case_tickets(style: str) -> list[dict]:
+    """E2E cases as live tickets: walk -> e2e/walk_cases.jsonl (identifier tickets, known cause),
+    general -> e2e/general_cases.jsonl (L1 escalations without an identifier, known finding)."""
+    cases_path = Path(__file__).resolve().parent / "e2e" / f"{style}_cases.jsonl"
     cases = [json.loads(l) for l in cases_path.read_text(encoding="utf-8").splitlines() if l.strip()]
     out = []
     for i, case in enumerate(cases):
         sap = "SAP" in case["text"] or "UD" in case["text"] or "GR" in case["text"]
+        data_fault = case["expect"].get("data", bool(case["expect"])) and not case["expect"].get("none")
         out.append({"AreaID": AREA_COMMON if sap else AREA_CCM,
-                    "ComplaintTypeID": COMPLAINT_TYPE_BUG if case["expect"] else COMPLAINT_TYPE_CLARIFICATION,
+                    "ComplaintTypeID": COMPLAINT_TYPE_BUG if data_fault else COMPLAINT_TYPE_CLARIFICATION,
                     "Priority": PRIORITY_HIGH, "BriefDetails": case["text"][:80], "Description": case["text"],
                     "Requester": REQUESTERS[i % len(REQUESTERS)],
-                    "Expectation": {"case": f"walk:{case['id']}", "expected": case["truth"], "facts": case["expect"]}})
+                    "Expectation": {"case": f"{style}:{case['id']}", "expected": case.get("truth") or case["expect"].get("finding")
+                                    or case["expect"].get("route"), "facts": case["expect"]}})
     return out
 
 
@@ -455,7 +458,7 @@ def main():
     ap.add_argument("--username", default="sa")
     ap.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--style", choices=["template", "human", "walk"], default="template",
+    ap.add_argument("--style", choices=["template", "human", "walk", "general"], default="template",
                     help="human: tickets written the way plant users write them, with expected outcomes recorded aside.")
     ap.add_argument("--offset", type=int, default=0,
                      help="Skip the first N real entities per category (each entity list "
@@ -471,9 +474,9 @@ def main():
     finally:
         conn_xbatch.close()
 
-    human = args.style in ("human", "walk")
-    if args.style == "walk":
-        tickets = generate_walk_tickets()
+    human = args.style in ("human", "walk", "general")
+    if args.style in ("walk", "general"):
+        tickets = generate_case_tickets(args.style)
     else:
         tickets = generate_human_tickets(entities, offset=args.offset) if human else generate_tickets(entities, offset=args.offset)
     print(f"Generated {len(tickets)} {args.style}-style tickets using real plant entities.")
