@@ -39,9 +39,16 @@ QUERY_TIMEOUT_S = 8
 _NUMBER = re.compile(r"(?<![\w.])\d{1,6}(?:\.\d+)?(?![\w])")
 
 
-def jev(state: dict[str, Any], questions: dict[str, Any]) -> dict[str, Any]:
+def jev(state: dict[str, Any], questions: dict[str, Any], stage: str) -> dict[str, Any]:
+    """One Jev call. Inside a live run it is audited like the runtime's own Jev workflows
+    (jev.audit -> Hermes_Agent_Trace_Trn_Tbl), under stage WORLD_WALK_<stage>."""
     from jev.client import system_one
-    return ((system_one(state, questions) or {}).get("answers")) or {}
+    result = system_one(state, questions) or {}
+    if _AUDIT and result.get("ok"):
+        from jev.audit import persist_rows, rows_for_result
+        persist_rows(rows_for_result(result=result, stage=f"WORLD_WALK_{stage}", state=state,
+                                     ticket_id=_AUDIT.get("ticket_id"), run_id=_AUDIT["run_id"]))
+    return result.get("answers") or {}
 
 
 def is_table(name: str) -> bool:
@@ -94,7 +101,7 @@ def subject(text: str, entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
     a = jev({"ticket": text, "candidates": options},
             {"subject": {"type": "choice", "criteria": options,
                          "instructions": "Which item is the requester's question actually about? The others may be mentioned as context."}}
-            ).get("subject") or {}
+            , "SUBJECT").get("subject") or {}
     first = int(a["choice"][1:]) if a.get("choice") in options else 0
     return [entities[first]] + [e for i, e in enumerate(entities) if i != first]
 
@@ -217,7 +224,7 @@ def pick_columns(ticket: str, observation: dict[str, Any]) -> list[str]:
         "task": "Does this column's value help answer the requester's problem?",
         "ticket_path": "ticket", "column_path": f"columns.c{i}"}} for i in range(len(cols))}
     answers = jev({"ticket": ticket, "columns": {f"c{i}": f"{c} = {observation['columns'][c]}" for i, c in enumerate(cols)}},
-                  questions)
+                  questions, "COLUMNS")
     scored = sorted(((float((answers.get(f"c{i}") or {}).get("noul") or 0.0), c) for i, c in enumerate(cols)), reverse=True)
     return [c for score, c in scored if score >= 0.60][:15]  # same threshold as jev/relationship_hops.py
 
@@ -433,7 +440,7 @@ def choose(world: World, ticket: str, trail: list[dict], options: list[dict]) ->
         crit = {f"k{i}": f"look at a {k}" for i, k in enumerate(kinds)}
         a = jev({"ticket": ticket, "evidence_so_far": seen},
                 {"kind": {"type": "choice", "criteria": crit,
-                          "instructions": "Which kind of place should the investigation look at next?"}}).get("kind") or {}
+                          "instructions": "Which kind of place should the investigation look at next?"}}, "STEP").get("kind") or {}
         if a.get("choice") in crit:
             wanted = kinds[int(a["choice"][1:])]
             options = [o for o in options if kind_of(o) == wanted][:250]
@@ -442,7 +449,7 @@ def choose(world: World, ticket: str, trail: list[dict], options: list[dict]) ->
     crit[STOP_NOT_DATA] = "Stop: this is not a problem with the data (how-to, access, hardware)"
     a = jev({"ticket": ticket, "evidence_so_far": seen},
             {"next": {"type": "choice", "criteria": crit,
-                      "instructions": "Which single next step best helps find why the requester sees this problem?"}}).get("next") or {}
+                      "instructions": "Which single next step best helps find why the requester sees this problem?"}}, "STEP").get("next") or {}
     c = a.get("choice")
     return c if c in (STOP_EXPLAINED, STOP_NOT_DATA) else options[int(c[1:])] if c in crit else STOP_EXPLAINED
 
@@ -450,7 +457,7 @@ def choose(world: World, ticket: str, trail: list[dict], options: list[dict]) ->
 def judge(ticket: str, observation: str) -> dict[str, Any]:
     a = jev({"ticket": ticket, "finding": observation},
             {"role": {"type": "choice", "criteria": ROLES,
-                      "instructions": "What part does this finding play in the requester's problem?"}}).get("role") or {}
+                      "instructions": "What part does this finding play in the requester's problem?"}}, "ROLE").get("role") or {}
     return {"role": a.get("choice"), "confidence": a.get("confidence")}
 
 
@@ -485,7 +492,7 @@ def judge_all(ticket: str, texts: list[str]) -> list[dict[str, Any]]:
                   {f"role_{k}": {"type": "choice", "criteria": ROLES,
                                  "instructions": {"task": "What part does this finding play in the requester's problem?",
                                                   "ticket_path": "ticket", "finding_path": f"findings.{k}"}}
-                   for k in findings})
+                   for k in findings}, "ROLE")
     return [{"role": (answers.get(f"role_{k}") or {}).get("choice"),
              "confidence": (answers.get(f"role_{k}") or {}).get("confidence")} for k in findings]
 
@@ -509,7 +516,7 @@ def trace_numbers(ticket: str, value: str, seen: list[dict]) -> dict[str, Any]:
                                            "instructions": f"The requester quotes the number {n}. Which stored value is "
                                                            "the one they are looking at (match the screen or report they name)?"}
     if questions:
-        answers = jev({"ticket": ticket}, questions)
+        answers = jev({"ticket": ticket}, questions, "NUMBERS")
         for (n, options), q in zip(options_by_n.items(), questions):
             a = answers.get(q) or {}
             out[n] = {"source": options.get(a.get("choice")) if a.get("choice") != "none" else None,
@@ -532,7 +539,7 @@ SCOPE_MIN = 0.30  # TypeSafe skill-suggestion cookbook: nothing fits below 0.30
 def understand(ticket: str) -> dict[str, Any]:
     """What kind of escalation this is (route). One call; code acts on the answer."""
     a = jev({"ticket": ticket}, {"route": {"type": "choice", "criteria": ROUTES,
-                                           "instructions": "What is the requester's problem about?"}}).get("route") or {}
+                                           "instructions": "What is the requester's problem about?"}}, "ROUTE").get("route") or {}
     return {"route": a.get("choice") or "data", "confidence": a.get("confidence")}
 
 
@@ -550,7 +557,7 @@ def scope(world: World, ticket: str) -> list[dict[str, Any]]:
                   {f"fit_{k}": {"type": "noul", "instructions": {
                       "task": "Is this the screen, report, table or process the requester is talking about, "
                               "or where the data they describe is kept?",
-                      "ticket_path": "ticket", "candidate_path": f"candidates.{k}"}} for k in cands})
+                      "ticket_path": "ticket", "candidate_path": f"candidates.{k}"}} for k in cands}, "SCOPE")
     scored = sorted(((float((answers.get(f"fit_{k}") or {}).get("noul") or 0), p) for k, p in zip(cands, pages)),
                     key=lambda x: -x[0])
     return [dict(p, fit=round(s, 2)) for s, p in scored[:5] if s >= SCOPE_MIN]
@@ -590,7 +597,12 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
                     "stopped": "nothing in the world matches the requester's words: ask them which screen or report",
                     "seconds": round(time.perf_counter() - started, 1)}
     observed = [s for s in starts if s["obs"].get("observed", True)]
+    survey_log = [{"node": s["node"], "kind": s["kind"], "value": s["value"], "finding": s["obs"]["text"],
+                   "role": "not_observed", "action_id": (s["obs"].get("probe") or {}).get("action_id")}
+                  for s in starts if not s["obs"].get("observed", True)]
     for s, role in zip(observed, judge_all(ticket, [s["obs"]["text"] for s in observed])):
+        survey_log.append({"node": s["node"], "kind": s["kind"], "value": s["value"], "finding": s["obs"]["text"],
+                           "action_id": (s["obs"].get("probe") or {}).get("action_id"), **role})
         if s["slug"]:
             visited.add(s["slug"])
         if role["role"] != "unrelated":
@@ -599,6 +611,7 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
             if s["slug"]:  # a code check is a finding, not a place to go from
                 frontier += step_options(world, s["slug"], s["obs"], s["value"], conn)
     stopped = f"step limit {MAX_STEPS}"
+    steps_log: list[dict[str, Any]] = []  # each Jev step choice: how many options, which one (or stop)
     for _ in range(MAX_STEPS):
         options = [o for o in frontier if o["slug"] not in visited]  # mode 13
         if not options:
@@ -607,7 +620,9 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
         pick = choose(world, ticket, trail, options)
         if isinstance(pick, str):
             stopped = pick
+            steps_log.append({"options": len(options), "chosen": pick})
             break
+        steps_log.append({"options": len(options), "chosen": pick["label"]})
         visited.add(pick["slug"])
         node = world.page(pick["slug"])
         obs = look(node, pick["value"], conn, since)
@@ -627,8 +642,25 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
     probes = [{"probe": s["observation"]["probe"]} for s in trail
               if s["observation"].get("probe") and s.get("role") not in ("unrelated", "not_observed")]
     return {"route": "data", "data": True, "entities": entities, "since": str(since), "trail": trail, "stopped": stopped,
-            "numbers": numbers, "surveyed": len(starts), "probes": probes,
+            "numbers": numbers, "surveyed": len(starts), "probes": probes, "survey": survey_log, "steps": steps_log,
             "seconds": round(time.perf_counter() - started, 1)}
+
+
+def ledger(result: dict[str, Any]) -> dict[str, Any]:
+    """What the run keeps (InvestigationJson): enough to replay the investigation step by step.
+    Findings with their role and action ID; code checks and index lookups have no action ID."""
+    return {
+        "source": "world_walk", "route": result.get("route"), "stopped": result.get("stopped"),
+        "entities": [{k: e.get(k) for k in ("value", "key", "holders")} for e in result.get("entities") or []],
+        "missing": result.get("missing"), "since": result.get("since"), "seconds": result.get("seconds"),
+        "survey": result.get("survey") or [],
+        "steps": [{"chose": s.get("step"), "node": s.get("node"), "kind": s.get("kind"), "value": s.get("value"),
+                   "finding": (s.get("observation") or {}).get("text"), "role": s.get("role"),
+                   "confidence": s.get("confidence"),
+                   "action_id": ((s.get("observation") or {}).get("probe") or {}).get("action_id")}
+                  for s in result.get("trail") or [] if s.get("step") != "survey"],
+        "choices": result.get("steps") or [], "numbers": result.get("numbers"),
+    }
 
 
 def main() -> int:
@@ -640,9 +672,11 @@ def main() -> int:
     req = json.loads(sys.stdin.read() or "{}")
     if req.get("run_id"):
         from xstudio_l2_tool_bridge import _client
-        _AUDIT.update(client=_client(), run_id=str(req["run_id"]))
+        _AUDIT.update(client=_client(), run_id=str(req["run_id"]), ticket_id=req.get("ticket_id"))
     try:
         result = walk(str(req.get("ticket_text") or ""))
+        if _AUDIT:  # the run keeps its investigation (Hermes_L2_Response_Trn_Tbl.InvestigationJson)
+            _AUDIT["client"].save_investigation_ledger(_AUDIT["run_id"], ledger(result))
     except Exception as exc:  # the runtime falls back to its own path; never a traceback on stdout
         result = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
     finally:

@@ -1064,13 +1064,15 @@ def _run_xstudio_bridge(request: dict[str, Any], *, timeout: int = 45) -> dict[s
 WORLD_WALK_TIMEOUT_S = int(os.environ.get("L2_WORLD_WALK_TIMEOUT", "240"))
 
 
-def _run_world_walk(ticket: dict[str, Any], run_id: str | None) -> dict[str, Any]:
+def _run_world_walk(ticket: dict[str, Any], run_id: str | None, ticket_id: str) -> dict[str, Any]:
     """Investigate the ticket over the XBatch world (Model_Bench/world_walk.py, repo-resident like the
-    other bridges). Reads are audited against run_id. Failure is fail-open: the caller keeps going."""
+    other bridges). With a run_id its SQL reads and Jev calls are audited and its trail is saved as the
+    run's InvestigationJson. Failure is fail-open: the caller keeps going."""
     try:
         proc = subprocess.run(
             [_orch_python(), str(REPO_ROOT_WSL / "Model_Bench" / "world_walk.py")],
-            input=json.dumps({"ticket_text": direct_answer.ticket_text(ticket), "run_id": run_id}, default=str),
+            input=json.dumps({"ticket_text": direct_answer.ticket_text(ticket), "run_id": run_id,
+                              "ticket_id": ticket_id}, default=str),
             capture_output=True, text=True, timeout=WORLD_WALK_TIMEOUT_S,
         )
         data = json.loads((proc.stdout or "").strip() or "{}")
@@ -1764,7 +1766,7 @@ def _jev_first_investigation(
     # The L2 engineer (Knowledge/L2_ENGINEER_DESIGN.md): understand the ask, find what it is about
     # (identifier or words), look at audited live evidence, judge every finding, follow the world's
     # links. Its reads are audited against run_id, in the probe shape direct_answer already uses.
-    walk = _run_world_walk(ticket, run_id)
+    walk = _run_world_walk(ticket, run_id, ticket_id)
     probes: list[dict[str, Any]] = walk.get("probes") or []
     plan: dict[str, Any] = {
         "ok": bool(walk.get("ok")), "source": "world_walk", "route": walk.get("route"),
