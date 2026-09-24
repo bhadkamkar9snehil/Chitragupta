@@ -18,6 +18,7 @@ Do **not** duplicate the lifecycle architecture here. The authoritative sources 
 - Global SQL WIP: `1` active run.
 - Priorities: review `30`, rework `20`, new investigation `10`.
 - No-Qwen first: audited probes -> harness fact table -> Jev `direct_answer` picks the outcome -> fixed reply published. Jev never writes text; the local model runs only on NEEDS_REASONING.
+- XBatch investigation has one generated world: `Knowledge/process_world.json` -> `Knowledge/world/**` -> GBrain/world_walk. The retired semantic atlas/recipe registry is not a live dependency.
 - The model never writes SQL or names columns: `xstudio_read_table(table)` lets the harness pick filter and columns.
 - Worker profiles: `l2-jev-investigator`, `l2-reviewer-primary`; `l2-investigator` hosts the cron jobs. Gemma/primary/fallback profiles are retired.
 - Reviewer creation is deferred until investigator/rework completion is normalized and reviewable.

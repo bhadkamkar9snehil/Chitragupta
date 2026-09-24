@@ -210,8 +210,8 @@ Knowledge is deliberately separated by authority and lifetime:
 Git-tracked Knowledge/ documents
     = canonical domain/runtime reference
 
-Knowledge/xstudio_semantic_atlas.json
-    = generated object, procedure, relationship, domain, and recipe world model
+Knowledge/process_world.json + Knowledge/world/
+    = generated XBatch process graph and GBrain pages used by world_walk
 
 GBrain xstudio-knowledge source
     = derived searchable index of the committed knowledge; never ticket evidence
@@ -237,12 +237,11 @@ Start routing with:
 - `Knowledge/task-router.md` — human-readable mirror;
 - `Knowledge/L2_PIPELINE_STATE_MACHINE.md` — normative architecture and lifecycle specification.
 
-The dispatcher also loads `Knowledge/xbatch_investigation_recipes.json` and the
-semantic atlas directly. It deterministically selects a bounded recipe/world
-context before model work. The reviewer receives a claim-to-action evidence
-matrix derived from the frozen proposal and persisted current-run actions.
-GBrain improves semantic retrieval around that fixed context; the model is not
-expected to discover the XBatch world by searching conversationally.
+XBatch investigation uses one generated world: `build_process_world.py` writes
+`Knowledge/process_world.json`, `build_world_pages.py` renders
+`Knowledge/world/**` plus typed links, and `world_walk.py` traverses that world
+through GBrain while code performs audited live reads. The reviewer consumes the
+persisted current-run evidence; there is no parallel semantic atlas or recipe registry.
 
 ## TypeSafe Jev System-One control fabric
 

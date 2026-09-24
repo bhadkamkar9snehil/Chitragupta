@@ -7,32 +7,40 @@ from pathlib import Path
 
 try:
     from . import kb_retrieval as kb
-    from .xbatch_world import load_world
 except ImportError:
     import kb_retrieval as kb
-    from xbatch_world import load_world
 
 ROOT = Path(__file__).resolve().parent.parent
 CASES = ROOT / "Knowledge" / "eval" / "gbrain_retrieval_cases.jsonl"
 
 
 def validate_world_artifacts() -> dict:
+    """Validate the generated world that world_walk/GBrain actually consume."""
+    world_path = ROOT / "Knowledge" / "process_world.json"
+    pages_root = ROOT / "Knowledge" / "world"
+    links_path = pages_root / "links.jsonl"
     try:
-        world = load_world()
-        atlas = world["atlas"]
-        relationships = atlas.get("relationships") or []
-        source_count = sum(int(edge["provenance"]["source_row_count"]) for edge in relationships)
-        routes = {route["route"] for route in world["manifest"].get("routes", [])}
-        recipe_routes = {recipe["route"] for recipe in world["recipes"]}
-        if atlas.get("schema_version") != 2:
-            raise ValueError("semantic atlas schema_version must be 2")
-        if routes != recipe_routes or set(atlas.get("domains", {})) != routes:
-            raise ValueError("manifest routes, domains and recipes do not agree")
+        world = json.loads(world_path.read_text(encoding="utf-8"))
+        objects = ((world.get("schema") or {}).get("objects") or {})
+        procedures = world.get("procedures") or {}
+        if not isinstance(objects, dict) or not objects:
+            raise ValueError("process world has no schema objects")
+        if not isinstance(procedures, dict) or not procedures:
+            raise ValueError("process world has no procedures")
+        if not links_path.is_file():
+            raise ValueError("generated world links.jsonl is missing")
+        link_count = sum(1 for line in links_path.read_text(encoding="utf-8").splitlines() if line.strip())
+        page_count = sum(1 for path in pages_root.rglob("*.md") if path.is_file())
+        if page_count == 0 or link_count == 0:
+            raise ValueError("generated world pages or links are empty")
         return {
-            "status": "READY", "source_relationships": source_count,
-            "semantic_relationships": len(relationships), "recipes": len(world["recipes"]),
+            "status": "READY",
+            "objects": len(objects),
+            "procedures": len(procedures),
+            "pages": page_count,
+            "links": link_count,
         }
-    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         return {"status": "INVALID", "reason": f"{type(exc).__name__}: {exc}"}
 
 

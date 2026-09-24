@@ -323,13 +323,16 @@ Rules:
 
 ## 9. KB and memory boundaries
 
-The deterministic knowledge harness has two complementary inputs:
+The deterministic knowledge harness has one generated XBatch world plus governed
+reusable knowledge:
 
-- `Knowledge/xstudio_semantic_atlas.json` plus
-  `Knowledge/xbatch_investigation_recipes.json` provide the fixed,
-  harness-selected object/relationship/recipe world context;
-- GBrain provides bounded semantic retrieval over the committed knowledge
-  corpus. It is a derived index, not authority.
+- `Model_Bench/build_process_world.py` produces `Knowledge/process_world.json`;
+- `Model_Bench/build_world_pages.py` produces `Knowledge/world/**` and typed links;
+- `Model_Bench/world_walk.py` is the investigation owner and traverses those generated
+  pages through GBrain while deterministic code performs the live evidence reads;
+- governed Solution articles and other KB material remain leads that require live verification.
+
+GBrain is a derived retrieval/index layer, not ticket evidence or mutation authority.
 
 The retriever must obey:
 

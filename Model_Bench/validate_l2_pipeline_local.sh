@@ -135,7 +135,7 @@ run_fast_checks() {
   timed "Call trace tests" python3 Model_Bench/test_l2_calltrace.py
 
   section "Bridge, orchestrator, scout, trace and knowledge tests"
-  for t in test_xstudio_l2_tool_bridge test_hermes_orchestrator_cli_handlers test_ticket_scout            test_l2_orchestrator_plugin test_l2_trace_plugin test_jev_post_resolution_curation            test_xbatch_world test_xstudio_semantic_atlas test_helpdesk_sql_contract; do
+  for t in test_xstudio_l2_tool_bridge test_hermes_orchestrator_cli_handlers test_ticket_scout            test_l2_orchestrator_plugin test_l2_trace_plugin test_jev_post_resolution_curation            test_helpdesk_sql_contract; do
     timed "$t" env PYTHONPATH="$ROOT" python3 "Model_Bench/$t.py"
   done
 

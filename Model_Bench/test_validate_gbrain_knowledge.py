@@ -24,9 +24,10 @@ class GBrainEvaluationTests(unittest.TestCase):
     def test_current_world_artifacts_are_structurally_ready(self):
         report = validate_world_artifacts()
         self.assertEqual("READY", report["status"], report)
-        self.assertEqual(534, report["source_relationships"])
-        self.assertEqual(530, report["semantic_relationships"])
-        self.assertEqual(10, report["recipes"])
+        self.assertGreater(report["objects"], 0)
+        self.assertGreater(report["procedures"], 0)
+        self.assertGreater(report["pages"], 0)
+        self.assertGreater(report["links"], 0)
 
 
 if __name__ == "__main__":
