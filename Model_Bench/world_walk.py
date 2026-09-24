@@ -658,7 +658,7 @@ def walk(ticket: str, world: World | None = None, conn=None) -> dict[str, Any]:
 
 
 def ledger(result: dict[str, Any]) -> dict[str, Any]:
-    """What the run keeps (InvestigationJson): enough to replay the investigation step by step.
+    """The walk trail kept per run (trace event WORLD_WALK_TRAIL): enough to replay it step by step.
     Findings with their role and action ID; code checks and index lookups have no action ID."""
     return {
         "source": "world_walk", "route": result.get("route"), "stopped": result.get("stopped"),
@@ -686,13 +686,22 @@ def main() -> int:
         _AUDIT.update(client=_client(), run_id=str(req["run_id"]), ticket_id=req.get("ticket_id"))
     try:
         result = walk(str(req.get("ticket_text") or ""))
-        if _AUDIT:  # the run keeps its investigation (Hermes_L2_Response_Trn_Tbl.InvestigationJson)
-            _AUDIT["client"].save_investigation_ledger(_AUDIT["run_id"], ledger(result))
     except Exception as exc:  # the runtime falls back to its own path; never a traceback on stdout
         result = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
     finally:
         if _AUDIT.get("client"):
             _AUDIT["client"].close()
+    if _AUDIT:
+        # The trail is an append-only trace event, not InvestigationJson: the lifecycle owns that column
+        # (frozen proposal, escalation handoff) and overwrote the trail on reviewed/escalated runs.
+        # Written through the trace plugin's outbox; drain_l2_trace_log.py loads it into
+        # Hermes_Agent_Trace_Trn_Tbl (EventType world_walk, ToolName WORLD_WALK_TRAIL). Secrets redacted.
+        from xstudio_l2_trace_plugin import _write_event
+        _write_event({"event_type": "world_walk", "tool_name": "WORLD_WALK_TRAIL",
+                      "status": "error" if result.get("error") else "ok",
+                      "duration_ms": int(float(result.get("seconds") or 0) * 1000),
+                      "result": ledger(result), "error_message": result.get("error"),
+                      "run_id": _AUDIT["run_id"], "ticket_id": _AUDIT.get("ticket_id")})
     print(json.dumps({"ok": "error" not in result, **result}, default=str))
     return 0
 

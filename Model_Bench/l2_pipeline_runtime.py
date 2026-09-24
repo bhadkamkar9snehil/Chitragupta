@@ -1042,8 +1042,8 @@ WORLD_WALK_TIMEOUT_S = int(os.environ.get("L2_WORLD_WALK_TIMEOUT", "240"))
 
 def _run_world_walk(ticket: dict[str, Any], run_id: str | None, ticket_id: str) -> dict[str, Any]:
     """Investigate the ticket over the XBatch world (Model_Bench/world_walk.py, repo-resident like the
-    other bridges). With a run_id its SQL reads and Jev calls are audited and its trail is saved as the
-    run's InvestigationJson. Failure is fail-open: the caller keeps going."""
+    other bridges). With a run_id its SQL reads and Jev calls are audited and its trail is written as a
+    world_walk trace event (Hermes_Agent_Trace_Trn_Tbl, ToolName WORLD_WALK_TRAIL). Fail-open."""
     try:
         proc = subprocess.run(
             [_orch_python(), str(REPO_ROOT_WSL / "Model_Bench" / "world_walk.py")],
@@ -2515,7 +2515,7 @@ def process_jev_primary_reviews(
 # ---------------------------------------------------------------------------
 
 def _rejected_attempt_context(investigation_task_id: Optional[str]) -> str:
-    """Compact rejected attempt for the next card; current InvestigationJson belongs to world_walk."""
+    """Compact rejected attempt for the next card (card context only; nothing is persisted here)."""
     if not investigation_task_id:
         return ""
     done = [r for r in get_runs(investigation_task_id) if r.get("status") == "done"]
@@ -2615,8 +2615,8 @@ def create_rework_card(
 
     # Rework uses the same current-world investigator as the first pass. The walk runs
     # before the evidence snapshot so all audited reads it adds are present in the pinned
-    # current-run evidence. The rejected attempt remains card/history context; the current
-    # InvestigationJson stays owned by world_walk.
+    # current-run evidence. The rejected attempt remains card/history context; InvestigationJson is
+    # owned by the lifecycle (frozen proposal / escalation handoff), the walk trail by the trace table.
     evidence = [] if dry_run else _run_evidence_snapshot(args, run_id)
     chunks = [c for c in (context_chunks or stage_context_chunks(
         args, stage="rework", source_task=source_task, run_id=run_id, ticket_id=ticket_id,
