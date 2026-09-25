@@ -44,3 +44,5 @@ Model_Bench/results/ticket_resets/
 .cache/
 L1/api/bin/
 L1/api/obj/
+tools/RepoPad/bin/
+tools/RepoPad/obj/
