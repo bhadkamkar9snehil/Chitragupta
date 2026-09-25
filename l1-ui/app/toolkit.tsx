@@ -16,6 +16,7 @@ import {
 } from "@/components/tool-ui/question-flow/schema";
 import {
   KnowledgeSourcesResultSchema,
+  L1CollectIntakeResultSchema,
   L2QuestionAnswerResultSchema,
   L2QuestionPromptSchema,
   L2ReplySchema,
@@ -35,14 +36,8 @@ function labelsFor(
 
 function receiptSummary(
   flow: SerializableQuestionInputFlow,
-  result: unknown,
+  answers: Record<string, string[]>,
 ): Array<{ label: string; value: string }> {
-  if (!result || typeof result !== "object" || Array.isArray(result)) {
-    return [{ label: "Response", value: String(result ?? "Submitted") }];
-  }
-
-  const answers = result as Record<string, unknown>;
-
   if ("steps" in flow) {
     return flow.steps.map((step) => {
       const labels = labelsFor(step.options, answers[step.id]);
@@ -80,13 +75,16 @@ export default defineToolkit({
       if (!parsed) return null;
 
       if (result !== undefined) {
+        const parsedResult = L1CollectIntakeResultSchema.safeParse(result);
+        if (!parsedResult.success) return null;
+
         return (
           <QuestionFlow
             id={parsed.id}
             role="decision"
             choice={{
               title: "Incident details",
-              summary: receiptSummary(parsed, result),
+              summary: receiptSummary(parsed, parsedResult.data),
             }}
           />
         );
