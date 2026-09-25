@@ -271,8 +271,10 @@ public static class Ops
 
     public static async Task<object> Board()
     {
+        // One Hermes process is enough. The old implementation launched WSL twice in
+        // sequence (list + stats), so a cold board could pay the WSL/Python startup cost
+        // twice. Stats are a pure projection of the list we already fetched.
         var tasks = await Kanban("list");
-        var stats = await Kanban("stats");
         var list = (tasks as JsonArray ?? tasks?["tasks"]?.AsArray() ?? []).Select(t => new
         {
             id = t?["id"]?.ToString(),
@@ -287,6 +289,23 @@ public static class Ops
             skills = t?["skills"],
             body = Db.Trim(t?["body"]?.ToString(), 6000),
         }).ToList();
-        return new { available = tasks is not null, tasks = list, stats };
+
+        var byStatus = list
+            .GroupBy(t => string.IsNullOrWhiteSpace(t.status) ? "unknown" : t.status!)
+            .ToDictionary(g => g.Key, g => g.Count());
+        var byAssignee = list
+            .Where(t => !string.IsNullOrWhiteSpace(t.assignee))
+            .GroupBy(t => t.assignee!)
+            .ToDictionary(
+                g => g.Key,
+                g => g.GroupBy(t => string.IsNullOrWhiteSpace(t.status) ? "unknown" : t.status!)
+                      .ToDictionary(s => s.Key, s => s.Count()));
+
+        return new
+        {
+            available = tasks is not null,
+            tasks = list,
+            stats = tasks is null ? null : new { by_status = byStatus, by_assignee = byAssignee },
+        };
     }
 }

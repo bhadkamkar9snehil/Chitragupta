@@ -25,22 +25,82 @@ const kindOf = (title: string) => (/^REVIEW/.test(title) ? "Review" : /^REWORK/.
 const ticketOf = (title: string) => /Ticket_\d+/.exec(title)?.[0] ?? null;
 const age = (unix: number | null) => (unix ? ago(new Date(unix * 1000).toISOString().replace("Z", "")) : "");
 
+// Keep the last successful snapshots across route unmounts. Revisiting Board should
+// paint immediately, then reconcile with Hermes in the background.
+let boardSnapshot: Board | null = null;
+let ticketSnapshot: Ticket[] | null = null;
+let boardRequest: Promise<Board> | null = null;
+let ticketRequest: Promise<Ticket[]> | null = null;
+
+function readBoard() {
+  if (boardRequest) return boardRequest;
+  boardRequest = ops.board().finally(() => { boardRequest = null; });
+  return boardRequest;
+}
+
+function readTickets() {
+  if (ticketRequest) return ticketRequest;
+  ticketRequest = api.admin.tickets({}).finally(() => { ticketRequest = null; });
+  return ticketRequest;
+}
+
 export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo: string) => void; onOpenRun: (runId: string) => void }) {
   const [view, setView] = useState<"kanban" | "lifecycle">("kanban");
-  const [board, setBoard] = useState<Board | null>(null);
-  const [tickets, setTickets] = useState<Ticket[] | null>(null);
+  const [board, setBoard] = useState<Board | null>(() => boardSnapshot);
+  const [tickets, setTickets] = useState<Ticket[] | null>(() => ticketSnapshot);
   const [open, setOpen] = useState<KanbanTask | null>(null);
-  const [tick, setTick] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    ops.board().then(setBoard).catch((e: Error) => toast.error(e.message));
-    api.admin.tickets({}).then(setTickets).catch(() => {});
-  }, [tick]);
-
-  useEffect(() => {
-    const poll = setInterval(() => setTick((n) => n + 1), 15_000);
-    return () => clearInterval(poll);
+    let alive = true;
+    const load = () => {
+      readBoard()
+        .then((next) => {
+          boardSnapshot = next;
+          if (alive) setBoard(next);
+        })
+        .catch((e: Error) => {
+          if (alive && !boardSnapshot) toast.error(e.message);
+        });
+    };
+    load();
+    const poll = setInterval(load, 15_000);
+    return () => {
+      alive = false;
+      clearInterval(poll);
+    };
   }, []);
+
+  useEffect(() => {
+    if (view !== "lifecycle") return;
+    let alive = true;
+    readTickets()
+      .then((next) => {
+        ticketSnapshot = next;
+        if (alive) setTickets(next);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [view]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      if (view === "kanban") {
+        const next = await readBoard();
+        boardSnapshot = next;
+        setBoard(next);
+      } else {
+        const next = await readTickets();
+        ticketSnapshot = next;
+        setTickets(next);
+      }
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const columns = useMemo(() => {
     const tasks = board?.tasks ?? [];
@@ -65,7 +125,7 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
           ))}
         </div>
         <Tip label="Refresh">
-          <Button variant="ghost" size="icon-sm" aria-label="Refresh" onClick={() => setTick((n) => n + 1)}><RefreshCw /></Button>
+          <Button variant="ghost" size="icon-sm" aria-label="Refresh" onClick={refresh} disabled={refreshing}><RefreshCw className={cn(refreshing && "animate-spin")} /></Button>
         </Tip>
       </header>
 
