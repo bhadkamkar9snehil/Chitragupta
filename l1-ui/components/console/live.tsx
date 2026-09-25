@@ -7,6 +7,7 @@ import { ops, type Run, type TraceEvent } from "@/lib/api";
 import { ago, clock, describeEvent, duration, human, outcomeLabel, ticketLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Switch, Tag } from "@/components/ui/primitives";
+import { Button } from "@/components/ui/button";
 import { Brain, type Trail } from "./brain";
 import { InspectorBlock } from "./inspect";
 
@@ -229,12 +230,17 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
   const [run, setRun] = useState<Run | null>(null);
   const [events, setEvents] = useState<TraceEvent[]>([]);
   const [trail, setTrail] = useState<Trail | null>(null);
+  const [visual, setVisual] = useState(false);
   const lastRef = useRef<string | undefined>(undefined);
   const idRef = useRef<string | null>(null);
 
   useEffect(() => {
     ops.runs().then(setRuns).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    setVisual(false);
+  }, [follow, runId]);
 
   useEffect(() => {
     let alive = true;
@@ -332,30 +338,42 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
       </header>
 
       <div className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto xl:flex-row xl:overflow-hidden">
-        <section className="relative flex h-130 min-w-0 shrink-0 flex-col bg-background xl:h-auto xl:min-h-0 xl:flex-1" aria-label="World walk">
-          {run && (
-            <div className="flex flex-wrap gap-2 px-4 pt-3 text-2xs">
-              {trail?.route && <Tag>Route · {human(trail.route)}</Tag>}
-              <Tag>Jev decisions · {counts.jev}</Tag>
-              <Tag>Tool calls · {counts.tools}</Tag>
-              <Tag>Writer calls · {counts.model}</Tag>
-              <Tag>Took · {duration(run.Seconds)}</Tag>
-              {trail?.stopped && <Tag>Stopped · {trail.stopped.replace(/_/g, " ")}</Tag>}
+        <section className="relative flex min-h-80 min-w-0 shrink-0 flex-col bg-background xl:min-h-0 xl:flex-1" aria-label="L2 run overview">
+          {follow && !run ? (
+            <div className="grid h-full min-h-80 place-items-center px-6 text-center">
+              <div>
+                <Radio className="mx-auto size-5 text-subtle-foreground" aria-hidden />
+                <p className="mt-2 text-sm font-medium">No L2 run is active</p>
+                <p className="mt-1 text-xs text-muted-foreground">Follow Live is connected and will attach when the engineer claims the next ticket.</p>
+              </div>
             </div>
-          )}
-          <div className="min-h-0 flex-1">
-            {follow && !run ? (
-              <div className="grid h-full min-h-80 place-items-center px-6 text-center">
+          ) : run && visual ? (
+            <Brain trail={trail} ticketLabel={ticketLabel(run.TicketNo) || "Ticket"} mode={follow ? "live" : "replay"} autoplay={false} />
+          ) : run ? (
+            <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-5 lg:p-8">
+              <div className="mx-auto max-w-4xl space-y-5">
                 <div>
-                  <Radio className="mx-auto size-5 text-subtle-foreground" aria-hidden />
-                  <p className="mt-2 text-sm font-medium">No L2 run is active</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Follow Live is connected and will attach when the engineer claims the next ticket.</p>
+                  <p className="text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">{follow ? "Live investigation" : "Historical run"}</p>
+                  <h2 className="mt-1 text-heading font-semibold tracking-tight">{run.BriefDetails}</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">The event stream is the primary operational view. The visual replay is optional.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                  <LiveFact label="Route" value={human(trail?.route ?? run.Route) || "—"} />
+                  <LiveFact label="Jev decisions" value={counts.jev} />
+                  <LiveFact label="Tool calls" value={counts.tools} />
+                  <LiveFact label="Duration" value={duration(run.Seconds)} />
+                </div>
+                <div className="rounded-xl border bg-surface p-4">
+                  <h3 className="text-sm font-semibold">Current state</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">{run.IsActive ? "L2 is still working. New events appear in the activity stream." : `Run completed with ${outcomeLabel(run.ResponseType)}.`}</p>
+                  {trail?.stopped && <p className="mt-2 text-xs text-muted-foreground">Stopped because: {trail.stopped.replace(/_/g, " ")}</p>}
+                  <Button className="mt-4" variant="outline" size="sm" onClick={() => setVisual(true)}>
+                    {follow ? "Show visual map" : "Open visual replay"}
+                  </Button>
                 </div>
               </div>
-            ) : (
-              <Brain trail={trail} ticketLabel={ticketLabel(run?.TicketNo) || "Ticket"} mode={follow ? "live" : "replay"} autoplay={!follow} />
-            )}
-          </div>
+            </div>
+          ) : null}
         </section>
         <aside className="flex min-h-64 flex-col border-t bg-surface xl:min-h-0 xl:w-96 xl:border-l xl:border-t-0" aria-label="Event stream">
           <p className="border-b px-4 py-2.5 text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">What the engineer did</p>
@@ -364,6 +382,15 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
           </div>
         </aside>
       </div>
+    </div>
+  );
+}
+
+function LiveFact({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-xl border bg-surface p-3">
+      <p className="text-2xs text-subtle-foreground">{label}</p>
+      <p className="mt-1 text-sm font-semibold tabular-nums">{value}</p>
     </div>
   );
 }

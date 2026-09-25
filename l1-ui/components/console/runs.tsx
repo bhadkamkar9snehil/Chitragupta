@@ -108,7 +108,7 @@ const JEV_FIELDS: [keyof Run, string][] = [
 
 function RunWorkspace({ id, onBack, onLive, drawerOpen, onDrawerToggle }: { id: string; onBack: () => void; onLive: (id: string) => void; drawerOpen: boolean; onDrawerToggle: () => void }) {
   const [run, setRun] = useState<(Run & { Events: TraceEvent[] }) | null>(null);
-  const [tab, setTab] = useState<"walk" | "timeline" | "decisions" | "sql" | "proposal">("walk");
+  const [tab, setTab] = useState<"summary" | "timeline" | "decisions" | "sql" | "visual">("summary");
 
   useEffect(() => {
     ops.run(id).then(setRun).catch((e: Error) => toast.error(e.message));
@@ -117,11 +117,11 @@ function RunWorkspace({ id, onBack, onLive, drawerOpen, onDrawerToggle }: { id: 
   if (!run) return <div className="space-y-3 p-6"><Skeleton className="h-6 w-1/3" /><Skeleton className="h-96" /></div>;
 
   const tabs = [
-    { id: "walk" as const, label: "World walk" },
+    { id: "summary" as const, label: "Summary" },
     { id: "timeline" as const, label: "Timeline", n: run.Events.filter((e) => e.EventType !== "pre_tool_call").length },
-    { id: "decisions" as const, label: "Jev decisions", n: JEV_FIELDS.filter(([k]) => run[k]).length },
     { id: "sql" as const, label: "SQL reads", n: run.SqlActionList?.length ?? 0 },
-    { id: "proposal" as const, label: "Proposal" },
+    { id: "decisions" as const, label: "Jev decisions", n: JEV_FIELDS.filter(([k]) => run[k]).length },
+    { id: "visual" as const, label: "Visual replay" },
   ];
 
   return (
@@ -145,7 +145,7 @@ function RunWorkspace({ id, onBack, onLive, drawerOpen, onDrawerToggle }: { id: 
               {run.JevReviewDecision && <span>Jev review {outcomeLabel(run.JevReviewDecision)}{run.JevReviewConfidence != null ? ` · ${Math.round(run.JevReviewConfidence * 100)}%` : ""}</span>}
               {run.LocalModelPurpose && <span>Writer · {human(run.LocalModelPurpose)}</span>}
             </p>
-            <Button variant="outline" size="sm" className="mt-3" onClick={() => onLive(run.ID)}>Open replay</Button>
+            <p className="mt-2 text-2xs text-subtle-foreground">The visual replay is optional and never starts automatically.</p>
           </div>
         </div>
         <StageRail run={run} events={run.Events} />
@@ -159,7 +159,39 @@ function RunWorkspace({ id, onBack, onLive, drawerOpen, onDrawerToggle }: { id: 
         </div>
       </header>
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-        {tab === "walk" && <div className="h-full min-h-130"><Brain trail={(run.Trail as Trail) ?? null} ticketLabel={ticketLabel(run.TicketNo)} /></div>}
+        {tab === "summary" && (
+          <div className="mx-auto max-w-5xl space-y-5 p-4 lg:p-6">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <RunFact label="Outcome" value={outcomeLabel(run.ResponseType)} />
+              <RunFact label="Duration" value={duration(run.Seconds)} />
+              <RunFact label="SQL reads" value={run.SqlActions} />
+              <RunFact label="Jev decisions" value={run.JevCalls} />
+            </div>
+            {([["Problem", run.ProblemSummary], ["Findings", run.Findings], ["Root cause", run.RootCause], ["Resolution / next action", run.Resolution], ["What the requester was told", run.ReplyText]] as const)
+              .filter(([, v]) => v)
+              .map(([k, v]) => (
+                <section key={k}>
+                  <h3 className="text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">{k}</h3>
+                  <div className="mt-1.5 rounded-xl border bg-surface p-4"><RichText compact>{String(v)}</RichText></div>
+                </section>
+              ))}
+            {run.ErrorMessage && <p className="rounded-lg bg-destructive-soft p-3 text-sm text-destructive">{run.ErrorMessage}</p>}
+            <div className="flex flex-wrap gap-2">
+              {run.EscalateToL3 && <Tag>Escalated to L3</Tag>}
+              {run.IsResolved && <Tag>Marked resolved</Tag>}
+              {run.RequiresUserInput && <Tag>Needs requester input</Tag>}
+            </div>
+          </div>
+        )}
+        {tab === "visual" && (
+          <div className="flex min-h-full flex-col">
+            <div className="flex items-center justify-between gap-3 border-b bg-surface-2 px-4 py-2.5">
+              <p className="text-xs text-muted-foreground">Optional visual replay. It is paused until you press Play.</p>
+              <Button variant="outline" size="sm" onClick={() => onLive(run.ID)}>Open full-screen replay</Button>
+            </div>
+            <Brain trail={(run.Trail as Trail) ?? null} ticketLabel={ticketLabel(run.TicketNo)} autoplay={false} />
+          </div>
+        )}
         {tab === "timeline" && <div className="mx-auto max-w-3xl"><EventStream events={run.Events} /></div>}
         {tab === "decisions" && (
           <div className="mx-auto max-w-4xl space-y-3 p-4 lg:p-6">
@@ -200,25 +232,17 @@ function RunWorkspace({ id, onBack, onLive, drawerOpen, onDrawerToggle }: { id: 
             </div>
           ) : <Empty icon={<Database className="size-5" />} title="No SQL reads">This run answered without reading XBatch.</Empty>
         )}
-        {tab === "proposal" && (
-          <div className="mx-auto max-w-3xl space-y-5 p-4 lg:p-6">
-            {([["Problem", run.ProblemSummary], ["Findings", run.Findings], ["Root cause", run.RootCause], ["Resolution", run.Resolution], ["Reply to the requester", run.ReplyText]] as const)
-              .filter(([, v]) => v)
-              .map(([k, v]) => (
-                <section key={k}>
-                  <h3 className="text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">{k}</h3>
-                  <div className="mt-1.5 rounded-xl border bg-surface p-4"><RichText compact>{String(v)}</RichText></div>
-                </section>
-              ))}
-            {run.ErrorMessage && <p className="rounded-lg bg-destructive-soft p-3 text-sm text-destructive">{run.ErrorMessage}</p>}
-            <div className="flex flex-wrap gap-2">
-              {run.EscalateToL3 && <Tag>Escalated to L3</Tag>}
-              {run.IsResolved && <Tag>Marked resolved</Tag>}
-              {run.RequiresUserInput && <Tag>Needs requester input</Tag>}
-            </div>
-          </div>
-        )}
+
       </div>
+    </div>
+  );
+}
+
+function RunFact({ label, value }: { label: string; value: string | number | null | undefined }) {
+  return (
+    <div className="rounded-xl border bg-surface p-3">
+      <p className="text-2xs text-subtle-foreground">{label}</p>
+      <p className="mt-1 text-sm font-semibold tabular-nums">{value ?? "—"}</p>
     </div>
   );
 }
