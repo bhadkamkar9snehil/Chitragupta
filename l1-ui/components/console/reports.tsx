@@ -19,6 +19,7 @@ export function ReportsView() {
   const t = stats?.totals;
   const deflection = t && t.conversations ? Math.round((t.answeredWithoutTicket / t.conversations) * 100) : null;
   const helpful = t && (t.thumbsUp ?? 0) + (t.thumbsDown ?? 0) > 0 ? Math.round(((t.thumbsUp ?? 0) / ((t.thumbsUp ?? 0) + (t.thumbsDown ?? 0))) * 100) : null;
+  const rt = stats?.runtime.totals;
 
   return (
     <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
@@ -51,6 +52,31 @@ export function ReportsView() {
         <div className="mt-6 grid gap-3 lg:grid-cols-2">
           <Panel title="Tickets raised per day">{stats ? <DailyBars data={stats.series.map((s) => ({ day: s.day, value: s.tickets }))} unit="ticket" /> : <Skeleton className="h-48" />}</Panel>
           <Panel title="Conversations per day">{stats ? <DailyBars data={stats.series.map((s) => ({ day: s.day, value: s.conversations }))} unit="conversation" /> : <Skeleton className="h-48" />}</Panel>
+        </div>
+
+        <div className="mt-6">
+          <h2 className="text-title font-semibold tracking-tight">L2 runtime &amp; compute</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">Observed investigation time, Jev/tool/model latency and hardware/token telemetry captured by Hermes.</p>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Tile label="L2 runs" value={rt?.Runs} note={rt ? `Avg ${fmtSeconds(rt.AvgRunSeconds)} · max ${fmtSeconds(rt.MaxRunSeconds)}` : undefined} />
+          <Tile label="SQL reads / run" value={rt?.AvgSqlReadsPerRun == null ? (rt ? "—" : undefined) : rt.AvgSqlReadsPerRun.toFixed(1)} note="Average audited reads" />
+          <Tile label="Jev latency" value={rt?.AvgJevMs == null ? (rt ? "—" : undefined) : fmtMs(rt.AvgJevMs)} note="Average decision call" />
+          <Tile label="Writer latency" value={rt?.AvgModelMs == null ? (rt ? "—" : undefined) : fmtMs(rt.AvgModelMs)} note="Average model call" />
+          <Tile label="Tool latency" value={rt?.AvgToolMs == null ? (rt ? "—" : undefined) : fmtMs(rt.AvgToolMs)} note={rt ? `${rt.ToolErrors ?? 0} failed tool calls` : undefined} />
+          <Tile label="Model tokens" value={rt?.TotalTokens == null ? (rt ? "—" : undefined) : compactNumber(rt.TotalTokens)} note={rt ? `${rt.ModelErrors} failed model calls` : undefined} />
+          <Tile label="GPU utilisation" value={rt?.AvgGpuUtilPct == null ? (rt ? "—" : undefined) : `${rt.AvgGpuUtilPct.toFixed(0)}%`} note={rt?.PeakGpuVramMb == null ? "No GPU sample" : `Peak VRAM ${compactNumber(rt.PeakGpuVramMb)} MB`} />
+          <Tile label="CPU utilisation" value={rt?.AvgCpuUtilPct == null ? (rt ? "—" : undefined) : `${rt.AvgCpuUtilPct.toFixed(0)}%`} note="Average captured compute samples" />
+        </div>
+
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <Panel title="Model tokens per day">{stats ? <DailyBars data={stats.runtime.series.map((s) => ({ day: String(s.Day), value: Number(s.Tokens) || 0 }))} unit="token" /> : <Skeleton className="h-48" />}</Panel>
+          <Panel title="Observed calls per day">{stats ? <DailyBars data={stats.runtime.series.map((s) => ({ day: String(s.Day), value: Number(s.ToolCalls) + Number(s.ModelCalls) + Number(s.JevCalls) }))} unit="call" /> : <Skeleton className="h-48" />}</Panel>
+        </div>
+
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <Panel title="Slowest tools">{stats ? <RuntimeTable rows={stats.runtime.tools.map((x) => ({ label: x.Label, calls: x.Calls, errors: x.Errors, avg: x.AvgMs }))} /> : <Skeleton className="h-48" />}</Panel>
+          <Panel title="Writer models">{stats ? <RuntimeTable rows={stats.runtime.models.map((x) => ({ label: `${x.Provider} · ${x.Model}`, calls: x.Calls, errors: 0, avg: x.AvgMs, extra: x.Tokens == null ? "—" : `${compactNumber(x.Tokens)} tokens` }))} /> : <Skeleton className="h-48" />}</Panel>
         </div>
 
         <div className="mt-3 grid gap-3 lg:grid-cols-3">
@@ -88,6 +114,9 @@ export function ReportsView() {
 }
 
 const fmtHours = (h: number) => (h < 1 ? `${Math.round(h * 60)}m` : h < 48 ? `${h.toFixed(1)}h` : `${(h / 24).toFixed(1)}d`);
+const fmtSeconds = (s: number | null) => s == null ? "—" : s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${(s / 60).toFixed(1)}m` : `${(s / 3600).toFixed(1)}h`;
+const fmtMs = (v: number) => v < 1000 ? `${Math.round(v)}ms` : `${(v / 1000).toFixed(1)}s`;
+const compactNumber = (v: number) => new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 }).format(v);
 
 function Tile({ label, value, note }: { label: string; value?: number | string; note?: string }) {
   return (
@@ -159,6 +188,29 @@ function DailyBars({ data, unit }: { data: { day: string; value: number }[]; uni
           <p className="tabular-nums text-muted-foreground">{data[hover].value} {unit}{data[hover].value === 1 ? "" : "s"}</p>
         </div>
       )}
+    </div>
+  );
+}
+
+function RuntimeTable({ rows }: { rows: { label: string; calls: number; errors: number; avg: number | null; extra?: string }[] }) {
+  if (!rows.length) return <p className="text-sm text-muted-foreground">No runtime telemetry in this period.</p>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-meta">
+        <thead className="text-left text-2xs uppercase tracking-wider text-subtle-foreground">
+          <tr><th className="py-2 pr-3 font-semibold">Operation</th><th className="px-2 py-2 font-semibold">Calls</th><th className="px-2 py-2 font-semibold">Errors</th><th className="py-2 pl-2 text-right font-semibold">Avg</th></tr>
+        </thead>
+        <tbody className="divide-y">
+          {rows.map((r) => (
+            <tr key={r.label}>
+              <td className="py-2 pr-3"><p className="font-medium">{r.label}</p>{r.extra && <p className="text-2xs text-subtle-foreground">{r.extra}</p>}</td>
+              <td className="px-2 py-2 tabular-nums">{r.calls}</td>
+              <td className={cn("px-2 py-2 tabular-nums", r.errors > 0 && "text-destructive")}>{r.errors}</td>
+              <td className="py-2 pl-2 text-right tabular-nums">{r.avg == null ? "—" : fmtMs(r.avg)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

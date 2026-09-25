@@ -319,6 +319,76 @@ admin.MapGet("/stats", async (int? days) =>
                AVG(CAST(LatencyMs AS float)) AS AvgLatencyMs
         FROM dbo.L1_Chat_Message_Tbl WHERE Role = 'assistant' AND CreatedOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))
         """, ("@d", d))).First();
+    var runtimeTotals = (await Db.H("""
+        SELECT
+          (SELECT COUNT(*) FROM dbo.Hermes_L2_Response_Trn_Tbl r
+             WHERE r.IsDeleted = 0 AND r.CreatedOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))) AS Runs,
+          (SELECT AVG(CAST(DATEDIFF(second, r.ClaimedOn, r.CompletedOn) AS float)) FROM dbo.Hermes_L2_Response_Trn_Tbl r
+             WHERE r.IsDeleted = 0 AND r.ClaimedOn IS NOT NULL AND r.CompletedOn IS NOT NULL
+               AND r.CompletedOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))) AS AvgRunSeconds,
+          (SELECT MAX(DATEDIFF(second, r.ClaimedOn, r.CompletedOn)) FROM dbo.Hermes_L2_Response_Trn_Tbl r
+             WHERE r.IsDeleted = 0 AND r.ClaimedOn IS NOT NULL AND r.CompletedOn IS NOT NULL
+               AND r.CompletedOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))) AS MaxRunSeconds,
+          (SELECT AVG(CAST(a.ActionCount AS float)) FROM (
+             SELECT COUNT(*) AS ActionCount FROM dbo.Hermes_L2_SQL_Action_Trn_Tbl x
+             WHERE x.IsDeleted = 0 AND x.StartedOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))
+             GROUP BY x.RunID
+           ) a) AS AvgSqlReadsPerRun,
+          (SELECT AVG(CAST(t.DurationMs AS float)) FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+             WHERE t.EventType = 'post_tool_call' AND t.EventOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))) AS AvgToolMs,
+          (SELECT AVG(CAST(t.DurationMs AS float)) FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+             WHERE t.EventType = 'jev_system_one' AND t.EventOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))) AS AvgJevMs,
+          (SELECT AVG(CAST(t.DurationMs AS float)) FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+             WHERE t.EventType = 'post_api_request' AND t.EventOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))) AS AvgModelMs,
+          (SELECT SUM(CASE WHEN t.Status = 'error' OR t.ErrorMessage IS NOT NULL THEN 1 ELSE 0 END) FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+             WHERE t.EventType = 'post_tool_call' AND t.EventOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))) AS ToolErrors,
+          (SELECT COUNT(*) FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+             WHERE t.EventType = 'api_request_error' AND t.EventOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))) AS ModelErrors,
+          (SELECT SUM(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.UsageJson) = 1 THEN t.UsageJson ELSE '{}' END, '$.total_tokens') AS bigint))
+             FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+             WHERE t.EventType = 'post_api_request' AND t.EventOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))) AS TotalTokens,
+          (SELECT AVG(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.gpu_util_pct') AS float))
+             FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+             WHERE t.EventType IN ('gpu_sample','compute_sample') AND t.EventOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))) AS AvgGpuUtilPct,
+          (SELECT MAX(TRY_CAST(COALESCE(
+                 JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.gpu_mem_used_mb'),
+                 JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.mem_used_mb')) AS int))
+             FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+             WHERE t.EventType IN ('gpu_sample','compute_sample') AND t.EventOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))) AS PeakGpuVramMb,
+          (SELECT AVG(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(t.ResultJson) = 1 THEN t.ResultJson ELSE '{}' END, '$.cpu_util_pct') AS float))
+             FROM dbo.Hermes_Agent_Trace_Trn_Tbl t
+             WHERE t.EventType IN ('gpu_sample','compute_sample') AND t.EventOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))) AS AvgCpuUtilPct
+        """, ("@d", d))).First();
+    var runtimeTools = await Db.H("""
+        SELECT TOP 10 ToolName AS Label, COUNT(*) AS Calls,
+               SUM(CASE WHEN Status = 'error' OR ErrorMessage IS NOT NULL THEN 1 ELSE 0 END) AS Errors,
+               AVG(CAST(DurationMs AS float)) AS AvgMs, MAX(DurationMs) AS MaxMs
+        FROM dbo.Hermes_Agent_Trace_Trn_Tbl
+        WHERE EventType = 'post_tool_call' AND ToolName IS NOT NULL
+          AND EventOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))
+        GROUP BY ToolName
+        ORDER BY AVG(CAST(DurationMs AS float)) DESC, COUNT(*) DESC
+        """, ("@d", d));
+    var runtimeModels = await Db.H("""
+        SELECT TOP 10 ISNULL(Model, 'unknown') AS Model, ISNULL(Provider, 'unknown') AS Provider, COUNT(*) AS Calls,
+               AVG(CAST(DurationMs AS float)) AS AvgMs,
+               SUM(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(UsageJson) = 1 THEN UsageJson ELSE '{}' END, '$.total_tokens') AS bigint)) AS Tokens
+        FROM dbo.Hermes_Agent_Trace_Trn_Tbl
+        WHERE EventType = 'post_api_request' AND EventOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))
+        GROUP BY Model, Provider ORDER BY COUNT(*) DESC
+        """, ("@d", d));
+    var runtimeSeries = await Db.H("""
+        SELECT CAST(EventOn AS date) AS Day,
+               SUM(CASE WHEN EventType = 'post_tool_call' THEN 1 ELSE 0 END) AS ToolCalls,
+               SUM(CASE WHEN EventType = 'post_api_request' THEN 1 ELSE 0 END) AS ModelCalls,
+               SUM(CASE WHEN EventType = 'jev_system_one' THEN 1 ELSE 0 END) AS JevCalls,
+               SUM(CASE WHEN EventType = 'post_api_request'
+                        THEN ISNULL(TRY_CAST(JSON_VALUE(CASE WHEN ISJSON(UsageJson) = 1 THEN UsageJson ELSE '{}' END, '$.total_tokens') AS bigint), 0)
+                        ELSE 0 END) AS Tokens
+        FROM dbo.Hermes_Agent_Trace_Trn_Tbl
+        WHERE EventOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))
+        GROUP BY CAST(EventOn AS date) ORDER BY Day
+        """, ("@d", d));
     var firstReplyHours = tickets.Where(t => t["FirstReplyOn"] is DateTime).Select(t => ((DateTime)t["FirstReplyOn"]! - (DateTime)t["CreatedOn"]!).TotalHours).ToList();
     var ratings = tickets.Where(t => t["Rating"] is int).Select(t => (int)t["Rating"]!).ToList();
     var series = Enumerable.Range(0, d).Select(i => DateTime.Today.AddDays(i - d + 1)).Select(day => new
@@ -350,6 +420,7 @@ admin.MapGet("/stats", async (int? days) =>
         byState = tickets.GroupBy(t => t["StateLabel"]!.ToString()!).Select(g => new { label = g.Key, count = g.Count() }).OrderByDescending(g => g.count),
         byArea = tickets.GroupBy(t => t["Area"]?.ToString() ?? "Unassigned").Select(g => new { label = g.Key, count = g.Count() }).OrderByDescending(g => g.count),
         byType = tickets.GroupBy(t => t["Type"]?.ToString() ?? "Unassigned").Select(g => new { label = g.Key, count = g.Count() }).OrderByDescending(g => g.count),
+        runtime = new { totals = runtimeTotals, tools = runtimeTools, models = runtimeModels, series = runtimeSeries },
     };
 });
 

@@ -89,6 +89,16 @@ export type Stats = {
   byState: { label: string; count: number }[];
   byArea: { label: string; count: number }[];
   byType: { label: string; count: number }[];
+  runtime: {
+    totals: {
+      Runs: number; AvgRunSeconds: number | null; MaxRunSeconds: number | null; AvgSqlReadsPerRun: number | null;
+      AvgToolMs: number | null; AvgJevMs: number | null; AvgModelMs: number | null; ToolErrors: number | null; ModelErrors: number;
+      TotalTokens: number | null; AvgGpuUtilPct: number | null; PeakGpuVramMb: number | null; AvgCpuUtilPct: number | null;
+    };
+    tools: { Label: string; Calls: number; Errors: number; AvgMs: number | null; MaxMs: number | null }[];
+    models: { Model: string; Provider: string; Calls: number; AvgMs: number | null; Tokens: number | null }[];
+    series: { Day: string; ToolCalls: number; ModelCalls: number; JevCalls: number; Tokens: number }[];
+  };
 };
 
 export class ApiError extends Error {
