@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Command } from "cmdk";
 import {
-  BarChart3, Bot, Gauge, Inbox, KanbanSquare, MessagesSquare, Moon, PanelLeftClose, PanelLeftOpen, Radio, Search, Settings as SettingsIcon, ShieldAlert, Sun,
+  BarChart3, Bot, FileJson2, Gauge, Inbox, KanbanSquare, MessagesSquare, Moon, PanelLeftClose, PanelLeftOpen, Radio, Search, Settings as SettingsIcon, ShieldAlert, Sun,
   Ticket as TicketIcon, UserRound, Wrench,
 } from "lucide-react";
 import { api, type Ticket, type User } from "@/lib/api";
@@ -21,9 +21,10 @@ import { BoardView } from "./board";
 import { RunsView } from "./runs";
 import { L3View } from "./l3";
 import { AgentsView } from "./agents";
+import { LogsView } from "./logs";
 
 // One route shape for the whole suite: #/<view>/<id>
-export type View = "overview" | "live" | "board" | "inbox" | "conversations" | "runs" | "l3" | "agents" | "reports" | "settings";
+export type View = "overview" | "live" | "board" | "inbox" | "conversations" | "runs" | "l3" | "agents" | "logs" | "reports" | "settings";
 export type ConsoleRoute = { view: View; id?: string | null };
 
 const GROUPS: { label: string; items: { view: View; label: string; icon: typeof Inbox }[] }[] = [
@@ -40,6 +41,7 @@ const GROUPS: { label: string; items: { view: View; label: string; icon: typeof 
   ] },
   { label: "System", items: [
     { view: "agents", label: "Agents & tools", icon: Wrench },
+    { view: "logs", label: "Runtime logs", icon: FileJson2 },
     { view: "reports", label: "Reports", icon: BarChart3 },
     { view: "settings", label: "Settings", icon: SettingsIcon },
   ] },
@@ -199,6 +201,7 @@ export function Console() {
             <L3View escalationId={route.id ?? null} onSelect={setId} engineer={engineer} askEngineer={() => setPicking(true)} onOpenRun={(id) => go("runs", id)} onOpenTicket={(id) => go("inbox", id)} />
           )}
           {route.view === "agents" && <AgentsView onOpenRun={(id) => go("runs", id)} />}
+          {route.view === "logs" && <LogsView />}
           {route.view === "reports" && <ReportsView />}
           {route.view === "settings" && <SettingsView tab={route.id ?? undefined} onTab={setId} />}
         </main>

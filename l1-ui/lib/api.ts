@@ -237,6 +237,9 @@ export type Escalation = {
   EscalatedOn: string; AssignedToUserID: string | null; AssignedOn: string | null; L3Remarks: string | null; L3ResolutionSummary: string | null;
   ResolvedOn: string | null; BriefDetails: string | null; FirstLastName: string | null; EmailID: string | null; TicketStatus: string | null; Area: string | null;
 };
+export type RuntimeLogRecord = { raw: string; data: Record<string, unknown> | null };
+export type RuntimeLogSource = { name: string; available: boolean; records: RuntimeLogRecord[]; error?: string | null };
+export type RuntimeLogs = { at: string; sources: RuntimeLogSource[] };
 export type ToolStats = {
   tools: { ToolName: string; Calls: number; Errors: number; AvgMs: number | null; MaxMs: number | null; LastUsed: string }[];
   jev: { Stage: string; Calls: number; Errors: number; AvgMs: number | null; LastUsed: string }[];
@@ -257,4 +260,5 @@ export const ops = {
   l3Act: (id: string, body: { userId: string; action: "assign" | "note" | "resolve" | "reopen"; text?: string; public?: boolean; closeTicket?: boolean }) =>
     call(`ops/l3/${id}`, { method: "POST", body }),
   tools: () => call<ToolStats>("ops/tools"),
+  logs: (take = 160) => call<RuntimeLogs>(`ops/logs?take=${take}`),
 };

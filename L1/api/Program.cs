@@ -478,5 +478,6 @@ ops.MapGet("/activity", () => Ops.Activity(100));
 ops.MapGet("/l3", (string? status) => Ops.L3(status));
 ops.MapPost("/l3/{id}", (string id, JsonObject body) => Ops.L3Act(id, body));
 ops.MapGet("/tools", Ops.Tools);
+ops.MapGet("/logs", (int? take) => Ops.RuntimeLogs(take));
 
 app.Run();

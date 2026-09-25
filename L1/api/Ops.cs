@@ -227,6 +227,42 @@ public static class Ops
         return Results.Ok();
     }
 
+    static async Task<object> TailJsonl(string name, string bashPath, int top)
+    {
+        var psi = new ProcessStartInfo("wsl.exe") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        var script = $"file=\"{bashPath}\"; if [ -f \"$file\" ]; then echo __AVAILABLE__; tail -n {top} -- \"$file\"; else echo __MISSING__; fi";
+        foreach (var a in new[] { "-e", "bash", "-lc", script }) psi.ArgumentList.Add(a);
+        try
+        {
+            using var proc = Process.Start(psi)!;
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var output = await proc.StandardOutput.ReadToEndAsync(cts.Token);
+            var lines = output.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            var available = lines.FirstOrDefault() == "__AVAILABLE__";
+            var records = new List<object>();
+            foreach (var line in lines.Skip(1))
+            {
+                try { records.Add(new { raw = line, data = JsonNode.Parse(line) }); }
+                catch { records.Add(new { raw = line, data = (JsonNode?)null }); }
+            }
+            return new { name, available, records };
+        }
+        catch (Exception ex)
+        {
+            return new { name, available = false, records = Array.Empty<object>(), error = Db.Trim(ex.Message, 200) };
+        }
+    }
+
+    public static async Task<object> RuntimeLogs(int? take)
+    {
+        var top = Math.Clamp(take ?? 160, 20, 400);
+        var sources = await Task.WhenAll(
+            TailJsonl("Call trace", "$HOME/.hermes/logs/l2_calltrace/$(date +%F).jsonl", top),
+            TailJsonl("Observer events", "$HOME/.hermes/plugin-data/xstudio-l2-trace/events.jsonl", top)
+        );
+        return new { at = DateTime.Now, sources };
+    }
+
     public static async Task<object> Tools() => new
     {
         tools = await Db.H("""
