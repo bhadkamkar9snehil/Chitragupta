@@ -8,7 +8,12 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
 } from "@assistant-ui/react";
-import { ArrowUpIcon, CircleAlertIcon, SquareIcon } from "lucide-react";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  CircleAlertIcon,
+  SquareIcon,
+} from "lucide-react";
 
 function UserMessage() {
   return (
@@ -123,7 +128,14 @@ export function L1Thread() {
         </div>
 
         <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mt-auto border-t bg-background px-4 py-4 sm:px-6">
-          <div className="mx-auto w-full max-w-3xl">
+          <div className="relative mx-auto w-full max-w-3xl">
+            <ThreadPrimitive.ScrollToBottom
+              aria-label="Jump to latest message"
+              className="absolute -top-16 left-1/2 flex min-h-11 -translate-x-1/2 items-center gap-2 rounded-md border bg-card px-3 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:invisible"
+            >
+              <ArrowDownIcon className="size-4" aria-hidden="true" />
+              Latest
+            </ThreadPrimitive.ScrollToBottom>
             <Composer />
           </div>
         </ThreadPrimitive.ViewportFooter>
