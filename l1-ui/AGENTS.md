@@ -12,6 +12,26 @@ architectural responsibility and must not acquire business/workflow ownership.
 - The upstream Chitragupta L1 API decides routing, answerability, specialist use,
   ticket creation, and L2 question handling.
 - Tool UI components render structured interactions; they do not decide policy.
+- The in-memory conversation UUID is correlation/idempotency context only. Never
+  treat it as requester identity or authorization.
+- Ticket status labels, attention state, L2 publications, and L2 questions are
+  server-provided facts. The UI may present them but must not infer or mutate
+  workflow state.
+
+## Current product-shell acceptance
+
+At this stage the assistant-ui baseline must be able to present, without owning
+the backend decision:
+
+- a governed L1 answer with optional approved-knowledge evidence;
+- structured missing-context intake;
+- the authoritative created-ticket snapshot;
+- a user-visible L2 publication;
+- an L2 QUESTION with a governed free-text answer result.
+
+Do not fake requester login, persistence, polling, SSE, ticket creation, GBrain
+retrieval, Jev decisions, or L2 delivery inside the frontend while those upstream
+contracts remain absent.
 
 ## UI discipline
 
