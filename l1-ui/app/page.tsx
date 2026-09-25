@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { Helpdesk } from "@/components/helpdesk/helpdesk";
 
 export default function Page() {
-  redirect("/l1");
+  return <Helpdesk />;
 }

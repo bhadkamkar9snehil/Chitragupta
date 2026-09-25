@@ -18,6 +18,8 @@
   --input: oklch(0.88 0.01 250);
   --ring: oklch(0.55 0.13 255);
   --selection: oklch(0.88 0.06 255);
+  --success-bg: oklch(0.94 0.05 155);
+  --success-fg: oklch(0.36 0.09 155);
   --radius: 0.75rem;
 }
 

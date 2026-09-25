@@ -55,15 +55,37 @@ async Task<Dictionary<string, object?>?> User(string userId) =>
     (await Query(config, "SELECT ID, Name, FullName, EmailID, ContactNo FROM dbo.XStudio_User_Mst_Tbl WHERE ID = @id", ("@id", userId)))
     .FirstOrDefault();
 
-// Tickets the user raised (matched by email), with the latest L2 reply.
-async Task<List<Dictionary<string, object?>>> Tickets(string email) => await Query(helpdesk, """
-    SELECT TOP 30 c.ID, c.TicketNo, c.BriefDetails, c.Status, c.AskStatus, c.CreatedOn, c.ReplyRemarks,
-           r.ResponseType, r.ProcessStatus, r.ReplyText, r.CompletedOn
+// Tickets the user raised (matched by email), with the latest published L2 reply.
+const string TicketSelect = """
+    SELECT TOP 30 c.ID, c.TicketNo, c.BriefDetails, c.Description, c.Status, c.AskStatus, c.CreatedOn, c.ModifiedOn, c.ReplyRemarks,
+           a.Name AS Area, r.ResponseType, r.ReplyText, r.CompletedOn
     FROM dbo.Complaint_Mst_Tbl c
-    OUTER APPLY (SELECT TOP 1 ResponseType, ProcessStatus, ReplyText, CompletedOn FROM dbo.Hermes_L2_Response_Trn_Tbl x
-                 WHERE x.TicketID = c.ID AND x.IsDeleted = 0 ORDER BY x.CreatedOn DESC) r
-    WHERE ISNULL(c.IsDeleted, 0) = 0 AND c.EmailID = @e ORDER BY c.CreatedOn DESC
-    """, ("@e", email));
+    LEFT JOIN dbo.Area_Mst_Tbl a ON a.ID = c.AreaID
+    OUTER APPLY (SELECT TOP 1 ResponseType, ReplyText, CompletedOn FROM dbo.Hermes_L2_Response_Trn_Tbl x
+                 WHERE x.TicketID = c.ID AND x.IsDeleted = 0 AND x.ProcessStatus = 'COMPLETED' AND x.ReplyText IS NOT NULL
+                 ORDER BY x.CompletedOn DESC) r
+    WHERE ISNULL(c.IsDeleted, 0) = 0
+    """;
+async Task<List<Dictionary<string, object?>>> Tickets(string email) =>
+    (await Query(helpdesk, TicketSelect + " AND c.EmailID = @e ORDER BY c.CreatedOn DESC", ("@e", email))).Select(WithState).ToList();
+
+// What the requester should read as the ticket's state; the Helpdesk and L2 rows are the only inputs.
+static Dictionary<string, object?> WithState(Dictionary<string, object?> t)
+{
+    var (label, tone) = (t["Status"]?.ToString(), t["AskStatus"]?.ToString(), t["ResponseType"]?.ToString()) switch
+    {
+        ("Closed", _, _) => ("Resolved", "done"),
+        (_, "Ask", _) => ("Waiting for your reply", "attention"),
+        (_, _, "RESOLUTION") => ("Resolved", "done"),
+        (_, _, "NEEDS_HUMAN_ACTION") => ("With the support team", "progress"),
+        (_, _, "L3_ESCALATION") => ("Escalated to specialist", "progress"),
+        (_, _, "UPDATE") => ("Update posted", "progress"),
+        _ => ("Being investigated", "pending"),
+    };
+    t["StateLabel"] = label;
+    t["StateTone"] = tone;
+    return t;
+}
 
 async Task<JsonNode?> Jev(object state, object questions)
 {
@@ -98,11 +120,34 @@ const string System = """
 
 app.MapGet("/api/users", async (string? q) => await Query(config, """
     SELECT TOP 20 ID, Name, FullName, EmailID FROM dbo.XStudio_User_Mst_Tbl
-    WHERE ISNULL(IsDeleted, 0) = 0 AND (@q IS NULL OR Name LIKE '%' + @q + '%' OR FullName LIKE '%' + @q + '%') ORDER BY FullName
+    WHERE ISNULL(IsDeleted, 0) = 0 AND (@q IS NULL OR Name LIKE '%' + @q + '%' OR FullName LIKE '%' + @q + '%') ORDER BY ISNULL(FullName, Name)
     """, ("@q", string.IsNullOrWhiteSpace(q) ? null : q)));
+
+app.MapGet("/api/users/{id}", async (string id) => await User(id) is { } u ? Results.Ok(u) : Results.NotFound());
 
 app.MapGet("/api/sessions", async (string userId) => await Query(helpdesk,
     "SELECT ID, Title, TicketNo, ModifiedOn FROM dbo.L1_Chat_Session_Tbl WHERE UserID = @u ORDER BY ModifiedOn DESC", ("@u", userId)));
+
+app.MapPatch("/api/sessions/{id:guid}", async (Guid id, JsonObject body) => await Query(helpdesk,
+    "UPDATE dbo.L1_Chat_Session_Tbl SET Title = @t WHERE ID = @s; SELECT @@ROWCOUNT AS updated",
+    ("@t", Trim(body["title"]?.ToString()?.Trim(), 200)), ("@s", id)));
+
+app.MapDelete("/api/sessions/{id:guid}", async (Guid id) => await Query(helpdesk, """
+    DELETE FROM dbo.L1_Chat_Message_Tbl WHERE SessionID = @s; DELETE FROM dbo.L1_Chat_Session_Tbl WHERE ID = @s;
+    SELECT @@ROWCOUNT AS deleted;
+    """, ("@s", id)));
+
+// One ticket with every reply L2 published on it, oldest first.
+app.MapGet("/api/tickets/{id}", async (string id) =>
+{
+    var t = (await Query(helpdesk, TicketSelect + " AND c.ID = @id", ("@id", id))).Select(WithState).FirstOrDefault();
+    if (t is null) return Results.NotFound();
+    t["Replies"] = await Query(helpdesk, """
+        SELECT ID, ResponseType, ReplyText, CompletedOn FROM dbo.Hermes_L2_Response_Trn_Tbl
+        WHERE TicketID = @id AND IsDeleted = 0 AND ProcessStatus = 'COMPLETED' AND ReplyText IS NOT NULL ORDER BY CompletedOn
+        """, ("@id", id));
+    return Results.Ok(t);
+});
 
 app.MapPost("/api/sessions", async (JsonObject body) => (await Query(helpdesk,
     "INSERT INTO dbo.L1_Chat_Session_Tbl (UserID, Title) OUTPUT inserted.ID, inserted.Title VALUES (@u, N'New chat')",
@@ -132,7 +177,7 @@ app.MapPost("/api/sessions/{id:guid}/messages", async (Guid id, JsonObject body)
     var session = (await Query(helpdesk, "SELECT TicketNo FROM dbo.L1_Chat_Session_Tbl WHERE ID = @s", ("@s", id))).First();
     var tickets = await Tickets(user["EmailID"]?.ToString() ?? "");
     var ticketText = string.Join("\n", tickets.Take(8).Select(t =>
-        $"{t["TicketNo"]}: \"{t["BriefDetails"]}\" status {t["Status"]}/{t["AskStatus"]}; L2: {t["ResponseType"] ?? "not answered yet"} {Trim(t["ReplyText"], 300)}"));
+        $"{t["TicketNo"]}: \"{t["BriefDetails"]}\" — {t["StateLabel"]}. Support team's latest reply: {(t["ReplyText"] is null ? "none yet" : Trim(t["ReplyText"], 300))}"));
     var transcript = string.Join("\n", history.Select(h => $"{h.role}: {h.content}"));
 
     // Jev decides what to do; code acts on it.
@@ -148,13 +193,15 @@ app.MapPost("/api/sessions/{id:guid}/messages", async (Guid id, JsonObject body)
                            instructions = "What should L1 support do next with this conversation?" } }))?["next"]?["choice"]?.ToString() ?? "ask";
 
     string reply;
+    Dictionary<string, object?>? ticket = null;
     if (decision == "ticket")
     {
         var ticketNo = await CreateTicket(user, history.Where(h => h.role == "user").Select(h => h.content).ToList(), transcript);
         await Query(helpdesk, "UPDATE dbo.L1_Chat_Session_Tbl SET TicketNo = @t, Title = @ti, ModifiedOn = GETDATE() WHERE ID = @s; SELECT 1 AS ok",
             ("@t", ticketNo), ("@ti", Trim(history.First(h => h.role == "user").content, 80)), ("@s", id));
-        reply = $"I have raised {ticketNo} for the L2 support team with the details above. You will see their reply under My tickets; " +
-                "if they need more information they will ask here.";
+        reply = $"I have raised {ticketNo} for the support team with the details above. You will see their reply under My tickets; " +
+                "if they need more information they will ask there.";
+        ticket = (await Query(helpdesk, TicketSelect + " AND c.TicketNo = @n", ("@n", ticketNo))).Select(WithState).FirstOrDefault();
     }
     else
     {
@@ -168,7 +215,7 @@ app.MapPost("/api/sessions/{id:guid}/messages", async (Guid id, JsonObject body)
     }
     await Query(helpdesk, "INSERT INTO dbo.L1_Chat_Message_Tbl (SessionID, Role, Content) VALUES (@s, 'assistant', @c); UPDATE dbo.L1_Chat_Session_Tbl SET ModifiedOn = GETDATE() WHERE ID = @s; SELECT 1 AS ok",
         ("@s", id), ("@c", reply));
-    return Results.Ok(new { decision, reply });
+    return Results.Ok(new { decision, reply, ticket });
 });
 
 // Deterministic ticket: requester fields, what they wrote, the transcript, identifiers found in it.
