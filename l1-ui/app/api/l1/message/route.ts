@@ -19,7 +19,7 @@ async function readBoundedText(
   if (!body) return "";
 
   const reader = body.getReader();
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
   let totalBytes = 0;
   let text = "";
 
