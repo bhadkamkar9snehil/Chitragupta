@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, CheckCircle2, Hand, ShieldAlert, UserRound } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Hand, PanelLeftClose, PanelLeftOpen, ShieldAlert, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { ops, type Escalation, type User } from "@/lib/api";
 import { ago, displayName, outcomeLabel, ticketLabel, when } from "@/lib/format";
@@ -23,6 +23,7 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
   const [status, setStatus] = useState("Open");
   const [rows, setRows] = useState<Escalation[] | null>(null);
   const [tick, setTick] = useState(0);
+  const [drawerOpen, setDrawerOpen] = useState(true);
 
   useEffect(() => {
     ops.l3().then(setRows).catch((e: Error) => toast.error(e.message));
@@ -34,10 +35,13 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
 
   return (
     <div className="flex min-h-0 flex-1">
-      <section aria-label="L3 queue" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-96 md:shrink-0", escalationId && "hidden md:flex")}>
+      <section aria-label="L3 queue" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-96 md:shrink-0", escalationId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
         <div className="space-y-2 border-b px-3 py-3">
           <div>
-            <h1 className="text-title font-semibold tracking-tight">L3 escalations</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="flex-1 text-title font-semibold tracking-tight">L3 escalations</h1>
+              {escalationId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setDrawerOpen(false)} aria-label="Hide escalation list"><PanelLeftClose /></Button>}
+            </div>
             <p className="text-2xs text-subtle-foreground">Handed over by the L2 engineer for a person to act on.{engineer && mine ? ` ${mine} assigned to you.` : ""}</p>
           </div>
           <div className="flex gap-1" role="tablist">
@@ -75,7 +79,7 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
       </section>
       <div className={cn("min-h-0 min-w-0 flex-1 flex-col", escalationId ? "flex" : "hidden md:flex")}>
         {selected ? (
-          <Detail key={selected.ID} e={selected} engineer={engineer} askEngineer={askEngineer} onBack={() => onSelect(null)} onChanged={() => setTick((n) => n + 1)} onOpenRun={onOpenRun} onOpenTicket={onOpenTicket} />
+          <Detail key={selected.ID} e={selected} engineer={engineer} askEngineer={askEngineer} onBack={() => onSelect(null)} onChanged={() => setTick((n) => n + 1)} onOpenRun={onOpenRun} onOpenTicket={onOpenTicket} drawerOpen={drawerOpen} onDrawerToggle={() => setDrawerOpen((v) => !v)} />
         ) : (
           <Empty className="m-auto" icon={<ShieldAlert className="size-5" />} title="Pick an escalation">What L2 found, what it suggests, and the actions a person needs to take.</Empty>
         )}
@@ -86,6 +90,7 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
 
 function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpenTicket }: {
   e: Escalation; engineer: User | null; askEngineer: () => void; onBack: () => void; onChanged: () => void; onOpenRun: (id: string) => void; onOpenTicket: (id: string) => void;
+  drawerOpen: boolean; onDrawerToggle: () => void;
 }) {
   const [note, setNote] = useState("");
   const [visible, setVisible] = useState(false);
@@ -117,6 +122,9 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
       <header className="shrink-0 border-b bg-surface px-4 py-3">
         <div className="flex items-start gap-2">
           <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Back" onClick={onBack}><ArrowLeft /></Button>
+          <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" aria-label={drawerOpen ? "Hide escalation list" : "Show escalation list"} onClick={onDrawerToggle}>
+            {drawerOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
+          </Button>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-xs text-muted-foreground">{ticketLabel(e.TicketNo)}</span>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Bot, Database, Radio } from "lucide-react";
+import { ArrowLeft, Bot, Database, PanelLeftClose, PanelLeftOpen, Radio } from "lucide-react";
 import { toast } from "sonner";
 import { ops, type Run, type TraceEvent } from "@/lib/api";
 import { ago, duration, human, outcomeLabel, ticketLabel, when } from "@/lib/format";
@@ -11,6 +11,7 @@ import { Empty, SearchInput, Skeleton, Tag } from "@/components/ui/primitives";
 import { RichText } from "@/components/helpdesk/rich-text";
 import { Brain, type Trail } from "./brain";
 import { EventStream, Json, StageRail } from "./live";
+import { InspectorBlock } from "./inspect";
 
 const OUTCOME_TONE: Record<string, string> = {
   RESOLUTION: "bg-success-soft text-success",
@@ -33,6 +34,7 @@ export function RunsView({ runId, onSelect, onLive }: { runId: string | null; on
   const [q, setQ] = useState("");
   const [outcome, setOutcome] = useState("");
   const [runs, setRuns] = useState<Run[] | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(true);
 
   useEffect(() => {
     const t = setTimeout(() => ops.runs(q || undefined).then(setRuns).catch((e: Error) => toast.error(e.message)), 200);
@@ -44,10 +46,13 @@ export function RunsView({ runId, onSelect, onLive }: { runId: string | null; on
 
   return (
     <div className="flex min-h-0 flex-1">
-      <section aria-label="L2 runs" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-96 md:shrink-0", runId && "hidden md:flex")}>
+      <section aria-label="L2 runs" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-96 md:shrink-0", runId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
         <div className="space-y-2 border-b px-3 py-3">
           <div>
-            <h1 className="text-title font-semibold tracking-tight">L2 runs</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="flex-1 text-title font-semibold tracking-tight">L2 runs</h1>
+              {runId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setDrawerOpen(false)} aria-label="Hide run list"><PanelLeftClose /></Button>}
+            </div>
             <p className="text-2xs text-subtle-foreground">Every investigation the L2 engineer ran, newest first.</p>
           </div>
           <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ticket, subject or route" aria-label="Search runs" />
@@ -85,7 +90,7 @@ export function RunsView({ runId, onSelect, onLive }: { runId: string | null; on
         </ul>
       </section>
       <div className={cn("min-h-0 min-w-0 flex-1 flex-col", runId ? "flex" : "hidden md:flex")}>
-        {runId ? <RunWorkspace key={runId} id={runId} onBack={() => onSelect(null)} onLive={onLive} /> : (
+        {runId ? <RunWorkspace key={runId} id={runId} onBack={() => onSelect(null)} onLive={onLive} drawerOpen={drawerOpen} onDrawerToggle={() => setDrawerOpen((v) => !v)} /> : (
           <Empty className="m-auto" icon={<Bot className="size-5" />} title="Pick a run">See how the engineer walked XBatch, what Jev decided at each step, and what it read.</Empty>
         )}
       </div>
@@ -97,7 +102,7 @@ const JEV_FIELDS: [keyof Run, string][] = [
   ["JevTriageJson", "Triage"], ["JevInvestigationJson", "Investigation"], ["JevReviewJson", "Review"], ["JevTraceJson", "Trace assessment"], ["JevKBCurationJson", "Knowledge curation"], ["ActionsTakenJson", "Actions taken"],
 ];
 
-function RunWorkspace({ id, onBack, onLive }: { id: string; onBack: () => void; onLive: (id: string) => void }) {
+function RunWorkspace({ id, onBack, onLive, drawerOpen, onDrawerToggle }: { id: string; onBack: () => void; onLive: (id: string) => void; drawerOpen: boolean; onDrawerToggle: () => void }) {
   const [run, setRun] = useState<(Run & { Events: TraceEvent[] }) | null>(null);
   const [tab, setTab] = useState<"walk" | "timeline" | "decisions" | "sql" | "proposal">("walk");
 
@@ -120,6 +125,9 @@ function RunWorkspace({ id, onBack, onLive }: { id: string; onBack: () => void; 
       <header className="shrink-0 space-y-3 border-b bg-surface px-4 pt-3">
         <div className="flex items-start gap-2">
           <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Back" onClick={onBack}><ArrowLeft /></Button>
+          <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" aria-label={drawerOpen ? "Hide run list" : "Show run list"} onClick={onDrawerToggle}>
+            {drawerOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
+          </Button>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-xs text-muted-foreground">{ticketLabel(run.TicketNo)} · attempt {run.AttemptNo}</span>
@@ -174,7 +182,7 @@ function RunWorkspace({ id, onBack, onLive }: { id: string; onBack: () => void; 
                       <td className="px-2 py-2">
                         <details>
                           <summary className="cursor-pointer font-mono text-xs">{a.ObjectName ?? a.OperationName ?? a.ActionType}</summary>
-                          {a.SqlText && <pre className="mt-1.5 max-w-xl whitespace-pre-wrap break-all rounded bg-surface-2 p-2 font-mono text-2xs text-muted-foreground">{a.SqlText}</pre>}
+                          {a.SqlText && <InspectorBlock className="mt-2 max-w-xl" label="Executed query" text={a.SqlText} kind="sql" />}
                         </details>
                       </td>
                       <td className="px-2 py-2 text-muted-foreground">{a.Purpose}</td>

@@ -8,6 +8,7 @@ import { ago, ticketLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, Empty, Skeleton, StatePill, Tip } from "@/components/ui/primitives";
+import { InspectorBlock } from "./inspect";
 
 const COLUMNS = ["triage", "todo", "ready", "running", "review", "blocked", "done"];
 const LIFECYCLE = ["Being investigated", "Update posted", "With the support team", "Escalated to specialist", "Waiting for your reply", "Resolved"];
@@ -221,7 +222,7 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
               {open.status && <StatePill tone={open.status === "done" ? "done" : open.status === "blocked" ? "attention" : "progress"}>{open.status}</StatePill>}
               {runOf(open) && <Button size="sm" variant="outline" onClick={() => { onOpenRun(runOf(open)!); setOpen(null); }}>Open the run</Button>}
             </div>
-            <pre className="scrollbar-thin mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-surface-2 p-3 font-mono text-2xs leading-relaxed text-muted-foreground">{open.body}</pre>
+            <InspectorBlock className="mt-3" label="Task payload" text={open.body} />
           </>
         )}
       </Dialog>

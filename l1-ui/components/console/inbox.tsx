@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, ArrowLeft, Bot, CheckCircle2, Clock, Copy, Headset, Inbox, Layers, RefreshCw, User as UserIcon } from "lucide-react";
+import { AlertCircle, ArrowLeft, Bot, CheckCircle2, Clock, Copy, Headset, Inbox, Layers, PanelLeftClose, PanelLeftOpen, RefreshCw, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Message, type SourceRef, type Ticket } from "@/lib/api";
 import { ago, pageTitle, RESPONSE_KIND, ticketLabel, when, whenShort } from "@/lib/format";
@@ -27,6 +27,7 @@ export function InboxView({ ticketId, onSelect }: { ticketId: string | null; onS
   const [all, setAll] = useState<Ticket[]>([]);
   const [lookups, setLookups] = useState<{ areas: string[]; sources: string[] }>({ areas: [], sources: [] });
   const [tick, setTick] = useState(0);
+  const [drawerOpen, setDrawerOpen] = useState(true);
 
   useEffect(() => {
     api.admin.lookups().then(setLookups).catch(() => {});
@@ -68,10 +69,11 @@ export function InboxView({ ticketId, onSelect }: { ticketId: string | null; onS
         ))}
       </aside>
 
-      <section aria-label="Tickets" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-80 md:shrink-0 xl:w-96", ticketId && "hidden md:flex")}>
+      <section aria-label="Tickets" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-80 md:shrink-0 xl:w-96", ticketId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
         <div className="space-y-2 border-b px-3 py-3">
           <div className="flex items-center gap-2">
             <h1 className="flex-1 text-title font-semibold tracking-tight">{VIEWS.find((v) => v.id === view)!.label}</h1>
+            {ticketId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setDrawerOpen(false)} aria-label="Hide ticket list"><PanelLeftClose /></Button>}
             <Tip label="Refresh">
               <Button variant="ghost" size="icon-sm" aria-label="Refresh" onClick={() => setTick((n) => n + 1)}>
                 <RefreshCw />
@@ -129,7 +131,7 @@ export function InboxView({ ticketId, onSelect }: { ticketId: string | null; onS
 
       <div className={cn("min-h-0 min-w-0 flex-1 flex-col", ticketId ? "flex" : "hidden md:flex")}>
         {ticketId ? (
-          <TicketWorkspace key={ticketId} id={ticketId} onBack={() => onSelect(null)} />
+          <TicketWorkspace key={ticketId} id={ticketId} onBack={() => onSelect(null)} drawerOpen={drawerOpen} onDrawerToggle={() => setDrawerOpen((v) => !v)} />
         ) : (
           <Empty className="m-auto" icon={<Inbox className="size-5" />} title="Pick a ticket">Its activity, the chat that raised it, and the L2 runs appear here.</Empty>
         )}
@@ -138,7 +140,7 @@ export function InboxView({ ticketId, onSelect }: { ticketId: string | null; onS
   );
 }
 
-function TicketWorkspace({ id, onBack }: { id: string; onBack: () => void }) {
+function TicketWorkspace({ id, onBack, drawerOpen, onDrawerToggle }: { id: string; onBack: () => void; drawerOpen: boolean; onDrawerToggle: () => void }) {
   const [t, setT] = useState<Ticket | null>(null);
   const [tab, setTab] = useState<"activity" | "chat" | "runs">("activity");
 
@@ -174,6 +176,9 @@ function TicketWorkspace({ id, onBack }: { id: string; onBack: () => void }) {
           <div className="flex items-start gap-2">
             <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Back" onClick={onBack}>
               <ArrowLeft />
+            </Button>
+            <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" aria-label={drawerOpen ? "Hide ticket list" : "Show ticket list"} onClick={onDrawerToggle}>
+              {drawerOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
             </Button>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">

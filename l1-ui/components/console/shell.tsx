@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Command } from "cmdk";
 import {
-  BarChart3, Bot, Gauge, Inbox, KanbanSquare, MessagesSquare, Moon, Radio, Search, Settings as SettingsIcon, ShieldAlert, Sun,
+  BarChart3, Bot, Gauge, Inbox, KanbanSquare, MessagesSquare, Moon, PanelLeftClose, PanelLeftOpen, Radio, Search, Settings as SettingsIcon, ShieldAlert, Sun,
   Ticket as TicketIcon, UserRound, Wrench,
 } from "lucide-react";
 import { api, type Ticket, type User } from "@/lib/api";
@@ -66,6 +66,7 @@ export function Console() {
   const [brand, setBrand] = useState("XBatch Helpdesk");
   const [engineer, setEngineer] = useState<User | null>(null);
   const [picking, setPicking] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState(() => safe(() => localStorage.getItem("desk.nav.collapsed") === "1", false));
 
   useEffect(() => {
     const sync = () => setRoute(parse());
@@ -100,23 +101,46 @@ export function Console() {
   return (
     <TooltipProvider>
       <div className="flex h-dvh overflow-hidden bg-background">
-        <nav aria-label="Suite" className="scrollbar-thin flex w-14 shrink-0 flex-col items-center overflow-y-auto border-r bg-surface py-3 xl:w-60 xl:items-stretch xl:px-2">
-          <div className="px-1 pb-3 xl:px-2">
-            <div className="flex items-center gap-2.5">
+        <nav aria-label="Suite" className={cn("scrollbar-thin flex w-14 shrink-0 flex-col items-center overflow-y-auto border-r bg-surface py-3", !navCollapsed && "xl:w-60 xl:items-stretch xl:px-2")}>
+          <div className={cn("w-full px-1 pb-3", !navCollapsed && "xl:px-2")}>
+            <div className={cn("flex items-center gap-2.5", navCollapsed && "justify-center")}>
               <BrandMark name={brand} compact />
-              <span className="hidden min-w-0 xl:block">
-                <span className="block truncate text-sm font-semibold leading-tight">Helpdesk suite</span>
-                <span className="block truncate text-2xs text-subtle-foreground">{brand}</span>
-              </span>
+              {!navCollapsed && (
+                <span className="hidden min-w-0 flex-1 xl:block">
+                  <span className="block truncate text-sm font-semibold leading-tight">Helpdesk suite</span>
+                  <span className="block truncate text-2xs text-subtle-foreground">{brand}</span>
+                </span>
+              )}
+              <Tip label={navCollapsed ? "Expand navigation" : "Collapse navigation"} side="right">
+                <button
+                  className="hidden size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-surface-2 hover:text-foreground xl:grid"
+                  onClick={() => {
+                    const next = !navCollapsed;
+                    setNavCollapsed(next);
+                    safe(() => localStorage.setItem("desk.nav.collapsed", next ? "1" : "0"), undefined);
+                  }}
+                  aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}
+                >
+                  {navCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+                </button>
+              </Tip>
             </div>
           </div>
-          <button onClick={() => setPalette(true)} className="mb-2 hidden h-9 items-center gap-2 rounded-md border bg-background px-2.5 text-meta text-subtle-foreground hover:border-border-strong xl:flex">
-            <Search className="size-4" aria-hidden /> Search
-            <span className="ml-auto flex gap-0.5"><Kbd>Ctrl</Kbd><Kbd>K</Kbd></span>
-          </button>
+          {navCollapsed ? (
+            <Tip label="Search" side="right">
+              <button onClick={() => setPalette(true)} className="mb-2 hidden size-9 place-items-center rounded-md border bg-background text-subtle-foreground hover:border-border-strong xl:grid" aria-label="Search">
+                <Search className="size-4" aria-hidden />
+              </button>
+            </Tip>
+          ) : (
+            <button onClick={() => setPalette(true)} className="mb-2 hidden h-9 items-center gap-2 rounded-md border bg-background px-2.5 text-meta text-subtle-foreground hover:border-border-strong xl:flex">
+              <Search className="size-4" aria-hidden /> Search
+              <span className="ml-auto flex gap-0.5"><Kbd>Ctrl</Kbd><Kbd>K</Kbd></span>
+            </button>
+          )}
           {GROUPS.map((g) => (
             <div key={g.label} className="mt-2 w-full">
-              <p className="hidden px-2.5 pb-1 pt-2 text-2xs font-semibold uppercase tracking-wider text-subtle-foreground xl:block">{g.label}</p>
+              {!navCollapsed && <p className="hidden px-2.5 pb-1 pt-2 text-2xs font-semibold uppercase tracking-wider text-subtle-foreground xl:block">{g.label}</p>}
               <div className="space-y-0.5">
                 {g.items.map((n) => (
                   <Tip key={n.view} label={n.label} side="right">
@@ -125,12 +149,13 @@ export function Console() {
                       aria-current={route.view === n.view ? "page" : undefined}
                       aria-label={n.label}
                       className={cn(
-                        "mx-auto flex size-11 items-center justify-center gap-2.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground xl:h-9 xl:w-full xl:justify-start xl:px-2.5",
+                        "mx-auto flex size-11 items-center justify-center gap-2.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+                        !navCollapsed && "xl:h-9 xl:w-full xl:justify-start xl:px-2.5",
                         route.view === n.view && "bg-surface-2 text-foreground",
                       )}
                     >
                       <n.icon className={cn("size-4.5 xl:size-4", n.view === "live" && "text-destructive")} aria-hidden />
-                      <span className="hidden xl:inline">{n.label}</span>
+                      {!navCollapsed && <span className="hidden xl:inline">{n.label}</span>}
                     </button>
                   </Tip>
                 ))}
@@ -138,12 +163,12 @@ export function Console() {
             </div>
           ))}
           <div className="mt-auto w-full space-y-0.5 pt-3">
-            <button onClick={() => setPicking(true)} className="mx-auto flex size-11 items-center justify-center gap-2.5 rounded-md text-left hover:bg-surface-2 xl:h-auto xl:w-full xl:justify-start xl:p-2" aria-label="Choose who you are">
+            <button onClick={() => setPicking(true)} className={cn("mx-auto flex size-11 items-center justify-center gap-2.5 rounded-md text-left hover:bg-surface-2", !navCollapsed && "xl:h-auto xl:w-full xl:justify-start xl:p-2")} aria-label="Choose who you are">
               {engineer ? <Avatar name={displayName(engineer)} className="size-7" /> : <UserRound className="size-4 text-muted-foreground" aria-hidden />}
-              <span className="hidden min-w-0 xl:block">
+              {!navCollapsed && <span className="hidden min-w-0 xl:block">
                 <span className="block truncate text-meta font-medium">{engineer ? displayName(engineer) : "Choose who you are"}</span>
                 <span className="block text-2xs text-subtle-foreground">{engineer ? "Acting engineer" : "Needed for L3 actions"}</span>
-              </span>
+              </span>}
             </button>
             <button
               onClick={() => {
@@ -156,7 +181,7 @@ export function Console() {
             >
               <Moon className="size-4 dark:hidden" aria-hidden />
               <Sun className="hidden size-4 dark:block" aria-hidden />
-              <span className="hidden xl:inline">Theme</span>
+              {!navCollapsed && <span className="hidden xl:inline">Theme</span>}
             </button>
           </div>
         </nav>
