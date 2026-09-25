@@ -74,12 +74,12 @@ export function TicketCard({
 
       <p className="mt-3 break-words text-base leading-7 md:text-sm md:leading-6">{ticket.summary}</p>
 
-      {ticket.domain || ticket.area || when ? (
+      {ticket.systemLabel || ticket.area || when ? (
         <dl className="mt-3 grid gap-2 border-t pt-3 text-sm sm:grid-cols-3">
-          {ticket.domain ? (
+          {ticket.systemLabel ? (
             <div>
               <dt className="text-xs text-muted-foreground">System</dt>
-              <dd className="mt-0.5 break-words font-medium">{ticket.domain}</dd>
+              <dd className="mt-0.5 break-words font-medium">{ticket.systemLabel}</dd>
             </div>
           ) : null}
           {ticket.area ? (
@@ -140,7 +140,7 @@ export function TicketList({
                   {ticket.summary}
                 </p>
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                  {ticket.domain ? <span>{ticket.domain}</span> : null}
+                  {ticket.systemLabel ? <span>{ticket.systemLabel}</span> : null}
                   {ticket.area ? <span>{ticket.area}</span> : null}
                   {when ? <span>{when}</span> : null}
                   {ticket.attentionRequired ? (
