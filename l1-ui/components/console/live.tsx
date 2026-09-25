@@ -8,6 +8,7 @@ import { ago, clock, describeEvent, duration, human, outcomeLabel, ticketLabel }
 import { cn } from "@/lib/utils";
 import { Switch, Tag } from "@/components/ui/primitives";
 import { Brain, type Trail } from "./brain";
+import { InspectorBlock } from "./inspect";
 
 export const ACTOR = {
   jev: { icon: Sparkles, tone: "bg-primary text-primary-foreground", label: "Jev" },
@@ -97,6 +98,18 @@ export function EventStream({ events, className }: { events: TraceEvent[]; class
   );
 }
 
+function decodeJson(value: unknown, depth = 0): unknown {
+  if (depth > 2 || typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!(trimmed.startsWith("{") || trimmed.startsWith("[") || (trimmed.startsWith('"') && trimmed.endsWith('"')))) return value;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed === value ? value : decodeJson(parsed, depth + 1);
+  } catch {
+    return value;
+  }
+}
+
 function JsonScalar({ value }: { value: unknown }) {
   if (value === null) return <span className="font-mono text-subtle-foreground">null</span>;
   if (typeof value === "string") return <span className="break-words font-mono text-foreground">{JSON.stringify(value)}</span>;
@@ -105,18 +118,63 @@ function JsonScalar({ value }: { value: unknown }) {
   return <span className="break-words font-mono text-muted-foreground">{String(value)}</span>;
 }
 
-function JsonTree({ value, depth = 0 }: { value: unknown; depth?: number }) {
-  if (value === null || typeof value !== "object") return <JsonScalar value={value} />;
+function RowTable({ rows }: { rows: Record<string, unknown>[] }) {
+  const columns = [...new Set(rows.flatMap((r) => Object.keys(r)))].slice(0, 12);
+  if (!columns.length) return null;
+  return (
+    <div className="scrollbar-thin max-h-72 overflow-auto rounded-md border">
+      <table className="w-full min-w-max text-2xs">
+        <thead className="sticky top-0 z-10 bg-surface-2 text-left uppercase tracking-wider text-subtle-foreground">
+          <tr>{columns.map((c) => <th key={c} className="whitespace-nowrap px-2.5 py-2 font-semibold">{c}</th>)}</tr>
+        </thead>
+        <tbody className="divide-y">
+          {rows.slice(0, 100).map((row, i) => (
+            <tr key={i} className="align-top">
+              {columns.map((c) => {
+                const value = decodeJson(row[c]);
+                return (
+                  <td key={c} className="max-w-64 px-2.5 py-2">
+                    {value !== null && typeof value === "object"
+                      ? <span className="font-mono text-subtle-foreground">{JSON.stringify(value)}</span>
+                      : <JsonScalar value={value} />}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length > 100 && <p className="border-t px-3 py-2 text-2xs text-subtle-foreground">Showing first 100 of {rows.length} rows.</p>}
+    </div>
+  );
+}
 
-  const entries = Array.isArray(value)
-    ? value.map((item, index) => [String(index), item] as const)
-    : Object.entries(value as Record<string, unknown>);
-  const kind = Array.isArray(value) ? "items" : "fields";
+function tabularRows(value: unknown): Record<string, unknown>[] | null {
+  if (Array.isArray(value) && value.length && value.every((x) => x && typeof x === "object" && !Array.isArray(x)))
+    return value as Record<string, unknown>[];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const o = value as Record<string, unknown>;
+  for (const key of ["rows", "data", "items", "records", "result"]) {
+    const candidate = decodeJson(o[key]);
+    if (Array.isArray(candidate) && candidate.length && candidate.every((x) => x && typeof x === "object" && !Array.isArray(x)))
+      return candidate as Record<string, unknown>[];
+  }
+  return null;
+}
+
+function JsonTree({ value, depth = 0 }: { value: unknown; depth?: number }) {
+  const decoded = decodeJson(value);
+  if (decoded === null || typeof decoded !== "object") return <JsonScalar value={decoded} />;
+
+  const entries = Array.isArray(decoded)
+    ? decoded.map((item, index) => [String(index), item] as const)
+    : Object.entries(decoded as Record<string, unknown>);
+  const kind = Array.isArray(decoded) ? "items" : "fields";
 
   return (
     <details open={depth === 0} className="group/json min-w-0">
       <summary className="cursor-pointer select-none py-0.5 font-mono text-2xs text-subtle-foreground marker:text-border-strong">
-        {Array.isArray(value) ? "[" : "{"}{entries.length} {kind}{Array.isArray(value) ? "]" : "}"}
+        {Array.isArray(decoded) ? "[" : "{"}{entries.length} {kind}{Array.isArray(decoded) ? "]" : "}"}
       </summary>
       <div className="ml-2 border-l pl-2">
         {entries.map(([key, child]) => (
@@ -132,27 +190,35 @@ function JsonTree({ value, depth = 0 }: { value: unknown; depth?: number }) {
 }
 
 export function Json({ label, text }: { label: string; text: string }) {
-  let parsed: unknown;
-  let valid = true;
+  let parsed: unknown = text;
+  let valid = false;
   try {
-    parsed = JSON.parse(text);
+    parsed = decodeJson(JSON.parse(text));
+    valid = true;
   } catch {
-    valid = false;
+    parsed = text;
   }
+  const rows = valid ? tabularRows(parsed) : null;
 
   return (
-    <section className="min-w-0 overflow-hidden rounded-md border bg-background" aria-label={label}>
-      <div className="flex items-center justify-between border-b bg-surface-2 px-2.5 py-1.5">
+    <section className="min-w-0 space-y-2" aria-label={label}>
+      <div className="flex items-center justify-between">
         <p className="font-semibold uppercase tracking-wider text-subtle-foreground">{label}</p>
-        <span className="text-2xs text-subtle-foreground">{valid ? "Structured JSON" : "Plain text"}</span>
+        <span className="text-2xs text-subtle-foreground">{rows ? `${rows.length} row${rows.length === 1 ? "" : "s"}` : valid ? "Structured" : "Raw"}</span>
       </div>
-      <div className="scrollbar-thin max-h-72 overflow-auto p-2.5">
-        {valid ? (
+      {rows ? <RowTable rows={rows} /> : valid ? (
+        <div className="scrollbar-thin max-h-72 overflow-auto rounded-md border bg-background p-2.5">
           <JsonTree value={parsed} />
-        ) : (
-          <pre className="whitespace-pre-wrap break-words font-mono text-2xs leading-relaxed text-muted-foreground">{text}</pre>
-        )}
-      </div>
+        </div>
+      ) : (
+        <InspectorBlock label={label} text={text} />
+      )}
+      {valid && (
+        <details>
+          <summary className="cursor-pointer text-2xs text-subtle-foreground hover:text-foreground">Raw payload</summary>
+          <InspectorBlock className="mt-2" label={label} text={text} />
+        </details>
+      )}
     </section>
   );
 }
