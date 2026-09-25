@@ -38,8 +38,9 @@ The UI contract can represent the complete assistant-ui spike required by #21:
 1. answer from governed knowledge, with approved sources when supplied;
 2. collect missing structured context;
 3. render the authoritative ticket returned after deterministic creation;
-4. render an L2 publication;
-5. render an L2 QUESTION and return the requester's free-text answer.
+4. render the requester's current ticket/status list;
+5. render an L2 publication;
+6. render an L2 QUESTION and return the requester's free-text answer.
 
 Those are interaction capabilities. This UI does not pretend the corresponding
 backend services already exist.
@@ -181,6 +182,30 @@ then resumes.
 
 `statusLabel` is authoritative server-provided presentation text. The browser
 must not derive ticket workflow state from internal L2 fields.
+
+### Ticket/status list
+
+```json
+{
+  "type": "tickets",
+  "tickets": [
+    {
+      "ticketId": "232",
+      "ticketNo": "Ticket_232",
+      "summary": "Material document is not visible in SAP.",
+      "statusLabel": "Submitted",
+      "attentionRequired": false,
+      "domain": "SAP",
+      "area": "EAF",
+      "updatedOn": "2026-09-25T08:20:00+05:30"
+    }
+  ]
+}
+```
+
+The list is bounded to 20 ticket snapshots per response. Authentication,
+authorization, paging, and which tickets are visible remain upstream
+responsibilities.
 
 ### L2 publication
 
