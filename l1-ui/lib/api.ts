@@ -261,6 +261,32 @@ export type ToolStats = {
   sql: SqlAction[];
 };
 
+// Pipeline health: the runtime's own `status` and the benchmark report, passed through by the API.
+export type Probe<T> = { at: string; ok: boolean; error: string | null; data: T | null };
+export type RuntimeStatus = {
+  active_runs: { run_id?: string; ticket_no?: string; stage?: string }[];
+  tasks_by_run: Record<string, { id: string; title: string; status: string; assignee: string; pipeline_stage: string; review_cycle: number }[]>;
+  anomalies: unknown[];
+  local_model: { running: number; queued: number };
+  binding_ready_for_new_claims: boolean;
+  binding_block_reason: string | null;
+  contract: { max_pipeline_wip: number; max_qwen_running: number; max_qwen_waiting: number; max_review_cycles: number; priorities: Record<string, number>; execution_modes: string[] };
+};
+export type Performance = {
+  window_since: string;
+  runs: { RunID: string; TicketNo: string; ResponseType: string | null; DurationSeconds: number | null }[];
+  outcomes: { runs: number; published: number; failed: number; active: number; response_types: Record<string, number>; canned_incomplete_replies: number; avg_claim_to_publish_min: number | null; answered_without_qwen: number; avg_no_qwen_seconds: number | null };
+  tool_health: { per_tool: { ToolName: string; Calls: number; Failed: number }[]; top_failure_causes: { cause: string; count?: number; n?: number }[] };
+  waste: Record<string, number>;
+  failure_reasons: { reason?: string; count?: number }[];
+  jev_review_gates: { jev_approvals: number; direct_publish: number; blocked_by_gate: Record<string, number> };
+  model_input: { ProfileName: string; Sessions: number; Requests: number; AvgFirstPrompt: number; AvgPrompt: number; MaxPrompt: number }[];
+  spill_threshold_chars: number;
+  claim_health: { Waiting: number; Active: number; MinutesSinceClaim: number | null; Stalled: boolean };
+  expectations: { scored: number; passed: number; pending: number; rows: { TicketNo: string; ResponseType: string; Case: string; Expected: string; Pass: boolean | null; Reply?: string }[] };
+  invariants: Record<string, number>;
+};
+
 export const ops = {
   overview: () => call<Overview>("ops/overview"),
   runs: (search?: string) => call<Run[]>(`ops/runs?${q({ q: search })}`),
@@ -273,4 +299,6 @@ export const ops = {
     call<{ escalation: Escalation; ticket: Ticket }>(`ops/l3/${id}`, { method: "POST", body }),
   tools: () => call<ToolStats>("ops/tools"),
   logs: (take = 160) => call<RuntimeLogs>(`ops/logs?take=${take}`),
+  status: () => call<Probe<RuntimeStatus>>("ops/status"),
+  performance: (hours: number) => call<Probe<Performance>>(`ops/performance?hours=${hours}`),
 };
