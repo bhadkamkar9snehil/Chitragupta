@@ -90,6 +90,11 @@ Set-Location $Repo
 git restore -- l1-ui/next-env.d.ts 2>$null
 if ($LASTEXITCODE -ne 0) { throw "Failed to restore generated next-env.d.ts after build." }
 
+Write-Host "Validating L1 API..." -ForegroundColor Cyan
+$apiValidationOutput = Join-Path $env:TEMP "chitragupta-api-validate"
+dotnet build $ApiProject -p:UseAppHost=false "-p:OutputPath=$apiValidationOutput\"
+if ($LASTEXITCODE -ne 0) { throw "L1 API build failed. No services were restarted." }
+
 Install-RepoPad
 
 Write-Host "Restarting L1 API..." -ForegroundColor Cyan
