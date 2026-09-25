@@ -181,6 +181,11 @@ input {
   background-image: repeating-linear-gradient(-45deg, var(--border-strong) 0 2px, transparent 2px 5px);
 }
 
+/* Collapsed empty board columns label themselves sideways. */
+.vertical-text {
+  writing-mode: vertical-rl;
+}
+
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom);
 }

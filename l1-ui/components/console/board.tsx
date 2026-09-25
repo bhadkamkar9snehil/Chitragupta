@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, KanbanSquare, RefreshCw } from "lucide-react";
+import { Activity, AlertTriangle, CornerDownRight, KanbanSquare, RefreshCw, Users } from "lucide-react";
 import { toast } from "sonner";
 import { api, ops, type Board, type KanbanTask, type Ticket } from "@/lib/api";
-import { ago, ticketLabel } from "@/lib/format";
+import { ago, duration, outcomeLabel, ticketLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { PageTitle, Segmented } from "@/components/ui/viz";
+import { Attributes, Headline, Legend, PageTitle, Panel, SegmentBar, Segmented } from "@/components/ui/viz";
 import { Button } from "@/components/ui/button";
-import { Dialog, Empty, Skeleton, StatePill, Tip } from "@/components/ui/primitives";
+import { Dialog, Empty, Skeleton, Tip } from "@/components/ui/primitives";
 import { InspectorBlock } from "./inspect";
 
 const COLUMNS = ["triage", "todo", "ready", "running", "review", "blocked", "done"];
@@ -50,7 +50,7 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
   const [view, setView] = useState<"kanban" | "lifecycle">("kanban");
   const [board, setBoard] = useState<Board | null>(() => boardSnapshot);
   const [tickets, setTickets] = useState<Ticket[] | null>(() => ticketSnapshot);
-  const [open, setOpen] = useState<KanbanTask | null>(null);
+  const [open, setOpen] = useState<Task | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
@@ -104,120 +104,206 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
     }
   };
 
-  const columns = useMemo(() => {
-    const tasks = board?.tasks ?? [];
-    return COLUMNS.filter((c) => ["ready", "running", "review", "blocked", "done"].includes(c) || tasks.some((t) => t.status === c))
-      .map((c) => ({ id: c, tasks: tasks.filter((t) => t.status === c).sort((a, b) => (b.completedAt ?? b.createdAt ?? 0) - (a.completedAt ?? a.createdAt ?? 0)) }));
-  }, [board]);
-
-  const runOf = (t: KanbanTask) => /run_id:\s*([0-9A-F-]{36})/i.exec(t.body)?.[1] ?? null;
+  const tasks = useMemo(() => (board?.tasks ?? []).map((t) => ({ ...t, ...parseTask(t) })), [board]);
+  const later = (t: Task) => tasks.find((o) => o.ticket === t.ticket && o.id !== t.id && (o.createdAt ?? 0) > (t.createdAt ?? 0));
+  const columns = COLUMNS.filter((c) => ["ready", "running", "review", "blocked", "done"].includes(c) || tasks.some((t) => t.status === c))
+    .map((c) => ({ id: c, tasks: tasks.filter((t) => t.status === c).sort((x, y) => (y.completedAt ?? y.createdAt ?? 0) - (x.completedAt ?? x.createdAt ?? 0)) }));
+  const active = tasks.filter((t) => !["done", "blocked", "archived"].includes(t.status));
+  const blocked = tasks.filter((t) => t.status === "blocked");
+  const superseded = blocked.filter((t) => later(t));
+  const stuck = blocked.filter((t) => !later(t));
+  const finished = tasks.filter((t) => t.completedAt && t.startedAt);
+  const avgTook = finished.length ? Math.round(finished.reduce((n, t) => n + ((t.completedAt ?? 0) - (t.startedAt ?? 0)), 0) / finished.length) : null;
+  const done = tasks.filter((t) => t.status === "done").length;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex shrink-0 flex-wrap items-center gap-3 border-b bg-canvas px-4 py-3 lg:px-6">
-        <PageTitle icon={KanbanSquare} className="flex-1" title="Board" meta={view === "kanban" ? "L2 task queue · investigations, rework and reviews" : "tickets grouped by support state"} />
+        <PageTitle icon={KanbanSquare} className="flex-1" title="Board" meta={view === "kanban" ? "L2 task queue · one active run at a time · review 30 › rework 20 › new 10" : "open tickets grouped by support state"} />
         <Segmented label="Board view" value={view} onChange={setView} options={[{ id: "kanban", label: "Agent tasks" }, { id: "lifecycle", label: "Ticket lifecycle" }]} />
         <Tip label="Refresh">
           <Button variant="ghost" size="icon-sm" aria-label="Refresh" onClick={refresh} disabled={refreshing}><RefreshCw className={cn(refreshing && "animate-spin")} /></Button>
         </Tip>
       </header>
 
-      {view === "kanban" && board?.stats && (
-        <div className="flex shrink-0 gap-3 overflow-x-auto border-b bg-canvas px-4 py-2.5 lg:px-6">
-          {Object.entries(board.stats.by_assignee).map(([agent, counts]) => (
-            <div key={agent} className="flex items-center gap-2.5 rounded-lg border bg-background px-3 py-1.5">
-              <span className="grid size-7 place-items-center rounded-md bg-signal-soft text-2xs font-bold text-signal" aria-hidden>{(AGENT[agent]?.name ?? agent).split(" ").map((w) => w[0]).join("").slice(0, 2)}</span>
-              <span>
-                <span className="block text-meta font-medium leading-tight">{AGENT[agent]?.name ?? agent}</span>
-                <span className="block text-2xs text-subtle-foreground">{Object.entries(counts).map(([s, n]) => `${n} ${s}`).join(" · ")}</span>
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
       <div className="scrollbar-thin min-h-0 flex-1 overflow-auto">
+        {view === "kanban" && board?.available && (
+          <div className="grid gap-3 px-4 pt-4 md:grid-cols-3 lg:px-6">
+            <Panel icon={Activity} title="Queue" meta={active.length ? `${active.length} task${active.length === 1 ? "" : "s"} in flight` : "idle · nothing in flight"}>
+              <Headline value={active.length} unit="active" note={`${done} done`} />
+              <SegmentBar className="mt-3" label="Tasks by state" segments={[
+                { label: "Running", value: tasks.filter((t) => t.status === "running").length, tone: "signal" },
+                { label: "Waiting", value: active.filter((t) => t.status !== "running").length, tone: "strong" },
+                { label: "Stuck", value: stuck.length, tone: "warn" },
+                { label: "Superseded", value: superseded.length, tone: "hatch" },
+                { label: "Done", value: done, tone: "faint" },
+              ]} />
+            </Panel>
+            <Panel icon={AlertTriangle} title="Blocked" meta="a blocked review is expected when a rework replaced it">
+              <Legend rows={[
+                { label: "stuck · needs a person", value: stuck.length, tone: stuck.length ? "warn" : "faint", onClick: stuck[0] ? () => setOpen(stuck[0]) : undefined },
+                { label: "superseded by a later cycle", value: superseded.length, tone: "hatch" },
+              ]} />
+              <p className="mt-2 truncate font-mono text-2xs text-subtle-foreground">{stuck[0]?.error && stuck[0].error !== "None" ? stuck[0].error : stuck.length ? "no error recorded" : "nothing is stuck"}</p>
+            </Panel>
+            <Panel icon={Users} title="Workers" meta={avgTook != null ? `avg ${duration(avgTook)} per finished task` : "worker profiles"}>
+              <Legend rows={Object.entries(board.stats?.by_assignee ?? {}).map(([agent, counts]) => ({
+                label: AGENT[agent]?.name.toLowerCase() ?? agent,
+                value: Object.entries(counts).map(([st, n]) => `${n} ${st}`).join(" · "),
+                tone: Object.keys(counts).some((st) => !["done", "blocked"].includes(st)) ? "signal" as const : "faint" as const,
+              }))} />
+            </Panel>
+          </div>
+        )}
+
         {!board && <div className="flex gap-3 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-96 w-72 shrink-0" />)}</div>}
         {board && !board.available && view === "kanban" && (
           <Empty icon={<KanbanSquare className="size-5" />} title="Board unavailable">The Hermes Kanban board could not be read from WSL.</Empty>
         )}
         {view === "kanban" && board?.available && (
-          <div className="flex h-full gap-3 p-4 lg:px-6">
-            {columns.map((c) => (
-              <section key={c.id} className="flex w-72 shrink-0 flex-col rounded-xl bg-surface-2" aria-label={c.id}>
-                <div className="flex items-center gap-2 px-3 py-2.5">
-                  <span className={cn("size-2 rounded-full", c.id === "running" ? "bg-signal motion-safe:animate-pulse" : c.id === "blocked" ? "bg-warning" : c.id === "done" ? "bg-signal-muted" : c.id === "review" ? "bg-muted-foreground" : "bg-border-strong")} aria-hidden />
-                  <h2 className="text-meta font-semibold capitalize">{c.id}</h2>
-                  <span className="ml-auto text-2xs tabular-nums text-subtle-foreground">{c.tasks.length}</span>
-                </div>
-                <ul className="scrollbar-thin min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
-                  {c.tasks.map((t) => (
-                    <li key={t.id}>
-                      <button onClick={() => setOpen(t)} className="w-full rounded-lg border bg-surface p-3 text-left hover:border-border-strong">
-                        <span className="flex items-center gap-2">
-                          <span className={cn("rounded px-1.5 py-0.5 font-mono text-2xs", kindOf(t.title) === "Review" ? "bg-surface-3 text-foreground" : kindOf(t.title) === "Rework" ? "bg-warning-soft text-warning" : "bg-signal-soft text-signal")}>{kindOf(t.title)}</span>
-                          <span className="font-mono text-xs text-muted-foreground">{ticketLabel(ticketOf(t.title))}</span>
-                          <span className="ml-auto text-2xs text-subtle-foreground">{age(t.completedAt ?? t.startedAt ?? t.createdAt)}</span>
-                        </span>
-                        <span className="mt-2 block text-2xs text-muted-foreground">{AGENT[t.assignee ?? ""]?.name ?? t.assignee ?? "Unassigned"}</span>
-                        {t.status === "blocked" && (
-                          <span className="mt-2 flex items-start gap-1.5 text-2xs text-warning">
-                            <AlertTriangle className="mt-px size-3 shrink-0" aria-hidden />
-                            <span className="line-clamp-2">{t.error && t.error !== "None" ? t.error : "Blocked: waiting on a human or evidence"}</span>
-                          </span>
-                        )}
-                      </button>
-                    </li>
-                  ))}
-                  {!c.tasks.length && <li className="px-2 py-6 text-center text-2xs text-subtle-foreground">Empty</li>}
-                </ul>
+          <div className="flex min-h-128 gap-3 p-4 lg:px-6">
+            {columns.map((c) => c.tasks.length ? (
+              <Column key={c.id} name={c.id} count={c.tasks.length} dot={STATUS_DOT[c.id]} hint={c.id === "blocked" ? `${superseded.length} superseded` : c.id === "running" ? "wip 1" : undefined}>
+                {c.tasks.map((t) => <TaskCard key={t.id} task={t} next={later(t)} onOpen={() => setOpen(t)} />)}
+              </Column>
+            ) : (
+              <section key={c.id} aria-label={`${c.id}, empty`} className="flex w-12 shrink-0 flex-col items-center gap-3 rounded-2xl border border-dashed py-3">
+                <span className={cn("size-2 rounded-full", STATUS_DOT[c.id])} aria-hidden />
+                <span className="font-mono text-xs text-subtle-foreground vertical-text">{c.id} · 0</span>
               </section>
             ))}
           </div>
         )}
         {view === "lifecycle" && (
-          <div className="flex h-full gap-3 p-4 lg:px-6">
+          <div className="flex min-h-128 gap-3 p-4 lg:px-6">
             {LIFECYCLE.map((stage) => {
               const items = (tickets ?? []).filter((t) => t.StateLabel === stage);
               return (
-                <section key={stage} className="flex w-72 shrink-0 flex-col rounded-xl bg-surface-2" aria-label={stage}>
-                  <div className="flex items-center gap-2 px-3 py-2.5">
-                    <h2 className="text-meta font-semibold">{LIFECYCLE_NAME[stage]}</h2>
-                    <span className="ml-auto text-2xs tabular-nums text-subtle-foreground">{items.length}</span>
-                  </div>
-                  <ul className="scrollbar-thin min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
-                    {items.map((t) => (
-                      <li key={t.ID}>
-                        <button onClick={() => onOpenTicket(t.ID)} className="w-full rounded-lg border bg-surface p-3 text-left hover:border-border-strong">
-                          <span className="flex items-center gap-2">
-                            <span className="font-mono text-xs text-muted-foreground">{ticketLabel(t.TicketNo)}</span>
-                            <span className="ml-auto text-2xs text-subtle-foreground">{ago(t.ModifiedOn ?? t.CreatedOn)}</span>
-                          </span>
-                          <span className="mt-1.5 line-clamp-2 block text-meta leading-snug">{t.BriefDetails}</span>
-                          <span className="mt-2 block text-2xs text-subtle-foreground">{t.FirstLastName}{t.Area && t.Area !== "Common" ? ` · ${t.Area}` : ""}</span>
-                        </button>
-                      </li>
-                    ))}
-                    {!items.length && <li className="px-2 py-6 text-center text-2xs text-subtle-foreground">None</li>}
-                  </ul>
-                </section>
+                <Column key={stage} name={LIFECYCLE_NAME[stage]} count={items.length} dot={STAGE_DOT[stage] ?? "bg-border-strong"}>
+                  {items.map((t) => (
+                    <li key={t.ID}>
+                      <button onClick={() => onOpenTicket(t.ID)} className="w-full rounded-xl border bg-canvas p-3 text-left hover:border-border-strong">
+                        <span className="flex items-center gap-2 font-mono text-xs">
+                          <span className="text-foreground">{ticketLabel(t.TicketNo)}</span>
+                          <span className="ml-auto text-subtle-foreground">{ago(t.ModifiedOn ?? t.CreatedOn)}</span>
+                        </span>
+                        <span className="mt-1.5 line-clamp-2 block text-meta leading-snug">{t.BriefDetails}</span>
+                        <span className="mt-2 block truncate font-mono text-2xs text-subtle-foreground">{t.FirstLastName}{t.Area && t.Area !== "Common" ? ` · ${t.Area}` : ""}</span>
+                      </button>
+                    </li>
+                  ))}
+                  {!items.length && <li className="py-8 text-center font-mono text-2xs text-subtle-foreground">none</li>}
+                </Column>
               );
             })}
           </div>
         )}
       </div>
 
-      <Dialog open={!!open} onOpenChange={(o) => !o && setOpen(null)} title={open?.title ?? ""} description={open ? `${AGENT[open.assignee ?? ""]?.name ?? open.assignee} · ${open.status} · ${open.id}` : undefined} className="max-w-2xl">
+      <Dialog open={!!open} onOpenChange={(o) => !o && setOpen(null)} title={open ? `${open.kind}${open.kind !== "Investigation" ? ` · cycle ${open.cycle}` : ""} · ${ticketLabel(open.ticket)}` : ""} description={open ? `${AGENT[open.assignee ?? ""]?.name ?? open.assignee ?? "Unassigned"} · ${open.status}` : undefined} className="max-w-2xl">
         {open && (
-          <>
+          <div className="space-y-4">
             <div className="flex flex-wrap gap-2">
-              {open.status && <StatePill tone={open.status === "done" ? "done" : open.status === "blocked" ? "attention" : "progress"}>{open.status}</StatePill>}
-              {runOf(open) && <Button size="sm" variant="outline" onClick={() => { onOpenRun(runOf(open)!); setOpen(null); }}>Open the run</Button>}
+              {open.run && <Button size="sm" onClick={() => { onOpenRun(open.run!); setOpen(null); }}>How it happened</Button>}
+              {open.ticketId && <Button size="sm" variant="outline" onClick={() => { onOpenTicket(open.ticketId!); setOpen(null); }}>Open ticket</Button>}
             </div>
-            <InspectorBlock className="mt-3" label="Task payload" text={open.body} />
-          </>
+            {open.response && (
+              <div className="rounded-xl border bg-surface p-3">
+                <p className="font-mono text-xs"><span className="text-signal">proposes {outcomeLabel(open.response).toLowerCase()}</span><span className="text-subtle-foreground"> · evidence {(open.evidence ?? "unknown").toLowerCase()}</span></p>
+                {open.reply && <p className="mt-2 line-clamp-6 whitespace-pre-line text-meta text-muted-foreground">{open.reply}</p>}
+              </div>
+            )}
+            <Attributes rows={[
+              { k: "task", v: open.id, copy: open.id },
+              { k: "status", v: open.status, tone: open.status === "blocked" ? "warn" : open.status === "done" ? undefined : "signal" },
+              { k: "priority", v: `${open.priority ?? "—"} · ${PRIORITY[open.priority ?? ""] ?? "other"}` },
+              { k: "created", v: age(open.createdAt) },
+              { k: "took", v: open.startedAt && open.completedAt ? duration(open.completedAt - open.startedAt) : open.startedAt ? `started ${age(open.startedAt)}` : "not started" },
+              ...(open.error && open.error !== "None" ? [{ k: "error", v: open.error, tone: "warn" as const }] : []),
+            ]} />
+            <details>
+              <summary className="cursor-pointer text-xs text-subtle-foreground hover:text-foreground">Task payload</summary>
+              <InspectorBlock className="mt-2" label="Task payload" text={open.body} />
+            </details>
+          </div>
         )}
       </Dialog>
     </div>
+  );
+}
+
+type Task = KanbanTask & ReturnType<typeof parseTask>;
+
+// The task body is "key: value" lines plus a proposal digest; read just what a person needs.
+function parseTask(t: KanbanTask) {
+  const field = (k: string) => new RegExp(`^-? ?${k}:\\s*(.+)$`, "m").exec(t.body)?.[1]?.trim() ?? null;
+  return {
+    kind: kindOf(t.title),
+    cycle: Number(/\[(\d+)\]/.exec(t.title)?.[1] ?? field("review_cycle") ?? 0),
+    ticket: field("ticket_no") ?? ticketOf(t.title),
+    ticketId: field("ticket_id"),
+    run: field("run_id"),
+    response: field("response_type"),
+    evidence: field("evidence_status"),
+    reply: /- reply_text:\s*([\s\S]*?)(?:\n- \w+:|$)/.exec(t.body)?.[1]?.trim() ?? null,
+  };
+}
+
+const PRIORITY: Record<string, string> = { "30": "review", "20": "rework", "10": "new investigation" };
+const STATUS_DOT: Record<string, string> = {
+  triage: "bg-border-strong", todo: "bg-border-strong", ready: "bg-muted-foreground", running: "bg-signal motion-safe:animate-pulse",
+  review: "bg-muted-foreground", blocked: "bg-warning", done: "bg-signal-muted",
+};
+const STAGE_DOT: Record<string, string> = {
+  "Being investigated": "bg-signal motion-safe:animate-pulse", "Update posted": "bg-muted-foreground", "With the support team": "bg-muted-foreground",
+  "Escalated to specialist": "bg-warning", "Waiting for your reply": "bg-muted-foreground", Resolved: "bg-signal-muted",
+};
+
+function Column({ name, count, dot, hint, children }: { name: string; count: number; dot: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <section aria-label={name} className="flex w-76 min-w-76 max-w-md shrink-0 grow flex-col rounded-2xl border bg-canvas p-1.5">
+      <header className="flex items-center gap-2 px-2.5 pb-2 pt-1.5">
+        <span className={cn("size-2 rounded-full", dot)} aria-hidden />
+        <h2 className="text-meta font-semibold capitalize">{name}</h2>
+        {hint && <span className="font-mono text-2xs text-subtle-foreground">{hint}</span>}
+        <span className="ml-auto font-mono text-xs tabular-nums text-muted-foreground">{count}</span>
+      </header>
+      <ul className="scrollbar-thin min-h-0 flex-1 space-y-1.5 overflow-y-auto rounded-xl border bg-surface p-1.5">{children}</ul>
+    </section>
+  );
+}
+
+function TaskCard({ task: t, next, onOpen }: { task: Task; next?: Task; onOpen: () => void }) {
+  const took = t.startedAt && t.completedAt ? t.completedAt - t.startedAt : null;
+  const stale = t.status === "blocked" && !!next;
+  return (
+    <li>
+      <button onClick={onOpen} className={cn("w-full rounded-xl border bg-canvas p-3 text-left hover:border-border-strong", t.status === "running" && "border-signal", t.status === "blocked" && !stale && "border-warning/50", stale && "opacity-60 hover:opacity-100")}>
+        <span className="flex items-center gap-2 font-mono text-xs">
+          <span className={cn("rounded px-1.5 py-0.5 text-2xs", t.kind === "Review" ? "bg-surface-3 text-foreground" : t.kind === "Rework" ? "bg-warning-soft text-warning" : "bg-signal-soft text-signal")}>
+            {t.kind.toLowerCase()}{t.kind !== "Investigation" ? ` · c${t.cycle}` : ""}
+          </span>
+          <span className="text-foreground">{ticketLabel(t.ticket)}</span>
+          <span className="ml-auto text-subtle-foreground">{age(t.completedAt ?? t.startedAt ?? t.createdAt)}</span>
+        </span>
+        {t.response && (
+          <span className="mt-2 block truncate font-mono text-2xs">
+            <span className="text-subtle-foreground">proposes </span>
+            <span className="text-foreground">{outcomeLabel(t.response).toLowerCase()}</span>
+            {t.evidence && <span className={t.evidence === "COMPLETE" ? "text-signal" : "text-warning"}> · {t.evidence.toLowerCase()}</span>}
+          </span>
+        )}
+        <span className="mt-2 flex items-center gap-2 font-mono text-2xs text-subtle-foreground">
+          <span className="truncate">{AGENT[t.assignee ?? ""]?.name.toLowerCase() ?? t.assignee ?? "unassigned"}</span>
+          {took != null && <span className="ml-auto shrink-0">took {duration(took)}</span>}
+        </span>
+        {t.status === "blocked" && (
+          <span className={cn("mt-2 flex items-start gap-1.5 text-2xs", stale ? "text-subtle-foreground" : "text-warning")}>
+            {stale ? <CornerDownRight className="mt-px size-3 shrink-0" aria-hidden /> : <AlertTriangle className="mt-px size-3 shrink-0" aria-hidden />}
+            <span className="line-clamp-2">{stale ? `superseded by ${next!.kind.toLowerCase()} · c${next!.cycle}` : t.error && t.error !== "None" ? t.error : "blocked · waiting on a person"}</span>
+          </span>
+        )}
+      </button>
+    </li>
   );
 }
