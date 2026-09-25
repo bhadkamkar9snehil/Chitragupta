@@ -45,6 +45,7 @@ function humanToolCall(
   args: unknown,
 ): ToolCallPart {
   const argsText = JSON.stringify(args);
+  if (!argsText) throw new Error("Invalid Helpdesk tool arguments.");
   return {
     type: "tool-call",
     toolCallId,
