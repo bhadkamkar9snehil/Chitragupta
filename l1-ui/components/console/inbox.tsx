@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, ArrowLeft, ArrowRight, Bot, CheckCircle2, Clock, Copy, Headset, Inbox, Layers, MessageSquare, PanelLeftClose, PanelLeftOpen, RefreshCw, Ticket as TicketIcon, User as UserIcon } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowRight, Bot, CheckCircle2, Clock, Headset, Inbox, Layers, PanelLeftClose, PanelLeftOpen, RefreshCw, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Message, type SourceRef, type Ticket } from "@/lib/api";
 import { ago, human, outcomeLabel, pageTitle, RESPONSE_KIND, ticketLabel, when, whenShort } from "@/lib/format";
@@ -178,26 +178,18 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
               {drawerOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
             </Button>
             <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  className="font-mono text-xs text-muted-foreground hover:text-foreground"
-                  onClick={() => {
-                    navigator.clipboard.writeText(t.TicketNo).catch(() => {});
-                    toast.success("Ticket number copied");
-                  }}
-                >
-                  {t.TicketNo} <Copy className="inline size-3" aria-hidden />
-                </button>
-                <StatePill tone={t.StateTone}>{t.StateLabel}</StatePill>
+              <div className="flex items-start gap-3">
+                <h2 className="min-w-0 flex-1 text-title font-semibold leading-snug tracking-tight">
+                  <button
+                    className="mr-2 font-mono text-muted-foreground hover:text-foreground"
+                    title="Copy ticket number"
+                    onClick={() => { navigator.clipboard.writeText(t.TicketNo).catch(() => {}); toast.success("Ticket number copied"); }}
+                  >{ticketLabel(t.TicketNo)}</button>
+                  {t.BriefDetails}
+                </h2>
+                <StatePill tone={t.StateTone} className="mt-0.5 shrink-0">{t.StateLabel}</StatePill>
               </div>
-              <h2 className="mt-1 text-title font-semibold leading-snug tracking-tight">{t.BriefDetails}</h2>
-              <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground 2xl:hidden">
-                <span>{t.FirstLastName || t.EmailID}</span>
-                <span>{t.Area ?? "No area"} · {t.Type ?? "No type"}</span>
-                <span>{t.Priority?.replace(" Priority", "") ?? "Standard"}</span>
-                <span>Raised {when(t.CreatedOn)}</span>
-              </p>
-              <Journey ticket={t} onChat={() => setTab("chat")} onRun={onOpenRun} />
+              <Trail ticket={t} onChat={() => setTab("chat")} onRun={onOpenRun} />
             </div>
           </div>
           <div className="scrollbar-thin my-3 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl border bg-canvas p-1" role="tablist">
@@ -304,25 +296,27 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
   );
 }
 
-// Where this ticket is in its life: chat -> ticket -> L2 investigations -> current state. Each step opens its record.
-function Journey({ ticket, onChat, onRun }: { ticket: Ticket; onChat: () => void; onRun: (id: string) => void }) {
-  const runs = ticket.Runs ?? [];
-  const latest = runs.at(-1);
-  const step = "inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border bg-canvas px-2.5 font-mono text-2xs text-muted-foreground";
-  const link = "hover:border-border-strong hover:text-foreground";
+// One quiet line: who raised it, when, and where it has been. The chat and each L2 attempt open their record.
+function Trail({ ticket: t, onChat, onRun }: { ticket: Ticket; onChat: () => void; onRun: (id: string) => void }) {
+  const link = "text-foreground underline-offset-4 hover:underline";
+  const high = t.Priority && !/standard|normal|medium/i.test(t.Priority) ? t.Priority.replace(" Priority", "") : null;
   return (
-    <ol className="scrollbar-thin mt-3 flex items-center gap-1 overflow-x-auto pb-1" aria-label="Ticket journey">
-      {ticket.Transcript?.length ? (
-        <li className="flex shrink-0 items-center gap-1"><button onClick={onChat} className={cn(step, link)}><MessageSquare className="size-3" aria-hidden />L1 chat</button><span className="h-px w-3 bg-signal" aria-hidden /></li>
-      ) : null}
-      <li className="flex shrink-0 items-center gap-1"><span className={step}><TicketIcon className="size-3" aria-hidden />raised {whenShort(ticket.CreatedOn)}</span><span className={cn("h-px w-3", runs.length ? "bg-signal" : "bg-border-strong")} aria-hidden /></li>
-      {runs.length ? runs.map((r) => (
-        <li key={r.ID} className="flex shrink-0 items-center gap-1">
-          <button onClick={() => onRun(r.ID)} className={cn(step, link, !r.CompletedOn && "border-signal text-signal")}><Bot className="size-3" aria-hidden />L2 #{r.AttemptNo}{r.CompletedOn ? ` · ${outcomeLabel(r.ResponseType).toLowerCase()}` : " · working"}</button>
-          {r !== latest && <span className="h-px w-3 bg-signal" aria-hidden />}
-        </li>
-      )) : <li className="flex shrink-0 items-center gap-1"><span className={cn(step, "border-dashed")}>L2 not claimed yet</span><span className="h-px w-3 bg-border-strong" aria-hidden /></li>}
-    </ol>
+    <p className="scrollbar-thin mt-1 flex items-center gap-x-2 overflow-x-auto whitespace-nowrap pb-1 text-xs text-muted-foreground">
+      <span>{t.FirstLastName || t.EmailID}</span>
+      <span aria-hidden>·</span>
+      <span>{whenShort(t.CreatedOn)}</span>
+      {high && <><span aria-hidden>·</span><span className="text-warning">{high}</span></>}
+      {t.Transcript?.length ? <><span aria-hidden>·</span><button onClick={onChat} className={link}>from chat</button></> : null}
+      <span aria-hidden>·</span>
+      {t.Runs?.length ? t.Runs.map((r, i) => (
+        <span key={r.ID} className="flex items-center gap-2">
+          {i > 0 && <span aria-hidden>→</span>}
+          <button onClick={() => onRun(r.ID)} className={cn(link, !r.CompletedOn && "text-signal")}>
+            L2 #{r.AttemptNo} {r.CompletedOn ? outcomeLabel(r.ResponseType).toLowerCase() : "working"}
+          </button>
+        </span>
+      )) : <span>not claimed by L2 yet</span>}
+    </p>
   );
 }
 
