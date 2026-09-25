@@ -15,11 +15,46 @@ import {
   L1MessageResponseSchema,
 } from "@/lib/l1-contract";
 
-function assertNever(value: never): never {
-  throw new Error(`Unsupported L1 response type: ${String(value)}`);
+type ToolCallPart = Extract<
+  ThreadAssistantMessagePart,
+  { type: "tool-call" }
+>;
+
+function assertNever(_value: never): never {
+  throw new Error("Unsupported L1 response type.");
 }
 
-function toolCallId(prefix: string, turn: number) {
+function displayToolCall(
+  toolName: string,
+  toolCallId: string,
+  result: unknown,
+): ToolCallPart {
+  return {
+    type: "tool-call",
+    toolCallId,
+    toolName,
+    args: {},
+    argsText: "{}",
+    result,
+  };
+}
+
+function humanToolCall(
+  toolName: string,
+  toolCallId: string,
+  args: unknown,
+): ToolCallPart {
+  const argsText = JSON.stringify(args);
+  return {
+    type: "tool-call",
+    toolCallId,
+    toolName,
+    args: JSON.parse(argsText),
+    argsText,
+  };
+}
+
+function displayToolCallId(prefix: string, turn: number) {
   return `${prefix}-${turn}`;
 }
 
@@ -78,15 +113,14 @@ export function L1RuntimeProvider({
               { type: "text", text: parsed.data.text },
             ];
 
-            if (parsed.data.sources && parsed.data.sources.length > 0) {
-              content.push({
-                type: "tool-call",
-                toolCallId: toolCallId("knowledge", turn),
-                toolName: "show_knowledge_sources",
-                args: {},
-                argsText: "{}",
-                result: { sources: parsed.data.sources },
-              });
+            if (parsed.data.sources) {
+              content.push(
+                displayToolCall(
+                  "show_knowledge_sources",
+                  displayToolCallId("knowledge", turn),
+                  { sources: parsed.data.sources },
+                ),
+              );
             }
 
             return { content };
@@ -95,13 +129,11 @@ export function L1RuntimeProvider({
           case "collect_intake":
             return {
               content: [
-                {
-                  type: "tool-call",
-                  toolCallId: parsed.data.toolCallId,
-                  toolName: "collect_intake",
-                  args: parsed.data.flow,
-                  argsText: JSON.stringify(parsed.data.flow),
-                },
+                humanToolCall(
+                  "collect_intake",
+                  parsed.data.toolCallId,
+                  parsed.data.flow,
+                ),
               ],
               status: { type: "requires-action", reason: "tool-calls" },
             };
@@ -109,55 +141,44 @@ export function L1RuntimeProvider({
           case "ticket":
             return {
               content: [
-                {
-                  type: "tool-call",
-                  toolCallId: toolCallId("ticket", turn),
-                  toolName: "show_ticket",
-                  args: {},
-                  argsText: "{}",
-                  result: parsed.data.ticket,
-                },
+                displayToolCall(
+                  "show_ticket",
+                  displayToolCallId("ticket", turn),
+                  parsed.data.ticket,
+                ),
               ],
             };
 
           case "tickets":
             return {
               content: [
-                {
-                  type: "tool-call",
-                  toolCallId: toolCallId("tickets", turn),
-                  toolName: "show_tickets",
-                  args: {},
-                  argsText: "{}",
-                  result: { tickets: parsed.data.tickets },
-                },
+                displayToolCall(
+                  "show_tickets",
+                  displayToolCallId("tickets", turn),
+                  { tickets: parsed.data.tickets },
+                ),
               ],
             };
 
           case "l2_reply":
             return {
               content: [
-                {
-                  type: "tool-call",
-                  toolCallId: toolCallId("l2-reply", turn),
-                  toolName: "show_l2_reply",
-                  args: {},
-                  argsText: "{}",
-                  result: parsed.data.reply,
-                },
+                displayToolCall(
+                  "show_l2_reply",
+                  displayToolCallId("l2-reply", turn),
+                  parsed.data.reply,
+                ),
               ],
             };
 
           case "l2_question":
             return {
               content: [
-                {
-                  type: "tool-call",
-                  toolCallId: parsed.data.toolCallId,
-                  toolName: "answer_l2_question",
-                  args: parsed.data.prompt,
-                  argsText: JSON.stringify(parsed.data.prompt),
-                },
+                humanToolCall(
+                  "answer_l2_question",
+                  parsed.data.toolCallId,
+                  parsed.data.prompt,
+                ),
               ],
               status: { type: "requires-action", reason: "tool-calls" },
             };
