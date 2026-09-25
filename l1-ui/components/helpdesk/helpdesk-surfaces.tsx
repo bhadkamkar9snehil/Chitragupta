@@ -72,7 +72,7 @@ export function TicketCard({
         </div>
       </div>
 
-      <p className="mt-3 break-words text-sm leading-6">{ticket.summary}</p>
+      <p className="mt-3 break-words text-base leading-7 md:text-sm md:leading-6">{ticket.summary}</p>
 
       {ticket.domain || ticket.area || when ? (
         <dl className="mt-3 grid gap-2 border-t pt-3 text-sm sm:grid-cols-3">
@@ -136,7 +136,7 @@ export function TicketList({
                     {ticket.statusLabel}
                   </span>
                 </div>
-                <p className="mt-1 break-words text-sm leading-6">
+                <p className="mt-1 break-words text-base leading-7 md:text-sm md:leading-6">
                   {ticket.summary}
                 </p>
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -186,7 +186,7 @@ export function L2ReplySurface({ reply }: Readonly<{ reply: L2Reply }>) {
           </>
         ) : null}
       </div>
-      <p className="mt-2 break-words whitespace-pre-wrap text-sm leading-6">
+      <p className="mt-2 break-words whitespace-pre-wrap text-base leading-7 md:text-sm md:leading-6">
         {reply.text}
       </p>
     </section>
@@ -217,12 +217,12 @@ export function L2QuestionSurface({
         <div className="break-words text-xs font-medium text-muted-foreground">
           Ticket {prompt.ticketNo}
         </div>
-        <p className="mt-2 break-words text-sm font-medium leading-6">
+        <p className="mt-2 break-words text-base font-medium leading-7 md:text-sm md:leading-6">
           {prompt.question}
         </p>
         <div className="mt-3 border-t pt-3">
           <div className="text-xs text-muted-foreground">Your answer</div>
-          <p className="mt-1 break-words whitespace-pre-wrap text-sm leading-6">
+          <p className="mt-1 break-words whitespace-pre-wrap text-base leading-7 md:text-sm md:leading-6">
             {answer.answer}
           </p>
           <div className="mt-2 text-xs font-medium text-primary">
@@ -264,7 +264,7 @@ export function L2QuestionSurface({
         Ticket {prompt.ticketNo}
       </div>
       <h3 className="mt-2 text-base font-semibold">Support needs more detail</h3>
-      <p className="mt-1 break-words text-sm leading-6">{prompt.question}</p>
+      <p className="mt-1 break-words text-base leading-7 md:text-sm md:leading-6">{prompt.question}</p>
 
       <label
         className="mt-4 block text-sm font-medium"
