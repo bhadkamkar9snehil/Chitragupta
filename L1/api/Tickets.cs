@@ -15,7 +15,9 @@ public static class Tickets
                a.Name AS Area, k.Name AS Type, p.priority AS Priority,
                -- XStudio's insert trigger rewrites Source, so the chat link is the reliable channel marker.
                CASE WHEN EXISTS (SELECT 1 FROM dbo.L1_Chat_Session_Tbl l WHERE l.TicketNo = c.TicketNo) THEN 'Helpdesk chat' ELSE 'Other' END AS Channel,
-               r.ResponseType, r.ReplyText, r.CompletedOn, run.ProcessStatus AS RunStatus,
+               r.ResponseType,
+               CASE WHEN l3.L3Status = 'Resolved' AND l3.L3ResolutionSummary IS NOT NULL THEN l3.L3ResolutionSummary ELSE r.ReplyText END AS ReplyText,
+               r.CompletedOn, run.ProcessStatus AS RunStatus, l3.L3Status, l3.L3ResolutionSummary,
                (SELECT MIN(CompletedOn) FROM dbo.Hermes_L2_Response_Trn_Tbl f
                  WHERE f.TicketID = c.ID AND f.IsDeleted = 0 AND f.ProcessStatus = 'COMPLETED' AND f.ReplyText IS NOT NULL) AS FirstReplyOn,
                (SELECT TOP 1 Rating FROM dbo.L1_Ticket_Event_Tbl e WHERE e.TicketID = CONVERT(varchar(36), c.ID) AND e.Kind = 'rating'
@@ -29,20 +31,24 @@ public static class Tickets
                      ORDER BY x.CompletedOn DESC) r
         OUTER APPLY (SELECT TOP 1 ProcessStatus FROM dbo.Hermes_L2_Response_Trn_Tbl y
                      WHERE y.TicketID = c.ID AND y.IsDeleted = 0 ORDER BY y.CreatedOn DESC) run
+        OUTER APPLY (SELECT TOP 1 L3Status, L3ResolutionSummary, ResolvedOn FROM dbo.Hermes_L3_Escalation_Trn_Tbl e
+                     WHERE e.IsDeleted = 0 AND CONVERT(varchar(36), e.TicketID) = CONVERT(varchar(36), c.ID)
+                     ORDER BY e.EscalatedOn DESC) l3
         WHERE ISNULL(c.IsDeleted, 0) = 0
         """;
 
     // What a requester reads as the ticket's state; Helpdesk + L2 rows are the only inputs.
     public static Dictionary<string, object?> WithState(Dictionary<string, object?> t)
     {
-        var (label, tone) = (t["Status"]?.ToString(), t["AskStatus"]?.ToString(), t["ResponseType"]?.ToString()) switch
+        var (label, tone) = (t["Status"]?.ToString(), t["AskStatus"]?.ToString(), t["ResponseType"]?.ToString(), t["L3Status"]?.ToString()) switch
         {
-            ("Closed", _, _) => ("Resolved", "done"),
-            (_, "Ask", _) => ("Waiting for your reply", "attention"),
-            (_, _, "RESOLUTION") => ("Resolved", "done"),
-            (_, _, "NEEDS_HUMAN_ACTION") => ("With the support team", "progress"),
-            (_, _, "L3_ESCALATION") => ("Escalated to specialist", "progress"),
-            (_, _, "UPDATE") => ("Update posted", "progress"),
+            ("Closed", _, _, _) => ("Resolved", "done"),
+            (_, "Ask", _, _) => ("Waiting for your reply", "attention"),
+            (_, _, "RESOLUTION", _) => ("Resolved", "done"),
+            (_, _, _, "Resolved") => ("Update posted", "progress"),
+            (_, _, "NEEDS_HUMAN_ACTION", _) => ("With the support team", "progress"),
+            (_, _, "L3_ESCALATION", _) => ("Escalated to specialist", "progress"),
+            (_, _, "UPDATE", _) => ("Update posted", "progress"),
             _ => ("Being investigated", "pending"),
         };
         t["StateLabel"] = label;

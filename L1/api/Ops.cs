@@ -209,22 +209,69 @@ public static class Ops
                 await Note("Note", text, body["public"]?.GetValue<bool>() == true);
                 break;
             case "resolve" when !string.IsNullOrEmpty(text):
+                var closeTicket = body["closeTicket"]?.GetValue<bool>() == true;
                 await Db.Exec("""
-                    UPDATE dbo.Hermes_L3_Escalation_Trn_Tbl SET L3Status = 'Resolved', L3ResolutionSummary = @x, ResolvedOn = GETDATE(),
-                        ResolvedByUserID = @u, IsProcessed = 1, ModifiedOn = GETDATE() WHERE ID = @id
-                    """, ("@x", text), ("@u", actor["ID"]?.ToString()), ("@id", id));
-                await Note("Resolution", text, true);
-                if (body["closeTicket"]?.GetValue<bool>() == true)
-                    await Db.Exec("UPDATE dbo.Complaint_Mst_Tbl SET Status = 'Closed', ModifiedOn = GETDATE() WHERE CONVERT(varchar(36), ID) = @t", ("@t", row["TicketID"]?.ToString()));
+                    SET XACT_ABORT ON;
+                    BEGIN TRY
+                      BEGIN TRAN;
+                      UPDATE dbo.Hermes_L3_Escalation_Trn_Tbl
+                      SET L3Status = 'Resolved', L3ResolutionSummary = @x, ResolvedOn = GETDATE(),
+                          ResolvedByUserID = @u, IsProcessed = 1, ModifiedOn = GETDATE()
+                      WHERE ID = @id;
+
+                      INSERT INTO dbo.Hermes_Ticket_Activity_Trn_Tbl
+                        (TicketID, RunID, ActivityType, ActorType, ActorName, NoteText, IsCustomerVisible, CreatedBy, Source)
+                      VALUES (@t, @r, 'Resolution', 'Human', @n, @x, 1, @u, 'L3-Desk');
+
+                      UPDATE dbo.Complaint_Mst_Tbl
+                      SET Status = CASE WHEN @close = 1 THEN 'Closed' ELSE Status END,
+                          AskStatus = CASE WHEN @close = 1 THEN 'Enter' ELSE AskStatus END,
+                          ReplyRemarks = @x,
+                          ModifiedOn = GETDATE()
+                      WHERE CONVERT(varchar(36), ID) = @t;
+                      COMMIT;
+                    END TRY
+                    BEGIN CATCH
+                      IF @@TRANCOUNT > 0 ROLLBACK;
+                      THROW;
+                    END CATCH
+                    """,
+                    ("@x", text), ("@u", actor["ID"]?.ToString()), ("@id", id), ("@t", row["TicketID"]?.ToString()),
+                    ("@r", row["RunID"]?.ToString()), ("@n", name), ("@close", closeTicket));
                 break;
             case "reopen":
-                await Db.Exec("UPDATE dbo.Hermes_L3_Escalation_Trn_Tbl SET L3Status = 'Open', ResolvedOn = NULL, ModifiedOn = GETDATE() WHERE ID = @id", ("@id", id));
-                await Note("Reopened", $"Reopened by {name}", false);
+                await Db.Exec("""
+                    SET XACT_ABORT ON;
+                    BEGIN TRY
+                      BEGIN TRAN;
+                      UPDATE dbo.Hermes_L3_Escalation_Trn_Tbl
+                      SET L3Status = 'Open', ResolvedOn = NULL, ResolvedByUserID = NULL, IsProcessed = 0, ModifiedOn = GETDATE()
+                      WHERE ID = @id;
+
+                      UPDATE dbo.Complaint_Mst_Tbl
+                      SET Status = CASE WHEN Status = 'Closed' THEN 'Enter' ELSE Status END,
+                          AskStatus = 'Enter', ModifiedOn = GETDATE()
+                      WHERE CONVERT(varchar(36), ID) = @t;
+
+                      INSERT INTO dbo.Hermes_Ticket_Activity_Trn_Tbl
+                        (TicketID, RunID, ActivityType, ActorType, ActorName, NoteText, IsCustomerVisible, CreatedBy, Source)
+                      VALUES (@t, @r, 'Reopened', 'Human', @n, @note, 0, @u, 'L3-Desk');
+                      COMMIT;
+                    END TRY
+                    BEGIN CATCH
+                      IF @@TRANCOUNT > 0 ROLLBACK;
+                      THROW;
+                    END CATCH
+                    """,
+                    ("@id", id), ("@t", row["TicketID"]?.ToString()), ("@r", row["RunID"]?.ToString()), ("@n", name),
+                    ("@note", $"Reopened by {name}"), ("@u", actor["ID"]?.ToString()));
                 break;
             default:
                 return Results.BadRequest();
         }
-        return Results.Ok();
+        var updated = (await L3(null)).FirstOrDefault(r => r["ID"]?.ToString()?.Equals(id, StringComparison.OrdinalIgnoreCase) == true);
+        var ticket = await Tickets.One(row["TicketID"]?.ToString() ?? "");
+        return Results.Ok(new { escalation = updated, ticket });
     }
 
     static async Task<object> TailJsonl(string name, string bashPath, int top)

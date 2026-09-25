@@ -79,7 +79,10 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
       </section>
       <div className={cn("min-h-0 min-w-0 flex-1 flex-col", escalationId ? "flex" : "hidden md:flex")}>
         {selected ? (
-          <Detail key={selected.ID} e={selected} engineer={engineer} askEngineer={askEngineer} onBack={() => onSelect(null)} onChanged={() => setTick((n) => n + 1)} onOpenRun={onOpenRun} onOpenTicket={onOpenTicket} drawerOpen={drawerOpen} onDrawerToggle={() => setDrawerOpen((v) => !v)} />
+          <Detail key={selected.ID} e={selected} engineer={engineer} askEngineer={askEngineer} onBack={() => onSelect(null)} onChanged={(updated) => {
+            if (updated) setRows((current) => current?.map((x) => x.ID === updated.ID ? updated : x) ?? null);
+            setTick((n) => n + 1);
+          }} onOpenRun={onOpenRun} onOpenTicket={onOpenTicket} drawerOpen={drawerOpen} onDrawerToggle={() => setDrawerOpen((v) => !v)} />
         ) : (
           <Empty className="m-auto" icon={<ShieldAlert className="size-5" />} title="Pick an escalation">What L2 found, what it suggests, and the actions a person needs to take.</Empty>
         )}
@@ -89,7 +92,7 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
 }
 
 function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpenTicket, drawerOpen, onDrawerToggle }: {
-  e: Escalation; engineer: User | null; askEngineer: () => void; onBack: () => void; onChanged: () => void; onOpenRun: (id: string) => void; onOpenTicket: (id: string) => void;
+  e: Escalation; engineer: User | null; askEngineer: () => void; onBack: () => void; onChanged: (updated?: Escalation) => void; onOpenRun: (id: string) => void; onOpenTicket: (id: string) => void;
   drawerOpen: boolean; onDrawerToggle: () => void;
 }) {
   const [note, setNote] = useState("");
@@ -103,11 +106,11 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
     if (!engineer) return askEngineer();
     setBusy(true);
     try {
-      await ops.l3Act(e.ID, { userId: engineer.ID, action, text, public: visible, closeTicket: close });
-      toast.success({ assign: "Picked up", note: "Note added", resolve: "Resolved", reopen: "Reopened" }[action]);
+      const result = await ops.l3Act(e.ID, { userId: engineer.ID, action, text, public: visible, closeTicket: close });
+      toast.success({ assign: "Picked up", note: "Note added", resolve: close ? "Escalation resolved and ticket closed" : "Escalation resolved", reopen: "Reopened" }[action]);
       setNote("");
       setSummary("");
-      onChanged();
+      onChanged(result.escalation);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {

@@ -258,7 +258,7 @@ export const ops = {
   activity: () => call<Activity[]>("ops/activity"),
   l3: (status?: string) => call<Escalation[]>(`ops/l3?${q({ status })}`),
   l3Act: (id: string, body: { userId: string; action: "assign" | "note" | "resolve" | "reopen"; text?: string; public?: boolean; closeTicket?: boolean }) =>
-    call(`ops/l3/${id}`, { method: "POST", body }),
+    call<{ escalation: Escalation; ticket: Ticket }>(`ops/l3/${id}`, { method: "POST", body }),
   tools: () => call<ToolStats>("ops/tools"),
   logs: (take = 160) => call<RuntimeLogs>(`ops/logs?take=${take}`),
 };
