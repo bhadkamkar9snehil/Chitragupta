@@ -29,8 +29,17 @@ export const TicketSnapshotSchema = z.object({
   updatedOn: DateTextSchema.optional(),
 });
 
+const TicketListSchema = z
+  .array(TicketSnapshotSchema)
+  .max(20)
+  .refine(
+    (tickets) =>
+      new Set(tickets.map((ticket) => ticket.ticketId)).size === tickets.length,
+    { message: "Ticket IDs must be unique." },
+  );
+
 export const TicketListResultSchema = z.object({
-  tickets: z.array(TicketSnapshotSchema).max(20),
+  tickets: TicketListSchema,
 });
 
 export const L2ReplySchema = z.object({
@@ -111,7 +120,7 @@ export const L1MessageResponseSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("tickets"),
-    tickets: z.array(TicketSnapshotSchema).max(20),
+    tickets: TicketListSchema,
   }),
   z.object({
     type: z.literal("l2_reply"),
