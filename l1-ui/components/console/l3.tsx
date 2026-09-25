@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, CheckCircle2, Hand, PanelLeftClose, PanelLeftOpen, ShieldAlert, UserRound } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ExternalLink, Hand, PanelLeftClose, PanelLeftOpen, ShieldAlert, UserRound } from "lucide-react";
 import { toast } from "sonner";
-import { ops, type Escalation, type User } from "@/lib/api";
+import { api, ops, type Escalation, type Ticket, type User } from "@/lib/api";
 import { ago, displayName, outcomeLabel, ticketLabel, when } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -111,7 +111,27 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
   const [summary, setSummary] = useState("");
   const [close, setClose] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [showTicket, setShowTicket] = useState(false);
+  const [ticket, setTicket] = useState<Ticket | null>(null);
+  const [ticketLoading, setTicketLoading] = useState(false);
   const resolved = e.L3Status === "Resolved";
+
+  async function toggleTicketContext() {
+    if (showTicket) {
+      setShowTicket(false);
+      return;
+    }
+    setShowTicket(true);
+    if (ticket) return;
+    setTicketLoading(true);
+    try {
+      setTicket(await api.admin.ticket(e.TicketID));
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setTicketLoading(false);
+    }
+  }
 
   async function act(action: "assign" | "note" | "resolve" | "reopen", text?: string) {
     if (!engineer) return askEngineer();
@@ -148,14 +168,20 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
             <h2 className="mt-1 text-title font-semibold leading-snug tracking-tight">{e.BriefDetails}</h2>
             <p className="mt-1 break-words text-xs text-muted-foreground">{e.FirstLastName} · {e.EmailID}{e.Area ? ` · ${e.Area}` : ""} · ticket {e.TicketStatus === "Closed" ? "closed" : "open"}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              {e.RunID && <Button variant="outline" size="sm" onClick={() => onOpenRun(e.RunID!)}>L2 run</Button>}
-              <Button variant="outline" size="sm" onClick={() => onOpenTicket(e.TicketID)}>Ticket</Button>
+              <Button variant={showTicket ? "soft" : "outline"} size="sm" onClick={toggleTicketContext}>
+                {showTicket ? "Hide ticket context" : "Ticket context"}
+              </Button>
+              {e.RunID && <Button variant="outline" size="sm" onClick={() => onOpenRun(e.RunID!)}>View L2 investigation</Button>}
+              <Button variant="ghost" size="sm" onClick={() => onOpenTicket(e.TicketID)}>Open full ticket <ExternalLink /></Button>
             </div>
           </div>
         </div>
       </header>
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto grid max-w-5xl gap-6 p-4 lg:grid-cols-5 lg:p-6">
+        {showTicket && (
+          <TicketContext ticket={ticket} loading={ticketLoading} onOpenFull={() => onOpenTicket(e.TicketID)} />
+        )}
+        <div className="mx-auto grid max-w-6xl gap-6 p-4 lg:grid-cols-5 lg:p-6">
           <div className="space-y-5 lg:col-span-3">
             {sections.filter(([, v]) => v).map(([k, v]) => (
               <section key={k}>
@@ -171,6 +197,15 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
             )}
           </div>
           <aside className="space-y-4 lg:col-span-2" aria-label="Actions">
+            <div className="rounded-xl border bg-surface p-4">
+              <p className="text-sm font-semibold">Human handoff workflow</p>
+              <ol className="mt-3 space-y-2 text-meta">
+                <li className="flex gap-2"><span className={cn("grid size-5 shrink-0 place-items-center rounded-full text-2xs font-semibold", e.AssignedToUserID ? "bg-success-soft text-success" : "bg-surface-3 text-muted-foreground")}>1</span><span><strong>Pick up</strong><span className="block text-xs text-muted-foreground">Own the escalation so the team knows who is acting.</span></span></li>
+                <li className="flex gap-2"><span className="grid size-5 shrink-0 place-items-center rounded-full bg-surface-3 text-2xs font-semibold text-muted-foreground">2</span><span><strong>Update if needed</strong><span className="block text-xs text-muted-foreground">Send the requester an update or keep an internal note.</span></span></li>
+                <li className="flex gap-2"><span className={cn("grid size-5 shrink-0 place-items-center rounded-full text-2xs font-semibold", resolved ? "bg-success-soft text-success" : "bg-surface-3 text-muted-foreground")}>3</span><span><strong>Resolve handoff</strong><span className="block text-xs text-muted-foreground">Record the human resolution and optionally close the ticket.</span></span></li>
+              </ol>
+            </div>
+
             <div className="rounded-xl border bg-surface p-4">
               <p className="text-sm font-semibold">Owner</p>
               {e.AssignedToUserID ? (
@@ -188,13 +223,13 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
             </div>
 
             <form className="rounded-xl border bg-surface p-4" onSubmit={(ev) => { ev.preventDefault(); if (note.trim()) act("note", note.trim()); }}>
-              <Label htmlFor="note">Add a note</Label>
+              <Label htmlFor="note">Update / internal note</Label>
               <Textarea id="note" rows={3} className="mt-1.5" value={note} onChange={(ev) => setNote(ev.target.value)} placeholder="What you checked, who you contacted…" />
               <div className="mt-2 flex items-center justify-between gap-2">
                 <label className="flex items-center gap-2 text-meta text-muted-foreground">
-                  <Switch checked={visible} onCheckedChange={setVisible} aria-label="Visible to the requester" /> Requester sees it
+                  <Switch checked={visible} onCheckedChange={setVisible} aria-label="Send update to requester" /> {visible ? "Send to requester" : "Internal only"}
                 </label>
-                <Button type="submit" size="sm" variant="outline" disabled={!note.trim() || busy}>Add note</Button>
+                <Button type="submit" size="sm" variant="outline" disabled={!note.trim() || busy}>{visible ? "Send update" : "Save note"}</Button>
               </div>
             </form>
 
@@ -206,8 +241,9 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
               </div>
             ) : (
               <form className="rounded-xl border bg-surface p-4" onSubmit={(ev) => { ev.preventDefault(); if (summary.trim()) act("resolve", summary.trim()); }}>
-                <Label htmlFor="resolve">Resolve</Label>
-                <Textarea id="resolve" rows={4} className="mt-1.5" value={summary} onChange={(ev) => setSummary(ev.target.value)} placeholder="What was done. The requester sees this on their ticket." />
+                <Label htmlFor="resolve">Resolve handoff</Label>
+                <p className="mt-1 text-xs text-muted-foreground">This resolution is requester-visible. Close the ticket when no further support action is required.</p>
+                <Textarea id="resolve" rows={4} className="mt-2" value={summary} onChange={(ev) => setSummary(ev.target.value)} placeholder="What was done, what the requester should know, and any next step." />
                 <label className="mt-2 flex items-center gap-2 text-meta text-muted-foreground">
                   <Switch checked={close} onCheckedChange={setClose} aria-label="Close the ticket" /> Close the ticket
                 </label>
@@ -222,3 +258,39 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
     </div>
   );
 }
+
+function TicketContext({ ticket, loading, onOpenFull }: { ticket: Ticket | null; loading: boolean; onOpenFull: () => void }) {
+  return (
+    <section className="border-b bg-surface-2 px-4 py-4 lg:px-6" aria-label="Ticket context">
+      <div className="mx-auto max-w-6xl">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">Ticket context · stays inside L3</p>
+            {loading ? <Skeleton className="mt-2 h-6 w-64" /> : ticket ? (
+              <>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-xs text-muted-foreground">{ticketLabel(ticket.TicketNo)}</span>
+                  <Tag>{ticket.StateLabel}</Tag>
+                  <span className="text-xs text-muted-foreground">{ticket.FirstLastName || ticket.EmailID} · {ticket.Channel ?? "Other"}</span>
+                </div>
+                <p className="mt-1 text-sm font-medium">{ticket.BriefDetails}</p>
+              </>
+            ) : <p className="mt-1 text-sm text-muted-foreground">Ticket context could not be loaded.</p>}
+          </div>
+          <Button variant="outline" size="sm" onClick={onOpenFull}>Open full ticket <ExternalLink /></Button>
+        </div>
+        {ticket?.Timeline?.length ? (
+          <ol className="mt-3 grid gap-2 lg:grid-cols-3">
+            {ticket.Timeline.slice(-3).map((item, i) => (
+              <li key={i} className="rounded-lg border bg-surface p-3">
+                <p className="text-2xs text-subtle-foreground">{item.Actor === "support" ? "Support" : "Requester"} · {when(item.At)}</p>
+                <p className="mt-1 line-clamp-3 text-xs">{item.Text || "No text"}</p>
+              </li>
+            ))}
+          </ol>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
