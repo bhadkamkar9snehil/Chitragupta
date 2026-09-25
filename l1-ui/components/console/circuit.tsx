@@ -201,15 +201,7 @@ export function InvestigationCircuit({ run, events, trail, live, onOpenRun, titl
   const picked = pick.kind === "event" ? x.shown.find((e) => e.ID === pick.id) : undefined;
   const pickedFinding = pick.kind === "finding" ? x.findings.find((f) => f.id === pick.id) : undefined;
   const select = (p: Pick) => { setPick(p); setView("inspect"); };
-  const spans: Span[] = x.shown.map((e) => ({
-    id: e.ID,
-    label: describeEvent(e).title,
-    sub: `${describeEvent(e).actor === "jev" ? "Jev" : describeEvent(e).actor === "walk" ? "World walk" : describeEvent(e).actor === "model" ? "Local model" : "Tool"} · ${clock(e.EventOn)}`,
-    start: at(e.EventOn) - x.dur(e) - x.t0,
-    end: at(e.EventOn) - x.t0,
-    tone: eventTone(e),
-    right: e.Status === "error" || e.ErrorMessage ? "error" : `${x.took.get(e.ID)?.estimated ? "≈" : ""}${ms(x.took.get(e.ID)?.ms)}`,
-  }));
+  const { spans, worked } = traceSpans(x);
 
   return (
     <div className="space-y-4">
@@ -341,7 +333,7 @@ export function InvestigationCircuit({ run, events, trail, live, onOpenRun, titl
           actions={<Legend inline rows={[{ label: "Jev", tone: "signal" }, { label: "walk", tone: "strong" }, { label: "tool", tone: "mid" }, { label: "model", tone: "info" }]} className="hidden sm:flex" />}>
           {spans.length ? (
             <div className="scrollbar-thin max-h-104 overflow-y-auto">
-              <Waterfall spans={spans} total={x.span} selected={pick.kind === "event" ? pick.id : null} onPick={(id) => select({ kind: "event", id })} />
+              <Waterfall spans={spans} total={worked} selected={pick.kind === "event" ? pick.id : null} onPick={(id) => select({ kind: "event", id })} />
             </div>
           ) : <p className="p-6 text-center text-sm text-muted-foreground">No steps recorded yet.</p>}
         </Panel>
@@ -367,6 +359,29 @@ export function InvestigationCircuit({ run, events, trail, live, onOpenRun, titl
       </div>
     </div>
   );
+}
+
+// The run's clock includes queue waits (tens of minutes) around seconds of work. Cut every idle gap
+// over a minute out of the scale and mark it, so the working steps are readable.
+function traceSpans(x: Investigation): { spans: Span[]; worked: number } {
+  const GAP = 60_000;
+  let cut = 0;
+  let prevEnd: number | null = null;
+  const spans = x.shown.map((e): Span => {
+    const end = at(e.EventOn) - x.t0;
+    const start = end - x.dur(e);
+    let gap: string | undefined;
+    if (prevEnd != null && start - prevEnd > GAP) {
+      gap = `waited ${ms(start - prevEnd)}${e.EventType === "post_api_request" ? " for a worker" : ""}`;
+      cut += start - prevEnd - 1000;
+    }
+    prevEnd = Math.max(prevEnd ?? 0, end);
+    return {
+      id: e.ID, label: describeEvent(e).title, sub: `+${ms(start)}`, start: start - cut, end: end - cut, tone: eventTone(e), gap,
+      right: e.Status === "error" || e.ErrorMessage ? "error" : `${x.took.get(e.ID)?.estimated ? "≈" : ""}${ms(x.took.get(e.ID)?.ms)}`,
+    };
+  });
+  return { spans, worked: Math.max(1, x.span - cut) };
 }
 
 const STATION_TITLE: Record<StationId, string> = {

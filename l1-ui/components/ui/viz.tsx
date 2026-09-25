@@ -248,7 +248,7 @@ export function Segmented<T extends string>({ options, value, onChange, label, c
 }
 
 // Waterfall of spans against a shared time axis (traces view).
-export type Span = { id: string; label: string; sub?: string; start: number; end: number; tone: VizTone; right?: string };
+export type Span = { id: string; label: string; sub?: string; start: number; end: number; tone: VizTone; right?: string; gap?: string };
 
 export function Waterfall({ spans, total, selected, onPick, className }: { spans: Span[]; total: number; selected?: string | null; onPick?: (id: string) => void; className?: string }) {
   const T = Math.max(1, total);
@@ -259,6 +259,11 @@ export function Waterfall({ spans, total, selected, onPick, className }: { spans
         const width = Math.max(0.8, Math.min(100 - left, ((s.end - s.start) / T) * 100));
         return (
           <li key={s.id}>
+            {s.gap && (
+              <p className="flex items-center gap-3 px-2 py-1.5 font-mono text-2xs text-subtle-foreground">
+                <span className="h-px flex-1 border-t border-dashed border-border-strong" aria-hidden />{s.gap}<span className="h-px flex-1 border-t border-dashed border-border-strong" aria-hidden />
+              </p>
+            )}
             <button
               type="button"
               onClick={() => onPick?.(s.id)}
