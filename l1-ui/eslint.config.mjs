@@ -1,20 +1,14 @@
 import { plugin as shadcn } from "@shadcn/lint";
-import tsParser from "@typescript-eslint/parser";
 import { defineConfig } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
 
 export default defineConfig([
+  ...nextVitals,
   {
     ignores: [".next/**", "node_modules/**"],
   },
   {
     files: ["**/*.{js,jsx,ts,tsx}"],
-    languageOptions: {
-      parser: tsParser,
-      parserOptions: {
-        ecmaFeatures: { jsx: true },
-        sourceType: "module",
-      },
-    },
     plugins: { shadcn },
     settings: {
       shadcn: {
