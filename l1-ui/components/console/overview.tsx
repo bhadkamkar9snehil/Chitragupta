@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowRight, Bot, CheckCircle2, Clock3, Headset, Radio, ShieldAlert, TriangleAlert, Users } from "lucide-react";
+import { ArrowRight, Bot, Clock3, Headset, Radio, ShieldAlert, Users } from "lucide-react";
 import { toast } from "sonner";
 import { ops, type AttentionTicket, type Overview } from "@/lib/api";
 import { ago, outcomeLabel, ticketLabel } from "@/lib/format";
@@ -65,12 +65,6 @@ export function OverviewView({ go }: { go: Go }) {
           <Lane icon={Bot} title="L2 · engineer" onOpen={go.runs} accent rows={c && [["Active now", c.ActiveRuns], ["Runs, 24h", c.RunsLast24h], ["Jev decisions, 24h", c.JevCallsLast24h], ["Writer calls, 24h", c.ModelCallsLast24h]]} />
           <Lane icon={ShieldAlert} title="L3 · people" onOpen={go.l3} rows={c && [["Open escalations", c.L3Open], ["Opened, 24h", c.L3OpenedLast24h ?? 0]]} note="Human specialist attention" />
         </div>
-
-        <section className="grid gap-px overflow-hidden rounded-xl border bg-border sm:grid-cols-3" aria-label="24 hour operational pulse">
-          <Pulse icon={CheckCircle2} label="Resolved" value={c?.ResolvedLast24h} note="last 24h" />
-          <Pulse icon={ShieldAlert} label="Escalated to L3" value={c?.L3OpenedLast24h} note="last 24h" />
-          <Pulse icon={TriangleAlert} label="Failed L2 runs" value={c?.FailedRunsLast24h} note="last 24h" attention={!!c?.FailedRunsLast24h} />
-        </section>
 
         <div className="grid gap-3 xl:grid-cols-3">
           <section className="overflow-hidden rounded-xl border bg-surface xl:col-span-2" aria-label="Tickets needing attention">
@@ -194,18 +188,6 @@ function AttentionRow({ ticket, onOpen }: { ticket: AttentionTicket; onOpen: () 
         </span>
       </button>
     </li>
-  );
-}
-
-function Pulse({ icon: Icon, label, value, note, attention }: { icon: typeof CheckCircle2; label: string; value: number | undefined; note: string; attention?: boolean }) {
-  return (
-    <div className="flex items-center gap-3 bg-surface px-4 py-3">
-      <Icon className={cn("size-4 text-subtle-foreground", attention && "text-destructive")} aria-hidden />
-      <div>
-        <p className="text-2xs text-subtle-foreground">{label} · {note}</p>
-        {value === undefined ? <Skeleton className="mt-1 h-5 w-10" /> : <p className={cn("text-title font-semibold tabular-nums", attention && "text-destructive")}>{value}</p>}
-      </div>
-    </div>
   );
 }
 
