@@ -179,10 +179,10 @@ function OptionList({
                     disabled={disabled || option.disabled}
                   />
                 </span>
-                <span className="flex flex-col">
-                  <span className="leading-6">{option.label}</span>
+                <span className="min-w-0 flex flex-col">
+                  <span className="break-words leading-6">{option.label}</span>
                   {option.description ? (
-                    <span className="text-sm font-normal text-muted-foreground">
+                    <span className="break-words text-sm font-normal text-muted-foreground">
                       {option.description}
                     </span>
                   ) : null}
@@ -244,9 +244,9 @@ function StepCard({
           </span>
           {totalSteps ? <ProgressBar current={step} total={totalSteps} /> : null}
           <div className="mt-1">
-            <h3 className="text-base font-semibold">{title}</h3>
+            <h3 className="break-words text-base font-semibold">{title}</h3>
             {description ? (
-              <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+              <p className="mt-1 break-words text-sm text-muted-foreground">{description}</p>
             ) : null}
           </div>
         </div>
@@ -305,7 +305,7 @@ function QuestionFlowReceipt({
             <Fragment key={`${item.label}-${index}`}>
               {index > 0 ? <Separator className="my-2" /> : null}
               <div className="flex flex-col gap-0.5 text-sm">
-                <span className="text-muted-foreground">{item.label}</span>
+                <span className="break-words text-muted-foreground">{item.label}</span>
                 <span className="break-words font-medium">{item.value}</span>
               </div>
             </Fragment>
