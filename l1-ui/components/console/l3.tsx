@@ -64,8 +64,15 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
                 {escalationId === r.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" aria-hidden />}
                 <span className="flex items-center gap-2">
                   <span className="font-mono text-xs text-muted-foreground">{ticketLabel(r.TicketNo)}</span>
-                  <span className={cn("rounded px-1.5 py-0.5 text-2xs font-semibold", r.EscalationCategory === "UNRESOLVED" ? "bg-warning-soft text-warning" : "bg-info-soft text-info")}>
-                    {r.EscalationCategory === "UNRESOLVED" ? "Unresolved by L2" : outcomeLabel(r.EscalationCategory)}
+                  <span className={cn(
+                    "rounded px-1.5 py-0.5 text-2xs font-semibold",
+                    r.L3Status === "Resolved" ? "bg-success-soft text-success"
+                      : r.L3Status === "In progress" ? "bg-primary-soft text-primary-soft-foreground"
+                        : r.EscalationCategory === "UNRESOLVED" ? "bg-warning-soft text-warning" : "bg-info-soft text-info",
+                  )}>
+                    {r.L3Status === "Resolved" ? "Resolved"
+                      : r.L3Status === "In progress" ? "In progress"
+                        : r.EscalationCategory === "UNRESOLVED" ? "Unresolved by L2" : outcomeLabel(r.EscalationCategory)}
                   </span>
                   <span className="ml-auto text-2xs text-subtle-foreground">{ago(r.EscalatedOn)}</span>
                 </span>
