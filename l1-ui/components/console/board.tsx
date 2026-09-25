@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, CornerDownRight, KanbanSquare, RefreshCw, Users } from "lucide-react";
+import { AlertTriangle, CornerDownRight, KanbanSquare, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { api, ops, type Board, type KanbanTask, type Ticket } from "@/lib/api";
 import { ago, duration, outcomeLabel, ticketLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Attributes, Headline, Legend, PageTitle, Panel, SegmentBar, Segmented, type VizTone } from "@/components/ui/viz";
+import { Attributes, PageTitle, Segmented } from "@/components/ui/viz";
 import { Button } from "@/components/ui/button";
 import { Dialog, Empty, Skeleton, Tip } from "@/components/ui/primitives";
 import { InspectorBlock } from "./inspect";
@@ -119,8 +119,6 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
   const openTickets = (tickets ?? []).filter((t) => t.StateLabel !== "Resolved");
   const stageCount = (stage: string) => openTickets.filter((t) => t.StateLabel === stage).length;
   const oldest = [...openTickets].filter((t) => t.StateLabel !== "Being investigated").sort((x, y) => x.CreatedOn.localeCompare(y.CreatedOn))[0];
-  const topRequesters = Object.entries(openTickets.reduce<Record<string, number>>((m, t) => ({ ...m, [t.FirstLastName ?? "unknown"]: (m[t.FirstLastName ?? "unknown"] ?? 0) + 1 }), {}))
-    .sort((x, y) => y[1] - x[1]).slice(0, 4);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -134,32 +132,17 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
 
       <div className="scrollbar-thin min-h-0 flex-1 overflow-auto">
         {view === "kanban" && board?.available && (
-          <div className="grid gap-3 px-4 pt-4 md:grid-cols-3 lg:px-6">
-            <Panel icon={Activity} title="Queue" meta={active.length ? `${active.length} task${active.length === 1 ? "" : "s"} in flight` : "idle · nothing in flight"}>
-              <Headline value={active.length} unit="active" note={`${done} done`} />
-              <SegmentBar className="mt-3" label="Tasks by state" segments={[
-                { label: "Running", value: tasks.filter((t) => t.status === "running").length, tone: "signal" },
-                { label: "Waiting", value: active.filter((t) => t.status !== "running").length, tone: "strong" },
-                { label: "Stuck", value: stuck.length, tone: "warn" },
-                { label: "Superseded", value: superseded.length, tone: "hatch" },
-                { label: "Done", value: done, tone: "faint" },
-              ]} />
-            </Panel>
-            <Panel icon={AlertTriangle} title="Blocked" meta="a blocked review is expected when a rework replaced it">
-              <Legend rows={[
-                { label: "stuck · needs a person", value: stuck.length, tone: stuck.length ? "warn" : "faint", onClick: stuck[0] ? () => setOpen(stuck[0]) : undefined },
-                { label: "superseded by a later cycle", value: superseded.length, tone: "hatch" },
-              ]} />
-              <p className="mt-2 truncate font-mono text-2xs text-subtle-foreground">{stuck[0]?.error && stuck[0].error !== "None" ? stuck[0].error : stuck.length ? "no error recorded" : "nothing is stuck"}</p>
-            </Panel>
-            <Panel icon={Users} title="Workers" meta={avgTook != null ? `avg ${duration(avgTook)} per finished task` : "worker profiles"}>
-              <Legend rows={Object.entries(board.stats?.by_assignee ?? {}).map(([agent, counts]) => ({
-                label: AGENT[agent]?.name.toLowerCase() ?? agent,
-                value: Object.entries(counts).map(([st, n]) => `${n} ${st}`).join(" · "),
-                tone: Object.keys(counts).some((st) => !["done", "blocked"].includes(st)) ? "signal" as const : "faint" as const,
-              }))} />
-            </Panel>
-          </div>
+          <Strip items={[
+            { label: "Active", value: active.length, tone: active.length ? "signal" : undefined },
+            { label: "Done", value: done },
+            { label: "Stuck · needs a person", value: stuck.length, tone: stuck.length ? "warn" : undefined, onClick: stuck[0] ? () => setOpen(stuck[0]) : undefined },
+            { label: "Superseded reviews", value: superseded.length },
+            ...Object.entries(board.stats?.by_assignee ?? {}).map(([agent, counts]) => ({
+              label: AGENT[agent]?.name ?? agent,
+              value: Object.entries(counts).map(([st, n]) => `${n} ${st}`).join(" · "),
+            })),
+            ...(avgTook != null ? [{ label: "Avg per task", value: duration(avgTook) }] : []),
+          ]} />
         )}
 
         {!board && <div className="flex gap-3 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-96 w-72 shrink-0" />)}</div>}
@@ -167,45 +150,36 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
           <Empty icon={<KanbanSquare className="size-5" />} title="Board unavailable">The Hermes Kanban board could not be read from WSL.</Empty>
         )}
         {view === "kanban" && board?.available && (
-          <div className="flex flex-wrap items-start gap-3 p-4 md:min-h-128 md:flex-nowrap md:items-stretch lg:px-6">
-            {columns.map((c) => c.tasks.length ? (
+          <div className="flex flex-wrap items-start gap-3 px-4 pb-4 pt-3 md:min-h-128 md:items-stretch lg:px-6">
+            <EmptyLine items={columns.filter((c) => !c.tasks.length).map((c) => ({ name: c.id, dot: STATUS_DOT[c.id] }))} />
+            {columns.filter((c) => c.tasks.length).map((c) => (
               <Column key={c.id} name={c.id} count={c.tasks.length} dot={STATUS_DOT[c.id]} hint={c.id === "blocked" ? `${superseded.length} superseded` : c.id === "running" ? "wip 1" : undefined}>
                 {c.tasks.map((t) => <TaskCard key={t.id} task={t} next={later(t)} onOpen={() => setOpen(t)} />)}
               </Column>
-            ) : (
-              <EmptyRail key={c.id} name={c.id} dot={STATUS_DOT[c.id]} />
             ))}
           </div>
         )}
         {view === "lifecycle" && tickets && (
-          <div className="grid gap-3 px-4 pt-4 md:grid-cols-3 lg:px-6">
-            <Panel icon={Activity} title="Open tickets" meta={`${openTickets.length} open · ${tickets.length - openTickets.length} resolved`}>
-              <Headline value={openTickets.length} unit="open" note={`${stageCount("Being investigated")} with L2 now`} />
-              <SegmentBar className="mt-3" label="Open tickets by stage" segments={LIFECYCLE.filter((st) => st !== "Resolved").map((st) => ({ label: LIFECYCLE_NAME[st], value: stageCount(st), tone: STAGE_TONE[st] }))} />
-            </Panel>
-            <Panel icon={AlertTriangle} title="Waiting on people" meta="L2 has handed these over">
-              <Legend rows={[
-                { label: "needs human action", value: stageCount("With the support team"), tone: "strong" },
-                { label: "escalated to L3", value: stageCount("Escalated to specialist"), tone: "warn" },
-                { label: "waiting on requester", value: stageCount("Waiting for your reply"), tone: "mid" },
-              ]} />
-              <p className="mt-2 truncate font-mono text-2xs text-subtle-foreground">{oldest ? `oldest ${ticketLabel(oldest.TicketNo)} · open ${ago(oldest.CreatedOn)}` : "nothing waiting"}</p>
-            </Panel>
-            <Panel icon={Users} title="Requesters" meta="who has the most open tickets">
-              <Legend rows={topRequesters.map(([name, n]) => ({ label: name.toLowerCase(), value: n, tone: "faint" as const }))} />
-            </Panel>
-          </div>
+          <Strip items={[
+            { label: "Open", value: openTickets.length },
+            { label: "With L2 now", value: stageCount("Being investigated"), tone: stageCount("Being investigated") ? "signal" : undefined },
+            { label: "Needs human action", value: stageCount("With the support team") },
+            { label: "Escalated to L3", value: stageCount("Escalated to specialist"), tone: stageCount("Escalated to specialist") ? "warn" : undefined },
+            { label: "Waiting on requester", value: stageCount("Waiting for your reply") },
+            ...(oldest ? [{ label: "Oldest waiting", value: `${ticketLabel(oldest.TicketNo)} · ${ago(oldest.CreatedOn)}` }] : []),
+          ]} />
         )}
         {view === "lifecycle" && !tickets && <div className="flex gap-3 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-96 w-72 shrink-0" />)}</div>}
         {view === "lifecycle" && tickets && (
-          <div className="flex flex-wrap items-start gap-3 p-4 md:min-h-128 md:flex-nowrap md:items-stretch lg:px-6">
-            {LIFECYCLE.map((stage) => {
+          <div className="flex flex-wrap items-start gap-3 px-4 pb-4 pt-3 md:min-h-128 md:items-stretch lg:px-6">
+            <EmptyLine items={LIFECYCLE.filter((st) => !tickets.some((t) => t.StateLabel === st)).map((st) => ({ name: LIFECYCLE_NAME[st], dot: STAGE_DOT[st] ?? "bg-border-strong" }))} />
+            {LIFECYCLE.filter((st) => tickets.some((t) => t.StateLabel === st)).map((stage) => {
               const items = tickets.filter((t) => t.StateLabel === stage);
-              return items.length ? (
+              return (
                 <Column key={stage} name={LIFECYCLE_NAME[stage]} count={items.length} dot={STAGE_DOT[stage] ?? "bg-border-strong"} hint={stage === "Resolved" ? "closed" : undefined}>
                   {items.map((t) => <TicketCard key={t.ID} ticket={t} stage={stage} onOpen={() => onOpenTicket(t.ID)} />)}
                 </Column>
-              ) : <EmptyRail key={stage} name={LIFECYCLE_NAME[stage].toLowerCase()} dot={STAGE_DOT[stage] ?? "bg-border-strong"} />;
+              );
             })}
           </div>
         )}
@@ -323,19 +297,37 @@ function TaskCard({ task: t, next, onOpen }: { task: Task; next?: Task; onOpen: 
   );
 }
 
-const STAGE_TONE: Record<string, VizTone> = {
-  "Being investigated": "signal", "Update posted": "mid", "With the support team": "strong", "Escalated to specialist": "warn", "Waiting for your reply": "faint", Resolved: "faint",
-};
 const STAGE_CHIP: Record<string, string> = {
   "Being investigated": "bg-signal-soft text-signal", "Escalated to specialist": "bg-warning-soft text-warning", Resolved: "bg-surface-3 text-muted-foreground",
 };
 
-function EmptyRail({ name, dot }: { name: string; dot: string }) {
+// Columns with nothing in them, as one readable line.
+function EmptyLine({ items }: { items: { name: string; dot: string }[] }) {
+  if (!items.length) return null;
   return (
-    <section aria-label={`${name}, empty`} className="flex shrink-0 items-center gap-2 rounded-xl border border-dashed px-3 py-2 md:w-12 md:flex-col md:gap-3 md:rounded-2xl md:px-0 md:py-3">
-      <span className={cn("size-2 rounded-full", dot)} aria-hidden />
-      <span className="font-mono text-xs text-subtle-foreground md:vertical-text">{name} · 0</span>
-    </section>
+    <p className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs text-subtle-foreground">
+      <span>empty:</span>
+      {items.map((i) => <span key={i.name} className="flex items-center gap-1.5"><span className={cn("size-2 rounded-full", i.dot)} aria-hidden />{i.name.toLowerCase()}</span>)}
+    </p>
+  );
+}
+
+// The board's numbers in one compact row: label over value, no extra prose.
+function Strip({ items }: { items: { label: string; value: React.ReactNode; tone?: "signal" | "warn"; onClick?: () => void }[] }) {
+  return (
+    <dl className="mx-4 mt-3 flex flex-wrap gap-x-8 gap-y-3 rounded-2xl border bg-canvas px-5 py-3 lg:mx-6">
+      {items.map((i) => {
+        const body = (
+          <>
+            <dt className="text-xs text-subtle-foreground">{i.label}</dt>
+            <dd className={cn("font-mono text-base tabular-nums", i.tone === "signal" ? "text-signal" : i.tone === "warn" ? "text-warning" : "text-foreground")}>{i.value}</dd>
+          </>
+        );
+        return i.onClick
+          ? <button key={i.label} onClick={i.onClick} className="text-left hover:opacity-80">{body}</button>
+          : <div key={i.label}>{body}</div>;
+      })}
+    </dl>
   );
 }
 
