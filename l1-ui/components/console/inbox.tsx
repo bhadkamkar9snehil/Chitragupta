@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, ArrowLeft, ArrowRight, Bot, CheckCircle2, Clock, Headset, Inbox, Layers, PanelLeftClose, PanelLeftOpen, RefreshCw, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Message, type SourceRef, type Ticket } from "@/lib/api";
-import { ago, human, outcomeLabel, pageTitle, RESPONSE_KIND, ticketLabel, when, whenShort } from "@/lib/format";
+import { ago, human, outcomeLabel, pageTitle, plain, RESPONSE_KIND, ticketLabel, when, whenShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, Empty, SearchInput, Skeleton, StatePill, Tag, Tip } from "@/components/ui/primitives";
@@ -58,7 +58,7 @@ export function InboxView({ ticketId, onSelect, onOpenRun }: { ticketId: string 
     <div className="flex min-h-0 flex-1">
       <section aria-label="Tickets" className={cn("flex min-h-0 w-full flex-col border-r bg-canvas md:w-80 md:shrink-0 xl:w-96", ticketId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
         <div className="space-y-2 border-b px-3 py-3">
-          <PageTitle icon={Inbox} title={VIEWS.find((v) => v.id === view)!.label} meta={rows ? `${rows.length} tickets` : "loading"}>
+          <PageTitle icon={Inbox} title={VIEWS.find((v) => v.id === view)!.label}>
             <Tip label="Refresh">
               <Button variant="ghost" size="icon-sm" aria-label="Refresh" onClick={() => setTick((n) => n + 1)}>
                 <RefreshCw />
@@ -113,7 +113,6 @@ export function InboxView({ ticketId, onSelect, onOpenRun }: { ticketId: string 
                   </span>
                   <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
                     <StatePill tone={t.StateTone}>{t.StateLabel}</StatePill>
-                    {t.Channel === "Helpdesk chat" && <Tag>Chat</Tag>}
                     {t.Priority && !t.Priority.startsWith("Standard") && <Tag>{t.Priority.replace(" Priority", "")}</Tag>}
                   </span>
                 </span>
@@ -139,7 +138,7 @@ export function InboxView({ ticketId, onSelect, onOpenRun }: { ticketId: string 
 
 function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: { id: string; onBack: () => void; onOpenRun: (id: string) => void; drawerOpen: boolean; onDrawerToggle: () => void }) {
   const [t, setT] = useState<Ticket | null>(null);
-  const [tab, setTab] = useState<"activity" | "chat" | "runs">("activity");
+  const [tab, setTab] = useState<"activity" | "chat">("activity");
 
   useEffect(() => {
     api.admin.ticket(id).then(setT).catch((e: Error) => toast.error(e.message));
@@ -160,10 +159,11 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
       return [];
     }
   })();
+  // The first entry only repeats the title when the requester wrote nothing more.
+  const activity = (t.Timeline?.filter((item) => !(item.Kind === "created" && plain(item.Text).toLowerCase() === plain(t.BriefDetails).toLowerCase()))) ?? [];
   const tabs = [
-    { id: "activity" as const, label: "Activity", n: t.Timeline?.length ?? 0 },
+    { id: "activity" as const, label: "Activity", n: activity.length },
     { id: "chat" as const, label: "Chat transcript", n: t.Transcript?.length ?? 0 },
-    { id: "runs" as const, label: "L2 investigations", n: t.Runs?.length ?? 0 },
   ];
 
   return (
@@ -208,10 +208,10 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
           </div>
         </header>
         <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-8">
-          <div className={cn(tab === "runs" ? "w-full" : "mx-auto max-w-3xl")}>
+          <div className="mx-auto max-w-3xl">
             {tab === "activity" && (
               <ol className="space-y-5">
-                {t.Timeline?.map((item, i) => {
+                {activity.map((item, i) => {
                   const support = item.Actor === "support";
                   return (
                     <li key={i} className="flex gap-3">
@@ -238,26 +238,6 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
               </ol>
             )}
             {tab === "chat" && (t.Transcript?.length ? <Transcript messages={t.Transcript} /> : <Empty icon={<Bot className="size-5" />} title="No chat">This ticket was not raised from the helpdesk chat.</Empty>)}
-            {tab === "runs" && (
-              t.Runs?.length ? (
-                <ol className="space-y-2">
-                  {t.Runs.map((r) => (
-                    <li key={r.ID}>
-                      <button onClick={() => onOpenRun(r.ID)} className="group flex w-full flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border bg-surface px-4 py-3 text-left hover:border-border-strong">
-                        <span className="font-mono text-xs text-subtle-foreground">attempt {r.AttemptNo}</span>
-                        <span className="min-w-0 flex-1 text-sm font-medium">{r.CompletedOn ? outcomeLabel(r.ResponseType) : human(r.ProcessStatus)}</span>
-                        <span className="font-mono text-xs text-muted-foreground">{human(r.Route) || "—"}</span>
-                        <span className="font-mono text-xs text-subtle-foreground">{whenShort(r.ClaimedOn)}</span>
-                        <span className="flex items-center gap-1 text-meta font-medium text-signal">How it happened <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden /></span>
-                        {r.ErrorMessage && <span className="w-full truncate text-xs text-destructive">{r.ErrorMessage}</span>}
-                      </button>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <Empty icon={<Clock className="size-5" />} title="Not picked up yet">The L2 pipeline claims new tickets within a couple of minutes.</Empty>
-              )
-            )}
           </div>
         </div>
       </div>
