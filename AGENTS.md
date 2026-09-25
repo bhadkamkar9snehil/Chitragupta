@@ -69,6 +69,7 @@ All agents and developers must adhere to the Scope Guard:
 7. **Test Requested Behavior:** Verify the exact behavior requested. Do not perform repeated unnecessary test cycles.
 8. **Re-anchor on Growing Scope:** If an implementation or investigation begins ballooning in complexity, stop immediately and return to the minimal requested requirement.
 9. **Architectural Guard:** Any proposed new runtime component must map to one of the five existing architectural responsibilities. If it does not, the change is an architecture change and requires explicit approval before implementation.
+10. **No GitHub Actions:** Do not add, enable, depend on, or propose GitHub Actions workflows for this repository. Validation and deployment checks must use the project's local/manual scripts and existing non-GitHub-Actions mechanisms.
 
 ## 2. Current live L2 lifecycle
 
