@@ -173,7 +173,7 @@ then resumes.
     "summary": "Material document is not visible in SAP.",
     "statusLabel": "Submitted",
     "attentionRequired": false,
-    "domain": "SAP",
+    "systemLabel": "SAP",
     "area": "EAF",
     "createdOn": "2026-09-25T08:15:00+05:30"
   }
@@ -195,7 +195,7 @@ must not derive ticket workflow state from internal L2 fields.
       "summary": "Material document is not visible in SAP.",
       "statusLabel": "Submitted",
       "attentionRequired": false,
-      "domain": "SAP",
+      "systemLabel": "SAP",
       "area": "EAF",
       "updatedOn": "2026-09-25T08:20:00+05:30"
     }
