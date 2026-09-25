@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { api, ops, type Board, type KanbanTask, type Ticket } from "@/lib/api";
 import { ago, ticketLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { PageTitle, Segmented } from "@/components/ui/viz";
 import { Button } from "@/components/ui/button";
 import { Dialog, Empty, Skeleton, StatePill, Tip } from "@/components/ui/primitives";
 import { InspectorBlock } from "./inspect";
@@ -113,28 +114,19 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex shrink-0 flex-wrap items-center gap-3 border-b bg-surface px-4 py-3 lg:px-6">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-title font-semibold tracking-tight">Board</h1>
-          <p className="text-2xs text-subtle-foreground">{view === "kanban" ? "The L2 task queue, including investigations, rework and reviews." : "Tickets grouped by their current support state."}</p>
-        </div>
-        <div className="flex rounded-lg border bg-background p-0.5" role="radiogroup" aria-label="Board view">
-          {(["kanban", "lifecycle"] as const).map((v) => (
-            <button key={v} role="radio" aria-checked={view === v} onClick={() => setView(v)} className={cn("min-h-11 rounded-md px-3 text-meta font-medium text-muted-foreground sm:min-h-8", view === v && "bg-surface-3 text-foreground")}>
-              {v === "kanban" ? "Agent tasks" : "Ticket lifecycle"}
-            </button>
-          ))}
-        </div>
+      <header className="flex shrink-0 flex-wrap items-center gap-3 border-b bg-canvas px-4 py-3 lg:px-6">
+        <PageTitle icon={KanbanSquare} className="flex-1" title="Board" meta={view === "kanban" ? "L2 task queue · investigations, rework and reviews" : "tickets grouped by support state"} />
+        <Segmented label="Board view" value={view} onChange={setView} options={[{ id: "kanban", label: "Agent tasks" }, { id: "lifecycle", label: "Ticket lifecycle" }]} />
         <Tip label="Refresh">
           <Button variant="ghost" size="icon-sm" aria-label="Refresh" onClick={refresh} disabled={refreshing}><RefreshCw className={cn(refreshing && "animate-spin")} /></Button>
         </Tip>
       </header>
 
       {view === "kanban" && board?.stats && (
-        <div className="flex shrink-0 gap-3 overflow-x-auto border-b bg-surface px-4 py-2.5 lg:px-6">
+        <div className="flex shrink-0 gap-3 overflow-x-auto border-b bg-canvas px-4 py-2.5 lg:px-6">
           {Object.entries(board.stats.by_assignee).map(([agent, counts]) => (
             <div key={agent} className="flex items-center gap-2.5 rounded-lg border bg-background px-3 py-1.5">
-              <span className="grid size-7 place-items-center rounded-md bg-primary-soft text-2xs font-bold text-primary-soft-foreground" aria-hidden>{(AGENT[agent]?.name ?? agent).split(" ").map((w) => w[0]).join("").slice(0, 2)}</span>
+              <span className="grid size-7 place-items-center rounded-md bg-signal-soft text-2xs font-bold text-signal" aria-hidden>{(AGENT[agent]?.name ?? agent).split(" ").map((w) => w[0]).join("").slice(0, 2)}</span>
               <span>
                 <span className="block text-meta font-medium leading-tight">{AGENT[agent]?.name ?? agent}</span>
                 <span className="block text-2xs text-subtle-foreground">{Object.entries(counts).map(([s, n]) => `${n} ${s}`).join(" · ")}</span>
@@ -154,16 +146,16 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
             {columns.map((c) => (
               <section key={c.id} className="flex w-72 shrink-0 flex-col rounded-xl bg-surface-2" aria-label={c.id}>
                 <div className="flex items-center gap-2 px-3 py-2.5">
-                  <span className={cn("size-2 rounded-full", c.id === "running" ? "bg-destructive motion-safe:animate-pulse" : c.id === "blocked" ? "bg-warning" : c.id === "done" ? "bg-success" : c.id === "review" ? "bg-info" : "bg-border-strong")} aria-hidden />
+                  <span className={cn("size-2 rounded-full", c.id === "running" ? "bg-signal motion-safe:animate-pulse" : c.id === "blocked" ? "bg-warning" : c.id === "done" ? "bg-signal-muted" : c.id === "review" ? "bg-muted-foreground" : "bg-border-strong")} aria-hidden />
                   <h2 className="text-meta font-semibold capitalize">{c.id}</h2>
                   <span className="ml-auto text-2xs tabular-nums text-subtle-foreground">{c.tasks.length}</span>
                 </div>
                 <ul className="scrollbar-thin min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
                   {c.tasks.map((t) => (
                     <li key={t.id}>
-                      <button onClick={() => setOpen(t)} className="w-full rounded-lg border bg-surface p-3 text-left shadow-lift hover:border-border-strong">
+                      <button onClick={() => setOpen(t)} className="w-full rounded-lg border bg-surface p-3 text-left hover:border-border-strong">
                         <span className="flex items-center gap-2">
-                          <span className={cn("rounded px-1.5 py-0.5 text-2xs font-semibold", kindOf(t.title) === "Review" ? "bg-info-soft text-info" : kindOf(t.title) === "Rework" ? "bg-warning-soft text-warning" : "bg-primary-soft text-primary-soft-foreground")}>{kindOf(t.title)}</span>
+                          <span className={cn("rounded px-1.5 py-0.5 font-mono text-2xs", kindOf(t.title) === "Review" ? "bg-surface-3 text-foreground" : kindOf(t.title) === "Rework" ? "bg-warning-soft text-warning" : "bg-signal-soft text-signal")}>{kindOf(t.title)}</span>
                           <span className="font-mono text-xs text-muted-foreground">{ticketLabel(ticketOf(t.title))}</span>
                           <span className="ml-auto text-2xs text-subtle-foreground">{age(t.completedAt ?? t.startedAt ?? t.createdAt)}</span>
                         </span>
@@ -196,7 +188,7 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
                   <ul className="scrollbar-thin min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
                     {items.map((t) => (
                       <li key={t.ID}>
-                        <button onClick={() => onOpenTicket(t.ID)} className="w-full rounded-lg border bg-surface p-3 text-left shadow-lift hover:border-border-strong">
+                        <button onClick={() => onOpenTicket(t.ID)} className="w-full rounded-lg border bg-surface p-3 text-left hover:border-border-strong">
                           <span className="flex items-center gap-2">
                             <span className="font-mono text-xs text-muted-foreground">{ticketLabel(t.TicketNo)}</span>
                             <span className="ml-auto text-2xs text-subtle-foreground">{ago(t.ModifiedOn ?? t.CreatedOn)}</span>

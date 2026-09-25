@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bot, BookOpen, Check, Code2, Copy, Loader2, Palette, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Bot, BookOpen, Check, Code2, Copy, Loader2, Palette, Plus, RefreshCw, Settings as SettingsIcon, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, type AiSettings, type AllSettings } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { PageTitle, Panel } from "@/components/ui/viz";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Skeleton, Switch, Textarea } from "@/components/ui/primitives";
 import { applyBrand } from "@/components/helpdesk/app";
@@ -42,7 +43,7 @@ export function SettingsView({ tab, onTab }: { tab?: string; onTab: (t: string) 
   return (
     <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-5xl px-4 py-6 lg:px-8">
-        <h1 className="text-heading font-semibold tracking-tight">Settings</h1>
+        <PageTitle icon={SettingsIcon} title="Settings" meta="assistant model · knowledge · accent colour · embed" />
         <div className="mt-5 flex flex-col gap-6 md:flex-row">
           <nav className="flex gap-1 overflow-x-auto md:w-48 md:shrink-0 md:flex-col" aria-label="Settings sections">
             {TABS.map((t) => (
@@ -50,7 +51,7 @@ export function SettingsView({ tab, onTab }: { tab?: string; onTab: (t: string) 
                 key={t.id}
                 onClick={() => onTab(t.id)}
                 aria-current={current === t.id ? "page" : undefined}
-                className={cn("flex h-9 shrink-0 items-center gap-2.5 rounded-md px-2.5 text-meta font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground", current === t.id && "bg-surface-2 text-foreground")}
+                className={cn("flex h-9 shrink-0 items-center gap-2.5 rounded-md px-2.5 text-meta font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground", current === t.id && "bg-surface-3 text-foreground")}
               >
                 <t.icon className="size-4" aria-hidden /> {t.label}
               </button>
@@ -77,14 +78,10 @@ export function SettingsView({ tab, onTab }: { tab?: string; onTab: (t: string) 
 
 function Card({ title, description, children, footer }: { title: string; description?: string; children: React.ReactNode; footer?: React.ReactNode }) {
   return (
-    <section className="rounded-xl border bg-surface">
-      <div className="p-5">
-        <h2 className="text-sm font-semibold">{title}</h2>
-        {description && <p className="mt-1 text-meta text-muted-foreground">{description}</p>}
-        <div className="mt-5 space-y-5">{children}</div>
-      </div>
-      {footer && <div className="flex items-center justify-end gap-2 rounded-b-xl border-t bg-surface-2 px-5 py-3">{footer}</div>}
-    </section>
+    <Panel title={title} meta={description}>
+      <div className="space-y-5">{children}</div>
+      {footer && <div className="mt-6 flex items-center justify-end gap-2">{footer}</div>}
+    </Panel>
   );
 }
 
@@ -138,12 +135,12 @@ function AiForm({ initial, onSaved }: { initial: AiSettings; onSaved: (s: AllSet
               onClick={() => pick(p)}
               className={cn(
                 "relative rounded-lg border bg-background p-3 text-left hover:border-border-strong",
-                draft.provider === p.id && "border-primary ring-2 ring-ring",
+                draft.provider === p.id && "border-signal ring-2 ring-ring",
               )}
             >
               <span className="block text-sm font-medium">{p.name}</span>
               <span className="mt-0.5 block text-xs text-muted-foreground">{p.kind === "anthropic" ? "Anthropic API" : p.kind === "codex" ? "Codex CLI" : "OpenAI-compatible"}</span>
-              {draft.provider === p.id && <Check className="absolute right-2.5 top-2.5 size-4 text-primary" aria-hidden />}
+              {draft.provider === p.id && <Check className="absolute right-2.5 top-2.5 size-4 text-signal" aria-hidden />}
             </button>
           ))}
         </div>
@@ -216,7 +213,7 @@ function AiForm({ initial, onSaved }: { initial: AiSettings; onSaved: (s: AllSet
           {models && (
             <div className="mt-2 flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
               {models.map((m) => (
-                <button key={m} onClick={() => setDraft({ ...draft, model: m })} className={cn("rounded-md border px-2 py-1 font-mono text-xs hover:border-border-strong", draft.model === m && "border-primary bg-primary-soft text-primary-soft-foreground")}>
+                <button key={m} onClick={() => setDraft({ ...draft, model: m })} className={cn("rounded-md border px-2 py-1 font-mono text-xs hover:border-border-strong", draft.model === m && "border-signal bg-signal-soft text-signal")}>
                   {m}
                 </button>
               ))}
@@ -225,7 +222,7 @@ function AiForm({ initial, onSaved }: { initial: AiSettings; onSaved: (s: AllSet
         </Field>
         <div className="grid gap-5 sm:grid-cols-2">
           <Field label={`Temperature · ${draft.temperature}`} htmlFor="temp" hint="Lower is more consistent.">
-            <input id="temp" type="range" min={0} max={1} step={0.05} value={draft.temperature} onChange={(e) => setDraft({ ...draft, temperature: Number(e.target.value) })} className="w-full accent-primary" />
+            <input id="temp" type="range" min={0} max={1} step={0.05} value={draft.temperature} onChange={(e) => setDraft({ ...draft, temperature: Number(e.target.value) })} className="w-full accent-signal" />
           </Field>
           <Field label="Max reply length (tokens)" htmlFor="max">
             <Input id="max" type="number" min={100} max={4000} value={draft.maxTokens} onChange={(e) => setDraft({ ...draft, maxTokens: Number(e.target.value) })} />
@@ -293,7 +290,8 @@ function KnowledgeForm({ initial, onSaved }: { initial: AllSettings["knowledge"]
   );
 }
 
-const SWATCHES = ["#c2410c", "#b45309", "#0f766e", "#1d4ed8", "#6d28d9", "#be123c", "#334155"];
+// Hues only: lightness and chroma are normalised by the theme, so any pick stays legible in both themes.
+const SWATCHES = ["#4ceea8", "#4cd9ee", "#6aa8ff", "#a78bfa", "#f472b6", "#fbbf24", "#fb923c"];
 
 function AppearanceForm({ initial, onSaved }: { initial: AllSettings["widget"]; onSaved: (s: AllSettings) => void }) {
   const [draft, setDraft] = useState(initial);
@@ -316,7 +314,7 @@ function AppearanceForm({ initial, onSaved }: { initial: AllSettings["widget"]; 
           <Field label="Greeting" htmlFor="greet" hint="Shown under the greeting on the home screen.">
             <Textarea id="greet" rows={2} value={draft.greeting} onChange={(e) => setDraft({ ...draft, greeting: e.target.value })} maxLength={240} />
           </Field>
-          <Field label="Accent colour">
+          <Field label="Accent colour" hint="The one palette colour: every highlight, chart signal and state tint in the console and helpdesk is derived from its hue.">
             <div className="flex flex-wrap items-center gap-2">
               {SWATCHES.map((c) => (
                 <button
@@ -367,21 +365,21 @@ function AppearanceForm({ initial, onSaved }: { initial: AllSettings["widget"]; 
         <div className="overflow-hidden rounded-xl border bg-background shadow-pop">
           <div className="border-b bg-surface p-4">
             <div className="flex items-center gap-2">
-              <span className="size-6 rounded-md bg-primary" aria-hidden />
+              <span className="size-6 rounded-md bg-signal" aria-hidden />
               <span className="text-sm font-semibold">{draft.name}</span>
             </div>
             <p className="mt-4 text-lg font-semibold tracking-tight">Good morning, Krishna</p>
             <p className="mt-1 text-meta text-muted-foreground">{draft.greeting}</p>
             <div className="mt-3 flex h-10 items-center justify-between rounded-lg border bg-background px-3 text-meta text-subtle-foreground">
               Describe the problem…
-              <span className="size-6 rounded-md bg-primary" aria-hidden />
+              <span className="size-6 rounded-md bg-signal" aria-hidden />
             </div>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {draft.suggestions.slice(0, 3).map((s) => <span key={s} className="rounded-full border px-2 py-1 text-2xs text-muted-foreground">{s}</span>)}
             </div>
           </div>
           <div className="space-y-2 p-4">
-            <div className="ml-auto w-fit rounded-2xl rounded-br-md bg-primary px-3 py-2 text-meta text-primary-foreground">GR not happening for heat 1603945</div>
+            <div className="ml-auto w-fit rounded-2xl rounded-br-md bg-surface-3 px-3 py-2 text-meta text-foreground">GR not happening for heat 1603945</div>
             <div className="w-fit max-w-full rounded-xl border bg-surface px-3 py-2 text-meta">I&apos;ve raised #35 for the support team.</div>
           </div>
         </div>

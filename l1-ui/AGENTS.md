@@ -33,7 +33,12 @@ architectural responsibility and must not acquire business/workflow ownership.
 
 This is an **Operate-mode** product surface: design serves the support task.
 
-- Use semantic theme tokens in app-owned UI.
+- Use semantic theme tokens in app-owned UI. The palette is neutral graphite plus ONE accent (`--brand`, set in
+  Settings → Appearance, default `#4ceea8`); `--signal`, `--signal-soft`, `--success`, `--primary-soft` and the focus
+  ring are all derived from its hue in `app/globals.css`. Never hard-code an accent; primary actions are the contrast
+  pill (`bg-foreground text-background`), not the accent.
+- The same visual language applies to both surfaces (requester helpdesk and console): `PageTitle` opens every screen,
+  sections are `Panel`s, identifiers/times/counts are mono, avatars are neutral.
 - No decorative gradients, glass, or ornamental motion. Use elevation or border, not both, unless a real state
   requires it. Motion is allowed only when it carries state (a live stage pulsing, a wire the work is crossing).
 - Console visual language lives in `components/ui/viz.tsx` (reuse it, do not fork it): a `Panel` shell with a dashed

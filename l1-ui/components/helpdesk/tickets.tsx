@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CircleDot, Headset, Inbox, MessageCircle, RotateCcw, Send, Star, User as UserIcon } from "lucide-react";
+import { ArrowLeft, CircleDot, Ticket as TicketIcon, Headset, Inbox, MessageCircle, RotateCcw, Send, Star, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Ticket, type TimelineItem } from "@/lib/api";
 import { ago, RESPONSE_KIND, ticketLabel, when, whenShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { PageTitle } from "@/components/ui/viz";
 import { Button } from "@/components/ui/button";
 import { Dialog, Empty, SearchInput, Skeleton, StatePill, Tag, Textarea } from "@/components/ui/primitives";
 import { useHelpdesk } from "./app";
@@ -23,7 +24,7 @@ export function Tickets() {
   const selected = route.tab === "tickets" ? route.ticketId : null;
   return (
     <div className="flex min-h-0 flex-1">
-      <div className={cn("flex min-h-0 w-full flex-col border-r bg-surface lg:w-96 lg:shrink-0", selected && "hidden lg:flex")}>
+      <div className={cn("flex min-h-0 w-full flex-col border-r bg-canvas lg:w-96 lg:shrink-0", selected && "hidden lg:flex")}>
         <TicketList selected={selected} />
       </div>
       <div className={cn("min-h-0 min-w-0 flex-1 flex-col", selected ? "flex" : "hidden lg:flex")}>
@@ -50,9 +51,7 @@ function TicketList({ selected }: { selected: string | null }) {
 
   return (
     <>
-      <div className="px-4 pb-2 pt-4">
-        <h1 className="text-title font-semibold tracking-tight">Tickets</h1>
-      </div>
+      <PageTitle icon={TicketIcon} title="Tickets" meta={`${tickets.length} raised · ${tickets.filter((t) => t.StateTone !== "done").length} open`} className="mx-4 mb-3 mt-4" />
       <div className="px-4">
         <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search number, subject, area" aria-label="Search tickets" />
       </div>
@@ -83,9 +82,9 @@ function TicketList({ selected }: { selected: string | null }) {
             <button
               onClick={() => go({ tab: "tickets", ticketId: t.ID })}
               aria-current={selected === t.ID ? "true" : undefined}
-              className={cn("relative w-full px-4 py-3.5 text-left hover:bg-surface-2", selected === t.ID && "bg-primary-soft/60 hover:bg-primary-soft/60")}
+              className={cn("relative w-full px-4 py-3.5 text-left hover:bg-surface-2", selected === t.ID && "bg-surface-2 hover:bg-surface-2")}
             >
-              {selected === t.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" aria-hidden />}
+              {selected === t.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
               <div className="flex items-center justify-between gap-2">
                 <span className="font-mono text-xs text-muted-foreground">{ticketLabel(t.TicketNo)}</span>
                 <span className="text-2xs text-subtle-foreground">{ago(t.ModifiedOn ?? t.CreatedOn)}</span>
@@ -160,7 +159,7 @@ function TicketDetail({ id }: { id: string }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
-      <header className="shrink-0 border-b bg-surface px-3 py-3 lg:px-6">
+      <header className="shrink-0 border-b bg-canvas px-3 py-3 lg:px-6">
         <div className="flex items-start gap-2">
           <Button variant="ghost" size="icon-sm" className="lg:hidden" aria-label="Back to tickets" onClick={() => go({ tab: "tickets", ticketId: null })}>
             <ArrowLeft />
@@ -204,7 +203,7 @@ function TicketDetail({ id }: { id: string }) {
 
             {!done ? (
               <form
-                className="mt-8 rounded-xl border bg-surface p-3 shadow-lift focus-within:border-border-strong focus-within:ring-2 focus-within:ring-ring"
+                className="mt-8 rounded-xl border bg-surface p-3 focus-within:border-border-strong focus-within:ring-2 focus-within:ring-ring"
                 onSubmit={(e) => {
                   e.preventDefault();
                   submit();
@@ -295,7 +294,7 @@ function TimelineEntry({ item }: { item: TimelineItem }) {
       <span
         className={cn(
           "relative z-10 grid size-8 shrink-0 place-items-center rounded-full border",
-          support ? "border-transparent bg-primary text-primary-foreground" : "bg-surface text-muted-foreground",
+          support ? "border-transparent bg-signal-soft text-signal" : "bg-surface text-muted-foreground",
         )}
         aria-hidden
       >
@@ -310,7 +309,7 @@ function TimelineEntry({ item }: { item: TimelineItem }) {
         {item.Kind === "rating" ? (
           <p className="mt-1 text-warning" aria-label={`${item.Rating} of 5`}>{"★".repeat(item.Rating ?? 0)}<span className="text-border-strong">{"★".repeat(5 - (item.Rating ?? 0))}</span></p>
         ) : item.Text ? (
-          <div className={cn("mt-1.5 rounded-xl border p-3.5", support ? "bg-surface shadow-lift" : "bg-surface-2")}>
+          <div className={cn("mt-1.5 rounded-xl border p-3.5", support ? "bg-surface" : "bg-surface-2")}>
             <RichText>{item.Text}</RichText>
           </div>
         ) : null}

@@ -14,7 +14,7 @@ export function Input({ className, ...props }: React.ComponentProps<"input">) {
   return (
     <input
       className={cn(
-        "h-10 w-full rounded-md border bg-surface px-3 text-base outline-none placeholder:text-subtle-foreground focus:border-border-strong focus:ring-2 focus:ring-ring sm:text-sm",
+        "h-10 w-full rounded-lg border bg-canvas px-3 text-base outline-none placeholder:text-subtle-foreground focus:border-signal focus:ring-2 focus:ring-ring sm:text-sm",
         className,
       )}
       {...props}
@@ -29,7 +29,7 @@ export function SearchInput({ className, size = "default", ...props }: Omit<Reac
       <input
         type="search"
         className={cn(
-          "w-full rounded-md border bg-surface pl-9 pr-3 text-base outline-none placeholder:text-subtle-foreground focus:border-border-strong focus:ring-2 focus:ring-ring sm:text-sm",
+          "w-full rounded-lg border bg-canvas pl-9 pr-3 text-base outline-none placeholder:text-subtle-foreground focus:border-signal focus:ring-2 focus:ring-ring sm:text-sm",
           size === "lg" ? "h-11" : "h-9",
         )}
         {...props}
@@ -42,7 +42,7 @@ export function Textarea({ className, ...props }: React.ComponentProps<"textarea
   return (
     <textarea
       className={cn(
-        "w-full resize-y rounded-md border bg-surface px-3 py-2.5 text-base leading-relaxed outline-none placeholder:text-subtle-foreground focus:border-border-strong focus:ring-2 focus:ring-ring sm:text-sm",
+        "w-full resize-y rounded-lg border bg-canvas px-3 py-2.5 text-base leading-relaxed outline-none placeholder:text-subtle-foreground focus:border-signal focus:ring-2 focus:ring-ring sm:text-sm",
         className,
       )}
       {...props}
@@ -54,16 +54,17 @@ export function Label({ className, ...props }: React.ComponentProps<"label">) {
   return <label className={cn("text-meta font-medium text-foreground", className)} {...props} />;
 }
 
+// State pills: one signal for "moving", amber for "needs someone", greys for waiting / finished.
 const TONE: Record<Tone, string> = {
   attention: "bg-warning-soft text-warning [&>i]:bg-warning",
-  progress: "bg-info-soft text-info [&>i]:bg-info",
+  progress: "bg-signal-soft text-signal [&>i]:bg-signal",
   pending: "bg-surface-3 text-muted-foreground [&>i]:bg-subtle-foreground",
-  done: "bg-success-soft text-success [&>i]:bg-success",
+  done: "bg-surface-3 text-foreground [&>i]:bg-signal",
 };
 
 export function StatePill({ tone, children, className }: { tone: Tone; children: React.ReactNode; className?: string }) {
   return (
-    <span className={cn("inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-xs font-medium", TONE[tone], className)}>
+    <span className={cn("inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-md px-2 font-mono text-xs", TONE[tone], className)}>
       <i className={cn("size-1.5 rounded-full", tone === "attention" && "motion-safe:animate-pulse")} aria-hidden />
       {children}
     </span>
@@ -71,28 +72,20 @@ export function StatePill({ tone, children, className }: { tone: Tone; children:
 }
 
 export function Tag({ children, className, mono, variant = "default" }: { children: React.ReactNode; className?: string; mono?: boolean; variant?: "default" | "error" }) {
-  return <span className={cn("inline-flex h-6 items-center rounded-md border bg-surface-2 px-2 text-xs text-muted-foreground", variant === "error" && "text-destructive", mono && "font-mono", className)}>{children}</span>;
+  return <span className={cn("inline-flex h-6 items-center rounded-md bg-canvas px-2 text-xs text-muted-foreground", variant === "error" && "text-destructive", mono && "font-mono", className)}>{children}</span>;
 }
 
 export function Avatar({ name, className }: { name: string; className?: string }) {
-  // Stable hue per person so lists scan quickly.
-  const hue = [...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+  // Neutral: colour is reserved for the one signal.
   return (
-    <span
-      aria-hidden
-      data-hue={hue}
-      className={cn("grid size-8 shrink-0 place-items-center rounded-full text-2xs font-semibold tracking-wide text-white", className)}
-      ref={(el) => {
-        el?.style.setProperty("background", `oklch(0.58 0.11 ${hue})`);
-      }}
-    >
+    <span aria-hidden className={cn("grid size-8 shrink-0 place-items-center rounded-full border border-border-strong bg-surface-3 font-mono text-2xs font-medium text-foreground", className)}>
       {initials(name)}
     </span>
   );
 }
 
 export function Kbd({ children }: { children: React.ReactNode }) {
-  return <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border bg-surface-2 px-1 font-mono text-2xs text-muted-foreground">{children}</kbd>;
+  return <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border bg-canvas px-1 font-mono text-2xs text-muted-foreground">{children}</kbd>;
 }
 
 export function Skeleton({ className }: { className?: string }) {
@@ -102,7 +95,7 @@ export function Skeleton({ className }: { className?: string }) {
 export function Empty({ icon, title, children, className }: { icon: React.ReactNode; title: string; children?: React.ReactNode; className?: string }) {
   return (
     <div className={cn("flex flex-col items-center px-6 py-14 text-center", className)}>
-      <div className="grid size-11 place-items-center rounded-xl border bg-surface text-muted-foreground shadow-lift">{icon}</div>
+      <div className="grid size-11 place-items-center rounded-xl border border-dashed border-border-strong text-foreground">{icon}</div>
       <p className="mt-4 text-sm font-medium">{title}</p>
       {children && <div className="mt-1 max-w-xs text-sm text-muted-foreground">{children}</div>}
     </div>
@@ -113,12 +106,12 @@ export function Switch({ className, ...props }: React.ComponentProps<typeof Swit
   return (
     <SwitchPrimitive.Root
       className={cn(
-        "peer inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full border border-transparent bg-surface-3 transition-colors data-[state=checked]:bg-primary",
+        "peer inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full border border-transparent bg-surface-3 transition-colors data-[state=checked]:bg-signal",
         className,
       )}
       {...props}
     >
-      <SwitchPrimitive.Thumb className="block size-5 translate-x-0.5 rounded-full bg-white shadow-lift transition-transform data-[state=checked]:translate-x-4" />
+      <SwitchPrimitive.Thumb className="block size-5 translate-x-0.5 rounded-full bg-foreground transition-transform data-[state=checked]:translate-x-4 data-[state=checked]:bg-canvas" />
     </SwitchPrimitive.Root>
   );
 }
@@ -147,7 +140,7 @@ export function MenuContent({ className, ...props }: React.ComponentProps<typeof
       <MenuPrimitive.Content
         sideOffset={6}
         align="end"
-        className={cn("z-50 min-w-44 rounded-lg border bg-surface p-1 shadow-pop animate-fade", className)}
+        className={cn("z-50 min-w-44 rounded-xl border bg-canvas p-1 shadow-pop animate-fade", className)}
         {...props}
       />
     </MenuPrimitive.Portal>
@@ -158,7 +151,7 @@ export function MenuItem({ className, destructive, ...props }: React.ComponentPr
   return (
     <MenuPrimitive.Item
       className={cn(
-        "flex h-9 cursor-default select-none items-center gap-2 rounded-md px-2.5 text-sm outline-none data-[highlighted]:bg-surface-2 [&_svg]:size-4 [&_svg]:text-muted-foreground",
+        "flex h-9 cursor-default select-none items-center gap-2 rounded-md px-2.5 text-sm outline-none data-[highlighted]:bg-surface-3 [&_svg]:size-4 [&_svg]:text-muted-foreground",
         destructive && "text-destructive [&_svg]:text-destructive",
         className,
       )}
@@ -192,7 +185,7 @@ export function Dialog({
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40 animate-fade" />
         <DialogPrimitive.Content
           className={cn(
-            "fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-surface p-5 shadow-pop animate-rise",
+            "fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-canvas p-5 shadow-pop animate-rise",
             className,
           )}
         >

@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, Empty, SearchInput, Skeleton, StatePill, Tag, Tip } from "@/components/ui/primitives";
 import { RichText } from "@/components/helpdesk/rich-text";
+import { PageTitle } from "@/components/ui/viz";
 
 const VIEWS = [
   { id: "", label: "All", icon: Layers },
@@ -55,17 +56,16 @@ export function InboxView({ ticketId, onSelect, onOpenRun }: { ticketId: string 
 
   return (
     <div className="flex min-h-0 flex-1">
-      <section aria-label="Tickets" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-80 md:shrink-0 xl:w-96", ticketId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
+      <section aria-label="Tickets" className={cn("flex min-h-0 w-full flex-col border-r bg-canvas md:w-80 md:shrink-0 xl:w-96", ticketId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
         <div className="space-y-2 border-b px-3 py-3">
-          <div className="flex items-center gap-2">
-            <h1 className="flex-1 text-title font-semibold tracking-tight">{VIEWS.find((v) => v.id === view)!.label}</h1>
+          <PageTitle icon={Inbox} title={VIEWS.find((v) => v.id === view)!.label} meta={rows ? `${rows.length} tickets` : "loading"}>
             {ticketId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setCollapsedTicketId(ticketId)} aria-label="Hide ticket list"><PanelLeftClose /></Button>}
             <Tip label="Refresh">
               <Button variant="ghost" size="icon-sm" aria-label="Refresh" onClick={() => setTick((n) => n + 1)}>
                 <RefreshCw />
               </Button>
             </Tip>
-          </div>
+          </PageTitle>
           <div className="scrollbar-thin flex gap-1 overflow-x-auto pb-0.5" role="tablist" aria-label="Ticket status views">
             {VIEWS.map((v) => (
               <button
@@ -100,9 +100,9 @@ export function InboxView({ ticketId, onSelect, onOpenRun }: { ticketId: string 
               <button
                 onClick={() => onSelect(t.ID)}
                 aria-current={ticketId === t.ID ? "true" : undefined}
-                className={cn("relative flex w-full gap-3 px-3 py-3 text-left hover:bg-surface-2", ticketId === t.ID && "bg-primary-soft/60 hover:bg-primary-soft/60")}
+                className={cn("relative flex w-full gap-3 px-3 py-3 text-left hover:bg-surface-2", ticketId === t.ID && "bg-surface-2 hover:bg-surface-2")}
               >
-                {ticketId === t.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" aria-hidden />}
+                {ticketId === t.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
                 <Avatar name={t.FirstLastName || t.EmailID || "?"} className="mt-0.5 size-7" />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-2">
@@ -170,7 +170,7 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="shrink-0 border-b bg-surface px-4 pt-3">
+        <header className="shrink-0 border-b bg-canvas px-4 pt-3">
           <div className="flex items-start gap-2">
             <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Back" onClick={onBack}>
               <ArrowLeft />
@@ -208,7 +208,7 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
                 role="tab"
                 aria-selected={tab === x.id}
                 onClick={() => setTab(x.id)}
-                className={cn("flex h-9 items-center gap-1.5 border-b-2 border-transparent text-meta font-medium text-muted-foreground hover:text-foreground", tab === x.id && "border-primary text-foreground")}
+                className={cn("flex h-9 items-center gap-1.5 border-b-2 border-transparent text-meta font-medium text-muted-foreground hover:text-foreground", tab === x.id && "border-signal text-foreground")}
               >
                 {x.label}
                 <span className="rounded bg-surface-3 px-1.5 text-2xs tabular-nums">{x.n}</span>
@@ -224,7 +224,7 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
                   const support = item.Actor === "support";
                   return (
                     <li key={i} className="flex gap-3">
-                      <span className={cn("grid size-8 shrink-0 place-items-center rounded-full", support ? "bg-primary text-primary-foreground" : "border bg-surface text-muted-foreground")} aria-hidden>
+                      <span className={cn("grid size-8 shrink-0 place-items-center rounded-full", support ? "bg-signal-soft text-signal" : "border bg-surface text-muted-foreground")} aria-hidden>
                         {support ? <Headset className="size-4" /> : <UserIcon className="size-4" />}
                       </span>
                       <div className="min-w-0 flex-1">
@@ -350,7 +350,7 @@ export function Transcript({ messages }: { messages: Message[] }) {
         const sources: SourceRef[] = m.SourcesJson ? JSON.parse(m.SourcesJson) : [];
         return (
           <li key={m.ID} className={cn("flex gap-3", m.Role === "user" && "flex-row-reverse")}>
-            <span className={cn("grid size-7 shrink-0 place-items-center rounded-full", m.Role === "user" ? "border bg-surface text-muted-foreground" : "bg-primary text-primary-foreground")} aria-hidden>
+            <span className={cn("grid size-7 shrink-0 place-items-center rounded-full", m.Role === "user" ? "border bg-surface text-muted-foreground" : "bg-signal-soft text-signal")} aria-hidden>
               {m.Role === "user" ? <UserIcon className="size-3.5" /> : <Bot className="size-3.5" />}
             </span>
             <div className={cn("min-w-0 max-w-xl", m.Role === "user" && "text-right")}>

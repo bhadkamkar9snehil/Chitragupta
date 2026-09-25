@@ -12,10 +12,11 @@ import { RichText } from "@/components/helpdesk/rich-text";
 import { Json } from "./live";
 import { InspectorBlock } from "./inspect";
 import { InvestigationCircuit } from "./circuit";
+import { PageTitle } from "@/components/ui/viz";
 
 const OUTCOME_TONE: Record<string, string> = {
   RESOLUTION: "bg-success-soft text-success",
-  NEEDS_HUMAN_ACTION: "bg-info-soft text-info",
+  NEEDS_HUMAN_ACTION: "bg-surface-3 text-foreground",
   L3_ESCALATION: "bg-warning-soft text-warning",
   UPDATE: "bg-surface-3 text-muted-foreground",
 };
@@ -23,11 +24,11 @@ const OUTCOME_TONE: Record<string, string> = {
 export function Outcome({ type, active }: { type: string | null; active?: boolean }) {
   if (active)
     return (
-      <span className="inline-flex h-6 items-center gap-1.5 rounded-full bg-destructive-soft px-2.5 text-xs font-medium text-destructive">
+      <span className="inline-flex h-6 items-center gap-1.5 rounded-md bg-signal-soft px-2 font-mono text-xs text-signal">
         <Radio className="size-3 motion-safe:animate-pulse" aria-hidden /> Working
       </span>
     );
-  return <span className={cn("inline-flex h-6 items-center rounded-full px-2.5 text-xs font-medium", OUTCOME_TONE[type ?? ""] ?? "bg-surface-3 text-muted-foreground")}>{outcomeLabel(type)}</span>;
+  return <span className={cn("inline-flex h-6 items-center rounded-md px-2 font-mono text-xs", OUTCOME_TONE[type ?? ""] ?? "bg-surface-3 text-muted-foreground")}>{outcomeLabel(type)}</span>;
 }
 
 export function RunsView({ runId, onSelect, onLive, onOpenTicket }: { runId: string | null; onSelect: (id: string | null) => void; onLive: (id: string) => void; onOpenTicket: (id: string) => void }) {
@@ -48,15 +49,11 @@ export function RunsView({ runId, onSelect, onLive, onOpenTicket }: { runId: str
 
   return (
     <div className="flex min-h-0 flex-1">
-      <section aria-label="L2 investigations" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-96 md:shrink-0", runId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
+      <section aria-label="L2 investigations" className={cn("flex min-h-0 w-full flex-col border-r bg-canvas md:w-96 md:shrink-0", runId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
         <div className="space-y-2 border-b px-3 py-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="flex-1 text-title font-semibold tracking-tight">L2 investigations</h1>
-              {runId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setCollapsedRunId(runId)} aria-label="Hide run list"><PanelLeftClose /></Button>}
-            </div>
-            <p className="text-2xs text-subtle-foreground">Every investigation the L2 engineer ran, newest first.</p>
-          </div>
+          <PageTitle icon={Bot} title="L2 investigations" meta={runs ? `${runs.length} runs · newest first` : "loading"}>
+            {runId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setCollapsedRunId(runId)} aria-label="Hide run list"><PanelLeftClose /></Button>}
+          </PageTitle>
           <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ticket, subject or route" aria-label="Search runs" />
           <div className="flex gap-1 overflow-x-auto" role="tablist">
             {["", ...outcomes].map((o) => (
@@ -70,8 +67,8 @@ export function RunsView({ runId, onSelect, onLive, onOpenTicket }: { runId: str
           {!runs && [0, 1, 2].map((i) => <li key={i} className="border-b p-3"><Skeleton className="h-14" /></li>)}
           {shown.map((r) => (
             <li key={r.ID} className="border-b">
-              <button onClick={() => onSelect(r.ID)} aria-current={runId === r.ID ? "true" : undefined} className={cn("relative w-full px-3 py-3 text-left hover:bg-surface-2", runId === r.ID && "bg-primary-soft/60 hover:bg-primary-soft/60")}>
-                {runId === r.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" aria-hidden />}
+              <button onClick={() => onSelect(r.ID)} aria-current={runId === r.ID ? "true" : undefined} className={cn("relative w-full px-3 py-3 text-left hover:bg-surface-2", runId === r.ID && "bg-surface-2 hover:bg-surface-2")}>
+                {runId === r.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
                 <span className="flex items-center gap-2">
                   <span className="font-mono text-xs text-muted-foreground">{ticketLabel(r.TicketNo)}</span>
                   <Outcome type={r.ResponseType} active={r.IsActive} />
@@ -122,7 +119,7 @@ function RunWorkspace({ id, onBack, onLive, onOpenTicket, drawerOpen, onDrawerTo
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="shrink-0 space-y-3 border-b bg-surface px-4 pt-3">
+      <header className="shrink-0 space-y-3 border-b bg-canvas px-4 pt-3">
         <div className="flex items-start gap-2">
           <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Back" onClick={onBack}><ArrowLeft /></Button>
           <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" aria-label={drawerOpen ? "Hide run list" : "Show run list"} onClick={onDrawerToggle}>
@@ -149,7 +146,7 @@ function RunWorkspace({ id, onBack, onLive, onOpenTicket, drawerOpen, onDrawerTo
         </div>
         <div className="scrollbar-thin -mb-px flex gap-4 overflow-x-auto" role="tablist">
           {tabs.map((x) => (
-            <button key={x.id} role="tab" aria-selected={tab === x.id} onClick={() => setTab(x.id)} className={cn("flex h-9 shrink-0 items-center gap-1.5 border-b-2 border-transparent text-meta font-medium text-muted-foreground hover:text-foreground", tab === x.id && "border-primary text-foreground")}>
+            <button key={x.id} role="tab" aria-selected={tab === x.id} onClick={() => setTab(x.id)} className={cn("flex h-9 shrink-0 items-center gap-1.5 border-b-2 border-transparent text-meta font-medium text-muted-foreground hover:text-foreground", tab === x.id && "border-signal text-foreground")}>
               {x.label}
               {x.n !== undefined && <span className="rounded bg-surface-3 px-1.5 text-2xs tabular-nums">{x.n}</span>}
             </button>

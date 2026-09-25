@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { api, turn, type Message, type Session, type SourceRef, type Ticket } from "@/lib/api";
 import { ago, clock, dayGroup, pageTitle, plain, ticketLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { PageTitle } from "@/components/ui/viz";
 import { Button } from "@/components/ui/button";
 import { Dialog, Empty, Input, SearchInput, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Skeleton, StatePill, Tip } from "@/components/ui/primitives";
 import { BrandMark, useHelpdesk } from "./app";
@@ -22,7 +23,7 @@ export function Messages() {
 
   return (
     <div className="flex min-h-0 flex-1">
-      <div className={cn("flex min-h-0 w-full flex-col border-r bg-surface lg:w-80 lg:shrink-0", showThread && "hidden lg:flex")}>
+      <div className={cn("flex min-h-0 w-full flex-col border-r bg-canvas lg:w-80 lg:shrink-0", showThread && "hidden lg:flex")}>
         <ConversationList onNew={() => setComposing(true)} />
       </div>
       <div className={cn("min-h-0 min-w-0 flex-1 flex-col", showThread ? "flex" : "hidden lg:flex")}>
@@ -45,12 +46,11 @@ function ConversationList({ onNew }: { onNew: () => void }) {
 
   return (
     <>
-      <div className="flex items-center justify-between px-4 pb-2 pt-4">
-        <h1 className="text-title font-semibold tracking-tight">Messages</h1>
+      <PageTitle icon={MessageCircle} title="Messages" meta={`${sessions.length} conversation${sessions.length === 1 ? "" : "s"}`} className="mx-4 mb-3 mt-4">
         <Button size="sm" onClick={() => { go({ tab: "messages", sessionId: null }); onNew(); }}>
-          <Plus /> New
+          <Plus /> New chat
         </Button>
-      </div>
+      </PageTitle>
       <div className="px-4 pb-3">
         <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search conversations" aria-label="Search conversations" />
       </div>
@@ -74,9 +74,9 @@ function ConversationList({ onNew }: { onNew: () => void }) {
                   <button
                     onClick={() => go({ tab: "messages", sessionId: s.ID })}
                     aria-current={active === s.ID ? "true" : undefined}
-                    className={cn("relative flex w-full gap-3 px-4 py-3 text-left hover:bg-surface-2", active === s.ID && "bg-primary-soft/60 hover:bg-primary-soft/60")}
+                    className={cn("relative flex w-full gap-3 px-4 py-3 text-left hover:bg-surface-2", active === s.ID && "bg-surface-2 hover:bg-surface-2")}
                   >
-                    {active === s.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" aria-hidden />}
+                    {active === s.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
                     <span className="min-w-0 flex-1">
                       <span className="flex items-baseline justify-between gap-2">
                         <span className="truncate text-sm font-medium">{s.Title || "New conversation"}</span>
@@ -199,7 +199,7 @@ function Thread({ sessionId, draft, onBack }: { sessionId: string | null; draft?
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-surface px-3 lg:px-5">
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-canvas px-3 lg:px-5">
         <Button variant="ghost" size="icon-sm" className="lg:hidden" aria-label="Back to messages" onClick={() => { onBack(); go({ tab: "messages", sessionId: null }); }}>
           <ArrowLeft />
         </Button>
@@ -264,7 +264,7 @@ function Thread({ sessionId, draft, onBack }: { sessionId: string | null; draft?
               </p>
               <div className="mt-6 grid w-full max-w-lg gap-2 sm:grid-cols-2">
                 {config.suggestions.map((s) => (
-                  <button key={s} onClick={() => send(s)} className="rounded-xl border bg-surface px-3.5 py-3 text-left text-sm shadow-lift hover:border-border-strong">
+                  <button key={s} onClick={() => send(s)} className="rounded-xl border bg-surface px-3.5 py-3 text-left text-sm hover:border-border-strong">
                     {s}
                   </button>
                 ))}
@@ -284,7 +284,7 @@ function Thread({ sessionId, draft, onBack }: { sessionId: string | null; draft?
                     <p className="flex items-center gap-2 text-sm text-muted-foreground">
                       <span className="flex gap-0.5" aria-hidden>
                         {[0, 1, 2].map((i) => (
-                          <span key={i} className={cn("size-1 rounded-full bg-primary motion-safe:animate-pulse", i === 1 && "delay-150", i === 2 && "delay-300")} />
+                          <span key={i} className={cn("size-1 rounded-full bg-signal motion-safe:animate-pulse", i === 1 && "delay-150", i === 2 && "delay-300")} />
                         ))}
                       </span>
                       {live.status}…
@@ -293,7 +293,7 @@ function Thread({ sessionId, draft, onBack }: { sessionId: string | null; draft?
                   {live.text && (
                     <div className="text-foreground">
                       <RichText>{live.text}</RichText>
-                      <span className="ml-0.5 inline-block h-4 w-0.5 translate-y-0.5 bg-primary animate-caret" aria-hidden />
+                      <span className="ml-0.5 inline-block h-4 w-0.5 translate-y-0.5 bg-signal animate-caret" aria-hidden />
                     </div>
                   )}
                   {live.sources.length > 0 && <Sources sources={live.sources} />}
@@ -315,7 +315,7 @@ function Thread({ sessionId, draft, onBack }: { sessionId: string | null; draft?
             send(input);
           }}
         >
-          <div className="rounded-2xl border bg-surface p-2 shadow-lift focus-within:border-border-strong focus-within:ring-2 focus-within:ring-ring">
+          <div className="rounded-2xl border bg-surface p-2 focus-within:border-border-strong focus-within:ring-2 focus-within:ring-ring">
             <textarea
               ref={boxRef}
               value={input}
@@ -383,7 +383,7 @@ function Thread({ sessionId, draft, onBack }: { sessionId: string | null; draft?
 
 function AssistantAvatar() {
   return (
-    <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground" aria-hidden>
+    <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-signal-soft text-signal" aria-hidden>
       <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
         <path d="M4 17c3-6 5-9 8-9s5 3 8 9" />
       </svg>
@@ -402,7 +402,7 @@ function MessageItem({ m, tickets, onOpenTicket }: { m: Message; tickets: Ticket
     return (
       <li className="flex justify-end animate-rise">
         <div className="max-w-xs sm:max-w-md">
-          <div className="whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-body leading-relaxed text-primary-foreground">{m.Content}</div>
+          <div className="whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-surface-3 px-4 py-2.5 text-body leading-relaxed text-foreground">{m.Content}</div>
           <p className="mt-1 text-right text-2xs text-subtle-foreground">{clock(m.CreatedOn)}</p>
         </div>
       </li>
@@ -420,8 +420,8 @@ function MessageItem({ m, tickets, onOpenTicket }: { m: Message; tickets: Ticket
       <div className="min-w-0 flex-1 pt-0.5">
         <RichText>{m.Content}</RichText>
         {ticket && (
-          <button onClick={() => onOpenTicket(ticket.ID)} className="mt-3 flex w-full max-w-md items-center gap-3 rounded-xl border bg-surface p-3.5 text-left shadow-lift hover:border-border-strong">
-            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary-soft text-primary-soft-foreground">
+          <button onClick={() => onOpenTicket(ticket.ID)} className="mt-3 flex w-full max-w-md items-center gap-3 rounded-xl border bg-surface p-3.5 text-left hover:border-border-strong">
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-signal-soft text-signal">
               <Headset className="size-4" aria-hidden />
             </span>
             <span className="min-w-0 flex-1">

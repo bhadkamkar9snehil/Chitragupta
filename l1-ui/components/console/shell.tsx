@@ -110,14 +110,14 @@ export function Console() {
   return (
     <TooltipProvider>
       <div className="flex h-dvh overflow-hidden bg-background">
-        <nav aria-label="Suite" className={cn("scrollbar-thin flex w-16 shrink-0 flex-col items-center overflow-y-auto border-r bg-surface py-3", !navCollapsed && "xl:w-60 xl:items-stretch xl:px-2")}>
+        <nav aria-label="Suite" className={cn("scrollbar-thin flex w-16 shrink-0 flex-col items-center overflow-y-auto border-r bg-canvas py-3", !navCollapsed && "xl:w-60 xl:items-stretch xl:px-2")}>
           <div className={cn("w-full pb-3", !navCollapsed && "xl:px-2")}>
             {navCollapsed ? (
               <div className="hidden flex-col items-center gap-2 xl:flex">
                 <BrandMark name={brand} compact />
                 <Tip label="Expand navigation" side="right">
                   <button
-                    className="grid size-9 place-items-center rounded-lg border bg-background text-muted-foreground shadow-sm hover:bg-surface-2 hover:text-foreground"
+                    className="grid size-9 place-items-center rounded-lg border bg-background text-muted-foreground hover:bg-surface-2 hover:text-foreground"
                     onClick={() => {
                       setNavCollapsed(false);
                       safe(() => localStorage.setItem("desk.nav.collapsed", "0"), undefined);
@@ -185,7 +185,7 @@ export function Console() {
                       className={cn(
                         "mx-auto flex size-10 items-center justify-center gap-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground",
                         !navCollapsed && "xl:h-9 xl:w-full xl:justify-start xl:px-2.5",
-                        route.view === n.view && (navCollapsed ? "bg-primary-soft text-primary-soft-foreground shadow-sm" : "bg-surface-2 text-foreground"),
+                        route.view === n.view && (navCollapsed ? "bg-signal-soft text-signal" : "bg-surface-2 text-foreground"),
                       )}
                     >
                       <n.icon className={cn("size-4.5 xl:size-4", n.view === "live" && "text-signal")} aria-hidden />

@@ -26,7 +26,7 @@ public class Settings(IDataProtectionProvider dp)
         {
             ["name"] = "XBatch Helpdesk",
             ["greeting"] = "Tell us what is going wrong. We will answer straight away or hand it to the support team.",
-            ["accent"] = "#c2410c",
+            ["accent"] = "#4ceea8",
             ["suggestions"] = new JsonArray("GR not happening for a heat, SAP shows an error",
                 "Report value looks different from what I see on the screen", "A screen is not showing today's data",
                 "What is the status of my tickets?"),

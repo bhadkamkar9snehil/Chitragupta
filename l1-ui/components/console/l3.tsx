@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { api, ops, type Escalation, type Ticket, type User } from "@/lib/api";
 import { ago, displayName, outcomeLabel, ticketLabel, when } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { PageTitle, Segmented } from "@/components/ui/viz";
 import { Button } from "@/components/ui/button";
 import { Empty, Label, Skeleton, Switch, Tag, Textarea } from "@/components/ui/primitives";
 import { RichText } from "@/components/helpdesk/rich-text";
@@ -37,15 +38,11 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
 
   return (
     <div className="flex min-h-0 flex-1">
-      <section aria-label="L3 queue" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-96 md:shrink-0", escalationId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
+      <section aria-label="L3 queue" className={cn("flex min-h-0 w-full flex-col border-r bg-canvas md:w-96 md:shrink-0", escalationId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
         <div className="space-y-2 border-b px-3 py-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="flex-1 text-title font-semibold tracking-tight">L3 escalations</h1>
-              {escalationId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setCollapsedEscalationId(escalationId)} aria-label="Hide escalation list"><PanelLeftClose /></Button>}
-            </div>
-            <p className="text-2xs text-subtle-foreground">Handed over by the L2 engineer for a person to act on.{engineer && mine ? ` ${mine} assigned to you.` : ""}</p>
-          </div>
+          <PageTitle icon={ShieldAlert} title="L3 escalations" meta={`handed over by L2 for a person${engineer && mine ? ` · ${mine} assigned to you` : ""}`}>
+            {escalationId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setCollapsedEscalationId(escalationId)} aria-label="Hide escalation list"><PanelLeftClose /></Button>}
+          </PageTitle>
           <div className="flex gap-1" role="tablist">
             {STATUSES.map((s) => (
               <button key={s} role="tab" aria-selected={status === s} onClick={() => setStatus(s)} className={cn("min-h-11 rounded-md px-2 text-meta text-muted-foreground hover:bg-surface-2 sm:min-h-7", status === s && "bg-surface-3 font-medium text-foreground")}>
@@ -58,15 +55,15 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
           {!rows && [0, 1, 2].map((i) => <li key={i} className="border-b p-3"><Skeleton className="h-16" /></li>)}
           {shown.map((r) => (
             <li key={r.ID} className="border-b">
-              <button onClick={() => onSelect(r.ID)} aria-current={escalationId === r.ID ? "true" : undefined} className={cn("relative w-full px-3 py-3 text-left hover:bg-surface-2", escalationId === r.ID && "bg-primary-soft/60 hover:bg-primary-soft/60")}>
-                {escalationId === r.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" aria-hidden />}
+              <button onClick={() => onSelect(r.ID)} aria-current={escalationId === r.ID ? "true" : undefined} className={cn("relative w-full px-3 py-3 text-left hover:bg-surface-2", escalationId === r.ID && "bg-surface-2 hover:bg-surface-2")}>
+                {escalationId === r.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
                 <span className="flex items-center gap-2">
                   <span className="font-mono text-xs text-muted-foreground">{ticketLabel(r.TicketNo)}</span>
                   <span className={cn(
                     "rounded px-1.5 py-0.5 text-2xs font-semibold",
                     r.L3Status === "Resolved" ? "bg-success-soft text-success"
-                      : r.L3Status === "In progress" ? "bg-primary-soft text-primary-soft-foreground"
-                        : r.EscalationCategory === "UNRESOLVED" ? "bg-warning-soft text-warning" : "bg-info-soft text-info",
+                      : r.L3Status === "In progress" ? "bg-signal-soft text-signal"
+                        : r.EscalationCategory === "UNRESOLVED" ? "bg-warning-soft text-warning" : "bg-surface-3 text-foreground",
                   )}>
                     {r.L3Status === "Resolved" ? "Resolved"
                       : r.L3Status === "In progress" ? "In progress"
@@ -152,7 +149,7 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="shrink-0 border-b bg-surface px-4 py-3">
+      <header className="shrink-0 border-b bg-canvas px-4 py-3">
         <div className="flex items-start gap-2">
           <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Back" onClick={onBack}><ArrowLeft /></Button>
           <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" aria-label={drawerOpen ? "Hide escalation list" : "Show escalation list"} onClick={onDrawerToggle}>

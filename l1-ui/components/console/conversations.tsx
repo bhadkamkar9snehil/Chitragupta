@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, Empty, SearchInput, Skeleton, Tag } from "@/components/ui/primitives";
 import { Transcript } from "./inbox";
+import { PageTitle } from "@/components/ui/viz";
 
 const FILTERS = [
   { id: "", label: "All" },
@@ -33,12 +34,11 @@ export function ConversationsView({ sessionId, onSelect, onOpenTicket, onNewChat
 
   return (
     <div className="flex min-h-0 flex-1">
-      <section aria-label="Conversations" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-96 md:shrink-0", sessionId && "hidden md:flex")}>
+      <section aria-label="Conversations" className={cn("flex min-h-0 w-full flex-col border-r bg-canvas md:w-96 md:shrink-0", sessionId && "hidden md:flex")}>
         <div className="space-y-2 border-b px-3 py-3">
-          <div className="flex items-center gap-2">
-            <h1 className="flex-1 text-title font-semibold tracking-tight">Conversations</h1>
-            <Button size="sm" variant="outline" onClick={onNewChat}><MessageSquarePlus /> New chat</Button>
-          </div>
+          <PageTitle icon={MessagesSquare} title="L1 conversations" meta={rows ? `${rows.length} chats with the assistant` : "loading"}>
+            <Button size="sm" onClick={onNewChat}><MessageSquarePlus /> New chat</Button>
+          </PageTitle>
           <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles or ticket numbers" aria-label="Search conversations" />
           <div className="flex gap-1 overflow-x-auto" role="tablist">
             {FILTERS.map((f) => (
@@ -52,8 +52,8 @@ export function ConversationsView({ sessionId, onSelect, onOpenTicket, onNewChat
           {!rows && [0, 1, 2].map((i) => <li key={i} className="border-b p-3"><Skeleton className="h-12" /></li>)}
           {rows?.map((s) => (
             <li key={s.ID} className="border-b">
-              <button onClick={() => onSelect(s.ID)} aria-current={sessionId === s.ID ? "true" : undefined} className={cn("relative flex w-full gap-3 px-3 py-3 text-left hover:bg-surface-2", sessionId === s.ID && "bg-primary-soft/60 hover:bg-primary-soft/60")}>
-                {sessionId === s.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" aria-hidden />}
+              <button onClick={() => onSelect(s.ID)} aria-current={sessionId === s.ID ? "true" : undefined} className={cn("relative flex w-full gap-3 px-3 py-3 text-left hover:bg-surface-2", sessionId === s.ID && "bg-surface-2 hover:bg-surface-2")}>
+                {sessionId === s.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
                 <Avatar name={s.UserName || "?"} className="mt-0.5 size-7" />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-2">
@@ -92,7 +92,7 @@ function Detail({ id, session, onBack, onOpenTicket }: { id: string; session: Se
   }, [id]);
   return (
     <>
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-surface px-4">
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-canvas px-4">
         <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Back" onClick={onBack}>
           <ArrowLeft />
         </Button>

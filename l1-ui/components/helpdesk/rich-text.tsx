@@ -11,7 +11,7 @@ export function RichText({ children, compact }: { children: string; compact?: bo
           ol: (p) => <ol className="list-decimal space-y-1 pl-5" {...p} />,
           strong: (p) => <strong className="font-semibold" {...p} />,
           code: (p) => <code className="rounded bg-surface-3 px-1 py-0.5 font-mono text-sm" {...p} />,
-          a: (p) => <a className="text-primary underline underline-offset-2" target="_blank" rel="noreferrer" {...p} />,
+          a: (p) => <a className="text-signal underline underline-offset-2" target="_blank" rel="noreferrer" {...p} />,
         }}
       >
         {children}

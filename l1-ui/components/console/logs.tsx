@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ops, type RuntimeLogRecord, type RuntimeLogs } from "@/lib/api";
 import { ago } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { PageTitle } from "@/components/ui/viz";
 import { Button } from "@/components/ui/button";
 import { Empty, Skeleton, Switch, Tag } from "@/components/ui/primitives";
 import { Json } from "./live";
@@ -56,21 +57,18 @@ export function LogsView() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="shrink-0 border-b bg-surface px-4 py-3 lg:px-6">
+      <header className="shrink-0 border-b bg-canvas px-4 py-3 lg:px-6">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-title font-semibold tracking-tight">Runtime logs</h1>
-            <p className="text-2xs text-subtle-foreground">Read-only tail of Chitragupta JSONL observability written inside WSL.</p>
-          </div>
+          <PageTitle icon={FileJson2} className="flex-1" title="Runtime logs" meta="read-only tail of the JSONL observability written inside WSL" />
           <label className="flex items-center gap-2 text-meta text-muted-foreground">
             <Switch checked={follow} onCheckedChange={setFollow} aria-label="Follow runtime logs" />
-            {follow ? <><Radio className="size-3 text-destructive" /> Follow live</> : <><CirclePause className="size-3" /> Paused</>}
+            {follow ? <><Radio className="size-3 text-signal" /> Follow live</> : <><CirclePause className="size-3" /> Paused</>}
           </label>
           <Button variant="outline" size="sm" onClick={load}><RefreshCw /> Refresh</Button>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           {["All", ...(data?.sources.map((s) => s.name) ?? [])].map((name) => (
-            <button key={name} onClick={() => setSource(name)} className={cn("rounded-md border px-2.5 py-1 text-xs text-muted-foreground", source === name && "border-primary/40 bg-primary-soft text-primary-soft-foreground")}>
+            <button key={name} onClick={() => setSource(name)} className={cn("rounded-md border px-2.5 py-1 text-xs text-muted-foreground", source === name && "border-signal/40 bg-signal-soft text-signal")}>
               {name}
             </button>
           ))}
@@ -89,7 +87,7 @@ export function LogsView() {
             return (
               <li key={key} className="overflow-hidden rounded-lg border bg-surface">
                 <button onClick={() => setOpen(isOpen ? null : key)} className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-surface-2" aria-expanded={isOpen}>
-                  <span className={cn("size-2 shrink-0 rounded-full", failed ? "bg-destructive" : sourceName === "Observer events" ? "bg-primary" : "bg-border-strong")} aria-hidden />
+                  <span className={cn("size-2 shrink-0 rounded-full", failed ? "bg-destructive" : sourceName === "Observer events" ? "bg-signal" : "bg-border-strong")} aria-hidden />
                   <span className="w-28 shrink-0 text-2xs text-subtle-foreground">{sourceName}</span>
                   <span className="min-w-0 flex-1 truncate text-meta font-medium">{title(record)}</span>
                   {d.tool_name != null && <span className="hidden max-w-48 truncate font-mono text-2xs text-muted-foreground md:block">{String(d.tool_name)}</span>}

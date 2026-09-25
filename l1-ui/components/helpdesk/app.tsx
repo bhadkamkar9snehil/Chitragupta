@@ -39,7 +39,7 @@ const safe = <T,>(fn: () => T, fallback: T) => {
 export const DEFAULT_CONFIG: WidgetConfig = {
   name: "XBatch Helpdesk",
   greeting: "Tell us what is going wrong. We will answer straight away or hand it to the support team.",
-  accent: "#c2410c",
+  accent: "#4ceea8",
   suggestions: [],
 };
 
@@ -77,7 +77,7 @@ export function HelpdeskApp() {
   if (state === "booting")
     return (
       <div className="grid h-dvh place-items-center">
-        <span className="size-2 rounded-full bg-primary motion-safe:animate-ping" aria-label="Loading" />
+        <span className="size-2 rounded-full bg-signal motion-safe:animate-ping" aria-label="Loading" />
       </div>
     );
   if (state === "offline")
@@ -136,7 +136,7 @@ function SignIn({ config, onPick }: { config: WidgetConfig; onPick: (u: User) =>
         <p className="mt-1 text-sm text-muted-foreground">Choose your XBatch account. Your conversations and tickets stay with it.</p>
         <SearchInput autoFocus size="lg" className="mt-5" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name or email" aria-label="Search name or email" />
         {error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
-        <ul className="scrollbar-thin mt-2 max-h-96 overflow-y-auto rounded-lg border bg-surface shadow-lift" aria-label="Accounts">
+        <ul className="scrollbar-thin mt-2 max-h-96 overflow-y-auto rounded-lg border bg-surface" aria-label="Accounts">
           {users?.map((u) => (
             <li key={u.ID} className="border-b last:border-0">
               <button onClick={() => onPick(u)} className="flex min-h-13 w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none">
@@ -159,7 +159,7 @@ function SignIn({ config, onPick }: { config: WidgetConfig; onPick: (u: User) =>
 export function BrandMark({ name, compact }: { name: string; compact?: boolean }) {
   return (
     <div className="flex items-center gap-2.5">
-      <span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground shadow-lift">
+      <span className="grid size-8 place-items-center rounded-lg bg-signal text-canvas">
         <svg viewBox="0 0 24 24" className="size-4.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
           <path d="M4 17c3-6 5-9 8-9s5 3 8 9" />
           <path d="M8 21h8" />
@@ -233,7 +233,7 @@ function Workspace({ user, config, onSignOut }: { user: User; config: WidgetConf
     <HelpdeskContext.Provider value={ctx}>
       <div className="flex h-dvh overflow-hidden bg-background">
         {/* Rail: tablets and up */}
-        <nav aria-label="Helpdesk" className="hidden w-60 shrink-0 flex-col border-r bg-surface md:flex">
+        <nav aria-label="Helpdesk" className="hidden w-60 shrink-0 flex-col border-r bg-canvas md:flex">
           <div className="px-4 pb-2 pt-4">
             <BrandMark name={config.name} />
           </div>
@@ -272,13 +272,13 @@ function Workspace({ user, config, onSignOut }: { user: User; config: WidgetConf
             {route.tab === "tickets" && <Tickets />}
           </main>
           {/* Bottom tabs: widget / phone width */}
-          <nav aria-label="Helpdesk" className="grid shrink-0 grid-cols-3 border-t bg-surface pb-safe md:hidden">
+          <nav aria-label="Helpdesk" className="grid shrink-0 grid-cols-3 border-t bg-canvas pb-safe md:hidden">
             {nav.map((n) => (
               <button
                 key={n.tab}
                 onClick={() => setRoute(n.to)}
                 aria-current={route.tab === n.tab ? "page" : undefined}
-                className={cn("relative flex h-14 flex-col items-center justify-center gap-0.5 text-2xs font-medium text-subtle-foreground", route.tab === n.tab && "text-primary")}
+                className={cn("relative flex h-14 flex-col items-center justify-center gap-0.5 text-2xs font-medium text-subtle-foreground", route.tab === n.tab && "text-signal")}
               >
                 <n.icon className="size-5" aria-hidden />
                 {n.label}

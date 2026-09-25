@@ -62,7 +62,7 @@ export function Panel({ icon, title, meta, actions, children, className, pad = "
         {icon && <IconTile icon={icon} />}
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-semibold tracking-tight">{title}</h2>
-          {meta && <p className="truncate text-xs text-subtle-foreground">{meta}</p>}
+          {meta && <p className="line-clamp-2 text-xs text-subtle-foreground">{meta}</p>}
         </div>
         {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
       </header>
@@ -320,6 +320,20 @@ export function HeatCalendar({ days, unit, className }: { days: { day: string; v
           />
         ) : <span key={`pad-${i}`} className="h-4" />)}
       </div>
+    </div>
+  );
+}
+
+// Every screen opens the same way: dashed icon tile, title, one mono line of context, actions on the right.
+export function PageTitle({ icon, title, meta, children, className }: { icon: LucideIcon; title: ReactNode; meta?: ReactNode; children?: ReactNode; className?: string }) {
+  return (
+    <div className={cn("flex min-w-0 items-center gap-3", className)}>
+      <IconTile icon={icon} />
+      <div className="min-w-0 flex-1">
+        <h1 className="truncate text-title font-semibold tracking-tight">{title}</h1>
+        {meta && <p className="truncate font-mono text-2xs text-subtle-foreground">{meta}</p>}
+      </div>
+      {children && <div className="flex shrink-0 items-center gap-1.5">{children}</div>}
     </div>
   );
 }

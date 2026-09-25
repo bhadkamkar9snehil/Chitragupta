@@ -2,66 +2,61 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Warm steel neutrals; one brand accent (set from the console, default molten orange). */
+/* One palette: neutral graphite + ONE accent (--brand, set from Settings). Every accent in the UI is derived from it:
+   the data signal, soft tints, success and the focus ring. Primary actions are the contrast pill (foreground on background). */
 :root {
-  --brand: #c2410c;
-  --background: oklch(0.985 0.002 75);
-  --foreground: oklch(0.2 0.01 60);
+  --brand: #4ceea8;
+  --background: oklch(0.975 0 0);
+  --foreground: oklch(0.2 0 0);
+  --canvas: oklch(0.945 0 0);
   --surface: oklch(1 0 0);
-  --surface-2: oklch(0.967 0.004 75);
-  --surface-3: oklch(0.94 0.006 75);
-  --muted-foreground: oklch(0.5 0.012 60);
-  --subtle-foreground: oklch(0.62 0.01 60);
-  --border: oklch(0.91 0.006 75);
-  --border-strong: oklch(0.84 0.008 75);
-  --primary: var(--brand);
-  --primary-foreground: oklch(0.99 0 0);
-  --primary-soft: color-mix(in oklch, var(--brand) 11%, var(--surface));
-  --primary-soft-foreground: color-mix(in oklch, var(--brand) 78%, black);
-  --ring: color-mix(in oklch, var(--brand) 55%, transparent);
-  --success: oklch(0.55 0.12 155);
-  --success-soft: oklch(0.95 0.04 155);
-  --warning: oklch(0.62 0.14 70);
-  --warning-soft: oklch(0.96 0.05 85);
-  --info: oklch(0.5 0.12 250);
-  --info-soft: oklch(0.955 0.025 250);
-  --destructive: oklch(0.55 0.2 27);
-  --destructive-soft: oklch(0.96 0.03 27);
-  --shadow-color: 30 20% 20%;
+  --surface-2: oklch(0.965 0 0);
+  --surface-3: oklch(0.925 0 0);
+  --muted-foreground: oklch(0.46 0 0);
+  --subtle-foreground: oklch(0.6 0 0);
+  --border: oklch(0.9 0 0);
+  --border-strong: oklch(0.82 0 0);
+  --signal: oklch(from var(--brand) 0.6 0.13 h);
+  --signal-soft: oklch(from var(--brand) 0.95 0.04 h);
+  --signal-muted: oklch(from var(--brand) 0.8 0.07 h);
+  --primary: var(--foreground);
+  --primary-foreground: var(--background);
+  --primary-soft: var(--signal-soft);
+  --primary-soft-foreground: var(--signal);
+  --ring: color-mix(in oklch, var(--signal) 60%, transparent);
+  --success: var(--signal);
+  --success-soft: var(--signal-soft);
+  --warning: oklch(0.63 0.14 70);
+  --warning-soft: oklch(0.95 0.05 85);
+  --info: oklch(0.5 0.05 250);
+  --info-soft: oklch(0.95 0.015 250);
+  --destructive: oklch(0.57 0.2 25);
+  --destructive-soft: oklch(0.95 0.03 25);
+  --shadow-color: 0 0% 0%;
   --radius: 0.625rem;
-  /* Data signal: one mint for "the thing that matters" in every chart; everything else stays grey. */
-  --canvas: oklch(0.955 0.003 75);
-  --signal: oklch(0.6 0.13 162);
-  --signal-soft: oklch(0.94 0.045 162);
-  --signal-muted: oklch(0.8 0.07 162);
 }
 
 .dark {
-  /* Graphite: neutral, not warm. Panels sit on a darker shell with a lighter inset body. */
-  --background: oklch(0.225 0 0);
+  /* Graphite, sampled from the reference: page #212121, card shell #131313, inset body #1c1c1c. */
+  --background: oklch(0.235 0 0);
   --foreground: oklch(0.96 0 0);
-  --canvas: oklch(0.185 0 0);
+  --canvas: oklch(0.18 0 0);
   --surface: oklch(0.215 0 0);
   --surface-2: oklch(0.25 0 0);
   --surface-3: oklch(0.29 0 0);
-  --muted-foreground: oklch(0.72 0 0);
-  --subtle-foreground: oklch(0.56 0 0);
-  --border: oklch(0.28 0 0);
+  --muted-foreground: oklch(0.74 0 0);
+  --subtle-foreground: oklch(0.57 0 0);
+  --border: oklch(0.275 0 0);
   --border-strong: oklch(0.36 0 0);
-  --signal: oklch(0.83 0.14 162);
-  --signal-soft: oklch(0.32 0.05 162);
-  --signal-muted: oklch(0.52 0.08 162);
-  --primary-soft: color-mix(in oklch, var(--brand) 22%, var(--surface));
-  --primary-soft-foreground: color-mix(in oklch, var(--brand) 45%, white);
-  --success-soft: oklch(0.29 0.045 155);
-  --warning-soft: oklch(0.31 0.05 75);
-  --info-soft: oklch(0.29 0.045 250);
-  --destructive-soft: oklch(0.3 0.07 27);
-  --success: oklch(0.78 0.13 155);
-  --warning: oklch(0.82 0.13 80);
-  --info: oklch(0.8 0.1 250);
-  --destructive: oklch(0.72 0.17 27);
-  --shadow-color: 0 0% 0%;
+  --signal: oklch(from var(--brand) 0.86 0.15 h);
+  --signal-soft: oklch(from var(--brand) 0.3 0.055 h);
+  --signal-muted: oklch(from var(--brand) 0.52 0.09 h);
+  --warning: oklch(0.83 0.13 80);
+  --warning-soft: oklch(0.3 0.05 75);
+  --info: oklch(0.8 0.04 250);
+  --info-soft: oklch(0.29 0.02 250);
+  --destructive: oklch(0.7 0.17 25);
+  --destructive-soft: oklch(0.29 0.07 25);
 }
 
 @theme inline {
