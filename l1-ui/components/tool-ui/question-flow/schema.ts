@@ -29,9 +29,13 @@ const SerializableOptionsSchema = z
   .min(1)
   .max(20)
   .refine(
-    (options) => new Set(options.map((option) => option.id)).size === options.length,
+    (options) =>
+      new Set(options.map((option) => option.id)).size === options.length,
     { message: "Question option IDs must be unique." },
-  );
+  )
+  .refine((options) => options.some((option) => !option.disabled), {
+    message: "Question must contain at least one enabled option.",
+  });
 
 export const QuestionFlowStepDefinitionSchema = z.object({
   id: IdSchema,
