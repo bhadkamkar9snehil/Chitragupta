@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, ArrowLeft, Bot, CheckCircle2, Clock, Copy, Headset, Inbox, Layers, PanelLeftClose, PanelLeftOpen, RefreshCw, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Message, type SourceRef, type Ticket } from "@/lib/api";
-import { ago, pageTitle, RESPONSE_KIND, ticketLabel, when, whenShort } from "@/lib/format";
+import { ago, human, outcomeLabel, pageTitle, RESPONSE_KIND, ticketLabel, when, whenShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, Empty, SearchInput, Skeleton, StatePill, Tag, Tip } from "@/components/ui/primitives";
@@ -218,7 +218,7 @@ function TicketWorkspace({ id, onBack, drawerOpen, onDrawerToggle }: { id: strin
           </div>
         </header>
         <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-8">
-          <div className="mx-auto max-w-3xl">
+          <div className={cn(tab === "runs" ? "w-full" : "mx-auto max-w-3xl")}>
             {tab === "activity" && (
               <ol className="space-y-5">
                 {t.Timeline?.map((item, i) => {
@@ -251,26 +251,26 @@ function TicketWorkspace({ id, onBack, drawerOpen, onDrawerToggle }: { id: strin
             {tab === "runs" && (
               t.Runs?.length ? (
                 <div className="overflow-x-auto rounded-xl border bg-surface">
-                  <table className="w-full text-meta">
+                  <table className="w-full min-w-4xl text-meta">
                     <thead className="bg-surface-2 text-left text-2xs uppercase tracking-wider text-subtle-foreground">
                       <tr>
-                        <th className="px-3 py-2 font-semibold">Attempt</th>
-                        <th className="px-3 py-2 font-semibold">State</th>
-                        <th className="px-3 py-2 font-semibold">Outcome</th>
-                        <th className="px-3 py-2 font-semibold">Route</th>
-                        <th className="px-3 py-2 font-semibold">Claimed</th>
-                        <th className="px-3 py-2 font-semibold">Completed</th>
+                        <th className="w-20 px-4 py-3 font-semibold">Attempt</th>
+                        <th className="w-32 px-4 py-3 font-semibold">State</th>
+                        <th className="w-44 px-4 py-3 font-semibold">Outcome</th>
+                        <th className="px-4 py-3 font-semibold">Route</th>
+                        <th className="w-48 px-4 py-3 font-semibold">Claimed</th>
+                        <th className="w-48 px-4 py-3 font-semibold">Completed</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
                       {t.Runs.map((r) => (
-                        <tr key={r.ID}>
-                          <td className="px-3 py-2 tabular-nums">{r.AttemptNo}</td>
-                          <td className="px-3 py-2">{r.ProcessStatus}</td>
-                          <td className="px-3 py-2">{r.ResponseType ?? "—"}</td>
-                          <td className="px-3 py-2">{r.Route ?? "—"}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{when(r.ClaimedOn)}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{when(r.CompletedOn)}</td>
+                        <tr key={r.ID} className="align-top">
+                          <td className="px-4 py-3 font-mono text-xs tabular-nums">{r.AttemptNo}</td>
+                          <td className="px-4 py-3">{human(r.ProcessStatus)}</td>
+                          <td className="px-4 py-3 font-medium">{outcomeLabel(r.ResponseType)}</td>
+                          <td className="px-4 py-3 text-muted-foreground">{human(r.Route) || "—"}</td>
+                          <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{when(r.ClaimedOn)}</td>
+                          <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{when(r.CompletedOn)}</td>
                         </tr>
                       ))}
                     </tbody>
