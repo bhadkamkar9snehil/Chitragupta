@@ -24,14 +24,20 @@ export const QuestionFlowOptionSchema = z.object({
 
 export type QuestionFlowOption = z.infer<typeof QuestionFlowOptionSchema>;
 
+const SerializableOptionsSchema = z
+  .array(QuestionFlowOptionSchema.omit({ icon: true }))
+  .min(1)
+  .max(20)
+  .refine(
+    (options) => new Set(options.map((option) => option.id)).size === options.length,
+    { message: "Question option IDs must be unique." },
+  );
+
 export const QuestionFlowStepDefinitionSchema = z.object({
   id: IdSchema,
   title: TitleSchema,
   description: DescriptionSchema.optional(),
-  options: z
-    .array(QuestionFlowOptionSchema.omit({ icon: true }))
-    .min(1)
-    .max(20),
+  options: SerializableOptionsSchema,
   selectionMode: z.enum(["single", "multi"]).optional(),
 });
 
@@ -58,15 +64,19 @@ export const SerializableProgressiveModeSchema = BaseSchema.extend({
   step: z.number().int().min(1).max(8),
   title: TitleSchema,
   description: DescriptionSchema.optional(),
-  options: z
-    .array(QuestionFlowOptionSchema.omit({ icon: true }))
-    .min(1)
-    .max(20),
+  options: SerializableOptionsSchema,
   selectionMode: z.enum(["single", "multi"]).optional(),
 });
 
 export const SerializableUpfrontModeSchema = BaseSchema.extend({
-  steps: z.array(QuestionFlowStepDefinitionSchema).min(1).max(8),
+  steps: z
+    .array(QuestionFlowStepDefinitionSchema)
+    .min(1)
+    .max(8)
+    .refine(
+      (steps) => new Set(steps.map((step) => step.id)).size === steps.length,
+      { message: "Question step IDs must be unique." },
+    ),
 });
 
 export const SerializableReceiptModeSchema = BaseSchema.extend({
