@@ -166,7 +166,7 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
           <Empty icon={<KanbanSquare className="size-5" />} title="Board unavailable">The Hermes Kanban board could not be read from WSL.</Empty>
         )}
         {view === "kanban" && board?.available && (
-          <div className="flex flex-col gap-3 p-4 md:min-h-128 md:flex-row lg:px-6">
+          <div className="flex flex-wrap items-start gap-3 p-4 md:min-h-128 md:flex-nowrap md:items-stretch lg:px-6">
             {columns.map((c) => c.tasks.length ? (
               <Column key={c.id} name={c.id} count={c.tasks.length} dot={STATUS_DOT[c.id]} hint={c.id === "blocked" ? `${superseded.length} superseded` : c.id === "running" ? "wip 1" : undefined}>
                 {c.tasks.map((t) => <TaskCard key={t.id} task={t} next={later(t)} onOpen={() => setOpen(t)} />)}
@@ -197,7 +197,7 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
         )}
         {view === "lifecycle" && !tickets && <div className="flex gap-3 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-96 w-72 shrink-0" />)}</div>}
         {view === "lifecycle" && tickets && (
-          <div className="flex flex-col gap-3 p-4 md:min-h-128 md:flex-row lg:px-6">
+          <div className="flex flex-wrap items-start gap-3 p-4 md:min-h-128 md:flex-nowrap md:items-stretch lg:px-6">
             {LIFECYCLE.map((stage) => {
               const items = tickets.filter((t) => t.StateLabel === stage);
               return items.length ? (

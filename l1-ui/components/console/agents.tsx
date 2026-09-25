@@ -202,12 +202,12 @@ function ToolGraph({ tools, className }: { tools: ToolStats | null; className?: 
       actions={<Segmented label="Measure" value={metric} onChange={setMetric} options={[{ id: "calls", label: "Calls" }, { id: "latency", label: "Latency" }, { id: "errors", label: "Errors" }]} />}>
       {!tools ? <Skeleton className="h-80" /> : !rows.length ? <p className="py-10 text-center text-sm text-muted-foreground">No tool calls recorded yet.</p> : (
         <div className="space-y-5">
-          <div className="dot-grid flex items-center rounded-lg p-3">
-            <div className="w-36 shrink-0 rounded-xl border border-signal bg-surface px-3 py-2.5 sm:w-44">
+          <div className="dot-grid flex flex-col items-stretch gap-3 rounded-lg p-3 sm:flex-row sm:items-center sm:gap-0">
+            <div className="shrink-0 rounded-xl border border-signal bg-surface px-3 py-2.5 sm:w-44">
               <p className="font-mono text-sm">L2 engineer</p>
               <p className="font-mono text-xs text-subtle-foreground">{tools.tools.length} tools</p>
             </div>
-            <svg viewBox={`0 0 100 ${H}`} preserveAspectRatio="none" className="h-full min-h-40 w-12 shrink-0 self-stretch sm:w-24" aria-hidden>
+            <svg viewBox={`0 0 100 ${H}`} preserveAspectRatio="none" className="hidden h-full min-h-40 w-24 shrink-0 self-stretch sm:block" aria-hidden>
               {rows.map((t, i) => {
                 const y = i * 72 + 36;
                 const isHot = t.ToolName === hotName;
