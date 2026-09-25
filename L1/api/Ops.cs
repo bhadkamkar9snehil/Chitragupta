@@ -86,8 +86,65 @@ public static class Ops
               (SELECT COUNT(*) FROM dbo.L1_Chat_Session_Tbl WHERE CreatedOn >= DATEADD(hour, -24, GETDATE())) AS ChatsLast24h,
               (SELECT MAX(ClaimedOn) FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE IsDeleted = 0) AS LastClaimOn,
               (SELECT COUNT(*) FROM dbo.Hermes_Agent_Trace_Trn_Tbl WHERE EventType = 'jev_system_one' AND EventOn >= DATEADD(hour, -24, GETDATE())) AS JevCallsLast24h,
-              (SELECT COUNT(*) FROM dbo.Hermes_Agent_Trace_Trn_Tbl WHERE EventType = 'post_api_request' AND EventOn >= DATEADD(hour, -24, GETDATE())) AS ModelCallsLast24h
+              (SELECT COUNT(*) FROM dbo.Hermes_Agent_Trace_Trn_Tbl WHERE EventType = 'post_api_request' AND EventOn >= DATEADD(hour, -24, GETDATE())) AS ModelCallsLast24h,
+              (SELECT COUNT(*) FROM dbo.Complaint_Mst_Tbl WHERE ISNULL(IsDeleted,0) = 0 AND Status = 'Closed' AND ModifiedOn >= DATEADD(hour, -24, GETDATE())) AS ResolvedLast24h,
+              (SELECT COUNT(*) FROM dbo.Hermes_L3_Escalation_Trn_Tbl WHERE IsDeleted = 0 AND EscalatedOn >= DATEADD(hour, -24, GETDATE())) AS L3OpenedLast24h,
+              (SELECT COUNT(*) FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE IsDeleted = 0 AND CreatedOn >= DATEADD(hour, -24, GETDATE())
+                 AND (ErrorMessage IS NOT NULL OR UPPER(ISNULL(ProcessStatus,'')) = 'FAILED')) AS FailedRunsLast24h
             """)).First();
+        var attention = await Db.H("""
+            SELECT TOP 10
+              CONVERT(varchar(36), c.ID) AS ID, c.TicketNo, c.BriefDetails, c.Priority, c.Status, c.AskStatus,
+              c.CreatedOn, p.LastProgressOn,
+              DATEDIFF(hour, c.CreatedOn, GETDATE()) AS AgeHours,
+              DATEDIFF(hour, p.LastProgressOn, GETDATE()) AS StalledHours,
+              r.RunID,
+              CASE
+                WHEN l.HasOpenL3 = 1 THEN 'L3 attention'
+                WHEN r.IsActive = 1 THEN 'L2 working'
+                WHEN ISNULL(c.AskStatus,'') = 'Ask' THEN 'Waiting on requester'
+                WHEN r.RunID IS NULL THEN 'Unclaimed'
+                ELSE 'No active work'
+              END AS AttentionState
+            FROM dbo.Complaint_Mst_Tbl c
+            OUTER APPLY (
+              SELECT TOP 1
+                CONVERT(varchar(36), rr.ID) AS RunID,
+                rr.IsActive,
+                COALESCE(rr.HeartbeatOn, rr.CompletedOn, rr.ClaimedOn, rr.CreatedOn) AS LastRunOn
+              FROM dbo.Hermes_L2_Response_Trn_Tbl rr
+              WHERE rr.TicketID = c.ID AND rr.IsDeleted = 0
+              ORDER BY COALESCE(rr.HeartbeatOn, rr.CompletedOn, rr.ClaimedOn, rr.CreatedOn) DESC
+            ) r
+            OUTER APPLY (
+              SELECT MAX(a.CreatedOn) AS LastActivityOn
+              FROM dbo.Hermes_Ticket_Activity_Trn_Tbl a
+              WHERE a.IsDeleted = 0 AND a.TicketID = CONVERT(varchar(36), c.ID)
+            ) a
+            OUTER APPLY (
+              SELECT CASE WHEN EXISTS (
+                SELECT 1 FROM dbo.Hermes_L3_Escalation_Trn_Tbl e
+                WHERE e.IsDeleted = 0
+                  AND CONVERT(varchar(36), e.TicketID) = CONVERT(varchar(36), c.ID)
+                  AND ISNULL(e.L3Status,'Open') <> 'Resolved'
+              ) THEN 1 ELSE 0 END AS HasOpenL3
+            ) l
+            OUTER APPLY (
+              SELECT MAX(v.At) AS LastProgressOn
+              FROM (VALUES (c.CreatedOn), (c.ModifiedOn), (r.LastRunOn), (a.LastActivityOn)) v(At)
+            ) p
+            WHERE ISNULL(c.IsDeleted,0) = 0 AND c.Status <> 'Closed'
+            ORDER BY
+              CASE
+                WHEN l.HasOpenL3 = 1 THEN 0
+                WHEN r.RunID IS NULL THEN 1
+                WHEN r.IsActive = 1 THEN 2
+                WHEN ISNULL(c.AskStatus,'') = 'Ask' THEN 4
+                ELSE 3
+              END,
+              DATEDIFF(hour, p.LastProgressOn, GETDATE()) DESC,
+              c.CreatedOn
+            """);
         var outcomes = await Db.H("""
             SELECT ISNULL(ResponseType, 'In progress') AS Label, COUNT(*) AS Count FROM dbo.Hermes_L2_Response_Trn_Tbl
             WHERE IsDeleted = 0 GROUP BY ResponseType ORDER BY COUNT(*) DESC
@@ -95,7 +152,7 @@ public static class Ops
         var lm = (await Db.H("""
             SELECT TOP 1 EventOn, ResultJson FROM dbo.Hermes_Agent_Trace_Trn_Tbl WHERE EventType = 'lmstudio_sample' ORDER BY EventOn DESC
             """)).FirstOrDefault();
-        return new { counts, outcomes, lmStudio = lm, activity = await Activity(40), live = await LiveRun() };
+        return new { counts, attention, outcomes, lmStudio = lm, activity = await Activity(40), live = await LiveRun() };
     }
 
     // One feed across the suite: L2 runs, L3 changes, ticket activity, L1 conversations.

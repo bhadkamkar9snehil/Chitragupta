@@ -163,7 +163,7 @@ export function Console() {
 
         <main className="flex min-w-0 flex-1 flex-col">
           {route.view === "overview" && (
-            <OverviewView go={{ live: () => go("live"), l1: () => go("conversations"), runs: () => go("runs"), l3: () => go("l3"), tickets: () => go("inbox"), run: (id) => go("runs", id) }} />
+            <OverviewView go={{ live: () => go("live"), l1: () => go("conversations"), runs: () => go("runs"), l3: () => go("l3"), tickets: () => go("inbox"), ticket: (id) => go("inbox", id), run: (id) => go("runs", id) }} />
           )}
           {route.view === "live" && <LiveView runId={route.id ?? null} onRun={setId} onOpenRun={(id) => go("runs", id)} />}
           {route.view === "board" && <BoardView onOpenTicket={(id) => go("inbox", id)} onOpenRun={(id) => go("runs", id)} />}

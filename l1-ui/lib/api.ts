@@ -199,11 +199,18 @@ export type SqlAction = {
   TicketNo?: string | null; RunID?: string;
 };
 export type Activity = { At: string; Lane: "l1" | "l2" | "l3"; Title: string; TicketNo: string | null; RunID: string | null; Detail: string | null };
+export type AttentionTicket = {
+  ID: string; TicketNo: string; BriefDetails: string | null; Priority: string | null; Status: string; AskStatus: string | null;
+  CreatedOn: string; LastProgressOn: string; AgeHours: number; StalledHours: number; RunID: string | null;
+  AttentionState: "L3 attention" | "L2 working" | "Waiting on requester" | "Unclaimed" | "No active work";
+};
 export type Overview = {
   counts: {
     NewTickets: number; ActiveRuns: number; WaitingOnRequester: number; L3Open: number; OpenTickets: number; RunsLast24h: number;
     ChatsLast24h: number; LastClaimOn: string | null; JevCallsLast24h: number; ModelCallsLast24h: number;
+    ResolvedLast24h: number; L3OpenedLast24h: number; FailedRunsLast24h: number;
   };
+  attention: AttentionTicket[];
   outcomes: { Label: string; Count: number }[];
   lmStudio: { EventOn: string; ResultJson: string } | null;
   activity: Activity[];
