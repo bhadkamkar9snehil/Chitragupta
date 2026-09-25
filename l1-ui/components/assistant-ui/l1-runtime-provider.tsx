@@ -19,8 +19,8 @@ function assertNever(value: never): never {
   throw new Error(`Unsupported L1 response type: ${String(value)}`);
 }
 
-function toolCallId(prefix: string, value: string, turn: number) {
-  return `${prefix}-${value}-${turn}`;
+function toolCallId(prefix: string, turn: number) {
+  return `${prefix}-${turn}`;
 }
 
 export function L1RuntimeProvider({
@@ -81,11 +81,7 @@ export function L1RuntimeProvider({
             if (parsed.data.sources && parsed.data.sources.length > 0) {
               content.push({
                 type: "tool-call",
-                toolCallId: toolCallId(
-                  "knowledge",
-                  parsed.data.sources[0].id,
-                  turn,
-                ),
+                toolCallId: toolCallId("knowledge", turn),
                 toolName: "show_knowledge_sources",
                 args: {},
                 argsText: "{}",
@@ -115,11 +111,7 @@ export function L1RuntimeProvider({
               content: [
                 {
                   type: "tool-call",
-                  toolCallId: toolCallId(
-                    "ticket",
-                    parsed.data.ticket.ticketId,
-                    turn,
-                  ),
+                  toolCallId: toolCallId("ticket", turn),
                   toolName: "show_ticket",
                   args: {},
                   argsText: "{}",
@@ -133,7 +125,7 @@ export function L1RuntimeProvider({
               content: [
                 {
                   type: "tool-call",
-                  toolCallId: toolCallId("tickets", "current", turn),
+                  toolCallId: toolCallId("tickets", turn),
                   toolName: "show_tickets",
                   args: {},
                   argsText: "{}",
@@ -147,11 +139,7 @@ export function L1RuntimeProvider({
               content: [
                 {
                   type: "tool-call",
-                  toolCallId: toolCallId(
-                    "l2-reply",
-                    parsed.data.reply.replyId,
-                    turn,
-                  ),
+                  toolCallId: toolCallId("l2-reply", turn),
                   toolName: "show_l2_reply",
                   args: {},
                   argsText: "{}",
