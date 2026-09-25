@@ -25,10 +25,8 @@ export function KnowledgeSources({
   sources,
 }: Readonly<{ sources: KnowledgeSource[] }>) {
   return (
-    <section className="mt-4 border-t pt-3" aria-label="Sources used">
-      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Sources used
-      </div>
+    <section className="mt-4 border-t pt-3">
+      <h3 className="text-sm font-semibold">Sources used</h3>
       <ul className="mt-2 space-y-3">
         {sources.map((source) => (
           <li key={source.id} className="min-w-0">
@@ -119,7 +117,7 @@ export function TicketList({
       <h3 className="text-sm font-semibold">Your Helpdesk tickets</h3>
       {tickets.length === 0 ? (
         <p className="mt-2 text-sm text-muted-foreground">
-          No Helpdesk tickets are available for this account.
+          No Helpdesk tickets are available.
         </p>
       ) : (
         <ul className="mt-2">
