@@ -59,8 +59,12 @@ function upstreamMessagesUrl() {
   }
 }
 
+const RESPONSE_HEADERS = {
+  "Cache-Control": "no-store",
+} as const;
+
 function jsonError(error: string, status: number) {
-  return NextResponse.json({ error }, { status });
+  return NextResponse.json({ error }, { status, headers: RESPONSE_HEADERS });
 }
 
 function declaredBodyTooLarge(value: string | null, maxBytes: number) {
@@ -114,7 +118,10 @@ export async function POST(request: Request) {
     return jsonError("Invalid Helpdesk request.", 400);
   }
 
-  const headers = new Headers({ "Content-Type": "application/json" });
+  const headers = new Headers({
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  });
   const token = process.env.CHITRAGUPTA_L1_API_TOKEN?.trim();
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
@@ -170,5 +177,7 @@ export async function POST(request: Request) {
     return jsonError("The Helpdesk service returned an invalid response.", 502);
   }
 
-  return NextResponse.json(parsedResponse.data);
+  return NextResponse.json(parsedResponse.data, {
+    headers: RESPONSE_HEADERS,
+  });
 }
