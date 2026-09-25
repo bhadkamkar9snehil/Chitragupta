@@ -7,6 +7,7 @@ import {
   Tools,
   useLocalRuntime,
   type ChatModelAdapter,
+  type ThreadAssistantMessagePart,
 } from "@assistant-ui/react";
 import l1Toolkit from "@/app/toolkit";
 import {
@@ -73,17 +74,9 @@ export function L1RuntimeProvider({
 
         switch (parsed.data.type) {
           case "message": {
-            const content: Array<
-              | { type: "text"; text: string }
-              | {
-                  type: "tool-call";
-                  toolCallId: string;
-                  toolName: string;
-                  args: Record<string, never>;
-                  argsText: string;
-                  result: unknown;
-                }
-            > = [{ type: "text", text: parsed.data.text }];
+            const content: ThreadAssistantMessagePart[] = [
+              { type: "text", text: parsed.data.text },
+            ];
 
             if (parsed.data.sources && parsed.data.sources.length > 0) {
               content.push({
@@ -131,6 +124,20 @@ export function L1RuntimeProvider({
                   args: {},
                   argsText: "{}",
                   result: parsed.data.ticket,
+                },
+              ],
+            };
+
+          case "tickets":
+            return {
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: toolCallId("tickets", "current", turn),
+                  toolName: "show_tickets",
+                  args: {},
+                  argsText: "{}",
+                  result: { tickets: parsed.data.tickets },
                 },
               ],
             };
