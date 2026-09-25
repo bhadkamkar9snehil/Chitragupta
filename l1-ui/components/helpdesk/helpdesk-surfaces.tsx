@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type {
   KnowledgeSource,
@@ -204,6 +204,7 @@ export function L2QuestionSurface({
   answer?: L2QuestionAnswerResult;
   onSubmit?: (answer: L2QuestionAnswerResult) => Promise<void> | void;
 }>) {
+  const answerFieldId = useId();
   const [value, setValue] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -268,12 +269,12 @@ export function L2QuestionSurface({
 
       <label
         className="mt-4 block text-sm font-medium"
-        htmlFor={`l2-answer-${prompt.questionId}`}
+        htmlFor={answerFieldId}
       >
         Your answer
       </label>
       <textarea
-        id={`l2-answer-${prompt.questionId}`}
+        id={answerFieldId}
         value={value}
         onChange={(event) => setValue(event.target.value)}
         maxLength={4_000}
