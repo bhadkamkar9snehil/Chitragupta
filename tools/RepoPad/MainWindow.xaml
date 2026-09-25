@@ -79,8 +79,7 @@
                         <TextBlock Text="REPO PAD / 01"
                                    FontSize="12"
                                    FontWeight="Bold"
-                                   Foreground="#57534A"
-                                   CharacterSpacing="120"/>
+                                   Foreground="#57534A"/>
                         <TextBlock Text="LOCAL APPLY CONTROLLER"
                                    Margin="0,5,0,0"
                                    FontSize="24"
@@ -141,8 +140,7 @@
                                                     <TextBlock Text="KEY 01"
                                                                FontSize="11"
                                                                FontWeight="Bold"
-                                                               Foreground="#F8E6DB"
-                                                               CharacterSpacing="120"/>
+                                                               Foreground="#F8E6DB"/>
                                                     <Ellipse Width="8" Height="8"
                                                              Fill="#231F1C"
                                                              HorizontalAlignment="Right"/>
@@ -152,8 +150,7 @@
                                                                HorizontalAlignment="Center"
                                                                FontSize="15"
                                                                FontWeight="Bold"
-                                                               Foreground="#2A201B"
-                                                               CharacterSpacing="80"/>
+                                                               Foreground="#2A201B"/>
                                                     <TextBlock Text="APPLY"
                                                                Margin="0,8,0,0"
                                                                HorizontalAlignment="Center"
@@ -197,8 +194,7 @@
                                            VerticalAlignment="Center"
                                            FontSize="11"
                                            FontWeight="Bold"
-                                           Foreground="#C8C2B7"
-                                           CharacterSpacing="100"/>
+                                           Foreground="#C8C2B7"/>
                                 <TextBlock Text="ADMIN"
                                            Margin="0,0,16,0"
                                            HorizontalAlignment="Right"
