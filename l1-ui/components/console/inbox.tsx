@@ -57,22 +57,6 @@ export function InboxView({ ticketId, onSelect }: { ticketId: string | null; onS
 
   return (
     <div className="flex min-h-0 flex-1">
-      <aside className="hidden w-52 shrink-0 border-r bg-surface px-2 py-4 2xl:block" aria-label="Views">
-        <p className="px-2.5 pb-2 text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">Views</p>
-        {VIEWS.map((v) => (
-          <button
-            key={v.id}
-            onClick={() => setView(v.id)}
-            aria-current={view === v.id ? "true" : undefined}
-            className={cn("flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-meta text-muted-foreground hover:bg-surface-2 hover:text-foreground", view === v.id && "bg-surface-2 font-medium text-foreground")}
-          >
-            <v.icon className="size-4" aria-hidden />
-            <span className="truncate">{v.label}</span>
-            <span className="ml-auto text-2xs tabular-nums text-subtle-foreground">{count(v.id)}</span>
-          </button>
-        ))}
-      </aside>
-
       <section aria-label="Tickets" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-80 md:shrink-0 xl:w-96", ticketId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
         <div className="space-y-2 border-b px-3 py-3">
           <div className="flex items-center gap-2">
@@ -84,11 +68,23 @@ export function InboxView({ ticketId, onSelect }: { ticketId: string | null; onS
               </Button>
             </Tip>
           </div>
+          <div className="scrollbar-thin flex gap-1 overflow-x-auto pb-0.5" role="tablist" aria-label="Ticket status views">
+            {VIEWS.map((v) => (
+              <button
+                key={v.id || "all"}
+                role="tab"
+                aria-selected={view === v.id}
+                onClick={() => setView(v.id)}
+                className={cn("flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-surface-2 hover:text-foreground", view === v.id && "bg-surface-3 font-medium text-foreground")}
+              >
+                <v.icon className="size-3.5" aria-hidden />
+                {v.label}
+                <span className="text-2xs tabular-nums text-subtle-foreground">{count(v.id)}</span>
+              </button>
+            ))}
+          </div>
           <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search tickets, requesters…" aria-label="Search tickets" />
           <div className="flex gap-2">
-            <select value={view} onChange={(e) => setView(e.target.value)} aria-label="View" className="h-8 min-w-0 flex-1 rounded-md border bg-surface px-2 text-meta 2xl:hidden">
-              {VIEWS.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-            </select>
             <select value={area} onChange={(e) => setArea(e.target.value)} aria-label="Area" className="h-8 min-w-0 flex-1 rounded-md border bg-surface px-2 text-meta">
               <option value="">All areas</option>
               {lookups.areas.map((a) => <option key={a}>{a}</option>)}

@@ -104,34 +104,49 @@ export function Console() {
   return (
     <TooltipProvider>
       <div className="flex h-dvh overflow-hidden bg-background">
-        <nav aria-label="Suite" className={cn("scrollbar-thin flex w-14 shrink-0 flex-col items-center overflow-y-auto border-r bg-surface py-3", !navCollapsed && "xl:w-60 xl:items-stretch xl:px-2")}>
-          <div className={cn("w-full px-1 pb-3", !navCollapsed && "xl:px-2")}>
-            <div className={cn("flex items-center gap-2.5", navCollapsed && "justify-center")}>
-              <BrandMark name={brand} compact />
-              {!navCollapsed && (
+        <nav aria-label="Suite" className={cn("scrollbar-thin flex w-16 shrink-0 flex-col items-center overflow-y-auto border-r bg-surface py-3", !navCollapsed && "xl:w-60 xl:items-stretch xl:px-2")}>
+          <div className={cn("w-full pb-3", !navCollapsed && "xl:px-2")}>
+            {navCollapsed ? (
+              <div className="hidden flex-col items-center gap-2 xl:flex">
+                <BrandMark name={brand} compact />
+                <Tip label="Expand navigation" side="right">
+                  <button
+                    className="grid size-9 place-items-center rounded-lg border bg-background text-muted-foreground shadow-sm hover:bg-surface-2 hover:text-foreground"
+                    onClick={() => {
+                      setNavCollapsed(false);
+                      safe(() => localStorage.setItem("desk.nav.collapsed", "0"), undefined);
+                    }}
+                    aria-label="Expand navigation"
+                  >
+                    <PanelLeftOpen className="size-4" />
+                  </button>
+                </Tip>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2.5 px-1">
+                <BrandMark name={brand} compact />
                 <span className="hidden min-w-0 flex-1 xl:block">
                   <span className="block truncate text-sm font-semibold leading-tight">Helpdesk suite</span>
                   <span className="block truncate text-2xs text-subtle-foreground">{brand}</span>
                 </span>
-              )}
-              <Tip label={navCollapsed ? "Expand navigation" : "Collapse navigation"} side="right">
-                <button
-                  className="hidden size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-surface-2 hover:text-foreground xl:grid"
-                  onClick={() => {
-                    const next = !navCollapsed;
-                    setNavCollapsed(next);
-                    safe(() => localStorage.setItem("desk.nav.collapsed", next ? "1" : "0"), undefined);
-                  }}
-                  aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}
-                >
-                  {navCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
-                </button>
-              </Tip>
-            </div>
+                <Tip label="Collapse navigation" side="right">
+                  <button
+                    className="hidden size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-surface-2 hover:text-foreground xl:grid"
+                    onClick={() => {
+                      setNavCollapsed(true);
+                      safe(() => localStorage.setItem("desk.nav.collapsed", "1"), undefined);
+                    }}
+                    aria-label="Collapse navigation"
+                  >
+                    <PanelLeftClose className="size-4" />
+                  </button>
+                </Tip>
+              </div>
+            )}
           </div>
           {navCollapsed ? (
             <Tip label="Search" side="right">
-              <button onClick={() => setPalette(true)} className="mb-2 hidden size-9 place-items-center rounded-md border bg-background text-subtle-foreground hover:border-border-strong xl:grid" aria-label="Search">
+              <button onClick={() => setPalette(true)} className="mb-2 hidden size-10 place-items-center rounded-lg bg-surface-2 text-subtle-foreground hover:bg-surface-3 hover:text-foreground xl:grid" aria-label="Search">
                 <Search className="size-4" aria-hidden />
               </button>
             </Tip>
@@ -141,8 +156,8 @@ export function Console() {
               <span className="ml-auto flex gap-0.5"><Kbd>Ctrl</Kbd><Kbd>K</Kbd></span>
             </button>
           )}
-          {GROUPS.map((g) => (
-            <div key={g.label} className="mt-2 w-full">
+          {GROUPS.map((g, groupIndex) => (
+            <div key={g.label} className={cn("w-full", navCollapsed ? "py-1" : "mt-2", navCollapsed && groupIndex > 0 && "mt-1 border-t pt-2")}>
               {!navCollapsed && <p className="hidden px-2.5 pb-1 pt-2 text-2xs font-semibold uppercase tracking-wider text-subtle-foreground xl:block">{g.label}</p>}
               <div className="space-y-0.5">
                 {g.items.map((n) => (
@@ -152,9 +167,9 @@ export function Console() {
                       aria-current={route.view === n.view ? "page" : undefined}
                       aria-label={n.label}
                       className={cn(
-                        "mx-auto flex size-11 items-center justify-center gap-2.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+                        "mx-auto flex size-10 items-center justify-center gap-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground",
                         !navCollapsed && "xl:h-9 xl:w-full xl:justify-start xl:px-2.5",
-                        route.view === n.view && "bg-surface-2 text-foreground",
+                        route.view === n.view && (navCollapsed ? "bg-primary-soft text-primary-soft-foreground shadow-sm" : "bg-surface-2 text-foreground"),
                       )}
                     >
                       <n.icon className={cn("size-4.5 xl:size-4", n.view === "live" && "text-destructive")} aria-hidden />
@@ -166,7 +181,7 @@ export function Console() {
             </div>
           ))}
           <div className="mt-auto w-full space-y-0.5 pt-3">
-            <button onClick={() => setPicking(true)} className={cn("mx-auto flex size-11 items-center justify-center gap-2.5 rounded-md text-left hover:bg-surface-2", !navCollapsed && "xl:h-auto xl:w-full xl:justify-start xl:p-2")} aria-label="Choose who you are">
+            <button onClick={() => setPicking(true)} className={cn("mx-auto flex size-10 items-center justify-center gap-2.5 rounded-lg text-left hover:bg-surface-2", !navCollapsed && "xl:h-auto xl:w-full xl:justify-start xl:p-2")} aria-label="Choose who you are">
               {engineer ? <Avatar name={displayName(engineer)} className="size-7" /> : <UserRound className="size-4 text-muted-foreground" aria-hidden />}
               {!navCollapsed && <span className="hidden min-w-0 xl:block">
                 <span className="block truncate text-meta font-medium">{engineer ? displayName(engineer) : "Choose who you are"}</span>
@@ -180,7 +195,7 @@ export function Console() {
                 safe(() => localStorage.setItem("l1.theme", dark ? "dark" : "light"), undefined);
               }}
               aria-label="Switch theme"
-              className={cn("mx-auto flex size-11 items-center justify-center gap-2.5 rounded-md text-sm text-muted-foreground hover:bg-surface-2", !navCollapsed && "xl:h-9 xl:w-full xl:justify-start xl:px-2.5")}
+              className={cn("mx-auto flex size-10 items-center justify-center gap-2.5 rounded-lg text-sm text-muted-foreground hover:bg-surface-2", !navCollapsed && "xl:h-9 xl:w-full xl:justify-start xl:px-2.5")}
             >
               <Moon className="size-4 dark:hidden" aria-hidden />
               <Sun className="hidden size-4 dark:block" aria-hidden />
