@@ -181,7 +181,7 @@ export type Run = {
   AttemptNo: number; ProcessStatus: string; IsActive: boolean; Route: string | null; ResponseType: string | null; ExecutionMode: string | null;
   JevReviewDecision: string | null; JevReviewConfidence: number | null; JevRiskScore: number | null; JevModel: string | null;
   LocalModelState: string | null; LocalModelPurpose: string | null; ClaimedOn: string | null; HeartbeatOn: string | null;
-  CompletedOn: string | null; CreatedOn: string; ErrorMessage: string | null; EscalateToL3: boolean | null; IsResolved: boolean | null;
+  CompletedOn: string | null; CreatedOn: string; ErrorMessage: string | null; EscalateToL3: boolean | null; IsResolved: boolean | null; RequiresUserInput: boolean | null;
   SqlActions: number; Events: number | TraceEvent[]; JevCalls: number; Seconds: number | null;
   ProblemSummary?: string | null; Findings?: string | null; RootCause?: string | null; Resolution?: string | null; ReplyText?: string | null;
   JevTriageJson?: string | null; JevInvestigationJson?: string | null; JevReviewJson?: string | null; JevTraceJson?: string | null;

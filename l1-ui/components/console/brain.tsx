@@ -135,7 +135,7 @@ export function Brain({ trail, ticketLabel, autoplay = true, compact }: { trail:
           </radialGradient>
         </defs>
         {[95, 257, 345].map((r) => (
-          <ellipse key={r} cx={CX} cy={CY} rx={r} ry={r * 0.82} className="fill-none stroke-border" strokeDasharray="2 6" />
+          <ellipse key={r} cx={CX} cy={CY} rx={r} ry={r * 0.82} fill="none" className="stroke-border" strokeDasharray="2 6" />
         ))}
         {graph.edges.map((e, i) => {
           const a = byId.get(e.from), b = byId.get(e.to);
@@ -150,8 +150,9 @@ export function Brain({ trail, ticketLabel, autoplay = true, compact }: { trail:
             <g key={i}>
               <path
                 d={`M${a.x},${a.y} Q${mx},${my} ${b.x},${b.y}`}
+                fill="none"
                 className={cn(
-                  "fill-none transition-[stroke-opacity] duration-500",
+                  "transition-all duration-500",
                   e.kind === "step" ? "stroke-primary" : "stroke-border-strong",
                   !lit && "stroke-transparent",
                 )}
@@ -180,13 +181,13 @@ export function Brain({ trail, ticketLabel, autoplay = true, compact }: { trail:
           return (
             <g key={n.id} onMouseEnter={() => setHover(n)} onMouseLeave={() => setHover(null)} className={cn("cursor-default transition-opacity duration-300", !on && "opacity-0")}>
               {pulse && <circle cx={n.x} cy={n.y} r={r * 3.2} fill="url(#glow)" />}
-              {n.ring === 0 && <circle cx={n.x} cy={n.y} r={r + 10} className="fill-none stroke-primary/40" strokeWidth={1.5} />}
+              {n.ring === 0 && <circle cx={n.x} cy={n.y} r={r + 10} fill="none" className="stroke-primary/40" strokeWidth={1.5} />}
               <circle
                 cx={n.x}
                 cy={n.y}
                 r={r}
                 className={cn(
-                  "stroke-surface transition-[fill] duration-500",
+                  "stroke-surface transition-colors duration-500",
                   n.ring === 0 ? "fill-primary" : n.ring === 1 ? "fill-foreground" : role ? role.fill : n.ring === 3 ? "fill-primary" : "fill-border-strong",
                   step?.to === n.id && "stroke-primary",
                 )}

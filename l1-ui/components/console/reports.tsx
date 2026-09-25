@@ -163,7 +163,7 @@ function DailyBars({ data, unit }: { data: { day: string; value: number }[]; uni
   );
 }
 
-function Ranked({ rows }: { rows: { label: string; count: number }[] }) {
+export function Ranked({ rows }: { rows: { label: string; count: number }[] }) {
   const max = Math.max(1, ...rows.map((r) => r.count));
   if (!rows.length) return <p className="text-sm text-muted-foreground">No tickets in this period.</p>;
   return (
