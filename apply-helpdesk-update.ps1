@@ -46,6 +46,33 @@ for ($i = 0; $i -lt 15; $i++) {
 }
 if (-not $ready) { throw "L1 API did not become ready on port 5116." }
 
+Write-Host "Checking Helpdesk UI..." -ForegroundColor Cyan
+$uiReady = $false
+try {
+    $response = Invoke-WebRequest "http://127.0.0.1:3417/admin" -UseBasicParsing -TimeoutSec 2
+    $uiReady = $response.StatusCode -ge 200 -and $response.StatusCode -lt 500
+} catch {}
+
+if (-not $uiReady) {
+    Start-Process powershell.exe -ArgumentList @(
+        "-NoExit",
+        "-Command",
+        "Set-Location '$Ui'; npm run dev -- -p 3417"
+    )
+
+    for ($i = 0; $i -lt 25; $i++) {
+        Start-Sleep -Seconds 1
+        try {
+            $response = Invoke-WebRequest "http://127.0.0.1:3417/admin" -UseBasicParsing -TimeoutSec 2
+            if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
+                $uiReady = $true
+                break
+            }
+        } catch {}
+    }
+}
+if (-not $uiReady) { throw "Helpdesk UI did not become ready on port 3417." }
+
 $dirtyAfter = git status --porcelain
 if ($dirtyAfter) {
     Write-Host $dirtyAfter
@@ -53,4 +80,5 @@ if ($dirtyAfter) {
 }
 
 Write-Host ""
-Write-Host "Ready. Refresh http://localhost:3417/admin" -ForegroundColor Green
+Write-Host "Ready. API :5116 and Helpdesk UI :3417 are running." -ForegroundColor Green
+Write-Host "Refresh http://localhost:3417/admin" -ForegroundColor Green
