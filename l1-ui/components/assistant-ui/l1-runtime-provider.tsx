@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 import {
   AssistantRuntimeProvider,
   AuiConfig,
@@ -9,61 +9,174 @@ import {
   type ChatModelAdapter,
 } from "@assistant-ui/react";
 import l1Toolkit from "@/app/toolkit";
-import { L1MessageResponseSchema } from "@/lib/l1-contract";
+import {
+  L1HumanToolNameSchema,
+  L1MessageResponseSchema,
+} from "@/lib/l1-contract";
 
-const L1ModelAdapter: ChatModelAdapter = {
-  async run({ messages, abortSignal, unstable_getMessage }) {
-    const toolResults = unstable_getMessage().content.flatMap((part) =>
-      part.type === "tool-call" && part.result !== undefined
-        ? [{ toolCallId: part.toolCallId, result: part.result }]
-        : [],
-    );
+function assertNever(value: never): never {
+  throw new Error(`Unsupported L1 response type: ${String(value)}`);
+}
 
-    const response = await fetch("/api/l1/message", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, toolResults }),
-      signal: abortSignal,
-    });
-
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as
-        | { error?: string }
-        | null;
-      throw new Error(payload?.error ?? "L1 request failed.");
-    }
-
-    const parsed = L1MessageResponseSchema.safeParse(await response.json());
-    if (!parsed.success) {
-      throw new Error("L1 response did not match the UI contract.");
-    }
-
-    if (parsed.data.type === "collect_intake") {
-      return {
-        content: [
-          {
-            type: "tool-call",
-            toolCallId: parsed.data.toolCallId,
-            toolName: "collect_intake",
-            args: parsed.data.flow,
-            argsText: JSON.stringify(parsed.data.flow),
-          },
-        ],
-        status: { type: "requires-action", reason: "tool-calls" },
-      };
-    }
-
-    return {
-      content: [{ type: "text", text: parsed.data.text }],
-    };
-  },
-};
+function toolCallId(prefix: string, value: string, turn: number) {
+  return `${prefix}-${value}-${turn}`;
+}
 
 export function L1RuntimeProvider({
   children,
 }: Readonly<{ children: ReactNode }>) {
-  const runtime = useLocalRuntime(L1ModelAdapter, {
-    unstable_humanToolNames: ["collect_intake"],
+  const conversationIdRef = useRef<string | null>(null);
+
+  const modelAdapter = useMemo<ChatModelAdapter>(
+    () => ({
+      async run({ messages, abortSignal, unstable_getMessage }) {
+        if (!conversationIdRef.current) {
+          conversationIdRef.current = crypto.randomUUID();
+        }
+
+        const toolResults = unstable_getMessage().content.flatMap((part) => {
+          if (part.type !== "tool-call" || part.result === undefined) return [];
+
+          const parsedName = L1HumanToolNameSchema.safeParse(part.toolName);
+          if (!parsedName.success) return [];
+
+          return [
+            {
+              toolCallId: part.toolCallId,
+              toolName: parsedName.data,
+              result: part.result,
+            },
+          ];
+        });
+
+        const response = await fetch("/api/l1/message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversationId: conversationIdRef.current,
+            messages,
+            toolResults,
+          }),
+          signal: abortSignal,
+        });
+
+        if (!response.ok) {
+          throw new Error("The Helpdesk request could not be completed.");
+        }
+
+        const parsed = L1MessageResponseSchema.safeParse(await response.json());
+        if (!parsed.success) {
+          throw new Error("The Helpdesk response was invalid.");
+        }
+
+        const turn = messages.length;
+
+        switch (parsed.data.type) {
+          case "message": {
+            const content: Array<
+              | { type: "text"; text: string }
+              | {
+                  type: "tool-call";
+                  toolCallId: string;
+                  toolName: string;
+                  args: Record<string, never>;
+                  argsText: string;
+                  result: unknown;
+                }
+            > = [{ type: "text", text: parsed.data.text }];
+
+            if (parsed.data.sources && parsed.data.sources.length > 0) {
+              content.push({
+                type: "tool-call",
+                toolCallId: toolCallId(
+                  "knowledge",
+                  parsed.data.sources[0].id,
+                  turn,
+                ),
+                toolName: "show_knowledge_sources",
+                args: {},
+                argsText: "{}",
+                result: { sources: parsed.data.sources },
+              });
+            }
+
+            return { content };
+          }
+
+          case "collect_intake":
+            return {
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: parsed.data.toolCallId,
+                  toolName: "collect_intake",
+                  args: parsed.data.flow,
+                  argsText: JSON.stringify(parsed.data.flow),
+                },
+              ],
+              status: { type: "requires-action", reason: "tool-calls" },
+            };
+
+          case "ticket":
+            return {
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: toolCallId(
+                    "ticket",
+                    parsed.data.ticket.ticketId,
+                    turn,
+                  ),
+                  toolName: "show_ticket",
+                  args: {},
+                  argsText: "{}",
+                  result: parsed.data.ticket,
+                },
+              ],
+            };
+
+          case "l2_reply":
+            return {
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: toolCallId(
+                    "l2-reply",
+                    parsed.data.reply.replyId,
+                    turn,
+                  ),
+                  toolName: "show_l2_reply",
+                  args: {},
+                  argsText: "{}",
+                  result: parsed.data.reply,
+                },
+              ],
+            };
+
+          case "l2_question":
+            return {
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: parsed.data.toolCallId,
+                  toolName: "answer_l2_question",
+                  args: parsed.data.prompt,
+                  argsText: JSON.stringify(parsed.data.prompt),
+                },
+              ],
+              status: { type: "requires-action", reason: "tool-calls" },
+            };
+
+          default:
+            return assertNever(parsed.data);
+        }
+      },
+    }),
+    [],
+  );
+
+  const runtime = useLocalRuntime(modelAdapter, {
+    unstable_humanToolNames: ["collect_intake", "answer_l2_question"],
   });
   const config = AuiConfig({ tools: Tools({ toolkit: l1Toolkit }) });
 
