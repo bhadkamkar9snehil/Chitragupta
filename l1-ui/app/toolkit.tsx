@@ -6,6 +6,7 @@ import {
   L2QuestionSurface,
   L2ReplySurface,
   TicketCard,
+  TicketList,
 } from "@/components/helpdesk/helpdesk-surfaces";
 import { QuestionFlow } from "@/components/tool-ui/question-flow";
 import {
@@ -18,6 +19,7 @@ import {
   L2QuestionAnswerResultSchema,
   L2QuestionPromptSchema,
   L2ReplySchema,
+  TicketListResultSchema,
   TicketSnapshotSchema,
 } from "@/lib/l1-contract";
 
@@ -127,6 +129,17 @@ export default defineToolkit({
       const parsed = TicketSnapshotSchema.safeParse(result);
       if (!parsed.success) return null;
       return <TicketCard ticket={parsed.data} />;
+    },
+  },
+
+  show_tickets: {
+    type: "backend",
+    description:
+      "Show the authenticated requester's authoritative Helpdesk ticket list.",
+    render: ({ result }) => {
+      const parsed = TicketListResultSchema.safeParse(result);
+      if (!parsed.success) return null;
+      return <TicketList tickets={parsed.data.tickets} />;
     },
   },
 
