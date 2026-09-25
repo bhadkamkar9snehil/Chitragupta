@@ -108,6 +108,58 @@ export function TicketCard({
   );
 }
 
+export function TicketList({
+  tickets,
+}: Readonly<{ tickets: TicketSnapshot[] }>) {
+  return (
+    <section
+      className="mt-2 w-full max-w-2xl border-t pt-3"
+      aria-label="Your Helpdesk tickets"
+    >
+      <h3 className="text-sm font-semibold">Your Helpdesk tickets</h3>
+      {tickets.length === 0 ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          No Helpdesk tickets are available for this account.
+        </p>
+      ) : (
+        <ul className="mt-2">
+          {tickets.map((ticket, index) => {
+            const when = formatWhen(ticket.updatedOn ?? ticket.createdOn);
+            return (
+              <li
+                key={ticket.ticketId}
+                className={index > 0 ? "border-t py-3" : "pb-3"}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm font-semibold tabular-nums">
+                    {ticket.ticketNo}
+                  </span>
+                  <span className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground">
+                    {ticket.statusLabel}
+                  </span>
+                </div>
+                <p className="mt-1 break-words text-sm leading-6">
+                  {ticket.summary}
+                </p>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  {ticket.domain ? <span>{ticket.domain}</span> : null}
+                  {ticket.area ? <span>{ticket.area}</span> : null}
+                  {when ? <span>{when}</span> : null}
+                  {ticket.attentionRequired ? (
+                    <span className="font-medium text-destructive">
+                      Reply needed
+                    </span>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 const replyLabels: Record<L2Reply["kind"], string> = {
   UPDATE: "Support update",
   RESOLUTION: "Resolution",
