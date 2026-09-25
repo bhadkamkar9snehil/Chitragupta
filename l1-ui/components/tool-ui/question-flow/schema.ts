@@ -1,6 +1,11 @@
 import type { ReactNode } from "react";
 import { z } from "zod";
 
+const IdSchema = z.string().trim().min(1).max(128);
+const TitleSchema = z.string().trim().min(1).max(240);
+const LabelSchema = z.string().trim().min(1).max(200);
+const DescriptionSchema = z.string().trim().min(1).max(600);
+
 const ToolUIRoleSchema = z.enum([
   "information",
   "decision",
@@ -10,9 +15,9 @@ const ToolUIRoleSchema = z.enum([
 ]);
 
 export const QuestionFlowOptionSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().min(1),
-  description: z.string().optional(),
+  id: IdSchema,
+  label: LabelSchema,
+  description: DescriptionSchema.optional(),
   icon: z.custom<ReactNode>().optional(),
   disabled: z.boolean().optional(),
 });
@@ -20,10 +25,13 @@ export const QuestionFlowOptionSchema = z.object({
 export type QuestionFlowOption = z.infer<typeof QuestionFlowOptionSchema>;
 
 export const QuestionFlowStepDefinitionSchema = z.object({
-  id: z.string().min(1),
-  title: z.string().min(1),
-  description: z.string().optional(),
-  options: z.array(QuestionFlowOptionSchema.omit({ icon: true })).min(1),
+  id: IdSchema,
+  title: TitleSchema,
+  description: DescriptionSchema.optional(),
+  options: z
+    .array(QuestionFlowOptionSchema.omit({ icon: true }))
+    .min(1)
+    .max(20),
   selectionMode: z.enum(["single", "multi"]).optional(),
 });
 
@@ -32,30 +40,33 @@ export type QuestionFlowStepDefinition = z.infer<
 >;
 
 export const QuestionFlowSummaryItemSchema = z.object({
-  label: z.string().min(1),
-  value: z.string().min(1),
+  label: LabelSchema,
+  value: z.string().trim().min(1).max(600),
 });
 
 export const QuestionFlowChoiceSchema = z.object({
-  title: z.string().min(1),
-  summary: z.array(QuestionFlowSummaryItemSchema).min(1),
+  title: TitleSchema,
+  summary: z.array(QuestionFlowSummaryItemSchema).min(1).max(20),
 });
 
 const BaseSchema = z.object({
-  id: z.string().min(1),
+  id: IdSchema,
   role: ToolUIRoleSchema.optional(),
 });
 
 export const SerializableProgressiveModeSchema = BaseSchema.extend({
-  step: z.number().min(1),
-  title: z.string().min(1),
-  description: z.string().optional(),
-  options: z.array(QuestionFlowOptionSchema.omit({ icon: true })).min(1),
+  step: z.number().int().min(1).max(8),
+  title: TitleSchema,
+  description: DescriptionSchema.optional(),
+  options: z
+    .array(QuestionFlowOptionSchema.omit({ icon: true }))
+    .min(1)
+    .max(20),
   selectionMode: z.enum(["single", "multi"]).optional(),
 });
 
 export const SerializableUpfrontModeSchema = BaseSchema.extend({
-  steps: z.array(QuestionFlowStepDefinitionSchema).min(1),
+  steps: z.array(QuestionFlowStepDefinitionSchema).min(1).max(8),
 });
 
 export const SerializableReceiptModeSchema = BaseSchema.extend({
