@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Cpu, Sparkles, Wrench } from "lucide-react";
+import { ArrowRight, Bot, Cpu, Sparkles, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { api, ops, type AiSettings, type Board, type ToolStats } from "@/lib/api";
 import { ago, describeEvent, human, ticketLabel, when } from "@/lib/format";
@@ -16,6 +16,7 @@ export function AgentsView({ onOpenRun }: { onOpenRun: (id: string) => void }) {
   const [tools, setTools] = useState<ToolStats | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
   const [ai, setAi] = useState<AiSettings | null>(null);
+  const [focus, setFocus] = useState("jev");
 
   useEffect(() => {
     ops.tools().then(setTools).catch((e: Error) => toast.error(e.message));
@@ -35,16 +36,24 @@ export function AgentsView({ onOpenRun }: { onOpenRun: (id: string) => void }) {
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <AgentCard icon={Sparkles} name="Jev" role="Decides every step: route, which records matter, what happens next. Never writes text or SQL." accent
+            selected={focus === "jev"} onSelect={() => setFocus("jev")}
             lines={tools ? [`${tools.jev.reduce((a, j) => a + j.Calls, 0)} decisions`, `${tools.jev.length} kinds of decision`] : undefined} />
           {Object.entries(AGENT).map(([id, a]) => (
             <AgentCard key={id} icon={Bot} name={a.name} role={a.role}
+              selected={focus === `agent:${id}`} onSelect={() => setFocus(`agent:${id}`)}
               lines={board?.stats ? [Object.entries(board.stats.by_assignee[id] ?? {}).map(([s, n]) => `${n} ${s}`).join(" · ") || "No tasks on the board", id] : undefined} />
           ))}
-          <AgentCard icon={Cpu} name="L1 assistant" role="Talks to requesters, finds XBatch knowledge, raises tickets." lines={ai ? [`Writes with ${human(ai.provider)}`, ai.model] : undefined} />
+          <AgentCard icon={Cpu} name="L1 assistant" role="Talks to requesters, finds XBatch knowledge, raises tickets."
+            selected={focus === "l1"} onSelect={() => setFocus("l1")}
+            lines={ai ? [`Writes with ${human(ai.provider)}`, ai.model] : undefined} />
           {tools?.models.map((m) => (
-            <AgentCard key={m.Model} icon={Cpu} name={`L2 writer · ${m.Model}`} role="Only phrases replies when the evidence needs reasoning." lines={[`${m.Calls} calls via ${m.Provider}`, `last ${ago(m.LastUsed)}`]} />
+            <AgentCard key={m.Model} icon={Cpu} name={`L2 writer · ${m.Model}`} role="Only phrases replies when the evidence needs reasoning."
+              selected={focus === `model:${m.Model}`} onSelect={() => setFocus(`model:${m.Model}`)}
+              lines={[`${m.Calls} calls via ${m.Provider}`, `last ${ago(m.LastUsed)}`]} />
           ))}
         </div>
+
+        <AgentInspector focus={focus} tools={tools} board={board} ai={ai} />
 
         <div className="grid gap-3 xl:grid-cols-2">
           <section className="rounded-xl border bg-surface" aria-label="Tools">
@@ -129,15 +138,79 @@ export function AgentsView({ onOpenRun }: { onOpenRun: (id: string) => void }) {
   );
 }
 
-function AgentCard({ icon: Icon, name, role, lines, accent }: { icon: typeof Bot; name: string; role: string; lines?: string[]; accent?: boolean }) {
+function AgentCard({ icon: Icon, name, role, lines, accent, selected, onSelect }: { icon: typeof Bot; name: string; role: string; lines?: string[]; accent?: boolean; selected: boolean; onSelect: () => void }) {
   return (
-    <div className={cn("rounded-xl border bg-surface p-4", accent && "border-primary/40")}>
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={cn("group rounded-xl border bg-surface p-4 text-left hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", accent && "border-primary/40", selected && "ring-2 ring-ring")}
+    >
       <div className="flex items-center gap-2.5">
         <span className={cn("grid size-8 place-items-center rounded-lg", accent ? "bg-primary text-primary-foreground" : "bg-surface-3 text-muted-foreground")}><Icon className="size-4" aria-hidden /></span>
-        <p className="min-w-0 truncate text-sm font-semibold">{name}</p>
+        <p className="min-w-0 flex-1 truncate text-sm font-semibold">{name}</p>
+        <ArrowRight className="size-4 text-subtle-foreground transition-transform group-hover:translate-x-0.5" aria-hidden />
       </div>
       <p className="mt-2 text-meta text-muted-foreground">{role}</p>
       {lines ? <div className="mt-3 flex flex-wrap gap-1.5">{lines.map((l) => <Tag key={l}>{l}</Tag>)}</div> : <Skeleton className="mt-3 h-6" />}
+    </button>
+  );
+}
+
+function AgentInspector({ focus, tools, board, ai }: { focus: string; tools: ToolStats | null; board: Board | null; ai: AiSettings | null }) {
+  if (focus === "jev") {
+    const calls = tools?.jev.reduce((n, j) => n + j.Calls, 0);
+    const errors = tools?.jev.reduce((n, j) => n + j.Errors, 0);
+    const avg = tools?.jev.length ? tools.jev.reduce((n, j) => n + (j.AvgMs ?? 0) * j.Calls, 0) / Math.max(1, calls ?? 0) : null;
+    return <Inspector title="Jev · decision plane" description="Fast typed judgments used for route, evidence relevance, next-step choice and review.">
+      <Metric label="Decisions" value={calls} /><Metric label="Failures" value={errors} attention={!!errors} /><Metric label="Weighted avg" value={ms(avg)} />
+      <Metric label="Decision kinds" value={tools?.jev.length} />
+    </Inspector>;
+  }
+
+  if (focus === "l1") {
+    return <Inspector title="L1 assistant" description="Requester-facing assistant configuration currently loaded by the Helpdesk.">
+      <Metric label="Provider" value={ai ? human(ai.provider) : undefined} /><Metric label="Model" value={ai?.model} />
+      <Metric label="Mode" value={ai?.kind ? human(ai.kind) : undefined} />
+    </Inspector>;
+  }
+
+  if (focus.startsWith("model:")) {
+    const model = focus.slice(6);
+    const m = tools?.models.find((x) => x.Model === model);
+    return <Inspector title={`Writer · ${model}`} description="Reasoning/writer calls recorded by the observer trace.">
+      <Metric label="Calls" value={m?.Calls} /><Metric label="Average latency" value={ms(m?.AvgMs)} />
+      <Metric label="Provider" value={m?.Provider} /><Metric label="Last used" value={m ? ago(m.LastUsed) : undefined} />
+    </Inspector>;
+  }
+
+  const id = focus.startsWith("agent:") ? focus.slice(6) : "";
+  const agent = AGENT[id];
+  const counts = board?.stats?.by_assignee[id] ?? {};
+  const total = Object.values(counts).reduce((a, n) => a + n, 0);
+  return <Inspector title={agent?.name ?? id} description={agent?.role ?? "Hermes worker profile"}>
+    <Metric label="Profile" value={id || "—"} /><Metric label="Tasks on board" value={board?.stats ? total : undefined} />
+    {Object.entries(counts).slice(0, 4).map(([status, count]) => <Metric key={status} label={human(status)} value={count} attention={status === "blocked" && count > 0} />)}
+  </Inspector>;
+}
+
+function Inspector({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-xl border bg-surface p-4" aria-live="polite">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h2 className="text-sm font-semibold">{title}</h2><p className="mt-1 text-meta text-muted-foreground">{description}</p></div>
+        <span className="text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">Selected agent</span>
+      </div>
+      <dl className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">{children}</dl>
+    </section>
+  );
+}
+
+function Metric({ label, value, attention }: { label: string; value: string | number | undefined | null; attention?: boolean }) {
+  return (
+    <div className="rounded-lg bg-surface-2 px-3 py-2.5">
+      <dt className="text-2xs text-subtle-foreground">{label}</dt>
+      <dd className={cn("mt-0.5 text-sm font-semibold tabular-nums", attention && "text-destructive")}>{value ?? "—"}</dd>
     </div>
   );
 }
