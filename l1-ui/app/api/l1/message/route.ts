@@ -75,6 +75,11 @@ export async function POST(request: Request) {
     return jsonError("The Helpdesk service is not configured.", 503);
   }
 
+  const contentType = request.headers.get("content-type")?.toLowerCase();
+  if (!contentType?.startsWith("application/json")) {
+    return jsonError("Unsupported Helpdesk request.", 415);
+  }
+
   if (
     declaredBodyTooLarge(
       request.headers.get("content-length"),
