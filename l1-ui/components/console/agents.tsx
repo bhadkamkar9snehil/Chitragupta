@@ -104,9 +104,9 @@ export function AgentsView({ onOpenRun }: { onOpenRun: (id: string) => void }) {
 
         <section className="rounded-xl border bg-surface" aria-label="SQL reads">
           <h2 className="border-b px-4 py-3 text-sm font-semibold">Recent audited SQL reads</h2>
-          <div className="overflow-x-auto">
+          <div className="scrollbar-thin max-h-96 overflow-auto">
             <table className="w-full min-w-160 text-meta">
-              <thead className="text-left text-2xs uppercase tracking-wider text-subtle-foreground">
+              <thead className="sticky top-0 z-10 bg-surface text-left text-2xs uppercase tracking-wider text-subtle-foreground">
                 <tr>{["When", "Ticket", "Object", "Purpose", "Rows", "Time"].map((h) => <th key={h} className="px-4 py-2 font-semibold">{h}</th>)}</tr>
               </thead>
               <tbody className="divide-y">
