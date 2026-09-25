@@ -53,6 +53,10 @@ export const TicketSnapshotSchema = z.object({
   updatedOn: DateTextSchema.optional(),
 });
 
+export const TicketListResultSchema = z.object({
+  tickets: z.array(TicketSnapshotSchema).max(20),
+});
+
 export const L2ReplySchema = z.object({
   replyId: IdSchema,
   ticketId: IdSchema,
@@ -100,6 +104,10 @@ export const L1MessageResponseSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("ticket"),
     ticket: TicketSnapshotSchema,
+  }),
+  z.object({
+    type: z.literal("tickets"),
+    tickets: z.array(TicketSnapshotSchema).max(20),
   }),
   z.object({
     type: z.literal("l2_reply"),
