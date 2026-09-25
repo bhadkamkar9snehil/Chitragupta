@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 
 const MAX_REQUEST_BYTES = 512 * 1024;
 const MAX_RESPONSE_BYTES = 512 * 1024;
+const UPSTREAM_TIMEOUT_MS = 120_000;
 
 class BodyTooLargeError extends Error {}
 
@@ -116,7 +117,10 @@ export async function POST(request: Request) {
       headers,
       body: JSON.stringify(parsedRequest.data),
       cache: "no-store",
-      signal: request.signal,
+      signal: AbortSignal.any([
+        request.signal,
+        AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      ]),
     });
   } catch {
     return jsonError("The Helpdesk service is temporarily unavailable.", 502);
