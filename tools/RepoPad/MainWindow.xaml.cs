@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Media;
 
 namespace RepoPad;
@@ -14,6 +16,7 @@ public partial class MainWindow : Window
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RepoPad", "repos.json");
 
     private bool _running;
+    private RepoAction? _selectedRepo;
 
     public ObservableCollection<RepoAction> Repositories { get; } = [];
 
@@ -43,8 +46,15 @@ public partial class MainWindow : Window
             });
 
             Repositories.Clear();
+            var slot = 1;
             foreach (var repo in config?.Repos ?? [])
+            {
+                repo.Slot = $"A{slot:00}";
                 Repositories.Add(repo);
+                slot++;
+            }
+
+            RepoCountText.Text = $"{Repositories.Count:00} LOADED";
 
             if (Repositories.Count == 0)
             {
@@ -53,13 +63,16 @@ public partial class MainWindow : Window
                 return;
             }
 
+            SelectRepository(Repositories[0]);
             SetStatus("READY", "#5D8C62");
+            CommandStateText.Text = "STANDBY";
             Append("RepoPad ready.");
             Append("Press a repository key to pull, validate, build and restart it.");
         }
         catch (Exception ex)
         {
             SetStatus("CONFIG ERROR", "#B94A3A");
+            CommandStateText.Text = "CONFIGURATION ERROR";
             Append(ex.Message);
         }
     }
@@ -69,6 +82,8 @@ public partial class MainWindow : Window
         if (_running || sender is not Button { Tag: RepoAction repo })
             return;
 
+        SelectRepository(repo);
+
         var scriptPath = Path.IsPathRooted(repo.Script)
             ? repo.Script
             : Path.Combine(repo.Path, repo.Script);
@@ -76,6 +91,7 @@ public partial class MainWindow : Window
         if (!Directory.Exists(repo.Path) || !File.Exists(scriptPath))
         {
             SetStatus("PATH ERROR", "#B94A3A");
+            CommandStateText.Text = "APPLY SCRIPT NOT FOUND";
             Append($"Cannot find {repo.Name} apply script:");
             Append(scriptPath);
             return;
@@ -83,9 +99,11 @@ public partial class MainWindow : Window
 
         _running = true;
         PadItems.IsEnabled = false;
+        RunProgress.Visibility = Visibility.Visible;
         SetStatus("RUNNING", "#D5A33F");
+        CommandStateText.Text = $"EXECUTING {repo.Slot}";
         OutputBox.Clear();
-        Append($"> {repo.Name}");
+        Append($"[{DateTime.Now:HH:mm:ss}] {repo.Name}");
         Append($"> {scriptPath}");
         Append("");
 
@@ -128,6 +146,8 @@ public partial class MainWindow : Window
             if (process.ExitCode == 0)
             {
                 SetStatus("READY", "#5D8C62");
+                CommandStateText.Text = "APPLY COMPLETE";
+                LastRunText.Text = $"LAST APPLY {DateTime.Now:HH:mm}";
                 Append("");
                 Append("DONE — refresh the application in your browser.");
                 if (!string.IsNullOrWhiteSpace(repo.Url))
@@ -136,6 +156,8 @@ public partial class MainWindow : Window
             else
             {
                 SetStatus("FAILED", "#B94A3A");
+                CommandStateText.Text = $"FAILED / EXIT {process.ExitCode}";
+                LastRunText.Text = $"FAILED {DateTime.Now:HH:mm}";
                 Append("");
                 Append($"Apply failed with exit code {process.ExitCode}.");
             }
@@ -143,6 +165,8 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             SetStatus("FAILED", "#B94A3A");
+            CommandStateText.Text = "EXECUTION ERROR";
+            LastRunText.Text = $"FAILED {DateTime.Now:HH:mm}";
             Append("");
             Append(ex.Message);
         }
@@ -150,7 +174,61 @@ public partial class MainWindow : Window
         {
             _running = false;
             PadItems.IsEnabled = true;
+            RunProgress.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private void OpenApp_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedRepo is null || string.IsNullOrWhiteSpace(_selectedRepo.Url))
+        {
+            Append("No application URL is configured for the selected repository.");
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(_selectedRepo.Url) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Append($"Could not open application: {ex.Message}");
+        }
+    }
+
+    private void OpenFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedRepo is null || !Directory.Exists(_selectedRepo.Path))
+        {
+            Append("The selected repository folder is unavailable.");
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $""{_selectedRepo.Path}"")
+            {
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            Append($"Could not open repository folder: {ex.Message}");
+        }
+    }
+
+    private void ClearLog_Click(object sender, RoutedEventArgs e)
+    {
+        OutputBox.Clear();
+        CommandStateText.Text = _running ? "RUNNING" : "STANDBY";
+        Append("Command monitor cleared.");
+    }
+
+    private void SelectRepository(RepoAction repo)
+    {
+        _selectedRepo = repo;
+        SelectedRepoName.Text = $"{repo.Slot} / {repo.Name}";
+        SelectedRepoPath.Text = repo.Path;
     }
 
     private void Append(string line)
@@ -164,6 +242,27 @@ public partial class MainWindow : Window
         StatusText.Text = text;
         StatusLed.Fill = (Brush)new BrushConverter().ConvertFromString(color)!;
     }
+}
+
+public sealed class HexBrushConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        try
+        {
+            var text = value?.ToString();
+            if (!string.IsNullOrWhiteSpace(text))
+                return (Brush)new BrushConverter().ConvertFromString(text)!;
+        }
+        catch
+        {
+        }
+
+        return new SolidColorBrush(Color.FromRgb(216, 94, 43));
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+        Binding.DoNothing;
 }
 
 public sealed class RepoPadConfig
@@ -180,4 +279,5 @@ public sealed class RepoAction
     public string Script { get; set; } = "";
     public string Accent { get; set; } = "#D85E2B";
     public string? Url { get; set; }
+    public string Slot { get; set; } = "";
 }

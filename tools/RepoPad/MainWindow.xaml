@@ -1,50 +1,124 @@
 <Window x:Class="RepoPad.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:RepoPad"
         Title="RepoPad"
-        Width="980" Height="640"
-        MinWidth="860" MinHeight="560"
+        Width="1120" Height="720"
+        MinWidth="980" MinHeight="620"
         WindowStartupLocation="CenterScreen"
-        Background="#CFC9BC"
-        FontFamily="Segoe UI Variable Text">
+        Background="#BDB8AE"
+        FontFamily="Segoe UI Variable Text"
+        SnapsToDevicePixels="True">
     <Window.Resources>
+        <local:HexBrushConverter x:Key="HexBrushConverter"/>
+
+        <Style x:Key="UtilityButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="Padding" Value="13,0"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Foreground" Value="#ECE7DC"/>
+            <Setter Property="Background" Value="#34322D"/>
+            <Setter Property="BorderBrush" Value="#171613"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="Shadow"
+                                    Margin="0,3,0,0"
+                                    CornerRadius="7"
+                                    Background="#171613"/>
+                            <Border x:Name="Face"
+                                    Margin="0,0,0,3"
+                                    CornerRadius="7"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Face" Property="Background" Value="#44413A"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Face" Property="Margin" Value="0,3,0,0"/>
+                                <Setter TargetName="Shadow" Property="Margin" Value="0,1,0,0"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Face" Property="Opacity" Value="0.45"/>
+                                <Setter TargetName="Shadow" Property="Opacity" Value="0.35"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="PadKeyStyle" TargetType="Button">
-            <Setter Property="Width" Value="300"/>
-            <Setter Property="Height" Value="270"/>
+            <Setter Property="Width" Value="342"/>
+            <Setter Property="Height" Value="286"/>
             <Setter Property="Margin" Value="8"/>
             <Setter Property="Padding" Value="0"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Background" Value="#D85E2B"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Grid Margin="5">
-                            <Border x:Name="KeyShadow"
-                                    Margin="0,10,0,0"
-                                    CornerRadius="22"
-                                    Background="#23221F"/>
-                            <Border x:Name="KeyFace"
-                                    CornerRadius="22"
-                                    Background="#D85E2B"
-                                    BorderBrush="#23221F"
+                            <Border x:Name="Base"
+                                    Margin="0,15,0,0"
+                                    CornerRadius="24"
+                                    Background="#1E1D1A"/>
+                            <Border x:Name="Skirt"
+                                    Margin="0,7,0,5"
+                                    CornerRadius="24"
+                                    Background="{TemplateBinding Background}"
+                                    Opacity="0.62"
+                                    BorderBrush="#1E1D1A"
+                                    BorderThickness="2"/>
+                            <Border x:Name="Face"
+                                    Margin="0,0,0,12"
+                                    CornerRadius="24"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="#1E1D1A"
                                     BorderThickness="2"
                                     Padding="20">
-                                <ContentPresenter HorizontalAlignment="Stretch"
-                                                  VerticalAlignment="Stretch"/>
+                                <Grid>
+                                    <ContentPresenter HorizontalAlignment="Stretch"
+                                                      VerticalAlignment="Stretch"/>
+                                    <Border x:Name="HoverWash"
+                                            CornerRadius="18"
+                                            Background="#FFFFFF"
+                                            Opacity="0"
+                                            IsHitTestVisible="False"/>
+                                </Grid>
                             </Border>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="KeyFace" Property="Background" Value="#E66B34"/>
+                                <Setter TargetName="HoverWash" Property="Opacity" Value="0.08"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Face" Property="BorderBrush" Value="#F6E6D9"/>
+                                <Setter TargetName="Face" Property="BorderThickness" Value="3"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="KeyFace" Property="Margin" Value="0,7,0,0"/>
-                                <Setter TargetName="KeyShadow" Property="Margin" Value="0,5,0,0"/>
+                                <Setter TargetName="Face" Property="Margin" Value="0,9,0,3"/>
+                                <Setter TargetName="Skirt" Property="Margin" Value="0,10,0,2"/>
+                                <Setter TargetName="HoverWash" Property="Opacity" Value="0.03"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="KeyFace" Property="Opacity" Value="0.58"/>
-                                <Setter TargetName="KeyShadow" Property="Opacity" Value="0.45"/>
+                                <Setter TargetName="Face" Property="Opacity" Value="0.55"/>
+                                <Setter TargetName="Skirt" Property="Opacity" Value="0.34"/>
+                                <Setter TargetName="Base" Property="Opacity" Value="0.5"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -53,185 +127,404 @@
         </Style>
     </Window.Resources>
 
-    <Grid Margin="20">
-        <Border CornerRadius="28"
-                Background="#E8E2D6"
-                BorderBrush="#2A2925"
+    <Grid Margin="18">
+        <Border CornerRadius="30"
+                Background="#E8E3D8"
+                BorderBrush="#262520"
                 BorderThickness="2"
-                Padding="20">
+                Padding="18">
             <Border.Effect>
-                <DropShadowEffect BlurRadius="18" Direction="270" ShadowDepth="8" Opacity="0.24"/>
+                <DropShadowEffect BlurRadius="24" Direction="270" ShadowDepth="10" Opacity="0.26"/>
             </Border.Effect>
 
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="16"/>
                     <RowDefinition Height="*"/>
+                    <RowDefinition Height="14"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <Grid Grid.Row="0" Margin="2,0,2,18">
+                <!-- instrument header -->
+                <Grid Grid.Row="0">
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <StackPanel>
-                        <TextBlock Text="REPO PAD / 01"
-                                   FontSize="12"
+
+                    <Border Width="46" Height="46"
+                            CornerRadius="11"
+                            Background="#23221E"
+                            BorderBrush="#0F0F0D"
+                            BorderThickness="1">
+                        <TextBlock Text="RP"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   FontFamily="Cascadia Mono, Consolas"
+                                   FontSize="15"
                                    FontWeight="Bold"
-                                   Foreground="#57534A"/>
-                        <TextBlock Text="LOCAL APPLY CONTROLLER"
-                                   Margin="0,5,0,0"
-                                   FontSize="24"
+                                   Foreground="#F0E9DD"/>
+                    </Border>
+
+                    <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="REPOPAD / LOCAL CONTROL SURFACE"
+                                   FontFamily="Cascadia Mono, Consolas"
+                                   FontSize="11"
+                                   FontWeight="Bold"
+                                   Foreground="#555149"/>
+                        <TextBlock Text="Repository apply controller"
+                                   Margin="0,3,0,0"
+                                   FontSize="21"
                                    FontWeight="SemiBold"
-                                   Foreground="#1F1E1B"/>
+                                   Foreground="#1C1B18"/>
                     </StackPanel>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Ellipse x:Name="StatusLed" Width="11" Height="11" Fill="#77736B" Margin="0,0,9,0"/>
-                        <TextBlock x:Name="StatusText"
-                                   Text="READY"
-                                   FontSize="12"
-                                   FontWeight="Bold"
-                                   Foreground="#4D4A44"
-                                   VerticalAlignment="Center"/>
-                    </StackPanel>
+
+                    <Border Grid.Column="2"
+                            CornerRadius="12"
+                            Background="#DCD6C9"
+                            BorderBrush="#A7A093"
+                            BorderThickness="1"
+                            Padding="12,8">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse x:Name="StatusLed"
+                                     Width="10" Height="10"
+                                     Fill="#77736B"
+                                     Margin="0,0,8,0"
+                                     VerticalAlignment="Center"/>
+                            <StackPanel>
+                                <TextBlock x:Name="StatusText"
+                                           Text="READY"
+                                           FontFamily="Cascadia Mono, Consolas"
+                                           FontSize="11"
+                                           FontWeight="Bold"
+                                           Foreground="#34312C"/>
+                                <TextBlock Text="ELEVATED / WINDOWS"
+                                           Margin="0,2,0,0"
+                                           FontFamily="Cascadia Mono, Consolas"
+                                           FontSize="9"
+                                           Foreground="#777166"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
                 </Grid>
 
-                <Grid Grid.Row="1">
+                <!-- hardware body -->
+                <Grid Grid.Row="2">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="340"/>
-                        <ColumnDefinition Width="18"/>
+                        <ColumnDefinition Width="404"/>
+                        <ColumnDefinition Width="16"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
+                    <!-- key bay -->
                     <Border Grid.Column="0"
-                            CornerRadius="20"
-                            Background="#D8D2C6"
-                            BorderBrush="#AAA396"
+                            CornerRadius="22"
+                            Background="#D2CCC0"
+                            BorderBrush="#9F988A"
                             BorderThickness="1"
-                            Padding="10">
+                            Padding="12">
                         <Grid>
-                            <Ellipse Width="7" Height="7" Fill="#817B71" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4"/>
-                            <Ellipse Width="7" Height="7" Fill="#817B71" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="4"/>
-                            <Ellipse Width="7" Height="7" Fill="#817B71" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="4"/>
-                            <Ellipse Width="7" Height="7" Fill="#817B71" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="4"/>
+                            <Ellipse Width="7" Height="7" Fill="#777066" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="2"/>
+                            <Ellipse Width="7" Height="7" Fill="#777066" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="2"/>
+                            <Ellipse Width="7" Height="7" Fill="#777066" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="2"/>
+                            <Ellipse Width="7" Height="7" Fill="#777066" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="2"/>
 
-                            <ItemsControl x:Name="PadItems"
-                                          ItemsSource="{Binding Repositories}"
-                                          HorizontalAlignment="Center"
-                                          VerticalAlignment="Center">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <WrapPanel HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Button Style="{StaticResource PadKeyStyle}"
-                                                Click="RepoButton_Click"
-                                                Tag="{Binding}">
-                                            <Grid>
-                                                <Grid.RowDefinitions>
-                                                    <RowDefinition Height="Auto"/>
-                                                    <RowDefinition Height="*"/>
-                                                    <RowDefinition Height="Auto"/>
-                                                </Grid.RowDefinitions>
-                                                <Grid>
-                                                    <TextBlock Text="KEY 01"
-                                                               FontSize="11"
-                                                               FontWeight="Bold"
-                                                               Foreground="#F8E6DB"/>
-                                                    <Ellipse Width="8" Height="8"
-                                                             Fill="#231F1C"
-                                                             HorizontalAlignment="Right"/>
-                                                </Grid>
-                                                <StackPanel Grid.Row="1" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Name}"
-                                                               HorizontalAlignment="Center"
-                                                               FontSize="15"
-                                                               FontWeight="Bold"
-                                                               Foreground="#2A201B"/>
-                                                    <TextBlock Text="APPLY"
-                                                               Margin="0,8,0,0"
-                                                               HorizontalAlignment="Center"
-                                                               FontSize="52"
-                                                               FontWeight="Black"
-                                                               Foreground="#FFF5EC"/>
-                                                    <TextBlock Text="PULL · CHECK · BUILD · RESTART"
-                                                               Margin="0,7,0,0"
-                                                               HorizontalAlignment="Center"
-                                                               FontFamily="Consolas"
-                                                               FontSize="10"
-                                                               Foreground="#F8E6DB"/>
-                                                </StackPanel>
-                                                <TextBlock Grid.Row="2"
-                                                           Text="{Binding Subtitle}"
-                                                           HorizontalAlignment="Center"
-                                                           FontSize="12"
-                                                           Foreground="#392922"/>
-                                            </Grid>
-                                        </Button>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <Grid Margin="10">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="10"/>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="12"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <Grid Grid.Row="0">
+                                    <TextBlock Text="KEY BAY"
+                                               FontFamily="Cascadia Mono, Consolas"
+                                               FontSize="10"
+                                               FontWeight="Bold"
+                                               Foreground="#5F5A51"/>
+                                    <TextBlock x:Name="RepoCountText"
+                                               Text="00 LOADED"
+                                               HorizontalAlignment="Right"
+                                               FontFamily="Cascadia Mono, Consolas"
+                                               FontSize="9"
+                                               Foreground="#7D766B"/>
+                                </Grid>
+
+                                <Border Grid.Row="2"
+                                        CornerRadius="18"
+                                        Background="#C7C1B5"
+                                        BorderBrush="#B0A99C"
+                                        BorderThickness="1"
+                                        Padding="6">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled">
+                                        <ItemsControl x:Name="PadItems"
+                                                      ItemsSource="{Binding Repositories}"
+                                                      HorizontalAlignment="Center">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel HorizontalAlignment="Center"/>
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Button Style="{StaticResource PadKeyStyle}"
+                                                            Background="{Binding Accent, Converter={StaticResource HexBrushConverter}}"
+                                                            Click="RepoButton_Click"
+                                                            Tag="{Binding}">
+                                                        <Grid>
+                                                            <Grid.RowDefinitions>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="*"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                            </Grid.RowDefinitions>
+
+                                                            <Grid>
+                                                                <Border CornerRadius="5"
+                                                                        Background="#2B211C"
+                                                                        Padding="7,3"
+                                                                        HorizontalAlignment="Left">
+                                                                    <TextBlock Text="{Binding Slot}"
+                                                                               FontFamily="Cascadia Mono, Consolas"
+                                                                               FontSize="9"
+                                                                               FontWeight="Bold"
+                                                                               Foreground="#F7E9DC"/>
+                                                                </Border>
+                                                                <Ellipse Width="8" Height="8"
+                                                                         Fill="#2A211C"
+                                                                         HorizontalAlignment="Right"
+                                                                         VerticalAlignment="Center"/>
+                                                            </Grid>
+
+                                                            <StackPanel Grid.Row="1" VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding Name}"
+                                                                           HorizontalAlignment="Center"
+                                                                           FontSize="14"
+                                                                           FontWeight="Bold"
+                                                                           Foreground="#30231E"
+                                                                           TextTrimming="CharacterEllipsis"/>
+                                                                <TextBlock Text="APPLY"
+                                                                           Margin="0,7,0,0"
+                                                                           HorizontalAlignment="Center"
+                                                                           FontSize="50"
+                                                                           FontWeight="Black"
+                                                                           Foreground="#FFF7EF"/>
+                                                                <TextBlock Text="PULL  ·  VERIFY  ·  BUILD  ·  RUN"
+                                                                           Margin="0,7,0,0"
+                                                                           HorizontalAlignment="Center"
+                                                                           FontFamily="Cascadia Mono, Consolas"
+                                                                           FontSize="9"
+                                                                           FontWeight="SemiBold"
+                                                                           Foreground="#FCE9DB"/>
+                                                            </StackPanel>
+
+                                                            <Grid Grid.Row="2">
+                                                                <TextBlock Text="{Binding Subtitle}"
+                                                                           FontSize="11"
+                                                                           Foreground="#412D24"
+                                                                           VerticalAlignment="Center"/>
+                                                                <TextBlock Text="PRESS"
+                                                                           HorizontalAlignment="Right"
+                                                                           FontFamily="Cascadia Mono, Consolas"
+                                                                           FontSize="9"
+                                                                           FontWeight="Bold"
+                                                                           Foreground="#412D24"/>
+                                                            </Grid>
+                                                        </Grid>
+                                                    </Button>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </Border>
+
+                                <Grid Grid.Row="4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <Rectangle Height="3" RadiusX="1.5" RadiusY="1.5" Fill="#5D8C62"/>
+                                        <TextBlock Text="PULL" Margin="0,5,0,0" FontFamily="Cascadia Mono, Consolas" FontSize="8" Foreground="#666057" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                        <Rectangle Height="3" RadiusX="1.5" RadiusY="1.5" Fill="#D2A33F"/>
+                                        <TextBlock Text="CHECK" Margin="0,5,0,0" FontFamily="Cascadia Mono, Consolas" FontSize="8" Foreground="#666057" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" Margin="6,0,0,0">
+                                        <Rectangle Height="3" RadiusX="1.5" RadiusY="1.5" Fill="#C86A3C"/>
+                                        <TextBlock Text="BUILD" Margin="0,5,0,0" FontFamily="Cascadia Mono, Consolas" FontSize="8" Foreground="#666057" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="3" Margin="6,0,0,0">
+                                        <Rectangle Height="3" RadiusX="1.5" RadiusY="1.5" Fill="#4E7089"/>
+                                        <TextBlock Text="RUN" Margin="0,5,0,0" FontFamily="Cascadia Mono, Consolas" FontSize="8" Foreground="#666057" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Grid>
                         </Grid>
                     </Border>
 
+                    <!-- monitor -->
                     <Border Grid.Column="2"
-                            CornerRadius="20"
-                            Background="#1E1D1A"
-                            BorderBrush="#2A2925"
-                            BorderThickness="2"
-                            Padding="0">
+                            CornerRadius="22"
+                            Background="#1B1A17"
+                            BorderBrush="#0E0E0C"
+                            BorderThickness="2">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="1"/>
+                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
+                                <RowDefinition Height="1"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <Grid Grid.Row="0" Background="#292824" Margin="1" Height="44">
-                                <TextBlock Text="COMMAND MONITOR"
-                                           Margin="16,0,0,0"
-                                           VerticalAlignment="Center"
-                                           FontSize="11"
-                                           FontWeight="Bold"
-                                           Foreground="#C8C2B7"/>
-                                <TextBlock Text="ADMIN"
-                                           Margin="0,0,16,0"
-                                           HorizontalAlignment="Right"
-                                           VerticalAlignment="Center"
-                                           FontSize="10"
-                                           FontWeight="Bold"
-                                           Foreground="#D8A84E"/>
+
+                            <Grid Grid.Row="0" Margin="15,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="COMMAND MONITOR"
+                                               FontFamily="Cascadia Mono, Consolas"
+                                               FontSize="10"
+                                               FontWeight="Bold"
+                                               Foreground="#CFC8BC"/>
+                                    <TextBlock x:Name="CommandStateText"
+                                               Text="STANDBY"
+                                               Margin="0,3,0,0"
+                                               FontFamily="Cascadia Mono, Consolas"
+                                               FontSize="9"
+                                               Foreground="#777E70"/>
+                                </StackPanel>
+                                <Border Grid.Column="1"
+                                        CornerRadius="5"
+                                        Background="#2B2924"
+                                        BorderBrush="#3A3832"
+                                        BorderThickness="1"
+                                        Padding="8,4">
+                                    <TextBlock Text="ADMIN"
+                                               FontFamily="Cascadia Mono, Consolas"
+                                               FontSize="9"
+                                               FontWeight="Bold"
+                                               Foreground="#D6AA50"/>
+                                </Border>
                             </Grid>
-                            <TextBox x:Name="OutputBox"
-                                     Grid.Row="1"
-                                     Margin="14"
-                                     IsReadOnly="True"
-                                     AcceptsReturn="True"
-                                     TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto"
-                                     HorizontalScrollBarVisibility="Disabled"
-                                     Background="Transparent"
-                                     BorderThickness="0"
-                                     Foreground="#D9E7CF"
-                                     SelectionBrush="#D85E2B"
-                                     CaretBrush="#D9E7CF"
-                                     FontFamily="Cascadia Mono, Consolas"
-                                     FontSize="12"/>
+
+                            <Rectangle Grid.Row="1" Fill="#33312C"/>
+
+                            <!-- selected repository display -->
+                            <Border Grid.Row="2"
+                                    Margin="14,12,14,10"
+                                    CornerRadius="10"
+                                    Background="#252821"
+                                    BorderBrush="#3A3F34"
+                                    BorderThickness="1"
+                                    Padding="12,9">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock x:Name="SelectedRepoName"
+                                                   Text="NO REPOSITORY"
+                                                   FontFamily="Cascadia Mono, Consolas"
+                                                   FontSize="11"
+                                                   FontWeight="Bold"
+                                                   Foreground="#DDE7CF"/>
+                                        <TextBlock x:Name="SelectedRepoPath"
+                                                   Text="Select a repository key"
+                                                   Margin="0,3,0,0"
+                                                   FontFamily="Cascadia Mono, Consolas"
+                                                   FontSize="9"
+                                                   Foreground="#88917E"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="LastRunText"
+                                               Grid.Column="1"
+                                               Text="NO RUN"
+                                               Margin="12,0,0,0"
+                                               VerticalAlignment="Center"
+                                               FontFamily="Cascadia Mono, Consolas"
+                                               FontSize="9"
+                                               FontWeight="Bold"
+                                               Foreground="#909989"/>
+                                </Grid>
+                            </Border>
+
+                            <Grid Grid.Row="3">
+                                <TextBox x:Name="OutputBox"
+                                         Margin="14,2,14,12"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         HorizontalScrollBarVisibility="Disabled"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         Foreground="#D6DEC9"
+                                         SelectionBrush="#D85E2B"
+                                         CaretBrush="#D6DEC9"
+                                         FontFamily="Cascadia Mono, Consolas"
+                                         FontSize="11"/>
+                                <TextBlock Text=">"
+                                           Margin="16,4,0,0"
+                                           HorizontalAlignment="Left"
+                                           VerticalAlignment="Top"
+                                           FontFamily="Cascadia Mono, Consolas"
+                                           FontSize="11"
+                                           Foreground="#5D8C62"
+                                           IsHitTestVisible="False"
+                                           Visibility="Collapsed"/>
+                            </Grid>
+
+                            <Rectangle Grid.Row="4" Fill="#33312C"/>
+
+                            <Grid Grid.Row="5" Margin="14,11">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="150"/>
+                                </Grid.ColumnDefinitions>
+
+                                <Button Grid.Column="0" Style="{StaticResource UtilityButtonStyle}" Click="OpenApp_Click">OPEN APP</Button>
+                                <Button Grid.Column="1" Style="{StaticResource UtilityButtonStyle}" Click="OpenFolder_Click">OPEN FOLDER</Button>
+                                <Button Grid.Column="2" Style="{StaticResource UtilityButtonStyle}" Click="ClearLog_Click">CLEAR LOG</Button>
+
+                                <ProgressBar x:Name="RunProgress"
+                                             Grid.Column="4"
+                                             Height="6"
+                                             VerticalAlignment="Center"
+                                             IsIndeterminate="True"
+                                             Visibility="Collapsed"
+                                             Foreground="#D85E2B"
+                                             Background="#302E29"/>
+                            </Grid>
                         </Grid>
                     </Border>
                 </Grid>
 
-                <Grid Grid.Row="2" Margin="2,16,2,0">
-                    <TextBlock Text="PRESS ONCE. REPOPAD RUNS THE CHECKED-IN APPLY SCRIPT AS ADMIN."
-                               FontFamily="Consolas"
-                               FontSize="10"
-                               Foreground="#666158"/>
-                    <TextBlock Text="v0.1"
+                <!-- footer -->
+                <Grid Grid.Row="4">
+                    <TextBlock Text="ONE KEY / ONE CHECKED-IN SCRIPT / NO HIDDEN WORK"
+                               FontFamily="Cascadia Mono, Consolas"
+                               FontSize="9"
+                               Foreground="#625D54"/>
+                    <TextBlock Text="RP-01  ·  LOCAL ADMIN SURFACE"
                                HorizontalAlignment="Right"
-                               FontFamily="Consolas"
-                               FontSize="10"
-                               Foreground="#837D72"/>
+                               FontFamily="Cascadia Mono, Consolas"
+                               FontSize="9"
+                               Foreground="#7E776D"/>
                 </Grid>
             </Grid>
         </Border>
