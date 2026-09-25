@@ -63,7 +63,7 @@ export function OverviewView({ go }: { go: Go }) {
           <Lane icon={Users} title="Requesters" onOpen={go.tickets} rows={c && [["Open tickets", c.OpenTickets], ["Waiting on requester", c.WaitingOnRequester], ["Unclaimed", c.NewTickets]]} />
           <Lane icon={Headset} title="L1 · assistant" onOpen={go.l1} rows={c && [["Conversations, 24h", c.ChatsLast24h]]} note="Answers directly or raises a ticket" />
           <Lane icon={Bot} title="L2 · engineer" onOpen={go.runs} accent rows={c && [["Active now", c.ActiveRuns], ["Runs, 24h", c.RunsLast24h], ["Jev decisions, 24h", c.JevCallsLast24h], ["Writer calls, 24h", c.ModelCallsLast24h]]} />
-          <Lane icon={ShieldAlert} title="L3 · people" onOpen={go.l3} rows={c && [["Open escalations", c.L3Open], ["Opened, 24h", c.L3OpenedLast24h]]} note="Human specialist attention" />
+          <Lane icon={ShieldAlert} title="L3 · people" onOpen={go.l3} rows={c && [["Open escalations", c.L3Open], ["Opened, 24h", c.L3OpenedLast24h ?? 0]]} note="Human specialist attention" />
         </div>
 
         <section className="grid gap-px overflow-hidden rounded-xl border bg-border sm:grid-cols-3" aria-label="24 hour operational pulse">
