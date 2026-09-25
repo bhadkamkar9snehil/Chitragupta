@@ -174,3 +174,70 @@ export async function* turn(sessionId: string, body: { userId: string; text?: st
     }
   }
 }
+
+// ---------------------------------------------------------------- L2 / L3 operations (L1/api/Ops.cs)
+export type Run = {
+  ID: string; TicketID: string; TicketNo: string | null; BriefDetails: string | null; FirstLastName: string | null;
+  AttemptNo: number; ProcessStatus: string; IsActive: boolean; Route: string | null; ResponseType: string | null; ExecutionMode: string | null;
+  JevReviewDecision: string | null; JevReviewConfidence: number | null; JevRiskScore: number | null; JevModel: string | null;
+  LocalModelState: string | null; LocalModelPurpose: string | null; ClaimedOn: string | null; HeartbeatOn: string | null;
+  CompletedOn: string | null; CreatedOn: string; ErrorMessage: string | null; EscalateToL3: boolean | null; IsResolved: boolean | null;
+  SqlActions: number; Events: number | TraceEvent[]; JevCalls: number; Seconds: number | null;
+  ProblemSummary?: string | null; Findings?: string | null; RootCause?: string | null; Resolution?: string | null; ReplyText?: string | null;
+  JevTriageJson?: string | null; JevInvestigationJson?: string | null; JevReviewJson?: string | null; JevTraceJson?: string | null;
+  JevKBCurationJson?: string | null; ActionsTakenJson?: string | null;
+  Trail?: import("@/components/console/brain").Trail | null;
+  SqlActionList?: SqlAction[];
+};
+export type TraceEvent = {
+  ID: string; EventType: string; ToolName: string | null; Name: string | null; Model: string | null; Provider: string | null;
+  Status: string | null; DurationMs: number | null; EventOn: string; ErrorMessage: string | null; ArgsJson: string | null; ResultJson: string | null;
+};
+export type SqlAction = {
+  ActionNo: number; ActionType: string; OperationName: string | null; ObjectName: string | null; Purpose: string | null; Status: string;
+  RowsAffected: number | null; StartedOn: string; CompletedOn?: string | null; Ms?: number | null; SqlText?: string | null; ErrorMessage: string | null;
+  TicketNo?: string | null; RunID?: string;
+};
+export type Activity = { At: string; Lane: "l1" | "l2" | "l3"; Title: string; TicketNo: string | null; RunID: string | null; Detail: string | null };
+export type Overview = {
+  counts: {
+    NewTickets: number; ActiveRuns: number; WaitingOnRequester: number; L3Open: number; OpenTickets: number; RunsLast24h: number;
+    ChatsLast24h: number; LastClaimOn: string | null; JevCallsLast24h: number; ModelCallsLast24h: number;
+  };
+  outcomes: { Label: string; Count: number }[];
+  lmStudio: { EventOn: string; ResultJson: string } | null;
+  activity: Activity[];
+  live: Run | null;
+};
+export type KanbanTask = {
+  id: string; title: string; status: string; assignee: string | null; priority: string | null; createdAt: number | null;
+  startedAt: number | null; completedAt: number | null; error: string | null; body: string;
+};
+export type Board = { available: boolean; tasks: KanbanTask[]; stats: { by_status: Record<string, number>; by_assignee: Record<string, Record<string, number>> } | null };
+export type Escalation = {
+  ID: string; TicketID: string; TicketNo: string; RunID: string | null; EscalationCategory: string; L3Status: string | null;
+  ProblemSummary: string | null; Findings: string | null; RootCause: string | null; SuggestedAction: string | null; ReplyText: string | null;
+  EscalatedOn: string; AssignedToUserID: string | null; AssignedOn: string | null; L3Remarks: string | null; L3ResolutionSummary: string | null;
+  ResolvedOn: string | null; BriefDetails: string | null; FirstLastName: string | null; EmailID: string | null; TicketStatus: string | null; Area: string | null;
+};
+export type ToolStats = {
+  tools: { ToolName: string; Calls: number; Errors: number; AvgMs: number | null; MaxMs: number | null; LastUsed: string }[];
+  jev: { Stage: string; Calls: number; Errors: number; AvgMs: number | null; LastUsed: string }[];
+  models: { Model: string; Provider: string; Calls: number; AvgMs: number | null; LastUsed: string }[];
+  catalog: { ActionCategory: string; ActionName: string; PermissionLevel: string; Description: string | null }[];
+  sql: SqlAction[];
+};
+
+export const ops = {
+  overview: () => call<Overview>("ops/overview"),
+  runs: (search?: string) => call<Run[]>(`ops/runs?${q({ q: search })}`),
+  run: (id: string) => call<Run & { Events: TraceEvent[] }>(`ops/runs/${id}`),
+  live: (runId?: string, since?: string) =>
+    call<{ run: Run | null; events?: TraceEvent[]; trail?: Run["Trail"] }>(`ops/live?${q({ runId, since })}`),
+  board: () => call<Board>("ops/board"),
+  activity: () => call<Activity[]>("ops/activity"),
+  l3: (status?: string) => call<Escalation[]>(`ops/l3?${q({ status })}`),
+  l3Act: (id: string, body: { userId: string; action: "assign" | "note" | "resolve" | "reopen"; text?: string; public?: boolean; closeTicket?: boolean }) =>
+    call(`ops/l3/${id}`, { method: "POST", body }),
+  tools: () => call<ToolStats>("ops/tools"),
+};

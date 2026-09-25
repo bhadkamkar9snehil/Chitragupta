@@ -390,4 +390,22 @@ admin.MapPost("/knowledge/search", async (JsonObject body, Settings s) =>
         .Select(h => new Dictionary<string, object?> { ["Slug"] = h.Slug, ["Title"] = h.Title, ["Type"] = h.Type, ["Snippet"] = h.Snippet });
 });
 
+// ---------------------------------------------------------------- L2 / L3 operations
+var ops = app.MapGroup("/api/ops");
+ops.MapGet("/overview", Ops.Overview);
+ops.MapGet("/runs", (string? q) => Ops.Runs(q));
+ops.MapGet("/runs/{id}", async (string id) => await Ops.Run(id) is { } r ? Results.Ok(r) : Results.NotFound());
+ops.MapGet("/live", async (string? runId, DateTime? since) =>
+{
+    var run = string.IsNullOrEmpty(runId) ? await Ops.LiveRun() : (await Ops.Runs(null)).FirstOrDefault(r => r["ID"]?.ToString()?.Equals(runId, StringComparison.OrdinalIgnoreCase) == true);
+    if (run is null) return Results.Ok(new { run = (object?)null });
+    var id = run["ID"]!.ToString()!;
+    return Results.Ok(new { run, events = await Ops.Events(id, since), trail = since is null ? await Ops.Trail(id) : null });
+});
+ops.MapGet("/board", Ops.Board);
+ops.MapGet("/activity", () => Ops.Activity(100));
+ops.MapGet("/l3", (string? status) => Ops.L3(status));
+ops.MapPost("/l3/{id}", (string id, JsonObject body) => Ops.L3Act(id, body));
+ops.MapGet("/tools", Ops.Tools);
+
 app.Run();

@@ -69,6 +69,11 @@ public static class Tickets
                      WHERE TicketID = @id AND IsDeleted = 0 AND ProcessStatus = 'COMPLETED' AND ReplyText IS NOT NULL
                      """, ("@id", id)))
             items.Add(new() { ["Kind"] = "reply", ["Actor"] = "support", ["ResponseType"] = r["ResponseType"], ["Text"] = r["ReplyText"], ["At"] = r["CompletedOn"] });
+        foreach (var a in await Db.H("""
+                     SELECT ActivityType, NoteText, CreatedOn FROM dbo.Hermes_Ticket_Activity_Trn_Tbl
+                     WHERE TicketID = @id AND IsDeleted = 0 AND IsCustomerVisible = 1 AND ActorType = 'Human'
+                     """, ("@id", id)))
+            items.Add(new() { ["Kind"] = "reply", ["Actor"] = "support", ["ResponseType"] = a["ActivityType"]?.ToString() == "Resolution" ? "RESOLUTION" : "UPDATE", ["Text"] = a["NoteText"], ["At"] = a["CreatedOn"] });
         foreach (var e in await Db.H("SELECT Kind, Content, Rating, CreatedOn FROM dbo.L1_Ticket_Event_Tbl WHERE TicketID = @id", ("@id", id)))
             items.Add(new() { ["Kind"] = e["Kind"], ["Actor"] = "requester", ["Text"] = e["Content"], ["Rating"] = e["Rating"], ["At"] = e["CreatedOn"] });
         return items.OrderBy(i => i["At"] as DateTime? ?? DateTime.MinValue).ToList();
