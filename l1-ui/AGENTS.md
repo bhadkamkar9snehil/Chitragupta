@@ -26,6 +26,7 @@ the backend decision:
 - a governed L1 answer with optional approved-knowledge evidence;
 - structured missing-context intake;
 - the authoritative created-ticket snapshot;
+- the authenticated requester's ticket/status list;
 - a user-visible L2 publication;
 - an L2 QUESTION with a governed free-text answer result.
 
