@@ -36,7 +36,7 @@ function labelsFor(
 
 function receiptSummary(
   flow: SerializableQuestionInputFlow,
-  answers: Record<string, string[]>,
+  answers: Record<string, string[] | string>,
 ): Array<{ label: string; value: string }> {
   if ("steps" in flow) {
     return flow.steps.map((step) => {
@@ -94,7 +94,7 @@ export default defineToolkit({
         return (
           <QuestionFlow
             {...parsed}
-            onComplete={(answers) => addResult(answers)}
+            onComplete={(answers: Record<string, string[]>) => addResult(answers)}
           />
         );
       }
@@ -102,7 +102,7 @@ export default defineToolkit({
       return (
         <QuestionFlow
           {...parsed}
-          onSelect={(optionIds) => addResult({ [parsed.id]: optionIds })}
+          onSelect={(optionIds: string[]) => addResult({ [parsed.id]: optionIds })}
         />
       );
     },
@@ -111,8 +111,6 @@ export default defineToolkit({
   show_knowledge_sources: {
     type: "backend",
     display: "standalone",
-    description:
-      "Show the approved governed knowledge sources that support an L1 answer.",
     render: ({ result }) => {
       const parsed = KnowledgeSourcesResultSchema.safeParse(result);
       if (!parsed.success) return null;
@@ -123,8 +121,6 @@ export default defineToolkit({
   show_ticket: {
     type: "backend",
     display: "standalone",
-    description:
-      "Show the authoritative Helpdesk ticket snapshot returned by Chitragupta.",
     render: ({ result }) => {
       const parsed = TicketSnapshotSchema.safeParse(result);
       if (!parsed.success) return null;
@@ -135,8 +131,6 @@ export default defineToolkit({
   show_tickets: {
     type: "backend",
     display: "standalone",
-    description:
-      "Show the authenticated requester's authoritative Helpdesk ticket list.",
     render: ({ result }) => {
       const parsed = TicketListResultSchema.safeParse(result);
       if (!parsed.success) return null;
@@ -147,8 +141,6 @@ export default defineToolkit({
   show_l2_reply: {
     type: "backend",
     display: "standalone",
-    description:
-      "Show a user-visible L2 publication for an existing Helpdesk ticket.",
     render: ({ result }) => {
       const parsed = L2ReplySchema.safeParse(result);
       if (!parsed.success) return null;
