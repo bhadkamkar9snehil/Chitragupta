@@ -11,11 +11,24 @@ export const L1HumanToolNameSchema = z.enum([
   "answer_l2_question",
 ]);
 
-export const L1ToolResultSchema = z.object({
-  toolCallId: IdSchema,
-  toolName: L1HumanToolNameSchema,
-  result: z.unknown(),
-});
+export const L1CollectIntakeResultSchema = z
+  .record(IdSchema, z.array(IdSchema).min(1).max(20))
+  .refine((value) => Object.keys(value).length <= 8, {
+    message: "Too many intake fields.",
+  });
+
+export const L1ToolResultSchema = z.discriminatedUnion("toolName", [
+  z.object({
+    toolCallId: IdSchema,
+    toolName: z.literal("collect_intake"),
+    result: L1CollectIntakeResultSchema,
+  }),
+  z.object({
+    toolCallId: IdSchema,
+    toolName: z.literal("answer_l2_question"),
+    result: z.lazy(() => L2QuestionAnswerResultSchema),
+  }),
+]);
 
 export const KnowledgeSourceSchema = z.object({
   id: IdSchema,
