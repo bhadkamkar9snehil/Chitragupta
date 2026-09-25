@@ -25,9 +25,9 @@ export function KnowledgeSources({
   sources,
 }: Readonly<{ sources: KnowledgeSource[] }>) {
   return (
-    <section className="mt-4 border-t pt-3" aria-label="Approved knowledge used">
+    <section className="mt-4 border-t pt-3" aria-label="Sources used">
       <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Approved knowledge
+        Sources used
       </div>
       <ul className="mt-2 space-y-3">
         {sources.map((source) => (
@@ -164,7 +164,7 @@ const replyLabels: Record<L2Reply["kind"], string> = {
   UPDATE: "Support update",
   RESOLUTION: "Resolution",
   L3_ESCALATION: "Escalated",
-  NEEDS_HUMAN_ACTION: "Action needed",
+  NEEDS_HUMAN_ACTION: "Manual action required",
 };
 
 export function L2ReplySurface({ reply }: Readonly<{ reply: L2Reply }>) {
