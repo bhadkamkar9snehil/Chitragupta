@@ -15,6 +15,7 @@ export const KnowledgeSourceSchema = z.object({
 
 const KnowledgeSourceListSchema = z
   .array(KnowledgeSourceSchema)
+  .min(1)
   .max(8)
   .refine(
     (sources) =>
@@ -23,7 +24,7 @@ const KnowledgeSourceListSchema = z
   );
 
 export const KnowledgeSourcesResultSchema = z.object({
-  sources: KnowledgeSourceListSchema.min(1),
+  sources: KnowledgeSourceListSchema,
 });
 
 export const TicketSnapshotSchema = z.object({
