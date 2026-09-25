@@ -23,15 +23,13 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
   const [status, setStatus] = useState("Open");
   const [rows, setRows] = useState<Escalation[] | null>(null);
   const [tick, setTick] = useState(0);
-  const [drawerOpen, setDrawerOpen] = useState(true);
+  const [collapsedEscalationId, setCollapsedEscalationId] = useState<string | null>(null);
+  const drawerOpen = !escalationId || collapsedEscalationId !== escalationId;
 
   useEffect(() => {
     ops.l3().then(setRows).catch((e: Error) => toast.error(e.message));
   }, [tick]);
 
-  useEffect(() => {
-    if (!escalationId) setDrawerOpen(true);
-  }, [escalationId]);
 
   const shown = (rows ?? []).filter((r) => (r.L3Status ?? "Open") === status);
   const selected = rows?.find((r) => r.ID === escalationId) ?? null;
@@ -44,7 +42,7 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
           <div>
             <div className="flex items-center gap-2">
               <h1 className="flex-1 text-title font-semibold tracking-tight">L3 escalations</h1>
-              {escalationId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setDrawerOpen(false)} aria-label="Hide escalation list"><PanelLeftClose /></Button>}
+              {escalationId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setCollapsedEscalationId(escalationId)} aria-label="Hide escalation list"><PanelLeftClose /></Button>}
             </div>
             <p className="text-2xs text-subtle-foreground">Handed over by the L2 engineer for a person to act on.{engineer && mine ? ` ${mine} assigned to you.` : ""}</p>
           </div>
@@ -93,7 +91,7 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
           <Detail key={selected.ID} e={selected} engineer={engineer} askEngineer={askEngineer} onBack={() => onSelect(null)} onChanged={(updated) => {
             if (updated) setRows((current) => current?.map((x) => x.ID === updated.ID ? updated : x) ?? null);
             setTick((n) => n + 1);
-          }} onOpenRun={onOpenRun} onOpenTicket={onOpenTicket} drawerOpen={drawerOpen} onDrawerToggle={() => setDrawerOpen((v) => !v)} />
+          }} onOpenRun={onOpenRun} onOpenTicket={onOpenTicket} drawerOpen={drawerOpen} onDrawerToggle={() => setCollapsedEscalationId((current) => current === escalationId ? null : escalationId)} />
         ) : (
           <Empty className="m-auto" icon={<ShieldAlert className="size-5" />} title="Pick an escalation">What L2 found, what it suggests, and the actions a person needs to take.</Empty>
         )}

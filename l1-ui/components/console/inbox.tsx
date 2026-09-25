@@ -27,15 +27,13 @@ export function InboxView({ ticketId, onSelect }: { ticketId: string | null; onS
   const [all, setAll] = useState<Ticket[]>([]);
   const [lookups, setLookups] = useState<{ areas: string[]; sources: string[] }>({ areas: [], sources: [] });
   const [tick, setTick] = useState(0);
-  const [drawerOpen, setDrawerOpen] = useState(true);
+  const [collapsedTicketId, setCollapsedTicketId] = useState<string | null>(null);
+  const drawerOpen = !ticketId || collapsedTicketId !== ticketId;
 
   useEffect(() => {
     api.admin.lookups().then(setLookups).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (!ticketId) setDrawerOpen(true);
-  }, [ticketId]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -61,7 +59,7 @@ export function InboxView({ ticketId, onSelect }: { ticketId: string | null; onS
         <div className="space-y-2 border-b px-3 py-3">
           <div className="flex items-center gap-2">
             <h1 className="flex-1 text-title font-semibold tracking-tight">{VIEWS.find((v) => v.id === view)!.label}</h1>
-            {ticketId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setDrawerOpen(false)} aria-label="Hide ticket list"><PanelLeftClose /></Button>}
+            {ticketId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setCollapsedTicketId(ticketId)} aria-label="Hide ticket list"><PanelLeftClose /></Button>}
             <Tip label="Refresh">
               <Button variant="ghost" size="icon-sm" aria-label="Refresh" onClick={() => setTick((n) => n + 1)}>
                 <RefreshCw />
@@ -131,7 +129,7 @@ export function InboxView({ ticketId, onSelect }: { ticketId: string | null; onS
 
       <div className={cn("min-h-0 min-w-0 flex-1 flex-col", ticketId ? "flex" : "hidden md:flex")}>
         {ticketId ? (
-          <TicketWorkspace key={ticketId} id={ticketId} onBack={() => onSelect(null)} drawerOpen={drawerOpen} onDrawerToggle={() => setDrawerOpen((v) => !v)} />
+          <TicketWorkspace key={ticketId} id={ticketId} onBack={() => onSelect(null)} drawerOpen={drawerOpen} onDrawerToggle={() => setCollapsedTicketId((current) => current === ticketId ? null : ticketId)} />
         ) : (
           <Empty className="m-auto" icon={<Inbox className="size-5" />} title="Pick a ticket">Its activity, the chat that raised it, and the L2 runs appear here.</Empty>
         )}

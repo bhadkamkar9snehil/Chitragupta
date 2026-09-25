@@ -34,16 +34,14 @@ export function RunsView({ runId, onSelect, onLive }: { runId: string | null; on
   const [q, setQ] = useState("");
   const [outcome, setOutcome] = useState("");
   const [runs, setRuns] = useState<Run[] | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(true);
+  const [collapsedRunId, setCollapsedRunId] = useState<string | null>(null);
+  const drawerOpen = !runId || collapsedRunId !== runId;
 
   useEffect(() => {
     const t = setTimeout(() => ops.runs(q || undefined).then(setRuns).catch((e: Error) => toast.error(e.message)), 200);
     return () => clearTimeout(t);
   }, [q]);
 
-  useEffect(() => {
-    if (!runId) setDrawerOpen(true);
-  }, [runId]);
 
   const outcomes = useMemo(() => [...new Set((runs ?? []).map((r) => r.ResponseType ?? ""))], [runs]);
   const shown = (runs ?? []).filter((r) => !outcome || (r.ResponseType ?? "") === outcome);
@@ -55,7 +53,7 @@ export function RunsView({ runId, onSelect, onLive }: { runId: string | null; on
           <div>
             <div className="flex items-center gap-2">
               <h1 className="flex-1 text-title font-semibold tracking-tight">L2 runs</h1>
-              {runId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setDrawerOpen(false)} aria-label="Hide run list"><PanelLeftClose /></Button>}
+              {runId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setCollapsedRunId(runId)} aria-label="Hide run list"><PanelLeftClose /></Button>}
             </div>
             <p className="text-2xs text-subtle-foreground">Every investigation the L2 engineer ran, newest first.</p>
           </div>
@@ -94,7 +92,7 @@ export function RunsView({ runId, onSelect, onLive }: { runId: string | null; on
         </ul>
       </section>
       <div className={cn("min-h-0 min-w-0 flex-1 flex-col", runId ? "flex" : "hidden md:flex")}>
-        {runId ? <RunWorkspace key={runId} id={runId} onBack={() => onSelect(null)} onLive={onLive} drawerOpen={drawerOpen} onDrawerToggle={() => setDrawerOpen((v) => !v)} /> : (
+        {runId ? <RunWorkspace key={runId} id={runId} onBack={() => onSelect(null)} onLive={onLive} drawerOpen={drawerOpen} onDrawerToggle={() => setCollapsedRunId((current) => current === runId ? null : runId)} /> : (
           <Empty className="m-auto" icon={<Bot className="size-5" />} title="Pick a run">See how the engineer walked XBatch, what Jev decided at each step, and what it read.</Empty>
         )}
       </div>

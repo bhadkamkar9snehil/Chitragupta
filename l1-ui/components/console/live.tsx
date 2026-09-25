@@ -230,7 +230,7 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
   const [run, setRun] = useState<Run | null>(null);
   const [events, setEvents] = useState<TraceEvent[]>([]);
   const [trail, setTrail] = useState<Trail | null>(null);
-  const [visual, setVisual] = useState(false);
+  const [visualFor, setVisualFor] = useState<string | null>(null);
   const lastRef = useRef<string | undefined>(undefined);
   const idRef = useRef<string | null>(null);
 
@@ -238,9 +238,6 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
     ops.runs().then(setRuns).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    setVisual(false);
-  }, [follow, runId]);
 
   useEffect(() => {
     let alive = true;
@@ -294,6 +291,8 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
     tools: events.filter((e) => e.EventType === "post_tool_call").length,
     model: events.filter((e) => e.EventType === "post_api_request").length,
   }), [events]);
+  const visualKey = run ? `${follow ? "live" : "replay"}:${run.ID}` : null;
+  const visualOpen = visualKey !== null && visualFor === visualKey;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -347,11 +346,11 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
                 <p className="mt-1 text-xs text-muted-foreground">Follow Live is connected and will attach when the engineer claims the next ticket.</p>
               </div>
             </div>
-          ) : run && visual ? (
+          ) : run && visualOpen ? (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="flex items-center justify-between gap-3 border-b bg-surface-2 px-4 py-2.5">
                 <p className="text-xs text-muted-foreground">{follow ? "Optional live visual map" : "Optional historical visual replay"}</p>
-                <Button variant="ghost" size="sm" onClick={() => setVisual(false)}>Back to run overview</Button>
+                <Button variant="ghost" size="sm" onClick={() => setVisualFor(null)}>Back to run overview</Button>
               </div>
               <Brain trail={trail} ticketLabel={ticketLabel(run.TicketNo) || "Ticket"} mode={follow ? "live" : "replay"} autoplay={false} />
             </div>
@@ -373,7 +372,7 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
                   <h3 className="text-sm font-semibold">Current state</h3>
                   <p className="mt-1 text-sm text-muted-foreground">{run.IsActive ? "L2 is still working. New events appear in the activity stream." : `Run completed with ${outcomeLabel(run.ResponseType)}.`}</p>
                   {trail?.stopped && <p className="mt-2 text-xs text-muted-foreground">Stopped because: {trail.stopped.replace(/_/g, " ")}</p>}
-                  <Button className="mt-4" variant="outline" size="sm" onClick={() => setVisual(true)}>
+                  <Button className="mt-4" variant="outline" size="sm" onClick={() => visualKey && setVisualFor(visualKey)}>
                     {follow ? "Show visual map" : "Open visual replay"}
                   </Button>
                 </div>

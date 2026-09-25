@@ -80,7 +80,7 @@ export function Console() {
     }).catch(() => {});
     const id = safe(() => localStorage.getItem(ENGINEER_KEY), null);
     if (id) api.user(id).then(setEngineer).catch(() => {});
-    setNavCollapsed(safe(() => localStorage.getItem("desk.nav.collapsed") === "1", false));
+    const navTimer = setTimeout(() => setNavCollapsed(safe(() => localStorage.getItem("desk.nav.collapsed") === "1", false)), 0);
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -90,6 +90,7 @@ export function Console() {
     window.addEventListener("keydown", onKey);
     return () => {
       clearTimeout(first);
+      clearTimeout(navTimer);
       window.removeEventListener("hashchange", sync);
       window.removeEventListener("keydown", onKey);
     };
