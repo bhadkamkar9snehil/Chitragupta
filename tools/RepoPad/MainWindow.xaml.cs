@@ -33,7 +33,7 @@ public partial class MainWindow : Window
         {
             if (!File.Exists(_configPath))
             {
-                SetStatus("NO CONFIG", "#B94A3A");
+                SetSurfaceState("NO CONFIG", "#B94A3A", "CONFIG MISSING");
                 Append("RepoPad configuration was not found.");
                 Append(_configPath);
                 return;
@@ -54,25 +54,22 @@ public partial class MainWindow : Window
                 slot++;
             }
 
-            RepoCountText.Text = $"{Repositories.Count:00} LOADED";
+            RepoCountText.Text = Repositories.Count.ToString("00");
 
             if (Repositories.Count == 0)
             {
-                SetStatus("NO REPOS", "#B94A3A");
+                SetSurfaceState("NO REPOS", "#B94A3A", "NO REPOSITORIES");
                 Append("No repository buttons are configured.");
                 return;
             }
 
             SelectRepository(Repositories[0]);
-            SetStatus("READY", "#5D8C62");
-            CommandStateText.Text = "STANDBY";
-            Append("RepoPad ready.");
-            Append("Press a repository key to pull, validate, build and restart it.");
+            SetSurfaceState("READY", "#5D8C62", "STANDBY");
+            Append("Ready.");
         }
         catch (Exception ex)
         {
-            SetStatus("CONFIG ERROR", "#B94A3A");
-            CommandStateText.Text = "CONFIGURATION ERROR";
+            SetSurfaceState("CONFIG ERROR", "#B94A3A", "CONFIGURATION ERROR");
             Append(ex.Message);
         }
     }
@@ -90,8 +87,7 @@ public partial class MainWindow : Window
 
         if (!Directory.Exists(repo.Path) || !File.Exists(scriptPath))
         {
-            SetStatus("PATH ERROR", "#B94A3A");
-            CommandStateText.Text = "APPLY SCRIPT NOT FOUND";
+            SetSurfaceState("PATH ERROR", "#B94A3A", "APPLY SCRIPT NOT FOUND");
             Append($"Cannot find {repo.Name} apply script:");
             Append(scriptPath);
             return;
@@ -99,9 +95,9 @@ public partial class MainWindow : Window
 
         _running = true;
         PadItems.IsEnabled = false;
+        UtilityActions.IsEnabled = false;
         RunProgress.Visibility = Visibility.Visible;
-        SetStatus("RUNNING", "#D5A33F");
-        CommandStateText.Text = $"EXECUTING {repo.Slot}";
+        SetSurfaceState("RUNNING", "#D5A33F", $"EXECUTING {repo.Slot}");
         OutputBox.Clear();
         Append($"[{DateTime.Now:HH:mm:ss}] {repo.Name}");
         Append($"> {scriptPath}");
@@ -145,9 +141,8 @@ public partial class MainWindow : Window
 
             if (process.ExitCode == 0)
             {
-                SetStatus("READY", "#5D8C62");
-                CommandStateText.Text = "APPLY COMPLETE";
-                LastRunText.Text = $"LAST APPLY {DateTime.Now:HH:mm}";
+                SetSurfaceState("READY", "#5D8C62", "APPLY COMPLETE");
+                LastRunText.Text = $"DONE {DateTime.Now:HH:mm}";
                 Append("");
                 Append("DONE — refresh the application in your browser.");
                 if (!string.IsNullOrWhiteSpace(repo.Url))
@@ -155,8 +150,7 @@ public partial class MainWindow : Window
             }
             else
             {
-                SetStatus("FAILED", "#B94A3A");
-                CommandStateText.Text = $"FAILED / EXIT {process.ExitCode}";
+                SetSurfaceState("FAILED", "#B94A3A", $"EXIT {process.ExitCode}");
                 LastRunText.Text = $"FAILED {DateTime.Now:HH:mm}";
                 Append("");
                 Append($"Apply failed with exit code {process.ExitCode}.");
@@ -164,8 +158,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            SetStatus("FAILED", "#B94A3A");
-            CommandStateText.Text = "EXECUTION ERROR";
+            SetSurfaceState("FAILED", "#B94A3A", "EXECUTION ERROR");
             LastRunText.Text = $"FAILED {DateTime.Now:HH:mm}";
             Append("");
             Append(ex.Message);
@@ -174,6 +167,7 @@ public partial class MainWindow : Window
         {
             _running = false;
             PadItems.IsEnabled = true;
+            UtilityActions.IsEnabled = true;
             RunProgress.Visibility = Visibility.Collapsed;
         }
     }
@@ -220,8 +214,7 @@ public partial class MainWindow : Window
     private void ClearLog_Click(object sender, RoutedEventArgs e)
     {
         OutputBox.Clear();
-        CommandStateText.Text = _running ? "RUNNING" : "STANDBY";
-        Append("Command monitor cleared.");
+        CommandStateText.Text = "STANDBY";
     }
 
     private void SelectRepository(RepoAction repo)
@@ -237,10 +230,11 @@ public partial class MainWindow : Window
         OutputBox.ScrollToEnd();
     }
 
-    private void SetStatus(string text, string color)
+    private void SetSurfaceState(string status, string color, string command)
     {
-        StatusText.Text = text;
+        StatusText.Text = status;
         StatusLed.Fill = (Brush)new BrushConverter().ConvertFromString(color)!;
+        CommandStateText.Text = command;
     }
 }
 
