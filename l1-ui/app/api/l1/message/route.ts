@@ -50,7 +50,10 @@ function upstreamMessagesUrl() {
   if (!value) return null;
 
   try {
-    return new URL(value);
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    if (url.username || url.password) return null;
+    return url;
   } catch {
     return null;
   }
