@@ -13,9 +13,13 @@ export const L1HumanToolNameSchema = z.enum([
 
 export const L1CollectIntakeResultSchema = z
   .record(IdSchema, z.array(IdSchema).min(1).max(20))
-  .refine((value) => Object.keys(value).length <= 8, {
-    message: "Too many intake fields.",
-  });
+  .refine(
+    (value) => {
+      const count = Object.keys(value).length;
+      return count >= 1 && count <= 8;
+    },
+    { message: "Intake must contain between 1 and 8 fields." },
+  );
 
 export const L1ToolResultSchema = z.discriminatedUnion("toolName", [
   z.object({
