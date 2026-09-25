@@ -51,7 +51,9 @@ public static class Ops
     // Trace events for a run, oldest first; `since` makes it a cheap live poll.
     public static Task<List<Dictionary<string, object?>>> Events(string runId, DateTime? since) => Db.H("""
         SELECT TOP 600 ID, EventType, ToolName, Name, Model, Provider, Status, DurationMs, EventOn, ErrorMessage,
-               LEFT(ArgsJson, 1200) AS ArgsJson, CASE WHEN ToolName = 'WORLD_WALK_TRAIL' THEN NULL ELSE LEFT(ResultJson, 1500) END AS ResultJson
+               LEFT(ArgsJson, 1200) AS ArgsJson, CASE WHEN ToolName = 'WORLD_WALK_TRAIL' THEN NULL
+                    WHEN EventType = 'jev_system_one' THEN LEFT(ResultJson, 6000) -- whole decision: the console draws its probabilities
+                    ELSE LEFT(ResultJson, 1500) END AS ResultJson
         FROM dbo.Hermes_Agent_Trace_Trn_Tbl
         WHERE RunID = @r AND IsDeleted = 0 AND (@s IS NULL OR EventOn > @s)
           AND EventType NOT IN ('compute_sample', 'lmstudio_sample', 'trace_context')

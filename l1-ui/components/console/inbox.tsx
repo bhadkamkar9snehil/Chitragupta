@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, ArrowLeft, Bot, CheckCircle2, Clock, Copy, Headset, Inbox, Layers, PanelLeftClose, PanelLeftOpen, RefreshCw, User as UserIcon } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowRight, Bot, CheckCircle2, Clock, Copy, Headset, Inbox, Layers, MessageSquare, PanelLeftClose, PanelLeftOpen, RefreshCw, Ticket as TicketIcon, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Message, type SourceRef, type Ticket } from "@/lib/api";
 import { ago, human, outcomeLabel, pageTitle, RESPONSE_KIND, ticketLabel, when, whenShort } from "@/lib/format";
@@ -18,7 +18,7 @@ const VIEWS = [
   { id: "done", label: "Resolved", icon: CheckCircle2 },
 ];
 
-export function InboxView({ ticketId, onSelect }: { ticketId: string | null; onSelect: (id: string | null) => void }) {
+export function InboxView({ ticketId, onSelect, onOpenRun }: { ticketId: string | null; onSelect: (id: string | null) => void; onOpenRun: (id: string) => void }) {
   const [view, setView] = useState("");
   const [q, setQ] = useState("");
   const [area, setArea] = useState("");
@@ -129,7 +129,7 @@ export function InboxView({ ticketId, onSelect }: { ticketId: string | null; onS
 
       <div className={cn("min-h-0 min-w-0 flex-1 flex-col", ticketId ? "flex" : "hidden md:flex")}>
         {ticketId ? (
-          <TicketWorkspace key={ticketId} id={ticketId} onBack={() => onSelect(null)} drawerOpen={drawerOpen} onDrawerToggle={() => setCollapsedTicketId((current) => current === ticketId ? null : ticketId)} />
+          <TicketWorkspace key={ticketId} id={ticketId} onOpenRun={onOpenRun} onBack={() => onSelect(null)} drawerOpen={drawerOpen} onDrawerToggle={() => setCollapsedTicketId((current) => current === ticketId ? null : ticketId)} />
         ) : (
           <Empty className="m-auto" icon={<Inbox className="size-5" />} title="Pick a ticket">Its activity, the chat that raised it, and the L2 runs appear here.</Empty>
         )}
@@ -138,7 +138,7 @@ export function InboxView({ ticketId, onSelect }: { ticketId: string | null; onS
   );
 }
 
-function TicketWorkspace({ id, onBack, drawerOpen, onDrawerToggle }: { id: string; onBack: () => void; drawerOpen: boolean; onDrawerToggle: () => void }) {
+function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: { id: string; onBack: () => void; onOpenRun: (id: string) => void; drawerOpen: boolean; onDrawerToggle: () => void }) {
   const [t, setT] = useState<Ticket | null>(null);
   const [tab, setTab] = useState<"activity" | "chat" | "runs">("activity");
 
@@ -164,7 +164,7 @@ function TicketWorkspace({ id, onBack, drawerOpen, onDrawerToggle }: { id: strin
   const tabs = [
     { id: "activity" as const, label: "Activity", n: t.Timeline?.length ?? 0 },
     { id: "chat" as const, label: "Chat transcript", n: t.Transcript?.length ?? 0 },
-    { id: "runs" as const, label: "L2 runs", n: t.Runs?.length ?? 0 },
+    { id: "runs" as const, label: "L2 investigations", n: t.Runs?.length ?? 0 },
   ];
 
   return (
@@ -198,6 +198,7 @@ function TicketWorkspace({ id, onBack, drawerOpen, onDrawerToggle }: { id: strin
                 <span>{t.Priority?.replace(" Priority", "") ?? "Standard"}</span>
                 <span>Raised {when(t.CreatedOn)}</span>
               </p>
+              <Journey ticket={t} onChat={() => setTab("chat")} onRun={onOpenRun} />
             </div>
           </div>
           <div className="-mb-px mt-3 flex gap-4" role="tablist">
@@ -248,32 +249,20 @@ function TicketWorkspace({ id, onBack, drawerOpen, onDrawerToggle }: { id: strin
             {tab === "chat" && (t.Transcript?.length ? <Transcript messages={t.Transcript} /> : <Empty icon={<Bot className="size-5" />} title="No chat">This ticket was not raised from the helpdesk chat.</Empty>)}
             {tab === "runs" && (
               t.Runs?.length ? (
-                <div className="overflow-x-auto rounded-xl border bg-surface">
-                  <table className="w-full min-w-4xl text-meta">
-                    <thead className="bg-surface-2 text-left text-2xs uppercase tracking-wider text-subtle-foreground">
-                      <tr>
-                        <th className="w-20 px-4 py-3 font-semibold">Attempt</th>
-                        <th className="w-32 px-4 py-3 font-semibold">State</th>
-                        <th className="w-44 px-4 py-3 font-semibold">Outcome</th>
-                        <th className="px-4 py-3 font-semibold">Route</th>
-                        <th className="w-48 px-4 py-3 font-semibold">Claimed</th>
-                        <th className="w-48 px-4 py-3 font-semibold">Completed</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {t.Runs.map((r) => (
-                        <tr key={r.ID} className="align-top">
-                          <td className="px-4 py-3 font-mono text-xs tabular-nums">{r.AttemptNo}</td>
-                          <td className="px-4 py-3">{human(r.ProcessStatus)}</td>
-                          <td className="px-4 py-3 font-medium">{outcomeLabel(r.ResponseType)}</td>
-                          <td className="px-4 py-3 text-muted-foreground">{human(r.Route) || "—"}</td>
-                          <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{when(r.ClaimedOn)}</td>
-                          <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{when(r.CompletedOn)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <ol className="space-y-2">
+                  {t.Runs.map((r) => (
+                    <li key={r.ID}>
+                      <button onClick={() => onOpenRun(r.ID)} className="group flex w-full flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border bg-surface px-4 py-3 text-left hover:border-border-strong">
+                        <span className="font-mono text-xs text-subtle-foreground">attempt {r.AttemptNo}</span>
+                        <span className="min-w-0 flex-1 text-sm font-medium">{r.CompletedOn ? outcomeLabel(r.ResponseType) : human(r.ProcessStatus)}</span>
+                        <span className="font-mono text-xs text-muted-foreground">{human(r.Route) || "—"}</span>
+                        <span className="font-mono text-xs text-subtle-foreground">{whenShort(r.ClaimedOn)}</span>
+                        <span className="flex items-center gap-1 text-meta font-medium text-signal">How it happened <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden /></span>
+                        {r.ErrorMessage && <span className="w-full truncate text-xs text-destructive">{r.ErrorMessage}</span>}
+                      </button>
+                    </li>
+                  ))}
+                </ol>
               ) : (
                 <Empty icon={<Clock className="size-5" />} title="Not picked up yet">The L2 pipeline claims new tickets within a couple of minutes.</Empty>
               )
@@ -313,6 +302,29 @@ function TicketWorkspace({ id, onBack, drawerOpen, onDrawerToggle }: { id: strin
         </p>
       </aside>
     </div>
+  );
+}
+
+// Where this ticket is in its life: chat -> ticket -> L2 investigations -> current state. Each step opens its record.
+function Journey({ ticket, onChat, onRun }: { ticket: Ticket; onChat: () => void; onRun: (id: string) => void }) {
+  const runs = ticket.Runs ?? [];
+  const latest = runs.at(-1);
+  const step = "inline-flex h-7 items-center gap-1.5 rounded-full border bg-canvas px-2.5 font-mono text-2xs text-muted-foreground";
+  const link = "hover:border-border-strong hover:text-foreground";
+  return (
+    <ol className="scrollbar-thin mt-3 flex items-center gap-1 overflow-x-auto pb-1" aria-label="Ticket journey">
+      {ticket.Transcript?.length ? (
+        <li className="flex items-center gap-1"><button onClick={onChat} className={cn(step, link)}><MessageSquare className="size-3" aria-hidden />L1 chat</button><span className="h-px w-3 bg-signal" aria-hidden /></li>
+      ) : null}
+      <li className="flex items-center gap-1"><span className={step}><TicketIcon className="size-3" aria-hidden />raised {whenShort(ticket.CreatedOn)}</span><span className={cn("h-px w-3", runs.length ? "bg-signal" : "bg-border-strong")} aria-hidden /></li>
+      {runs.length ? runs.map((r) => (
+        <li key={r.ID} className="flex items-center gap-1">
+          <button onClick={() => onRun(r.ID)} className={cn(step, link, !r.CompletedOn && "border-signal text-signal")}><Bot className="size-3" aria-hidden />L2 #{r.AttemptNo}{r.CompletedOn ? ` · ${outcomeLabel(r.ResponseType).toLowerCase()}` : " · working"}</button>
+          <span className="h-px w-3 bg-signal" aria-hidden />
+        </li>
+      )) : <li className="flex items-center gap-1"><span className={cn(step, "border-dashed")}>L2 not claimed yet</span><span className="h-px w-3 bg-border-strong" aria-hidden /></li>}
+      <li><span className={cn(step, "text-foreground", latest?.CompletedOn && "border-signal/60")}>{ticket.StateLabel}</span></li>
+    </ol>
   );
 }
 

@@ -186,6 +186,19 @@ export async function* turn(sessionId: string, body: { userId: string; text?: st
 }
 
 // ---------------------------------------------------------------- L2 / L3 operations (L1/api/Ops.cs)
+// The saved world walk: what the engineer surveyed, which links it followed and why it stopped.
+export type WalkFinding = { node: string; kind: string; value?: string; finding?: string; role?: string; confidence?: number; action_id?: string; chose?: string };
+export type Trail = {
+  source?: string;
+  route?: string;
+  stopped?: string;
+  seconds?: number;
+  entities?: { value: string; key: string; holders?: string[] }[];
+  survey?: WalkFinding[];
+  steps?: WalkFinding[];
+  choices?: { options: number; chosen: string }[];
+  numbers?: Record<string, { source: string | null; confidence: number; candidates: string[] }>;
+};
 export type Run = {
   ID: string; TicketID: string; TicketNo: string | null; BriefDetails: string | null; FirstLastName: string | null;
   AttemptNo: number; ProcessStatus: string; IsActive: boolean; Route: string | null; ResponseType: string | null; ExecutionMode: string | null;
@@ -196,7 +209,7 @@ export type Run = {
   ProblemSummary?: string | null; Findings?: string | null; RootCause?: string | null; Resolution?: string | null; ReplyText?: string | null;
   JevTriageJson?: string | null; JevInvestigationJson?: string | null; JevReviewJson?: string | null; JevTraceJson?: string | null;
   JevKBCurationJson?: string | null; ActionsTakenJson?: string | null;
-  Trail?: import("@/components/console/brain").Trail | null;
+  Trail?: Trail | null;
   SqlActionList?: SqlAction[];
 };
 export type TraceEvent = {

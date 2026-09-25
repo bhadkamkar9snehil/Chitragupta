@@ -1,103 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Cpu, Radio, Sparkles, Waypoints, Wrench, Activity as ActivityIcon, ChevronRight } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Radio } from "lucide-react";
 import { toast } from "sonner";
-import { ops, type Run, type TraceEvent } from "@/lib/api";
-import { ago, clock, describeEvent, duration, human, outcomeLabel, ticketLabel } from "@/lib/format";
-import { cn } from "@/lib/utils";
-import { Switch } from "@/components/ui/primitives";
-import { Button } from "@/components/ui/button";
-import { Brain, type Trail } from "./brain";
+import { ops, type Run, type TraceEvent, type Trail } from "@/lib/api";
+import { ago, outcomeLabel, ticketLabel } from "@/lib/format";
+import { IconTile, Segmented } from "@/components/ui/viz";
+import { InvestigationCircuit } from "./circuit";
 import { InspectorBlock } from "./inspect";
-
-export const ACTOR = {
-  jev: { icon: Sparkles, tone: "bg-primary text-primary-foreground", label: "Jev" },
-  walk: { icon: Waypoints, tone: "bg-info text-white dark:text-background", label: "World walk" },
-  tool: { icon: Wrench, tone: "bg-surface-3 text-muted-foreground", label: "Tool" },
-  model: { icon: Cpu, tone: "bg-success text-white dark:text-background", label: "Writer" },
-  system: { icon: ActivityIcon, tone: "bg-surface-3 text-subtle-foreground", label: "System" },
-};
-
-const STAGES: { id: string; label: string; hit: (e: TraceEvent) => boolean }[] = [
-  { id: "triage", label: "Triage", hit: (e) => /TICKET_(TRIAGE|SECURITY)/.test(e.ToolName ?? "") },
-  { id: "walk", label: "World walk", hit: (e) => (e.ToolName ?? "").startsWith("WORLD_WALK") || e.ToolName === "xstudio_read_table" },
-  { id: "decide", label: "Jev decides", hit: (e) => /JEV_DIRECT_ANSWER|GBRAIN_APPLICABILITY|JEV_INVESTIGATION|TRACE_ASSESSMENT/.test(e.ToolName ?? "") },
-  { id: "write", label: "Writer", hit: (e) => e.EventType === "post_api_request" || e.ToolName === "xstudio_submit_proposal" },
-  { id: "review", label: "Review", hit: (e) => e.ToolName === "PRIMARY_REVIEW" || (e.ToolName ?? "").startsWith("kanban_") },
-];
-
-// A tool call is recorded twice (pre/post); a human follows the finished one.
-const visible = (e: TraceEvent) => e.EventType !== "pre_tool_call";
-
-export function StageRail({ run, events }: { run: Run; events: TraceEvent[] }) {
-  const done = new Set(STAGES.filter((s) => events.some(s.hit)).map((s) => s.id));
-  const current = run.IsActive ? STAGES.filter((s) => done.has(s.id)).at(-1)?.id : null;
-  const all = [{ id: "claim", label: "Claimed", on: !!run.ClaimedOn }, ...STAGES.map((s) => ({ id: s.id, label: s.label, on: done.has(s.id) })), { id: "publish", label: outcomeLabel(run.ResponseType), on: !!run.CompletedOn }];
-  return (
-    <ol className="scrollbar-thin flex items-center gap-1 overflow-x-auto" aria-label="Pipeline stages">
-      {all.map((s, i) => (
-        <li key={s.id} className="flex items-center gap-1">
-          {i > 0 && <span className={cn("h-px w-4 sm:w-8", s.on ? "bg-primary" : "bg-border")} aria-hidden />}
-          <span
-            className={cn(
-              "flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-xs font-medium",
-              s.on ? "border-primary/40 bg-primary-soft text-primary-soft-foreground" : "text-subtle-foreground",
-              current === s.id && "ring-2 ring-ring motion-safe:animate-pulse",
-            )}
-          >
-            <span className={cn("size-1.5 rounded-full", s.on ? "bg-primary" : "bg-border-strong")} aria-hidden />
-            {s.label}
-          </span>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-export function EventStream({ events, className }: { events: TraceEvent[]; className?: string }) {
-  const [open, setOpen] = useState<string | null>(null);
-  const end = useRef<HTMLDivElement>(null);
-  const shown = events.filter(visible);
-  useEffect(() => {
-    end.current?.scrollIntoView({ block: "end" });
-  }, [shown.length]);
-  if (!shown.length) return <p className="p-4 text-sm text-muted-foreground">No events recorded yet.</p>;
-  return (
-    <ol className={cn("space-y-0.5 p-2", className)}>
-      {shown.map((e) => {
-        const d = describeEvent(e);
-        const A = ACTOR[d.actor];
-        const failed = e.Status === "error" || !!e.ErrorMessage;
-        return (
-          <li key={e.ID} className="animate-rise">
-            <button onClick={() => setOpen(open === e.ID ? null : e.ID)} className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-surface-2" aria-expanded={open === e.ID}>
-              <span className={cn("grid size-6 shrink-0 place-items-center rounded-md", A.tone)} aria-hidden>
-                <A.icon className="size-3.5" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className={cn("block truncate text-meta", failed && "text-destructive")}>{d.title}</span>
-                <span className="block text-2xs text-subtle-foreground">
-                  {A.label} · {clock(e.EventOn)}
-                  {e.DurationMs ? ` · ${e.DurationMs < 1000 ? `${e.DurationMs}ms` : `${(e.DurationMs / 1000).toFixed(1)}s`}` : ""}
-                </span>
-              </span>
-              <ChevronRight className={cn("size-3.5 text-subtle-foreground transition-transform", open === e.ID && "rotate-90")} aria-hidden />
-            </button>
-            {open === e.ID && (
-              <div className="mx-2 mb-2 space-y-2 rounded-md border bg-surface-2 p-2.5 text-2xs">
-                {e.ErrorMessage && <p className="text-destructive">{e.ErrorMessage}</p>}
-                {e.ArgsJson && <Json label="Input" text={e.ArgsJson} />}
-                {e.ResultJson && <Json label="Output" text={e.ResultJson} />}
-              </div>
-            )}
-          </li>
-        );
-      })}
-      <div ref={end} />
-    </ol>
-  );
-}
 
 function decodeJson(value: unknown, depth = 0): unknown {
   if (depth > 2 || typeof value !== "string") return value;
@@ -230,14 +140,12 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
   const [run, setRun] = useState<Run | null>(null);
   const [events, setEvents] = useState<TraceEvent[]>([]);
   const [trail, setTrail] = useState<Trail | null>(null);
-  const [visualFor, setVisualFor] = useState<string | null>(null);
   const lastRef = useRef<string | undefined>(undefined);
   const idRef = useRef<string | null>(null);
 
   useEffect(() => {
     ops.runs().then(setRuns).catch(() => {});
   }, []);
-
 
   useEffect(() => {
     let alive = true;
@@ -262,7 +170,7 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
           idRef.current = r.run.ID;
           setRun(f.run);
           setEvents(f.events ?? []);
-          setTrail((f.trail as Trail) ?? null);
+          setTrail(f.trail ?? null);
           lastRef.current = f.events?.at(-1)?.EventOn;
           if (switched && follow) toast(`Following ${ticketLabel(f.run?.TicketNo)}`, { description: f.run?.BriefDetails ?? undefined });
           return;
@@ -271,7 +179,7 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
         if (r.events?.length) {
           setEvents((ev) => [...ev, ...r.events!]);
           lastRef.current = r.events.at(-1)!.EventOn;
-          if (r.events.some((e) => e.ToolName === "WORLD_WALK_TRAIL")) ops.live(r.run.ID).then((f) => setTrail((f.trail as Trail) ?? null));
+          if (r.events.some((e) => e.ToolName === "WORLD_WALK_TRAIL")) ops.live(r.run.ID).then((f) => setTrail(f.trail ?? null));
         }
       } catch (e) {
         toast.error((e as Error).message);
@@ -286,116 +194,54 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
     };
   }, [follow, runId]);
 
-  const counts = useMemo(() => ({
-    jev: events.filter((e) => e.EventType === "jev_system_one").length,
-    tools: events.filter((e) => e.EventType === "post_tool_call").length,
-    model: events.filter((e) => e.EventType === "post_api_request").length,
-  }), [events]);
-  const visualKey = run ? `${follow ? "live" : "replay"}:${run.ID}` : null;
-  const visualOpen = visualKey !== null && visualFor === visualKey;
+  const live = follow && !!run?.IsActive;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="shrink-0 space-y-3 border-b bg-surface px-4 py-3 lg:px-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="min-w-0 w-full sm:w-auto sm:flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-title font-semibold tracking-tight">L2 engineer · live</h1>
-              {run?.IsActive ? (
-                <span className="flex items-center gap-1.5 rounded-full bg-destructive-soft px-2 py-0.5 text-2xs font-semibold text-destructive">
-                  <Radio className="size-3 motion-safe:animate-pulse" aria-hidden /> Working now
-                </span>
-              ) : run ? (
-                <span className="text-2xs text-subtle-foreground">Historical replay</span>
-              ) : follow ? (
-                <span className="text-2xs text-subtle-foreground">L2 idle · waiting for the next run</span>
-              ) : null}
-            </div>
-            {run && (
-              <p className="mt-0.5 truncate text-meta text-muted-foreground">
-                <button className="font-mono text-foreground hover:underline" onClick={() => onOpenRun(run.ID)}>{ticketLabel(run.TicketNo)}</button> · {run.BriefDetails}
-              </p>
-            )}
+    <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-400 space-y-4 px-4 py-5 lg:px-6">
+        <header className="flex flex-wrap items-center gap-3">
+          <IconTile icon={Radio} active={live} />
+          <div className="min-w-0 flex-1">
+            <h1 className="flex items-center gap-2 text-title font-semibold tracking-tight">
+              Live engineer
+              {live && <span className="flex items-center gap-1.5 rounded-full bg-signal-soft px-2 py-0.5 font-mono text-2xs text-signal"><span className="size-1.5 rounded-full bg-signal motion-safe:animate-pulse" aria-hidden />working now</span>}
+            </h1>
+            <p className="truncate text-xs text-subtle-foreground">
+              {follow ? (run ? (run.IsActive ? "Following the investigation as it happens" : "Last investigation · waiting for the next claim") : "L2 is idle · attaches when the next ticket is claimed") : "Replaying a recorded investigation"}
+            </p>
           </div>
-          <label className="flex items-center gap-2 text-meta">
-            <Switch checked={follow} onCheckedChange={(v) => { setFollow(v); if (v) onRun(null); }} aria-label="Follow the live run" />
-            Follow live
-          </label>
+          <Segmented
+            className="w-full sm:w-auto"
+            label="Mode"
+            value={follow ? "live" : "replay"}
+            onChange={(v) => { setFollow(v === "live"); if (v === "live") onRun(null); else if (run) onRun(run.ID); }}
+            options={[{ id: "live", label: "Follow live" }, { id: "replay", label: "Replay" }]}
+          />
           <select
             value={follow ? "" : runId ?? run?.ID ?? ""}
             onChange={(e) => { setFollow(false); onRun(e.target.value || null); }}
-            aria-label="Replay a run"
-            className="h-11 w-full min-w-0 rounded-md border bg-surface px-2 text-meta sm:h-9 sm:w-auto sm:max-w-72"
+            aria-label="Choose an investigation to replay"
+            className="h-10 w-full min-w-0 rounded-lg border bg-surface px-2 font-mono text-xs sm:w-auto sm:max-w-80"
           >
-            <option value="">{follow ? "Following live" : "Pick a run to replay"}</option>
+            <option value="">{follow ? "Pick a past investigation…" : "Choose an investigation"}</option>
             {runs.map((r) => (
               <option key={r.ID} value={r.ID}>{ticketLabel(r.TicketNo)} · {outcomeLabel(r.ResponseType)} · {ago(r.CompletedOn ?? r.CreatedOn)}</option>
             ))}
           </select>
-        </div>
-        {run && <StageRail run={run} events={events} />}
-      </header>
+        </header>
 
-      <div className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto xl:flex-row xl:overflow-hidden">
-        <section className="relative flex min-h-80 min-w-0 shrink-0 flex-col bg-background xl:min-h-0 xl:flex-1" aria-label="L2 run overview">
-          {follow && !run ? (
-            <div className="grid h-full min-h-80 place-items-center px-6 text-center">
-              <div>
-                <Radio className="mx-auto size-5 text-subtle-foreground" aria-hidden />
-                <p className="mt-2 text-sm font-medium">No L2 run is active</p>
-                <p className="mt-1 text-xs text-muted-foreground">Follow Live is connected and will attach when the engineer claims the next ticket.</p>
-              </div>
+        {run ? (
+          <InvestigationCircuit key={run.ID} run={run} events={events} trail={trail} live={live} onOpenRun={onOpenRun} />
+        ) : (
+          <div className="dot-grid grid min-h-96 place-items-center rounded-2xl border bg-canvas p-6 text-center">
+            <div className="max-w-sm">
+              <IconTile icon={Radio} className="mx-auto" />
+              <h2 className="mt-3 text-title font-semibold">Waiting for the next investigation</h2>
+              <p className="mt-1 text-sm text-muted-foreground">When the L2 engineer claims a ticket, its circuit lights up here step by step. Pick a past investigation above to replay how it happened.</p>
             </div>
-          ) : run && visualOpen ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <div className="flex items-center justify-between gap-3 border-b bg-surface-2 px-4 py-2.5">
-                <p className="text-xs text-muted-foreground">{follow ? "Optional live visual map" : "Optional historical visual replay"}</p>
-                <Button variant="ghost" size="sm" onClick={() => setVisualFor(null)}>Back to run overview</Button>
-              </div>
-              <Brain trail={trail} ticketLabel={ticketLabel(run.TicketNo) || "Ticket"} mode={follow ? "live" : "replay"} autoplay={false} />
-            </div>
-          ) : run ? (
-            <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-5 lg:p-8">
-              <div className="mx-auto max-w-4xl space-y-5">
-                <div>
-                  <p className="text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">{follow ? "Live investigation" : "Historical run"}</p>
-                  <h2 className="mt-1 text-heading font-semibold tracking-tight">{run.BriefDetails}</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">The event stream is the primary operational view. The visual replay is optional.</p>
-                </div>
-                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  <LiveFact label="Route" value={human(trail?.route ?? run.Route) || "—"} />
-                  <LiveFact label="Jev decisions" value={counts.jev} />
-                  <LiveFact label="Tool calls" value={counts.tools} />
-                  <LiveFact label="Duration" value={duration(run.Seconds)} />
-                </div>
-                <div className="rounded-xl border bg-surface p-4">
-                  <h3 className="text-sm font-semibold">Current state</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">{run.IsActive ? "L2 is still working. New events appear in the activity stream." : `Run completed with ${outcomeLabel(run.ResponseType)}.`}</p>
-                  {trail?.stopped && <p className="mt-2 text-xs text-muted-foreground">Stopped because: {trail.stopped.replace(/_/g, " ")}</p>}
-                  <Button className="mt-4" variant="outline" size="sm" onClick={() => visualKey && setVisualFor(visualKey)}>
-                    {follow ? "Show visual map" : "Open visual replay"}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </section>
-        <aside className="flex min-h-64 flex-col border-t bg-surface xl:min-h-0 xl:w-96 xl:border-l xl:border-t-0" aria-label="Event stream">
-          <p className="border-b px-4 py-2.5 text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">What the engineer did</p>
-          <div className="scrollbar-thin max-h-96 min-h-0 flex-1 overflow-y-auto xl:max-h-none">
-            <EventStream events={events} />
           </div>
-        </aside>
+        )}
       </div>
-    </div>
-  );
-}
-
-function LiveFact({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-xl border bg-surface p-3">
-      <p className="text-2xs text-subtle-foreground">{label}</p>
-      <p className="mt-1 text-sm font-semibold tabular-nums">{value}</p>
     </div>
   );
 }

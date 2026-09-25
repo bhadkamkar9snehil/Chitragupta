@@ -9,9 +9,9 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Empty, SearchInput, Skeleton, Tag } from "@/components/ui/primitives";
 import { RichText } from "@/components/helpdesk/rich-text";
-import { Brain, type Trail } from "./brain";
-import { EventStream, Json, StageRail } from "./live";
+import { Json } from "./live";
 import { InspectorBlock } from "./inspect";
+import { InvestigationCircuit } from "./circuit";
 
 const OUTCOME_TONE: Record<string, string> = {
   RESOLUTION: "bg-success-soft text-success",
@@ -30,7 +30,7 @@ export function Outcome({ type, active }: { type: string | null; active?: boolea
   return <span className={cn("inline-flex h-6 items-center rounded-full px-2.5 text-xs font-medium", OUTCOME_TONE[type ?? ""] ?? "bg-surface-3 text-muted-foreground")}>{outcomeLabel(type)}</span>;
 }
 
-export function RunsView({ runId, onSelect, onLive }: { runId: string | null; onSelect: (id: string | null) => void; onLive: (id: string) => void }) {
+export function RunsView({ runId, onSelect, onLive, onOpenTicket }: { runId: string | null; onSelect: (id: string | null) => void; onLive: (id: string) => void; onOpenTicket: (id: string) => void }) {
   const [q, setQ] = useState("");
   const [outcome, setOutcome] = useState("");
   const [runs, setRuns] = useState<Run[] | null>(null);
@@ -48,11 +48,11 @@ export function RunsView({ runId, onSelect, onLive }: { runId: string | null; on
 
   return (
     <div className="flex min-h-0 flex-1">
-      <section aria-label="L2 runs" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-96 md:shrink-0", runId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
+      <section aria-label="L2 investigations" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-96 md:shrink-0", runId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
         <div className="space-y-2 border-b px-3 py-3">
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="flex-1 text-title font-semibold tracking-tight">L2 runs</h1>
+              <h1 className="flex-1 text-title font-semibold tracking-tight">L2 investigations</h1>
               {runId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setCollapsedRunId(runId)} aria-label="Hide run list"><PanelLeftClose /></Button>}
             </div>
             <p className="text-2xs text-subtle-foreground">Every investigation the L2 engineer ran, newest first.</p>
@@ -92,7 +92,7 @@ export function RunsView({ runId, onSelect, onLive }: { runId: string | null; on
         </ul>
       </section>
       <div className={cn("min-h-0 min-w-0 flex-1 flex-col", runId ? "flex" : "hidden md:flex")}>
-        {runId ? <RunWorkspace key={runId} id={runId} onBack={() => onSelect(null)} onLive={onLive} drawerOpen={drawerOpen} onDrawerToggle={() => setCollapsedRunId((current) => current === runId ? null : runId)} /> : (
+        {runId ? <RunWorkspace key={runId} id={runId} onBack={() => onSelect(null)} onLive={onLive} onOpenTicket={onOpenTicket} drawerOpen={drawerOpen} onDrawerToggle={() => setCollapsedRunId((current) => current === runId ? null : runId)} /> : (
           <Empty className="m-auto" icon={<Bot className="size-5" />} title="Pick a run">See how the engineer walked XBatch, what Jev decided at each step, and what it read.</Empty>
         )}
       </div>
@@ -104,9 +104,9 @@ const JEV_FIELDS: [keyof Run, string][] = [
   ["JevTriageJson", "Triage"], ["JevInvestigationJson", "Investigation"], ["JevReviewJson", "Review"], ["JevTraceJson", "Trace assessment"], ["JevKBCurationJson", "Knowledge curation"], ["ActionsTakenJson", "Actions taken"],
 ];
 
-function RunWorkspace({ id, onBack, onLive, drawerOpen, onDrawerToggle }: { id: string; onBack: () => void; onLive: (id: string) => void; drawerOpen: boolean; onDrawerToggle: () => void }) {
+function RunWorkspace({ id, onBack, onLive, onOpenTicket, drawerOpen, onDrawerToggle }: { id: string; onBack: () => void; onLive: (id: string) => void; onOpenTicket: (id: string) => void; drawerOpen: boolean; onDrawerToggle: () => void }) {
   const [run, setRun] = useState<(Run & { Events: TraceEvent[] }) | null>(null);
-  const [tab, setTab] = useState<"summary" | "timeline" | "decisions" | "sql" | "visual">("summary");
+  const [tab, setTab] = useState<"circuit" | "summary" | "sql">("circuit");
 
   useEffect(() => {
     ops.run(id).then(setRun).catch((e: Error) => toast.error(e.message));
@@ -115,11 +115,9 @@ function RunWorkspace({ id, onBack, onLive, drawerOpen, onDrawerToggle }: { id: 
   if (!run) return <div className="space-y-3 p-6"><Skeleton className="h-6 w-1/3" /><Skeleton className="h-96" /></div>;
 
   const tabs = [
-    { id: "summary" as const, label: "Summary" },
-    { id: "timeline" as const, label: "Timeline", n: run.Events.filter((e) => e.EventType !== "pre_tool_call").length },
-    { id: "sql" as const, label: "SQL reads", n: run.SqlActionList?.length ?? 0 },
-    { id: "decisions" as const, label: "Jev decisions", n: JEV_FIELDS.filter(([k]) => run[k]).length },
-    { id: "visual" as const, label: "Visual replay" },
+    { id: "circuit" as const, label: "How it happened" },
+    { id: "summary" as const, label: "What was told" },
+    { id: "sql" as const, label: "Audited reads", n: run.SqlActionList?.length ?? 0 },
   ];
 
   return (
@@ -143,10 +141,12 @@ function RunWorkspace({ id, onBack, onLive, drawerOpen, onDrawerToggle }: { id: 
               {run.JevReviewDecision && <span>Jev review {outcomeLabel(run.JevReviewDecision)}{run.JevReviewConfidence != null ? ` · ${Math.round(run.JevReviewConfidence * 100)}%` : ""}</span>}
               {run.LocalModelPurpose && <span>Writer · {human(run.LocalModelPurpose)}</span>}
             </p>
-            <p className="mt-2 text-2xs text-subtle-foreground">The visual replay is optional and never starts automatically.</p>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            {run.IsActive && <Button size="sm" variant="outline" onClick={() => onLive(run.ID)}>Follow live</Button>}
+            <Button size="sm" variant="outline" onClick={() => onOpenTicket(run.TicketID)}>Open ticket</Button>
           </div>
         </div>
-        <StageRail run={run} events={run.Events} />
         <div className="scrollbar-thin -mb-px flex gap-4 overflow-x-auto" role="tablist">
           {tabs.map((x) => (
             <button key={x.id} role="tab" aria-selected={tab === x.id} onClick={() => setTab(x.id)} className={cn("flex h-9 shrink-0 items-center gap-1.5 border-b-2 border-transparent text-meta font-medium text-muted-foreground hover:text-foreground", tab === x.id && "border-primary text-foreground")}>
@@ -159,12 +159,6 @@ function RunWorkspace({ id, onBack, onLive, drawerOpen, onDrawerToggle }: { id: 
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
         {tab === "summary" && (
           <div className="mx-auto max-w-5xl space-y-5 p-4 lg:p-6">
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <RunFact label="Outcome" value={outcomeLabel(run.ResponseType)} />
-              <RunFact label="Duration" value={duration(run.Seconds)} />
-              <RunFact label="SQL reads" value={run.SqlActions} />
-              <RunFact label="Jev decisions" value={run.JevCalls} />
-            </div>
             {([["Problem", run.ProblemSummary], ["Findings", run.Findings], ["Root cause", run.RootCause], ["Resolution / next action", run.Resolution], ["What the requester was told", run.ReplyText]] as const)
               .filter(([, v]) => v)
               .map(([k, v]) => (
@@ -179,27 +173,19 @@ function RunWorkspace({ id, onBack, onLive, drawerOpen, onDrawerToggle }: { id: 
               {run.IsResolved && <Tag>Marked resolved</Tag>}
               {run.RequiresUserInput && <Tag>Needs requester input</Tag>}
             </div>
-          </div>
-        )}
-        {tab === "visual" && (
-          <div className="flex min-h-full flex-col">
-            <div className="flex items-center justify-between gap-3 border-b bg-surface-2 px-4 py-2.5">
-              <p className="text-xs text-muted-foreground">Optional visual replay. It is paused until you press Play.</p>
-              <Button variant="outline" size="sm" onClick={() => onLive(run.ID)}>Open full-screen replay</Button>
-            </div>
-            <Brain trail={(run.Trail as Trail) ?? null} ticketLabel={ticketLabel(run.TicketNo)} autoplay={false} />
-          </div>
-        )}
-        {tab === "timeline" && <div className="mx-auto max-w-3xl"><EventStream events={run.Events} /></div>}
-        {tab === "decisions" && (
-          <div className="mx-auto max-w-4xl space-y-3 p-4 lg:p-6">
-            {JEV_FIELDS.filter(([k]) => run[k]).map(([k, label]) => (
-              <details key={k} className="rounded-xl border bg-surface" open={k === "JevReviewJson"}>
-                <summary className="cursor-pointer px-4 py-3 text-sm font-medium">{label}</summary>
-                <div className="border-t p-4 text-xs"><Json label="Jev" text={String(run[k])} /></div>
+            {JEV_FIELDS.some(([k]) => run[k]) && (
+              <details className="rounded-xl border bg-surface">
+                <summary className="cursor-pointer px-4 py-3 text-sm font-medium">Stored Jev decisions (raw)</summary>
+                <div className="space-y-4 border-t p-4 text-xs">
+                  {JEV_FIELDS.filter(([k]) => run[k]).map(([k, label]) => <Json key={k} label={label} text={String(run[k])} />)}
+                </div>
               </details>
-            ))}
-            {!JEV_FIELDS.some(([k]) => run[k]) && <Empty icon={<Bot className="size-5" />} title="No stored decisions">Jev&apos;s calls for this run are in the timeline.</Empty>}
+            )}
+          </div>
+        )}
+        {tab === "circuit" && (
+          <div className="p-4 lg:p-6">
+            <InvestigationCircuit run={run} events={run.Events} trail={run.Trail ?? null} live={false} titled={false} />
           </div>
         )}
         {tab === "sql" && (
@@ -232,15 +218,6 @@ function RunWorkspace({ id, onBack, onLive, drawerOpen, onDrawerToggle }: { id: 
         )}
 
       </div>
-    </div>
-  );
-}
-
-function RunFact({ label, value }: { label: string; value: string | number | null | undefined }) {
-  return (
-    <div className="rounded-xl border bg-surface p-3">
-      <p className="text-2xs text-subtle-foreground">{label}</p>
-      <p className="mt-1 text-sm font-semibold tabular-nums">{value ?? "—"}</p>
     </div>
   );
 }

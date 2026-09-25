@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, MessagesSquare } from "lucide-react";
+import { ArrowLeft, MessageSquarePlus, MessagesSquare } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Message, type Session } from "@/lib/api";
 import { ago, ticketLabel } from "@/lib/format";
@@ -17,7 +17,7 @@ const FILTERS = [
   { id: "negative", label: "Not helpful" },
 ];
 
-export function ConversationsView({ sessionId, onSelect, onOpenTicket }: { sessionId: string | null; onSelect: (id: string | null) => void; onOpenTicket: (id: string) => void }) {
+export function ConversationsView({ sessionId, onSelect, onOpenTicket, onNewChat }: { sessionId: string | null; onSelect: (id: string | null) => void; onOpenTicket: (id: string) => void; onNewChat: () => void }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("");
   const [rows, setRows] = useState<Session[] | null>(null);
@@ -35,7 +35,10 @@ export function ConversationsView({ sessionId, onSelect, onOpenTicket }: { sessi
     <div className="flex min-h-0 flex-1">
       <section aria-label="Conversations" className={cn("flex min-h-0 w-full flex-col border-r bg-surface md:w-96 md:shrink-0", sessionId && "hidden md:flex")}>
         <div className="space-y-2 border-b px-3 py-3">
-          <h1 className="text-title font-semibold tracking-tight">Conversations</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="flex-1 text-title font-semibold tracking-tight">Conversations</h1>
+            <Button size="sm" variant="outline" onClick={onNewChat}><MessageSquarePlus /> New chat</Button>
+          </div>
           <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles or ticket numbers" aria-label="Search conversations" />
           <div className="flex gap-1 overflow-x-auto" role="tablist">
             {FILTERS.map((f) => (

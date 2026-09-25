@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { api, type Stats } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/primitives";
+import { BarChart3, CalendarDays } from "lucide-react";
+import { HeatCalendar, IconTile, Panel as VizPanel, Segmented } from "@/components/ui/viz";
 
 const RANGES = [7, 14, 30, 90];
 
@@ -26,17 +28,14 @@ export function ReportsView() {
     <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-6xl px-4 py-6 lg:px-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-heading font-semibold tracking-tight">Reports</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">Helpdesk demand, outcomes, investigation timing, model/tool performance and captured compute.</p>
+          <div className="flex items-center gap-3">
+            <IconTile icon={BarChart3} />
+            <div>
+              <h1 className="text-title font-semibold tracking-tight">Reports</h1>
+              <p className="text-xs text-subtle-foreground">Demand, outcomes, investigation timing, tool and model performance</p>
+            </div>
           </div>
-          <div className="flex rounded-lg border bg-surface p-0.5" role="radiogroup" aria-label="Period">
-            {RANGES.map((r) => (
-              <button key={r} role="radio" aria-checked={days === r} onClick={() => setDays(r)} className={cn("h-8 rounded-md px-3 text-meta font-medium text-muted-foreground", days === r && "bg-surface-3 text-foreground")}>
-                {r}d
-              </button>
-            ))}
-          </div>
+          <Segmented label="Period" value={String(days)} onChange={(v) => setDays(Number(v))} options={RANGES.map((r) => ({ id: String(r), label: `${r}d` }))} />
         </div>
 
         <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -50,7 +49,13 @@ export function ReportsView() {
           <Tile label="Assistant reply time" value={t?.avgLatencyMs == null ? (t ? "—" : undefined) : `${(t.avgLatencyMs / 1000).toFixed(1)}s`} note="Average, end to end" />
         </div>
 
-        <div className="mt-6 grid gap-3 lg:grid-cols-2">
+        <div className="mt-4">
+          <VizPanel icon={CalendarDays} title="Demand calendar" meta="tickets and conversations per day · busiest day in white">
+            {stats ? <HeatCalendar days={stats.series.map((s) => ({ day: s.day, value: s.tickets + s.conversations }))} unit="request" /> : <Skeleton className="h-36" />}
+          </VizPanel>
+        </div>
+
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
           <Panel title="Tickets raised per day">{stats ? <DailyBars data={stats.series.map((s) => ({ day: s.day, value: s.tickets }))} unit="ticket" /> : <Skeleton className="h-48" />}</Panel>
           <Panel title="Conversations per day">{stats ? <DailyBars data={stats.series.map((s) => ({ day: s.day, value: s.conversations }))} unit="conversation" /> : <Skeleton className="h-48" />}</Panel>
         </div>
@@ -121,21 +126,18 @@ const compactNumber = (v: number) => new Intl.NumberFormat("en-IN", { notation: 
 
 function Tile({ label, value, note }: { label: string; value?: number | string; note?: string }) {
   return (
-    <div className="rounded-xl border bg-surface p-4">
-      <p className="text-meta text-muted-foreground">{label}</p>
-      {value === undefined ? <Skeleton className="mt-2 h-8 w-16" /> : <p className="mt-1 text-display font-semibold tabular-nums tracking-tight">{value}</p>}
-      {note && <p className="mt-1 text-xs text-subtle-foreground">{note}</p>}
+    <div className="rounded-2xl border bg-canvas p-1.5">
+      <p className="px-2.5 pb-2 pt-1 text-xs text-subtle-foreground">{label}</p>
+      <div className="rounded-xl border bg-surface px-3 py-3">
+        {value === undefined ? <Skeleton className="h-8 w-16" /> : <p className="font-mono text-2xl font-medium tabular-nums tracking-tight">{value}</p>}
+        {note && <p className="mt-1 truncate font-mono text-2xs text-subtle-foreground">{note}</p>}
+      </div>
     </div>
   );
 }
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-xl border bg-surface p-4" aria-label={title}>
-      <h2 className="text-sm font-semibold">{title}</h2>
-      <div className="mt-4">{children}</div>
-    </section>
-  );
+  return <VizPanel title={title}>{children}</VizPanel>;
 }
 
 // Single series: one hue (brand), 4px rounded tops on a baseline, 2px gaps, hover tooltip per bar.
@@ -167,7 +169,7 @@ function DailyBars({ data, unit }: { data: { day: string; value: number }[]; uni
               {d.value > 0 && (
                 <path
                   d={`M${x + 1},${H} v${-(h - Math.min(4, h))} q0,${-Math.min(4, h)} ${Math.min(4, h)},${-Math.min(4, h)} h${Math.max(0, bw - 2 - 2 * Math.min(4, h))} q${Math.min(4, h)},0 ${Math.min(4, h)},${Math.min(4, h)} v${h - Math.min(4, h)} z`}
-                  className={cn("fill-primary transition-opacity", hover !== null && hover !== i && "opacity-45")}
+                  className={cn("fill-signal transition-opacity", hover !== null && hover !== i && "opacity-45")}
                 />
               )}
             </g>
@@ -229,12 +231,12 @@ export function Ranked({ rows }: { rows: { label: string; count: number }[] }) {
       {rows.slice(0, 8).map((r) => (
         <li key={r.label} className="text-meta">
           <div className="flex justify-between gap-2">
-            <span className="truncate">{r.label}</span>
-            <span className="tabular-nums text-muted-foreground">{r.count}</span>
+            <span className="truncate font-mono text-xs text-muted-foreground">{r.label}</span>
+            <span className="font-mono text-xs tabular-nums">{r.count}</span>
           </div>
           <div className="mt-1 h-1.5 rounded-full bg-surface-3">
             <div
-              className="h-full rounded-full bg-primary"
+              className="h-full rounded-full bg-signal"
               ref={(el) => {
                 el?.style.setProperty("width", `${(r.count / max) * 100}%`);
               }}

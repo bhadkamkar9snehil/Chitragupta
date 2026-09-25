@@ -21,8 +21,10 @@ architectural responsibility and must not acquire business/workflow ownership.
 - `/` requester helpdesk (embeddable; rail at >=768px, bottom tabs below): Home, Messages (streaming replies,
   XBatch sources, feedback, Talk to support handoff, solved + rating), Tickets (filters, timeline, reply,
   rating, still-not-fixed follow-up). Deep links: `#/messages[/id]`, `#/tickets[/id]`; `?theme=light|dark`.
-- `/admin` support console: Inbox (views, filters, activity / chat transcript / L2 runs, properties), Conversations
-  (decisions, sources, latency, feedback), Reports, Settings (AI provider, knowledge, appearance, embed). Ctrl+K.
+- `/admin` support console: Command centre, Live engineer (the investigation circuit, live or replayed step by step),
+  Tickets (journey: L1 chat -> ticket -> L2 investigations -> state, each step opens its record), Conversations,
+  L2 investigations (same circuit + what was told + audited reads), L3 escalations, Agents & tools (tool call graph),
+  Reports, Settings. **New chat** (nav, Ctrl+K) opens the requester helpdesk as the acting engineer. Ctrl+K.
 - `public/embed.js` floating launcher.
 - AI providers: OpenAI-compatible (LM Studio, Ollama, OpenAI, Gemini, Groq, OpenRouter, custom), Anthropic, and
   the Codex CLI for a ChatGPT plan (the only official route for a plan).
@@ -32,8 +34,13 @@ architectural responsibility and must not acquire business/workflow ownership.
 This is an **Operate-mode** product surface: design serves the support task.
 
 - Use semantic theme tokens in app-owned UI.
-- No decorative gradients, glass, nested cards, generic icon tiles, or ornamental
-  motion. Use elevation or border, not both, unless a real state requires it.
+- No decorative gradients, glass, or ornamental motion. Use elevation or border, not both, unless a real state
+  requires it. Motion is allowed only when it carries state (a live stage pulsing, a wire the work is crossing).
+- Console visual language lives in `components/ui/viz.tsx` (reuse it, do not fork it): a `Panel` shell with a dashed
+  `IconTile`, title and mono meta around one inset body; mono numerals; **one mint `signal` colour** for the thing that
+  matters in any chart and greys for everything else; `SegmentBar`/`Legend`, `TickGauge`, `ProbBars`, `Waterfall`,
+  `Attributes`, `Segmented`, `HeatCalendar`. Prefer these over tables wherever the data is a composition, a
+  distribution, a decision or a timeline; keep tables for genuinely tabular records (audited reads).
 - Primary actions, current state, errors, and focus may use accent color; inactive
   surfaces stay restrained.
 - Mobile text inputs remain at least 16px and interactive touch targets at least

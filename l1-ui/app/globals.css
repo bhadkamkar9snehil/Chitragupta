@@ -29,18 +29,28 @@
   --destructive-soft: oklch(0.96 0.03 27);
   --shadow-color: 30 20% 20%;
   --radius: 0.625rem;
+  /* Data signal: one mint for "the thing that matters" in every chart; everything else stays grey. */
+  --canvas: oklch(0.955 0.003 75);
+  --signal: oklch(0.6 0.13 162);
+  --signal-soft: oklch(0.94 0.045 162);
+  --signal-muted: oklch(0.8 0.07 162);
 }
 
 .dark {
-  --background: oklch(0.17 0.006 60);
-  --foreground: oklch(0.94 0.004 75);
-  --surface: oklch(0.205 0.006 60);
-  --surface-2: oklch(0.235 0.007 60);
-  --surface-3: oklch(0.275 0.008 60);
-  --muted-foreground: oklch(0.7 0.01 70);
-  --subtle-foreground: oklch(0.58 0.01 70);
-  --border: oklch(0.29 0.008 60);
-  --border-strong: oklch(0.36 0.01 60);
+  /* Graphite: neutral, not warm. Panels sit on a darker shell with a lighter inset body. */
+  --background: oklch(0.225 0 0);
+  --foreground: oklch(0.96 0 0);
+  --canvas: oklch(0.185 0 0);
+  --surface: oklch(0.215 0 0);
+  --surface-2: oklch(0.25 0 0);
+  --surface-3: oklch(0.29 0 0);
+  --muted-foreground: oklch(0.72 0 0);
+  --subtle-foreground: oklch(0.56 0 0);
+  --border: oklch(0.28 0 0);
+  --border-strong: oklch(0.36 0 0);
+  --signal: oklch(0.83 0.14 162);
+  --signal-soft: oklch(0.32 0.05 162);
+  --signal-muted: oklch(0.52 0.08 162);
   --primary-soft: color-mix(in oklch, var(--brand) 22%, var(--surface));
   --primary-soft-foreground: color-mix(in oklch, var(--brand) 45%, white);
   --success-soft: oklch(0.29 0.045 155);
@@ -79,6 +89,10 @@
   --color-info-soft: var(--info-soft);
   --color-destructive: var(--destructive);
   --color-destructive-soft: var(--destructive-soft);
+  --color-canvas: var(--canvas);
+  --color-signal: var(--signal);
+  --color-signal-soft: var(--signal-soft);
+  --color-signal-muted: var(--signal-muted);
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
   --text-meta: 0.8125rem;
@@ -101,6 +115,8 @@
   --animate-rise: rise 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
   --animate-fade: fade 160ms ease-out;
   --animate-caret: caret 1s steps(2) infinite;
+  --animate-flow: flow 0.9s linear infinite;
+  --animate-beacon: beacon 1.6s ease-out infinite;
 
   @keyframes rise {
     from { opacity: 0; transform: translateY(6px); }
@@ -109,6 +125,13 @@
   @keyframes fade {
     from { opacity: 0; }
     to { opacity: 1; }
+  }
+  @keyframes flow {
+    to { stroke-dashoffset: -16; }
+  }
+  @keyframes beacon {
+    0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--signal) 55%, transparent); }
+    100% { box-shadow: 0 0 0 10px transparent; }
   }
   @keyframes caret {
     0% { opacity: 1; }
@@ -150,6 +173,17 @@ body {
 textarea,
 input {
   caret-color: var(--primary);
+}
+
+/* Canvas for diagrams: a quiet dot grid, as on a whiteboard. */
+.dot-grid {
+  background-image: radial-gradient(circle, var(--border-strong) 1px, transparent 1.2px);
+  background-size: 16px 16px;
+}
+
+/* Remainder of a segmented bar (ties, pending, unknown). */
+.hatch {
+  background-image: repeating-linear-gradient(-45deg, var(--border-strong) 0 2px, transparent 2px 5px);
 }
 
 .pb-safe {
