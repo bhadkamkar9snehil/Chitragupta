@@ -6,34 +6,6 @@ const ShortTextSchema = z.string().trim().min(1).max(240);
 const LongTextSchema = z.string().trim().min(1).max(12_000);
 const DateTextSchema = z.string().trim().min(1).max(64);
 
-export const L1HumanToolNameSchema = z.enum([
-  "collect_intake",
-  "answer_l2_question",
-]);
-
-export const L1CollectIntakeResultSchema = z
-  .record(IdSchema, z.array(IdSchema).min(1).max(20))
-  .refine(
-    (value) => {
-      const count = Object.keys(value).length;
-      return count >= 1 && count <= 8;
-    },
-    { message: "Intake must contain between 1 and 8 fields." },
-  );
-
-export const L1ToolResultSchema = z.discriminatedUnion("toolName", [
-  z.object({
-    toolCallId: IdSchema,
-    toolName: z.literal("collect_intake"),
-    result: L1CollectIntakeResultSchema,
-  }),
-  z.object({
-    toolCallId: IdSchema,
-    toolName: z.literal("answer_l2_question"),
-    result: z.lazy(() => L2QuestionAnswerResultSchema),
-  }),
-]);
-
 export const KnowledgeSourceSchema = z.object({
   id: IdSchema,
   title: ShortTextSchema,
@@ -87,6 +59,34 @@ export const L2QuestionAnswerResultSchema = z.object({
   ticketId: IdSchema,
   answer: z.string().trim().min(1).max(4_000),
 });
+
+export const L1HumanToolNameSchema = z.enum([
+  "collect_intake",
+  "answer_l2_question",
+]);
+
+export const L1CollectIntakeResultSchema = z
+  .record(IdSchema, z.array(IdSchema).min(1).max(20))
+  .refine(
+    (value) => {
+      const count = Object.keys(value).length;
+      return count >= 1 && count <= 8;
+    },
+    { message: "Intake must contain between 1 and 8 fields." },
+  );
+
+export const L1ToolResultSchema = z.discriminatedUnion("toolName", [
+  z.object({
+    toolCallId: IdSchema,
+    toolName: z.literal("collect_intake"),
+    result: L1CollectIntakeResultSchema,
+  }),
+  z.object({
+    toolCallId: IdSchema,
+    toolName: z.literal("answer_l2_question"),
+    result: L2QuestionAnswerResultSchema,
+  }),
+]);
 
 export const L1MessageRequestSchema = z.object({
   conversationId: z.string().uuid(),
