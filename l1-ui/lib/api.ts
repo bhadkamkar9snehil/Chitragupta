@@ -208,9 +208,9 @@ export type Overview = {
   counts: {
     NewTickets: number; ActiveRuns: number; WaitingOnRequester: number; L3Open: number; OpenTickets: number; RunsLast24h: number;
     ChatsLast24h: number; LastClaimOn: string | null; JevCallsLast24h: number; ModelCallsLast24h: number;
-    ResolvedLast24h: number; L3OpenedLast24h: number; FailedRunsLast24h: number;
+    ResolvedLast24h?: number; L3OpenedLast24h?: number; FailedRunsLast24h?: number;
   };
-  attention: AttentionTicket[];
+  attention?: AttentionTicket[];
   outcomes: { Label: string; Count: number }[];
   lmStudio: { EventOn: string; ResultJson: string } | null;
   activity: Activity[];

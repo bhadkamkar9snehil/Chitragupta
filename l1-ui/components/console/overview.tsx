@@ -31,6 +31,9 @@ export function OverviewView({ go }: { go: Go }) {
   }, []);
 
   const c = data?.counts;
+  const attention = data?.attention ?? [];
+  const activity = data?.activity ?? [];
+  const outcomes = data?.outcomes ?? [];
   const lm = (() => {
     try {
       return data?.lmStudio ? (JSON.parse(data.lmStudio.ResultJson) as { latency_s?: number; models?: string[] }) : null;
@@ -69,8 +72,8 @@ export function OverviewView({ go }: { go: Go }) {
           <Pulse icon={TriangleAlert} label="Failed L2 runs" value={c?.FailedRunsLast24h} note="last 24h" attention={!!c?.FailedRunsLast24h} />
         </section>
 
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
-          <section className="overflow-hidden rounded-xl border bg-surface" aria-label="Tickets needing attention">
+        <div className="grid gap-3 xl:grid-cols-3">
+          <section className="overflow-hidden rounded-xl border bg-surface xl:col-span-2" aria-label="Tickets needing attention">
             <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
               <div>
                 <h2 className="text-sm font-semibold">Unresolved attention queue</h2>
@@ -80,12 +83,14 @@ export function OverviewView({ go }: { go: Go }) {
             </div>
             {!data ? (
               <div className="space-y-2 p-4"><Skeleton className="h-16" /><Skeleton className="h-16" /><Skeleton className="h-16" /></div>
-            ) : data.attention.length ? (
+            ) : attention.length ? (
               <ol className="divide-y">
-                {data.attention.map((t) => <AttentionRow key={t.ID} ticket={t} onOpen={() => go.ticket(t.ID)} />)}
+                {attention.map((t) => <AttentionRow key={t.ID} ticket={t} onOpen={() => go.ticket(t.ID)} />)}
               </ol>
             ) : (
-              <p className="p-6 text-center text-sm text-muted-foreground">No unresolved tickets need attention.</p>
+              <p className="p-6 text-center text-sm text-muted-foreground">
+                {data.attention === undefined ? "Attention data is not available yet." : "No unresolved tickets need attention."}
+              </p>
             )}
           </section>
 
@@ -118,7 +123,7 @@ export function OverviewView({ go }: { go: Go }) {
 
             <section className="rounded-xl border bg-surface p-4" aria-label="Outcomes">
               <h2 className="text-sm font-semibold">L2 outcomes</h2>
-              <div className="mt-4">{data ? <Ranked rows={data.outcomes.map((o) => ({ label: outcomeLabel(o.Label), count: o.Count }))} /> : <Skeleton className="h-32" />}</div>
+              <div className="mt-4">{data ? <Ranked rows={outcomes.map((o) => ({ label: outcomeLabel(o.Label), count: o.Count }))} /> : <Skeleton className="h-32" />}</div>
             </section>
 
             <section className="rounded-xl border bg-surface p-4" aria-label="Writer model">
@@ -141,7 +146,7 @@ export function OverviewView({ go }: { go: Go }) {
           </div>
           <ol className="divide-y">
             {!data && <li className="p-4"><Skeleton className="h-40" /></li>}
-            {data?.activity.slice(0, 16).map((a, i) => (
+            {activity.slice(0, 16).map((a, i) => (
               <li key={i} className="flex items-start gap-3 px-4 py-2.5">
                 <span className={cn("mt-0.5 w-7 shrink-0 rounded px-1 py-0.5 text-center text-2xs font-bold uppercase", a.Lane === "l1" ? "bg-surface-3 text-muted-foreground" : a.Lane === "l2" ? "bg-primary-soft text-primary-soft-foreground" : "bg-warning-soft text-warning")}>{a.Lane}</span>
                 <div className="min-w-0 flex-1">
@@ -174,8 +179,8 @@ function AttentionRow({ ticket, onOpen }: { ticket: AttentionTicket; onOpen: () 
 
   return (
     <li>
-      <button onClick={onOpen} className="grid w-full gap-2 px-4 py-3 text-left hover:bg-surface-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-        <div className="min-w-0">
+      <button onClick={onOpen} className="flex w-full flex-col gap-2 px-4 py-3 text-left hover:bg-surface-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-xs text-muted-foreground">{ticketLabel(ticket.TicketNo)}</span>
             <span className={cn("rounded px-1.5 py-0.5 text-2xs font-medium", tone)}>{ticket.AttentionState}</span>
@@ -183,7 +188,7 @@ function AttentionRow({ ticket, onOpen }: { ticket: AttentionTicket; onOpen: () 
           </span>
           <span className="mt-1 line-clamp-2 block text-meta font-medium">{ticket.BriefDetails}</span>
         </div>
-        <span className="flex gap-4 text-2xs text-subtle-foreground sm:text-right">
+        <span className="flex shrink-0 gap-4 text-2xs text-subtle-foreground sm:text-right">
           <span><Clock3 className="mr-1 inline size-3" aria-hidden />open {ago(ticket.CreatedOn)}</span>
           <span>progress {ago(ticket.LastProgressOn)}</span>
         </span>

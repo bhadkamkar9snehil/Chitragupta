@@ -120,9 +120,9 @@ function JsonTree({ value, depth = 0 }: { value: unknown; depth?: number }) {
       </summary>
       <div className="ml-2 border-l pl-2">
         {entries.map(([key, child]) => (
-          <div key={key} className="grid min-w-0 grid-cols-[minmax(2.5rem,auto)_minmax(0,1fr)] gap-x-2 border-b border-border/60 py-1 last:border-b-0">
-            <span className="min-w-0 truncate font-mono text-2xs text-subtle-foreground" title={key}>{key}</span>
-            <div className="min-w-0 text-2xs leading-relaxed"><JsonTree value={child} depth={depth + 1} /></div>
+          <div key={key} className="flex min-w-0 gap-2 border-b border-border/60 py-1 last:border-b-0">
+            <span className="w-24 shrink-0 truncate font-mono text-2xs text-subtle-foreground" title={key}>{key}</span>
+            <div className="min-w-0 flex-1 text-2xs leading-relaxed"><JsonTree value={child} depth={depth + 1} /></div>
           </div>
         ))}
         {!entries.length && <span className="font-mono text-2xs text-subtle-foreground">empty</span>}
