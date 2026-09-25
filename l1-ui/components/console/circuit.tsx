@@ -137,14 +137,30 @@ function useInvestigation(run: Run, events: TraceEvent[], trail: Trail | null, l
     };
 
     const entities = [...new Map((trail?.entities ?? []).map((e) => [e.value, e])).values()].slice(0, 3);
-    const t0 = shown.length ? Math.min(...shown.map((e) => at(e.EventOn) - (e.DurationMs ?? 0))) : 0;
+    // Model calls are recorded without a duration; estimate each as the gap since the previous recorded step.
+    // A call that opens a worker session (followed by kanban_show, or first after Jev/world-walk steps) waited in the
+    // queue instead; that gap is reported as queue wait, not model time.
+    const took = new Map<string, { ms: number | null; estimated: boolean }>();
+    let queueMs = 0;
+    shown.forEach((e, i) => {
+      if (e.DurationMs != null) return took.set(e.ID, { ms: e.DurationMs, estimated: false });
+      if (e.EventType !== "post_api_request") return took.set(e.ID, { ms: null, estimated: false });
+      const prev = shown[i - 1];
+      const gap = prev ? Math.max(0, at(e.EventOn) - at(prev.EventOn)) : 0;
+      const opensSession = !prev || !["post_api_request", "post_tool_call"].includes(prev.EventType) || shown[i + 1]?.ToolName === "kanban_show";
+      if (opensSession) { queueMs += gap; took.set(e.ID, { ms: null, estimated: true }); }
+      else took.set(e.ID, { ms: gap, estimated: true });
+    });
+    const dur = (e: TraceEvent) => took.get(e.ID)?.ms ?? 0;
+    const t0 = shown.length ? Math.min(...shown.map((e) => at(e.EventOn) - dur(e))) : 0;
     const t1 = shown.length ? Math.max(...shown.map((e) => at(e.EventOn))) : 0;
 
     return {
       shown, hits, state, triage, security, knowledge, walkRoute, verdict, investigation, assessment, findings, probesSeen, judged,
       evidence, models, tools, reads, entities, t0, span: t1 - t0,
       riskMax: maxNoul(security), appliesMax: maxNoul(knowledge, /^applicable/),
-      modelMs: models.reduce((n, e) => n + (e.DurationMs ?? 0), 0),
+      modelMs: models.reduce((n, e) => n + dur(e), 0),
+      took, dur, queueMs,
     };
   }, [run, events, trail, live]);
 }
@@ -189,10 +205,10 @@ export function InvestigationCircuit({ run, events, trail, live, onOpenRun, titl
     id: e.ID,
     label: describeEvent(e).title,
     sub: `${describeEvent(e).actor === "jev" ? "Jev" : describeEvent(e).actor === "walk" ? "World walk" : describeEvent(e).actor === "model" ? "Local model" : "Tool"} · ${clock(e.EventOn)}`,
-    start: at(e.EventOn) - (e.DurationMs ?? 0) - x.t0,
+    start: at(e.EventOn) - x.dur(e) - x.t0,
     end: at(e.EventOn) - x.t0,
     tone: eventTone(e),
-    right: e.Status === "error" || e.ErrorMessage ? "error" : ms(e.DurationMs),
+    right: e.Status === "error" || e.ErrorMessage ? "error" : `${x.took.get(e.ID)?.estimated ? "≈" : ""}${ms(x.took.get(e.ID)?.ms)}`,
   }));
 
   return (
@@ -301,7 +317,7 @@ export function InvestigationCircuit({ run, events, trail, live, onOpenRun, titl
                   {x.verdict?.probabilities ? <ProbBars scores={sorted(x.verdict.probabilities)} chosen={x.verdict.choice} max={3} /> : x.verdict?.choice ? <p className="font-mono text-xs">{human(x.verdict.choice)}</p> : <Pending state={x.state("verdict")} />}
                 </Station>
                 <Drop label={x.models.length ? "needs reasoning" : x.state("reasoning") === "skipped" ? "no model" : ""} state={x.state("reasoning")} />
-                <Station id="reasoning" state={x.state("reasoning")} title="Local model" sub={x.models.length ? `${x.models.length} calls · ${ms(x.modelMs)}` : "Only when the verdict needs reasoning"} pick={pick} onPick={select} compact>
+                <Station id="reasoning" state={x.state("reasoning")} title="Local model" sub={x.models.length ? `${x.models.length} calls · ≈${ms(x.modelMs)}${x.queueMs > 60_000 ? ` · queued ${ms(x.queueMs)}` : ""}` : "Only when the verdict needs reasoning"} pick={pick} onPick={select} compact>
                   {x.tools.length > 0 ? (
                     <p className="truncate font-mono text-2xs text-muted-foreground">{[...new Set(x.tools.map((t) => (t.ToolName ?? "").replace(/^xstudio_/, "")))].slice(0, 4).join(" · ")}</p>
                   ) : x.state("reasoning") === "skipped" ? <p className="text-xs text-subtle-foreground">Not run for this ticket.</p> : null}
@@ -333,7 +349,7 @@ export function InvestigationCircuit({ run, events, trail, live, onOpenRun, titl
         <Panel
           icon={Waypoints}
           title={picked ? describeEvent(picked).title : pickedFinding ? pickedFinding.node : STATION_TITLE[pick.kind === "station" ? pick.id : "evidence"]}
-          meta={picked ? `${clock(picked.EventOn)} · ${ms(picked.DurationMs)}` : pickedFinding ? `${pickedFinding.origin} · ${role(pickedFinding.role).label}` : "Select a stage, a probe or a step"}
+          meta={picked ? `${clock(picked.EventOn)} · ${x.took.get(picked.ID)?.estimated ? "≈" : ""}${ms(x.took.get(picked.ID)?.ms)}` : pickedFinding ? `${pickedFinding.origin} · ${role(pickedFinding.role).label}` : "Select a stage, a probe or a step"}
           className="xl:col-span-2"
           actions={picked?.ResultJson || picked?.ArgsJson ? <Segmented label="Inspector view" value={view} onChange={setView} options={[{ id: "inspect", label: "Details" }, { id: "raw", label: "Raw" }]} /> : undefined}
         >
@@ -344,7 +360,7 @@ export function InvestigationCircuit({ run, events, trail, live, onOpenRun, titl
                   {picked.ArgsJson && <Json label="Input" text={picked.ArgsJson} />}
                   {picked.ResultJson && <Json label="Output" text={picked.ResultJson} />}
                 </div>
-              ) : <EventDetail event={picked} run={run} />
+              ) : <EventDetail event={picked} run={run} took={x.took.get(picked.ID)} />
             ) : pickedFinding ? <FindingDetail finding={pickedFinding} /> : <StationDetail id={pick.kind === "station" ? pick.id : "evidence"} run={run} x={x} trail={trail} />}
           </div>
         </Panel>
@@ -503,7 +519,7 @@ function FindingDetail({ finding }: { finding: WalkFinding & { origin: string } 
   );
 }
 
-function EventDetail({ event, run }: { event: TraceEvent; run: Run }) {
+function EventDetail({ event, run, took }: { event: TraceEvent; run: Run; took?: { ms: number | null; estimated: boolean } }) {
   const answers = parseAnswers(event.ResultJson) ?? (event.ToolName ? fromRun(run, event.ToolName) : null);
   const choices = Object.entries(answers ?? {}).filter(([, a]) => a.choice);
   const nouls = Object.entries(answers ?? {}).filter(([, a]) => a.noul != null);
@@ -520,7 +536,7 @@ function EventDetail({ event, run }: { event: TraceEvent; run: Run }) {
       <Attributes rows={[
         { k: "step", v: describeEvent(event).title },
         { k: "status", v: event.Status ?? "—", tone: event.Status === "error" ? "danger" : undefined },
-        { k: "duration", v: ms(event.DurationMs), tone: "signal" },
+        { k: "duration", v: took?.estimated ? `≈${ms(took.ms)} since the previous step` : ms(took?.ms ?? event.DurationMs), tone: "signal" },
         { k: "at", v: when(event.EventOn) },
         ...(event.Model ? [{ k: "model", v: event.Model }] : []),
         ...(event.ToolName ? [{ k: "name", v: event.ToolName, copy: event.ToolName }] : []),
@@ -582,7 +598,7 @@ function StationDetail({ id, run, x, trail }: { id: StationId; run: Run; x: Inve
   if (id === "reasoning")
     return x.models.length || x.tools.length ? (
       <div className="space-y-4">
-        <Attributes rows={[{ k: "model calls", v: x.models.length, tone: "signal" }, { k: "model time", v: ms(x.modelMs) }, { k: "model", v: x.models[0]?.Model ?? "—" }, { k: "tool calls", v: x.tools.length }]} />
+        <Attributes rows={[{ k: "model calls", v: x.models.length, tone: "signal" }, { k: "model time", v: `≈${ms(x.modelMs)} (estimated from gaps; calls record no duration)` }, { k: "waited for a worker", v: ms(x.queueMs), tone: x.queueMs > 300_000 ? "warn" : undefined }, { k: "model", v: x.models[0]?.Model ?? "—" }, { k: "tool calls", v: x.tools.length }]} />
         <Legend rows={Object.entries(x.tools.reduce<Record<string, number>>((m, t) => ({ ...m, [(t.ToolName ?? "").replace(/^xstudio_/, "")]: (m[(t.ToolName ?? "").replace(/^xstudio_/, "")] ?? 0) + 1 }), {})).map(([k, n]) => ({ label: k, value: n, tone: "mid" as const }))} />
       </div>
     ) : <p className="text-sm text-muted-foreground">The local model was not needed. Jev picked the outcome from the fact table and a fixed reply was published.</p>;

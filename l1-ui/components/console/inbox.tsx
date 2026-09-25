@@ -59,7 +59,6 @@ export function InboxView({ ticketId, onSelect, onOpenRun }: { ticketId: string 
       <section aria-label="Tickets" className={cn("flex min-h-0 w-full flex-col border-r bg-canvas md:w-80 md:shrink-0 xl:w-96", ticketId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
         <div className="space-y-2 border-b px-3 py-3">
           <PageTitle icon={Inbox} title={VIEWS.find((v) => v.id === view)!.label} meta={rows ? `${rows.length} tickets` : "loading"}>
-            {ticketId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setCollapsedTicketId(ticketId)} aria-label="Hide ticket list"><PanelLeftClose /></Button>}
             <Tip label="Refresh">
               <Button variant="ghost" size="icon-sm" aria-label="Refresh" onClick={() => setTick((n) => n + 1)}>
                 <RefreshCw />

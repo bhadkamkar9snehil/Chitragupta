@@ -24,7 +24,7 @@ architectural responsibility and must not acquire business/workflow ownership.
 - `/admin` support console: Command centre, Live engineer (the investigation circuit, live or replayed step by step),
   Tickets (journey: L1 chat -> ticket -> L2 investigations -> state, each step opens its record), Conversations,
   L2 investigations (same circuit + what was told + audited reads), L3 escalations, Agents & tools (tool call graph),
-  Reports, Settings. **New chat** (nav, Ctrl+K, Conversations) opens `#/chat` inside the console: the same requester
+  Reports, Settings. **New chat** (nav, Ctrl+K, Conversations) opens a new thread in Conversations: the same requester
   chat component embedded as the acting engineer (never a new tab); its ticket links open the console ticket record.
 - `public/embed.js` floating launcher.
 - AI providers: OpenAI-compatible (LM Studio, Ollama, OpenAI, Gemini, Groq, OpenRouter, custom), Anthropic, and

@@ -292,7 +292,7 @@ export function Stat({ label, value, tone }: { label: string; value: ReactNode; 
   );
 }
 
-export const ms = (v?: number | null) => (v == null ? "—" : v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(v < 10_000 ? 2 : 1)} s`);
+export const ms = (v?: number | null) => (v == null ? "—" : v < 1000 ? `${Math.round(v)} ms` : v < 60_000 ? `${(v / 1000).toFixed(v < 10_000 ? 2 : 1)} s` : v < 3_600_000 ? `${(v / 60_000).toFixed(1)} min` : `${(v / 3_600_000).toFixed(1)} h`);
 export const pct = (v?: number | null) => (v == null ? "—" : `${Math.round(v * 100)}%`);
 
 // Calendar heat grid: weeks across, weekdays down; five intensity steps of the signal, the peak day in white.

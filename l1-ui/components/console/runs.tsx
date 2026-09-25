@@ -52,7 +52,6 @@ export function RunsView({ runId, onSelect, onLive, onOpenTicket }: { runId: str
       <section aria-label="L2 investigations" className={cn("flex min-h-0 w-full flex-col border-r bg-canvas md:w-96 md:shrink-0", runId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
         <div className="space-y-2 border-b px-3 py-3">
           <PageTitle icon={Bot} title="L2 investigations" meta={runs ? `${runs.length} runs · newest first` : "loading"}>
-            {runId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setCollapsedRunId(runId)} aria-label="Hide run list"><PanelLeftClose /></Button>}
           </PageTitle>
           <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ticket, subject or route" aria-label="Search runs" />
           <div className="flex gap-1 overflow-x-auto" role="tablist">

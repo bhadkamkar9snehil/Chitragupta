@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, SearchInput, TooltipProvider } from "@/components/ui/primitives";
 import { Home } from "./home";
-import { Messages } from "./conversation";
+import { Messages, Thread } from "./conversation";
 import { Tickets } from "./tickets";
 
 export type Route = { tab: "home" } | { tab: "messages"; sessionId: string | null; draft?: string } | { tab: "tickets"; ticketId: string | null };
@@ -188,7 +188,7 @@ function toHash(r: Route) {
 
 // Inside the support console the same chat runs embedded: the console owns the URL, and ticket links open the
 // console's own ticket record instead of the requester view.
-export type Embed = { sessionId: string | null; onSession: (id: string | null) => void; onOpenTicket: (ticketId: string | null) => void };
+export type Embed = { sessionId: string | null; threadOnly?: boolean; onSession: (id: string | null) => void; onOpenTicket: (ticketId: string | null) => void };
 
 function Workspace({ user, config, onSignOut, embed }: { user: User; config: WidgetConfig; onSignOut?: () => void; embed?: Embed }) {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -243,7 +243,9 @@ function Workspace({ user, config, onSignOut, embed }: { user: User; config: Wid
   if (embed)
     return (
       <HelpdeskContext.Provider value={ctx}>
-        <Messages />
+        {embed.threadOnly ? (
+          <Thread key={route.tab === "messages" ? route.sessionId ?? "new" : "new"} sessionId={route.tab === "messages" ? route.sessionId : null} onBack={() => embed.onSession(null)} />
+        ) : <Messages />}
       </HelpdeskContext.Provider>
     );
 

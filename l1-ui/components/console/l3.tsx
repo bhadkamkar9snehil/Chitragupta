@@ -41,7 +41,6 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
       <section aria-label="L3 queue" className={cn("flex min-h-0 w-full flex-col border-r bg-canvas md:w-96 md:shrink-0", escalationId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
         <div className="space-y-2 border-b px-3 py-3">
           <PageTitle icon={ShieldAlert} title="L3 escalations" meta={`handed over by L2 for a person${engineer && mine ? ` · ${mine} assigned to you` : ""}`}>
-            {escalationId && <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setCollapsedEscalationId(escalationId)} aria-label="Hide escalation list"><PanelLeftClose /></Button>}
           </PageTitle>
           <div className="flex gap-1" role="tablist">
             {STATUSES.map((s) => (

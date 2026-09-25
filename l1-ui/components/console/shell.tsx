@@ -9,10 +9,8 @@ import {
 import { api, type Ticket, type User } from "@/lib/api";
 import { displayName, ticketLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Avatar, Dialog, Empty, Kbd, SearchInput, StatePill, Tip, TooltipProvider } from "@/components/ui/primitives";
-import { applyBrand, BrandMark, ConsoleChat } from "@/components/helpdesk/app";
-import { Button } from "@/components/ui/button";
-import { PageTitle } from "@/components/ui/viz";
+import { Avatar, Dialog, Kbd, SearchInput, StatePill, Tip, TooltipProvider } from "@/components/ui/primitives";
+import { applyBrand, BrandMark } from "@/components/helpdesk/app";
 import { InboxView } from "./inbox";
 import { ConversationsView } from "./conversations";
 import { ReportsView } from "./reports";
@@ -26,7 +24,7 @@ import { AgentsView } from "./agents";
 import { LogsView } from "./logs";
 
 // One route shape for the whole suite: #/<view>/<id>
-export type View = "chat" | "overview" | "live" | "board" | "inbox" | "conversations" | "runs" | "l3" | "agents" | "logs" | "reports" | "settings";
+export type View = "overview" | "live" | "board" | "inbox" | "conversations" | "runs" | "l3" | "agents" | "logs" | "reports" | "settings";
 export type ConsoleRoute = { view: View; id?: string | null };
 
 const GROUPS: { label: string; items: { view: View; label: string; icon: typeof Inbox }[] }[] = [
@@ -48,11 +46,12 @@ const GROUPS: { label: string; items: { view: View; label: string; icon: typeof 
     { view: "settings", label: "Settings", icon: SettingsIcon },
   ] },
 ];
-const CHAT = { view: "chat" as View, label: "New chat", icon: MessageSquarePlus };
-const ALL = [CHAT, ...GROUPS.flatMap((g) => g.items)];
+const ALL = GROUPS.flatMap((g) => g.items);
 
 function parse(): ConsoleRoute {
-  const [, view, id] = location.hash.replace(/^#\/?/, "/").split("/");
+  const [, raw, id] = location.hash.replace(/^#\/?/, "/").split("/");
+  if (raw === "chat") return { view: "conversations", id: id ? decodeURIComponent(id) : "new" };
+  const view = raw;
   return ALL.some((n) => n.view === view) ? { view: view as View, id: id ? decodeURIComponent(id) : null } : { view: "overview" };
 }
 
@@ -111,43 +110,13 @@ export function Console() {
     <TooltipProvider>
       <div className="flex h-dvh overflow-hidden bg-background">
         <nav aria-label="Suite" className={cn("scrollbar-thin flex w-16 shrink-0 flex-col items-center overflow-y-auto border-r bg-canvas py-3", !navCollapsed && "xl:w-60 xl:items-stretch xl:px-2")}>
-          <div className={cn("w-full pb-3", !navCollapsed && "xl:px-2")}>
-            {navCollapsed ? (
-              <div className="hidden flex-col items-center gap-2 xl:flex">
-                <BrandMark name={brand} compact />
-                <Tip label="Expand navigation" side="right">
-                  <button
-                    className="grid size-9 place-items-center rounded-lg border bg-background text-muted-foreground hover:bg-surface-2 hover:text-foreground"
-                    onClick={() => {
-                      setNavCollapsed(false);
-                      safe(() => localStorage.setItem("desk.nav.collapsed", "0"), undefined);
-                    }}
-                    aria-label="Expand navigation"
-                  >
-                    <PanelLeftOpen className="size-4" />
-                  </button>
-                </Tip>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2.5 px-1">
-                <BrandMark name={brand} compact />
-                <span className="hidden min-w-0 flex-1 xl:block">
-                  <span className="block truncate text-sm font-semibold leading-tight">Helpdesk suite</span>
-                  <span className="block truncate text-2xs text-subtle-foreground">{brand}</span>
-                </span>
-                <Tip label="Collapse navigation" side="right">
-                  <button
-                    className="hidden size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-surface-2 hover:text-foreground xl:grid"
-                    onClick={() => {
-                      setNavCollapsed(true);
-                      safe(() => localStorage.setItem("desk.nav.collapsed", "1"), undefined);
-                    }}
-                    aria-label="Collapse navigation"
-                  >
-                    <PanelLeftClose className="size-4" />
-                  </button>
-                </Tip>
-              </div>
+          <div className={cn("flex w-full items-center justify-center gap-2.5 pb-3", !navCollapsed && "xl:justify-start xl:px-3")}>
+            <BrandMark name={brand} compact />
+            {!navCollapsed && (
+              <span className="hidden min-w-0 flex-1 xl:block">
+                <span className="block truncate text-sm font-semibold leading-tight">Helpdesk suite</span>
+                <span className="block truncate text-2xs text-subtle-foreground">{brand}</span>
+              </span>
             )}
           </div>
           {navCollapsed ? (
@@ -164,10 +133,10 @@ export function Console() {
           )}
           <Tip label="Start a chat in the helpdesk" side="right">
             <button
-              onClick={() => go("chat")}
+              onClick={() => go("conversations", "new")}
               aria-label="New chat"
-              aria-current={route.view === "chat" ? "page" : undefined}
-              className={cn("mx-auto mb-1 flex size-10 items-center justify-center gap-2 rounded-lg bg-foreground text-sm font-medium text-background hover:opacity-90", !navCollapsed && "xl:h-9 xl:w-full xl:rounded-full", route.view === "chat" && "ring-2 ring-ring ring-offset-2 ring-offset-canvas")}
+              aria-current={route.view === "conversations" && route.id === "new" ? "page" : undefined}
+              className={cn("mx-auto mb-1 flex size-10 items-center justify-center gap-2 rounded-lg bg-foreground text-sm font-medium text-background hover:opacity-90", !navCollapsed && "xl:h-9 xl:w-full xl:rounded-full", route.view === "conversations" && route.id === "new" && "ring-2 ring-ring ring-offset-2 ring-offset-canvas")}
             >
               <MessageSquarePlus className="size-4" aria-hidden />
               {!navCollapsed && <span className="hidden xl:inline">New chat</span>}
@@ -207,6 +176,17 @@ export function Console() {
             </button>
             <button
               onClick={() => {
+                setNavCollapsed(!navCollapsed);
+                safe(() => localStorage.setItem("desk.nav.collapsed", navCollapsed ? "0" : "1"), undefined);
+              }}
+              aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}
+              className={cn("mx-auto hidden size-10 items-center justify-center gap-2.5 rounded-lg text-sm text-muted-foreground hover:bg-surface-2 xl:flex", !navCollapsed && "xl:h-9 xl:w-full xl:justify-start xl:px-2.5")}
+            >
+              {navCollapsed ? <PanelLeftOpen className="size-4" aria-hidden /> : <PanelLeftClose className="size-4" aria-hidden />}
+              {!navCollapsed && <span>Collapse</span>}
+            </button>
+            <button
+              onClick={() => {
                 const dark = !document.documentElement.classList.contains("dark");
                 document.documentElement.classList.toggle("dark", dark);
                 safe(() => localStorage.setItem("l1.theme", dark ? "dark" : "light"), undefined);
@@ -225,26 +205,10 @@ export function Console() {
           {route.view === "overview" && (
             <OverviewView go={{ live: () => go("live"), l1: () => go("conversations"), runs: () => go("runs"), l3: () => go("l3"), tickets: () => go("inbox"), ticket: (id) => go("inbox", id), run: (id) => go("runs", id) }} />
           )}
-          {route.view === "chat" && (
-            engineer ? (
-              <div className="flex min-h-0 flex-1 flex-col">
-                <div className="flex shrink-0 items-center gap-3 border-b bg-canvas px-4 py-3 lg:px-6">
-                  <PageTitle icon={MessageSquarePlus} className="flex-1" title="Chat" meta={`as ${displayName(engineer)} · same assistant, tickets and L2 pipeline as requesters`} />
-                  <Button size="sm" variant="ghost" onClick={() => setPicking(true)}>Switch person</Button>
-                </div>
-                <ConsoleChat key={engineer.ID} user={engineer} embed={{ sessionId: route.id ?? null, onSession: (id) => setId(id), onOpenTicket: (id) => go("inbox", id) }} />
-              </div>
-            ) : (
-              <Empty className="m-auto" icon={<UserRound className="size-5" />} title="Choose who is chatting">
-                Chats and the tickets they raise are recorded against an XBatch account.
-                <Button size="sm" className="mt-4" onClick={() => setPicking(true)}>Choose who you are</Button>
-              </Empty>
-            )
-          )}
           {route.view === "live" && <LiveView key={route.id ? "replay" : "live"} runId={route.id ?? null} onRun={setId} onOpenRun={(id) => go("runs", id)} />}
           {route.view === "board" && <BoardView onOpenTicket={(id) => go("inbox", id)} onOpenRun={(id) => go("runs", id)} />}
           {route.view === "inbox" && <InboxView ticketId={route.id ?? null} onSelect={setId} onOpenRun={(id) => go("runs", id)} />}
-          {route.view === "conversations" && <ConversationsView sessionId={route.id ?? null} onSelect={setId} onOpenTicket={(id) => go("inbox", id)} onNewChat={() => go("chat")} />}
+          {route.view === "conversations" && <ConversationsView sessionId={route.id ?? null} onSelect={setId} onOpenTicket={(id) => go("inbox", id)} onOpenRun={(id) => go("runs", id)} engineer={engineer} askEngineer={() => setPicking(true)} />}
           {route.view === "runs" && <RunsView runId={route.id ?? null} onSelect={setId} onLive={(id) => go("live", id)} onOpenTicket={(id) => go("inbox", id)} />}
           {route.view === "l3" && (
             <L3View escalationId={route.id ?? null} onSelect={setId} engineer={engineer} askEngineer={() => setPicking(true)} onOpenRun={(id) => go("runs", id)} onOpenTicket={(id) => go("inbox", id)} />
@@ -255,7 +219,7 @@ export function Console() {
           {route.view === "settings" && <SettingsView tab={route.id ?? undefined} onTab={setId} />}
         </main>
       </div>
-      <Palette open={palette} onOpenChange={setPalette} go={go} onChat={() => go("chat")} />
+      <Palette open={palette} onOpenChange={setPalette} go={go} onChat={() => go("conversations", "new")} />
       <EngineerPicker
         open={picking}
         onOpenChange={setPicking}
@@ -351,7 +315,7 @@ function Palette({ open, onOpenChange, go, onChat }: { open: boolean; onOpenChan
           </Command.Item>
         </Command.Group>
         <Command.Group heading="Go to" className={heading}>
-          {ALL.filter((n) => n.view !== "chat").filter((n) => !q || n.label.toLowerCase().includes(q.toLowerCase())).map((n) => (
+          {ALL.filter((n) => !q || n.label.toLowerCase().includes(q.toLowerCase())).map((n) => (
             <Command.Item key={n.view} value={n.label} onSelect={() => run(n.view)} className="flex h-10 cursor-default items-center gap-3 rounded-md px-2 text-sm data-[selected=true]:bg-surface-2">
               <n.icon className="size-4 text-subtle-foreground" aria-hidden />
               {n.label}

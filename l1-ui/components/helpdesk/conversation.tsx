@@ -103,7 +103,7 @@ function ConversationList({ onNew }: { onNew: () => void }) {
 
 type Live = { status: string | null; text: string; sources: SourceRef[] } | null;
 
-function Thread({ sessionId, draft, onBack }: { sessionId: string | null; draft?: string; onBack: () => void }) {
+export function Thread({ sessionId, draft, onBack }: { sessionId: string | null; draft?: string; onBack: () => void }) {
   const { user, config, sessions, tickets, go, refresh } = useHelpdesk();
   const session = sessions.find((s) => s.ID === sessionId) ?? null;
   const [messages, setMessages] = useState<Message[]>([]);
