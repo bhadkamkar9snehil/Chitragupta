@@ -177,7 +177,7 @@ export function Console() {
                 safe(() => localStorage.setItem("l1.theme", dark ? "dark" : "light"), undefined);
               }}
               aria-label="Switch theme"
-              className="mx-auto flex size-11 items-center justify-center gap-2.5 rounded-md text-sm text-muted-foreground hover:bg-surface-2 xl:h-9 xl:w-full xl:justify-start xl:px-2.5"
+              className={cn("mx-auto flex size-11 items-center justify-center gap-2.5 rounded-md text-sm text-muted-foreground hover:bg-surface-2", !navCollapsed && "xl:h-9 xl:w-full xl:justify-start xl:px-2.5")}
             >
               <Moon className="size-4 dark:hidden" aria-hidden />
               <Sun className="hidden size-4 dark:block" aria-hidden />

@@ -88,7 +88,7 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
   );
 }
 
-function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpenTicket }: {
+function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpenTicket, drawerOpen, onDrawerToggle }: {
   e: Escalation; engineer: User | null; askEngineer: () => void; onBack: () => void; onChanged: () => void; onOpenRun: (id: string) => void; onOpenTicket: (id: string) => void;
   drawerOpen: boolean; onDrawerToggle: () => void;
 }) {
