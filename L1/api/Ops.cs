@@ -67,9 +67,10 @@ public static class Ops
         try { return row?["ResultJson"] is string s ? JsonNode.Parse(s) : null; } catch { return null; }
     }
 
-    // The run to watch: the active one, else the most recently touched.
+    // "Live" is intentionally active-only. A completed run is history and must never be
+    // substituted into the Follow Live surface, otherwise the operator sees replay presented as live state.
     public static async Task<Dictionary<string, object?>?> LiveRun() => (await Db.H(string.Format(RunSelect, 1) +
-        " ORDER BY CASE WHEN r.IsActive = 1 THEN 0 ELSE 1 END, ISNULL(r.HeartbeatOn, ISNULL(r.CompletedOn, r.CreatedOn)) DESC")).FirstOrDefault();
+        " AND r.IsActive = 1 ORDER BY ISNULL(r.HeartbeatOn, r.CreatedOn) DESC")).FirstOrDefault();
 
     public static async Task<object> Overview()
     {

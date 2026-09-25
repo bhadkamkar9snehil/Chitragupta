@@ -78,24 +78,25 @@ function layout(trail: Trail, ticketLabel: string) {
   return { nodes: [...nodes.values()], edges, duration: t + 800 };
 }
 
-export function Brain({ trail, ticketLabel, autoplay = true, compact }: { trail: Trail | null; ticketLabel: string; autoplay?: boolean; compact?: boolean }) {
+export function Brain({ trail, ticketLabel, autoplay = true, compact, mode = "replay" }: { trail: Trail | null; ticketLabel: string; autoplay?: boolean; compact?: boolean; mode?: "replay" | "live" }) {
   const graph = useMemo(() => (trail ? layout(trail, ticketLabel) : null), [trail, ticketLabel]);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(autoplay);
   const [hover, setHover] = useState<Node | null>(null);
   const raf = useRef(0);
   const last = useRef(0);
+  const live = mode === "live";
 
   useEffect(() => {
     const reset = setTimeout(() => {
-      setT(0);
-      setPlaying(autoplay);
+      setT(live && graph ? graph.duration : 0);
+      setPlaying(live ? false : autoplay);
     }, 0);
     return () => clearTimeout(reset);
-  }, [graph, autoplay]);
+  }, [graph, autoplay, live]);
 
   useEffect(() => {
-    if (!playing || !graph) return;
+    if (live || !playing || !graph) return;
     last.current = performance.now();
     const tick = (now: number) => {
       setT((prev) => {
@@ -111,7 +112,7 @@ export function Brain({ trail, ticketLabel, autoplay = true, compact }: { trail:
     };
     raf.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf.current);
-  }, [playing, graph]);
+  }, [playing, graph, live]);
 
   if (!graph)
     return (
@@ -120,10 +121,11 @@ export function Brain({ trail, ticketLabel, autoplay = true, compact }: { trail:
       </div>
     );
 
+  const now = live ? graph.duration : t;
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-  const litEdge = (e: Edge) => t >= e.at;
-  const firing = (e: Edge) => t >= e.at && t < e.at + 450;
-  const step = graph.edges.filter((e) => e.kind === "step" && t >= e.at).at(-1);
+  const litEdge = (e: Edge) => now >= e.at;
+  const firing = (e: Edge) => !live && now >= e.at && now < e.at + 450;
+  const step = graph.edges.filter((e) => e.kind === "step" && now >= e.at).at(-1);
 
   return (
     <div className={cn("relative flex h-full flex-col", compact && "min-h-96")}>
@@ -141,7 +143,7 @@ export function Brain({ trail, ticketLabel, autoplay = true, compact }: { trail:
           const a = byId.get(e.from), b = byId.get(e.to);
           if (!a || !b) return null;
           const lit = litEdge(e);
-          const p = Math.min(1, Math.max(0, (t - e.at) / 450));
+          const p = Math.min(1, Math.max(0, (now - e.at) / 450));
           const mx = (a.x + b.x) / 2 + (e.kind === "step" ? (CY - (a.y + b.y) / 2) * 0.15 : 0);
           const my = (a.y + b.y) / 2 + (e.kind === "step" ? ((a.x + b.x) / 2 - CX) * 0.15 : 0);
           const bez = (u: number) => ({ x: (1 - u) ** 2 * a.x + 2 * (1 - u) * u * mx + u * u * b.x, y: (1 - u) ** 2 * a.y + 2 * (1 - u) * u * my + u * u * b.y });
@@ -168,9 +170,9 @@ export function Brain({ trail, ticketLabel, autoplay = true, compact }: { trail:
           );
         })}
         {graph.nodes.map((n) => {
-          const on = t >= n.at;
-          const judged = n.judgedAt !== undefined && t >= n.judgedAt;
-          const pulse = on && t < n.at + 600;
+          const on = now >= n.at;
+          const judged = n.judgedAt !== undefined && now >= n.judgedAt;
+          const pulse = !live && on && now < n.at + 600;
           const r = n.ring === 0 ? 26 : n.ring === 1 ? 14 : n.ring === 3 ? 10 : 7 + (n.confidence ?? 0.5) * 5;
           const role = judged && n.role ? ROLE[n.role] : null;
           const label = n.ring === 0 ? n.label : pageTitle(n.label).slice(0, 26);
@@ -225,22 +227,26 @@ export function Brain({ trail, ticketLabel, autoplay = true, compact }: { trail:
       )}
 
       <div className="flex flex-wrap items-center gap-3 border-t px-3 py-2">
-        <Button variant="ghost" size="icon-sm" aria-label={playing ? "Pause" : "Play"} onClick={() => (t >= graph.duration ? (setT(0), setPlaying(true)) : setPlaying((p) => !p))}>
-          {playing ? <Pause /> : <Play />}
-        </Button>
-        <Button variant="ghost" size="icon-sm" aria-label="Replay" onClick={() => { setT(0); setPlaying(true); }}>
-          <RotateCcw />
-        </Button>
-        <input
-          type="range"
-          min={0}
-          max={graph.duration}
-          value={t}
-          onChange={(e) => { setPlaying(false); setT(Number(e.target.value)); }}
-          aria-label="Replay position"
-          className="h-1 min-w-24 flex-1 accent-primary"
-        />
-        <div className="flex flex-wrap items-center gap-3 text-2xs text-muted-foreground">
+        {!live && (
+          <>
+            <Button variant="ghost" size="icon-sm" aria-label={playing ? "Pause" : "Play"} onClick={() => (t >= graph.duration ? (setT(0), setPlaying(true)) : setPlaying((p) => !p))}>
+              {playing ? <Pause /> : <Play />}
+            </Button>
+            <Button variant="ghost" size="icon-sm" aria-label="Replay" onClick={() => { setT(0); setPlaying(true); }}>
+              <RotateCcw />
+            </Button>
+            <input
+              type="range"
+              min={0}
+              max={graph.duration}
+              value={t}
+              onChange={(e) => { setPlaying(false); setT(Number(e.target.value)); }}
+              aria-label="Replay position"
+              className="h-1 min-w-24 flex-1 accent-primary"
+            />
+          </>
+        )}
+        <div className={cn("flex flex-wrap items-center gap-3 text-2xs text-muted-foreground", live && "ml-auto")}>
           {Object.entries(ROLE).map(([k, v]) => (
             <span key={k} className="flex items-center gap-1.5">
               <svg className="size-2.5" viewBox="0 0 10 10" aria-hidden><circle cx="5" cy="5" r="5" className={v.fill} /></svg>

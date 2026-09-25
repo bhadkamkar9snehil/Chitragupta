@@ -129,7 +129,17 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
       try {
         const target = follow ? undefined : runId ?? undefined;
         const r = await ops.live(target, full ? undefined : lastRef.current);
-        if (!alive || !r.run) return;
+        if (!alive) return;
+        if (!r.run) {
+          if (follow) {
+            idRef.current = null;
+            lastRef.current = undefined;
+            setRun(null);
+            setEvents([]);
+            setTrail(null);
+          }
+          return;
+        }
         const switched = idRef.current !== r.run.ID;
         if (switched || full) {
           const f = switched && !full ? await ops.live(r.run.ID) : r;
@@ -178,7 +188,9 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
                   <Radio className="size-3 motion-safe:animate-pulse" aria-hidden /> Working now
                 </span>
               ) : run ? (
-                <span className="text-2xs text-subtle-foreground">Idle · replaying the last run</span>
+                <span className="text-2xs text-subtle-foreground">Historical replay</span>
+              ) : follow ? (
+                <span className="text-2xs text-subtle-foreground">L2 idle · waiting for the next run</span>
               ) : null}
             </div>
             {run && (
@@ -218,7 +230,19 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
               {trail?.stopped && <Tag>Stopped · {trail.stopped.replace(/_/g, " ")}</Tag>}
             </div>
           )}
-          <div className="min-h-0 flex-1"><Brain trail={trail} ticketLabel={ticketLabel(run?.TicketNo) || "Ticket"} /></div>
+          <div className="min-h-0 flex-1">
+            {follow && !run ? (
+              <div className="grid h-full min-h-80 place-items-center px-6 text-center">
+                <div>
+                  <Radio className="mx-auto size-5 text-subtle-foreground" aria-hidden />
+                  <p className="mt-2 text-sm font-medium">No L2 run is active</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Follow Live is connected and will attach when the engineer claims the next ticket.</p>
+                </div>
+              </div>
+            ) : (
+              <Brain trail={trail} ticketLabel={ticketLabel(run?.TicketNo) || "Ticket"} mode={follow ? "live" : "replay"} autoplay={!follow} />
+            )}
+          </div>
         </section>
         <aside className="flex min-h-64 flex-col border-t bg-surface xl:min-h-0 xl:w-96 xl:border-l xl:border-t-0" aria-label="Event stream">
           <p className="border-b px-4 py-2.5 text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">What the engineer did</p>

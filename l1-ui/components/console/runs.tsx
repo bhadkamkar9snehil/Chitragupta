@@ -133,7 +133,7 @@ function RunWorkspace({ id, onBack, onLive }: { id: string; onBack: () => void; 
               {run.JevReviewDecision && <span>Jev review {outcomeLabel(run.JevReviewDecision)}{run.JevReviewConfidence != null ? ` · ${Math.round(run.JevReviewConfidence * 100)}%` : ""}</span>}
               {run.LocalModelPurpose && <span>Writer · {human(run.LocalModelPurpose)}</span>}
             </p>
-            <Button variant="outline" size="sm" className="mt-3" onClick={() => onLive(run.ID)}>Replay live</Button>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => onLive(run.ID)}>Open replay</Button>
           </div>
         </div>
         <StageRail run={run} events={run.Events} />
