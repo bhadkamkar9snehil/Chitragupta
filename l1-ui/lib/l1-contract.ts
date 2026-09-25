@@ -79,12 +79,39 @@ export const L2QuestionAnswerResultSchema = z.object({
   answer: z.string().trim().min(1).max(4_000),
 });
 
-export const L1HumanToolNameSchema = z.enum([
-  "collect_intake",
-  "answer_l2_question",
+export const IncidentDetailFieldSchema = z.object({
+  id: IdSchema,
+  label: z.string().trim().min(1).max(160),
+  description: z.string().trim().min(1).max(400).optional(),
+  placeholder: z.string().trim().min(1).max(200).optional(),
+  multiline: z.boolean().optional(),
+  required: z.boolean().optional(),
+  maxLength: z.number().int().min(1).max(4_000).optional(),
+});
+
+export const IncidentDetailFormSchema = z
+  .object({
+    id: IdSchema,
+    title: ShortTextSchema,
+    description: z.string().trim().min(1).max(600).optional(),
+    fields: z.array(IncidentDetailFieldSchema).min(1).max(8),
+  })
+  .refine(
+    (form) =>
+      new Set(form.fields.map((field) => field.id)).size === form.fields.length,
+    { message: "Incident-detail field IDs must be unique." },
+  )
+  .refine(
+    (form) => form.fields.some((field) => field.required !== false),
+    { message: "Incident-detail form must contain a required field." },
+  );
+
+export const L1IntakePromptSchema = z.union([
+  SerializableQuestionInputFlowSchema,
+  IncidentDetailFormSchema,
 ]);
 
-export const L1CollectIntakeResultSchema = z
+export const L1ChoiceIntakeResultSchema = z
   .record(IdSchema, z.array(IdSchema).min(1).max(20))
   .refine(
     (value) => {
@@ -93,6 +120,26 @@ export const L1CollectIntakeResultSchema = z
     },
     { message: "Intake must contain between 1 and 8 fields." },
   );
+
+export const L1DetailIntakeResultSchema = z
+  .record(IdSchema, z.string().trim().min(1).max(4_000))
+  .refine(
+    (value) => {
+      const count = Object.keys(value).length;
+      return count >= 1 && count <= 8;
+    },
+    { message: "Incident details must contain between 1 and 8 fields." },
+  );
+
+export const L1CollectIntakeResultSchema = z.union([
+  L1ChoiceIntakeResultSchema,
+  L1DetailIntakeResultSchema,
+]);
+
+export const L1HumanToolNameSchema = z.enum([
+  "collect_intake",
+  "answer_l2_question",
+]);
 
 export const L1ToolResultSchema = z.discriminatedUnion("toolName", [
   z.object({
@@ -122,7 +169,7 @@ export const L1MessageResponseSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("collect_intake"),
     toolCallId: IdSchema,
-    flow: SerializableQuestionInputFlowSchema,
+    flow: L1IntakePromptSchema,
   }),
   z.object({
     type: z.literal("ticket"),
@@ -150,4 +197,6 @@ export type L2QuestionPrompt = z.infer<typeof L2QuestionPromptSchema>;
 export type L2QuestionAnswerResult = z.infer<
   typeof L2QuestionAnswerResultSchema
 >;
+export type IncidentDetailForm = z.infer<typeof IncidentDetailFormSchema>;
+export type L1IntakePrompt = z.infer<typeof L1IntakePromptSchema>;
 export type L1MessageResponse = z.infer<typeof L1MessageResponseSchema>;
