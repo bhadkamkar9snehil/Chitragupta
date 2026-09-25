@@ -186,22 +186,33 @@ function toHash(r: Route) {
   return "";
 }
 
-function Workspace({ user, config, onSignOut }: { user: User; config: WidgetConfig; onSignOut: () => void }) {
+// Inside the support console the same chat runs embedded: the console owns the URL, and ticket links open the
+// console's own ticket record instead of the requester view.
+export type Embed = { sessionId: string | null; onSession: (id: string | null) => void; onOpenTicket: (ticketId: string | null) => void };
+
+function Workspace({ user, config, onSignOut, embed }: { user: User; config: WidgetConfig; onSignOut?: () => void; embed?: Embed }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [route, setRouteState] = useState<Route>(() => parseHash());
+  const [route, setRouteState] = useState<Route>(() => (embed ? { tab: "messages", sessionId: embed.sessionId } : parseHash()));
   const setRoute = useCallback((r: Route) => {
+    if (embed) {
+      if (r.tab === "tickets") return embed.onOpenTicket(r.ticketId);
+      setRouteState(r.tab === "messages" ? r : { tab: "messages", sessionId: null });
+      if (r.tab === "messages") embed.onSession(r.sessionId);
+      return;
+    }
     setRouteState(r);
     const hash = toHash(r);
     if (location.hash !== hash) history.replaceState(null, "", hash || location.pathname + location.search);
-  }, []);
+  }, [embed]);
 
   useEffect(() => {
+    if (embed) return;
     const onHash = () => setRouteState(parseHash());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
-  }, []);
+  }, [embed]);
 
   const refresh = useCallback(async () => {
     const [s, t] = await Promise.allSettled([api.sessions(user.ID), api.tickets(user.ID)]);
@@ -228,6 +239,13 @@ function Workspace({ user, config, onSignOut }: { user: User; config: WidgetConf
     { tab: "messages" as const, label: "Messages", icon: MessageCircle, badge: 0, to: { tab: "messages", sessionId: null } as Route },
     { tab: "tickets" as const, label: "Tickets", icon: TicketIcon, badge: waiting, hint: open, to: { tab: "tickets", ticketId: null } as Route },
   ];
+
+  if (embed)
+    return (
+      <HelpdeskContext.Provider value={ctx}>
+        <Messages />
+      </HelpdeskContext.Provider>
+    );
 
   return (
     <HelpdeskContext.Provider value={ctx}>
@@ -290,6 +308,15 @@ function Workspace({ user, config, onSignOut }: { user: User; config: WidgetConf
       </div>
     </HelpdeskContext.Provider>
   );
+}
+
+// The requester chat, embedded in the support console as the acting engineer.
+export function ConsoleChat({ user, embed }: { user: User; embed: Embed }) {
+  const [config, setConfig] = useState<WidgetConfig>(DEFAULT_CONFIG);
+  useEffect(() => {
+    api.config().then((c) => setConfig({ ...DEFAULT_CONFIG, ...c.widget })).catch(() => {});
+  }, []);
+  return <Workspace user={user} config={config} embed={embed} />;
 }
 
 export function AccountMenu({ user, onSignOut, compact }: { user: User; onSignOut?: () => void; compact?: boolean }) {

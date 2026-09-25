@@ -9,8 +9,10 @@ import {
 import { api, type Ticket, type User } from "@/lib/api";
 import { displayName, ticketLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Avatar, Dialog, Kbd, SearchInput, StatePill, Tip, TooltipProvider } from "@/components/ui/primitives";
-import { applyBrand, BrandMark } from "@/components/helpdesk/app";
+import { Avatar, Dialog, Empty, Kbd, SearchInput, StatePill, Tip, TooltipProvider } from "@/components/ui/primitives";
+import { applyBrand, BrandMark, ConsoleChat } from "@/components/helpdesk/app";
+import { Button } from "@/components/ui/button";
+import { PageTitle } from "@/components/ui/viz";
 import { InboxView } from "./inbox";
 import { ConversationsView } from "./conversations";
 import { ReportsView } from "./reports";
@@ -24,7 +26,7 @@ import { AgentsView } from "./agents";
 import { LogsView } from "./logs";
 
 // One route shape for the whole suite: #/<view>/<id>
-export type View = "overview" | "live" | "board" | "inbox" | "conversations" | "runs" | "l3" | "agents" | "logs" | "reports" | "settings";
+export type View = "chat" | "overview" | "live" | "board" | "inbox" | "conversations" | "runs" | "l3" | "agents" | "logs" | "reports" | "settings";
 export type ConsoleRoute = { view: View; id?: string | null };
 
 const GROUPS: { label: string; items: { view: View; label: string; icon: typeof Inbox }[] }[] = [
@@ -46,7 +48,8 @@ const GROUPS: { label: string; items: { view: View; label: string; icon: typeof 
     { view: "settings", label: "Settings", icon: SettingsIcon },
   ] },
 ];
-const ALL = GROUPS.flatMap((g) => g.items);
+const CHAT = { view: "chat" as View, label: "New chat", icon: MessageSquarePlus };
+const ALL = [CHAT, ...GROUPS.flatMap((g) => g.items)];
 
 function parse(): ConsoleRoute {
   const [, view, id] = location.hash.replace(/^#\/?/, "/").split("/");
@@ -55,10 +58,7 @@ function parse(): ConsoleRoute {
 
 const ENGINEER_KEY = "desk.engineer";
 
-// Chats happen in the requester helpdesk; staff open it as themselves (the acting engineer) to test or raise one.
-export function openChat(engineer: User | null) {
-  window.open(`/${engineer ? `?user=${encodeURIComponent(engineer.ID)}` : ""}#/messages`, "_blank", "noopener");
-}
+
 const safe = <T,>(fn: () => T, fallback: T) => {
   try {
     return fn();
@@ -164,9 +164,10 @@ export function Console() {
           )}
           <Tip label="Start a chat in the helpdesk" side="right">
             <button
-              onClick={() => openChat(engineer)}
+              onClick={() => go("chat")}
               aria-label="New chat"
-              className={cn("mx-auto mb-1 flex size-10 items-center justify-center gap-2 rounded-lg bg-foreground text-sm font-medium text-background hover:opacity-90", !navCollapsed && "xl:h-9 xl:w-full xl:rounded-full")}
+              aria-current={route.view === "chat" ? "page" : undefined}
+              className={cn("mx-auto mb-1 flex size-10 items-center justify-center gap-2 rounded-lg bg-foreground text-sm font-medium text-background hover:opacity-90", !navCollapsed && "xl:h-9 xl:w-full xl:rounded-full", route.view === "chat" && "ring-2 ring-ring ring-offset-2 ring-offset-canvas")}
             >
               <MessageSquarePlus className="size-4" aria-hidden />
               {!navCollapsed && <span className="hidden xl:inline">New chat</span>}
@@ -224,10 +225,26 @@ export function Console() {
           {route.view === "overview" && (
             <OverviewView go={{ live: () => go("live"), l1: () => go("conversations"), runs: () => go("runs"), l3: () => go("l3"), tickets: () => go("inbox"), ticket: (id) => go("inbox", id), run: (id) => go("runs", id) }} />
           )}
+          {route.view === "chat" && (
+            engineer ? (
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div className="flex shrink-0 items-center gap-3 border-b bg-canvas px-4 py-3 lg:px-6">
+                  <PageTitle icon={MessageSquarePlus} className="flex-1" title="Chat" meta={`as ${displayName(engineer)} · same assistant, tickets and L2 pipeline as requesters`} />
+                  <Button size="sm" variant="ghost" onClick={() => setPicking(true)}>Switch person</Button>
+                </div>
+                <ConsoleChat key={engineer.ID} user={engineer} embed={{ sessionId: route.id ?? null, onSession: (id) => setId(id), onOpenTicket: (id) => go("inbox", id) }} />
+              </div>
+            ) : (
+              <Empty className="m-auto" icon={<UserRound className="size-5" />} title="Choose who is chatting">
+                Chats and the tickets they raise are recorded against an XBatch account.
+                <Button size="sm" className="mt-4" onClick={() => setPicking(true)}>Choose who you are</Button>
+              </Empty>
+            )
+          )}
           {route.view === "live" && <LiveView key={route.id ? "replay" : "live"} runId={route.id ?? null} onRun={setId} onOpenRun={(id) => go("runs", id)} />}
           {route.view === "board" && <BoardView onOpenTicket={(id) => go("inbox", id)} onOpenRun={(id) => go("runs", id)} />}
           {route.view === "inbox" && <InboxView ticketId={route.id ?? null} onSelect={setId} onOpenRun={(id) => go("runs", id)} />}
-          {route.view === "conversations" && <ConversationsView sessionId={route.id ?? null} onSelect={setId} onOpenTicket={(id) => go("inbox", id)} onNewChat={() => openChat(engineer)} />}
+          {route.view === "conversations" && <ConversationsView sessionId={route.id ?? null} onSelect={setId} onOpenTicket={(id) => go("inbox", id)} onNewChat={() => go("chat")} />}
           {route.view === "runs" && <RunsView runId={route.id ?? null} onSelect={setId} onLive={(id) => go("live", id)} onOpenTicket={(id) => go("inbox", id)} />}
           {route.view === "l3" && (
             <L3View escalationId={route.id ?? null} onSelect={setId} engineer={engineer} askEngineer={() => setPicking(true)} onOpenRun={(id) => go("runs", id)} onOpenTicket={(id) => go("inbox", id)} />
@@ -238,7 +255,7 @@ export function Console() {
           {route.view === "settings" && <SettingsView tab={route.id ?? undefined} onTab={setId} />}
         </main>
       </div>
-      <Palette open={palette} onOpenChange={setPalette} go={go} onChat={() => openChat(engineer)} />
+      <Palette open={palette} onOpenChange={setPalette} go={go} onChat={() => go("chat")} />
       <EngineerPicker
         open={picking}
         onOpenChange={setPicking}
@@ -334,7 +351,7 @@ function Palette({ open, onOpenChange, go, onChat }: { open: boolean; onOpenChan
           </Command.Item>
         </Command.Group>
         <Command.Group heading="Go to" className={heading}>
-          {ALL.filter((n) => !q || n.label.toLowerCase().includes(q.toLowerCase())).map((n) => (
+          {ALL.filter((n) => n.view !== "chat").filter((n) => !q || n.label.toLowerCase().includes(q.toLowerCase())).map((n) => (
             <Command.Item key={n.view} value={n.label} onSelect={() => run(n.view)} className="flex h-10 cursor-default items-center gap-3 rounded-md px-2 text-sm data-[selected=true]:bg-surface-2">
               <n.icon className="size-4 text-subtle-foreground" aria-hidden />
               {n.label}

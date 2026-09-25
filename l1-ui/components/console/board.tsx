@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { api, ops, type Board, type KanbanTask, type Ticket } from "@/lib/api";
 import { ago, duration, outcomeLabel, ticketLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Attributes, Headline, Legend, PageTitle, Panel, SegmentBar, Segmented } from "@/components/ui/viz";
+import { Attributes, Headline, Legend, PageTitle, Panel, SegmentBar, Segmented, type VizTone } from "@/components/ui/viz";
 import { Button } from "@/components/ui/button";
 import { Dialog, Empty, Skeleton, Tip } from "@/components/ui/primitives";
 import { InspectorBlock } from "./inspect";
@@ -115,6 +115,11 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
   const finished = tasks.filter((t) => t.completedAt && t.startedAt);
   const avgTook = finished.length ? Math.round(finished.reduce((n, t) => n + ((t.completedAt ?? 0) - (t.startedAt ?? 0)), 0) / finished.length) : null;
   const done = tasks.filter((t) => t.status === "done").length;
+  const openTickets = (tickets ?? []).filter((t) => t.StateLabel !== "Resolved");
+  const stageCount = (stage: string) => openTickets.filter((t) => t.StateLabel === stage).length;
+  const oldest = [...openTickets].filter((t) => t.StateLabel !== "Being investigated").sort((x, y) => x.CreatedOn.localeCompare(y.CreatedOn))[0];
+  const topRequesters = Object.entries(openTickets.reduce<Record<string, number>>((m, t) => ({ ...m, [t.FirstLastName ?? "unknown"]: (m[t.FirstLastName ?? "unknown"] ?? 0) + 1 }), {}))
+    .sort((x, y) => y[1] - x[1]).slice(0, 4);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -167,34 +172,39 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
                 {c.tasks.map((t) => <TaskCard key={t.id} task={t} next={later(t)} onOpen={() => setOpen(t)} />)}
               </Column>
             ) : (
-              <section key={c.id} aria-label={`${c.id}, empty`} className="flex w-12 shrink-0 flex-col items-center gap-3 rounded-2xl border border-dashed py-3">
-                <span className={cn("size-2 rounded-full", STATUS_DOT[c.id])} aria-hidden />
-                <span className="font-mono text-xs text-subtle-foreground vertical-text">{c.id} · 0</span>
-              </section>
+              <EmptyRail key={c.id} name={c.id} dot={STATUS_DOT[c.id]} />
             ))}
           </div>
         )}
-        {view === "lifecycle" && (
+        {view === "lifecycle" && tickets && (
+          <div className="grid gap-3 px-4 pt-4 md:grid-cols-3 lg:px-6">
+            <Panel icon={Activity} title="Open tickets" meta={`${openTickets.length} open · ${tickets.length - openTickets.length} resolved`}>
+              <Headline value={openTickets.length} unit="open" note={`${stageCount("Being investigated")} with L2 now`} />
+              <SegmentBar className="mt-3" label="Open tickets by stage" segments={LIFECYCLE.filter((st) => st !== "Resolved").map((st) => ({ label: LIFECYCLE_NAME[st], value: stageCount(st), tone: STAGE_TONE[st] }))} />
+            </Panel>
+            <Panel icon={AlertTriangle} title="Waiting on people" meta="L2 has handed these over">
+              <Legend rows={[
+                { label: "needs human action", value: stageCount("With the support team"), tone: "strong" },
+                { label: "escalated to L3", value: stageCount("Escalated to specialist"), tone: "warn" },
+                { label: "waiting on requester", value: stageCount("Waiting for your reply"), tone: "mid" },
+              ]} />
+              <p className="mt-2 truncate font-mono text-2xs text-subtle-foreground">{oldest ? `oldest ${ticketLabel(oldest.TicketNo)} · open ${ago(oldest.CreatedOn)}` : "nothing waiting"}</p>
+            </Panel>
+            <Panel icon={Users} title="Requesters" meta="who has the most open tickets">
+              <Legend rows={topRequesters.map(([name, n]) => ({ label: name.toLowerCase(), value: n, tone: "faint" as const }))} />
+            </Panel>
+          </div>
+        )}
+        {view === "lifecycle" && !tickets && <div className="flex gap-3 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-96 w-72 shrink-0" />)}</div>}
+        {view === "lifecycle" && tickets && (
           <div className="flex min-h-128 gap-3 p-4 lg:px-6">
             {LIFECYCLE.map((stage) => {
-              const items = (tickets ?? []).filter((t) => t.StateLabel === stage);
-              return (
-                <Column key={stage} name={LIFECYCLE_NAME[stage]} count={items.length} dot={STAGE_DOT[stage] ?? "bg-border-strong"}>
-                  {items.map((t) => (
-                    <li key={t.ID}>
-                      <button onClick={() => onOpenTicket(t.ID)} className="w-full rounded-xl border bg-canvas p-3 text-left hover:border-border-strong">
-                        <span className="flex items-center gap-2 font-mono text-xs">
-                          <span className="text-foreground">{ticketLabel(t.TicketNo)}</span>
-                          <span className="ml-auto text-subtle-foreground">{ago(t.ModifiedOn ?? t.CreatedOn)}</span>
-                        </span>
-                        <span className="mt-1.5 line-clamp-2 block text-meta leading-snug">{t.BriefDetails}</span>
-                        <span className="mt-2 block truncate font-mono text-2xs text-subtle-foreground">{t.FirstLastName}{t.Area && t.Area !== "Common" ? ` · ${t.Area}` : ""}</span>
-                      </button>
-                    </li>
-                  ))}
-                  {!items.length && <li className="py-8 text-center font-mono text-2xs text-subtle-foreground">none</li>}
+              const items = tickets.filter((t) => t.StateLabel === stage);
+              return items.length ? (
+                <Column key={stage} name={LIFECYCLE_NAME[stage]} count={items.length} dot={STAGE_DOT[stage] ?? "bg-border-strong"} hint={stage === "Resolved" ? "closed" : undefined}>
+                  {items.map((t) => <TicketCard key={t.ID} ticket={t} stage={stage} onOpen={() => onOpenTicket(t.ID)} />)}
                 </Column>
-              );
+              ) : <EmptyRail key={stage} name={LIFECYCLE_NAME[stage].toLowerCase()} dot={STAGE_DOT[stage] ?? "bg-border-strong"} />;
             })}
           </div>
         )}
@@ -303,6 +313,47 @@ function TaskCard({ task: t, next, onOpen }: { task: Task; next?: Task; onOpen: 
             <span className="line-clamp-2">{stale ? `superseded by ${next!.kind.toLowerCase()} · c${next!.cycle}` : t.error && t.error !== "None" ? t.error : "blocked · waiting on a person"}</span>
           </span>
         )}
+      </button>
+    </li>
+  );
+}
+
+const STAGE_TONE: Record<string, VizTone> = {
+  "Being investigated": "signal", "Update posted": "mid", "With the support team": "strong", "Escalated to specialist": "warn", "Waiting for your reply": "faint", Resolved: "faint",
+};
+const STAGE_CHIP: Record<string, string> = {
+  "Being investigated": "bg-signal-soft text-signal", "Escalated to specialist": "bg-warning-soft text-warning", Resolved: "bg-surface-3 text-muted-foreground",
+};
+
+function EmptyRail({ name, dot }: { name: string; dot: string }) {
+  return (
+    <section aria-label={`${name}, empty`} className="flex w-12 shrink-0 flex-col items-center gap-3 rounded-2xl border border-dashed py-3">
+      <span className={cn("size-2 rounded-full", dot)} aria-hidden />
+      <span className="vertical-text font-mono text-xs text-subtle-foreground">{name} · 0</span>
+    </section>
+  );
+}
+
+function TicketCard({ ticket: t, stage, onOpen }: { ticket: Ticket; stage: string; onOpen: () => void }) {
+  const last = t.Runs?.at(-1);
+  return (
+    <li>
+      <button onClick={onOpen} className={cn("w-full rounded-xl border bg-canvas p-3 text-left hover:border-border-strong", stage === "Being investigated" && "border-signal", stage === "Escalated to specialist" && "border-warning/50", stage === "Resolved" && "opacity-70 hover:opacity-100")}>
+        <span className="flex items-center gap-2 font-mono text-xs">
+          <span className={cn("rounded px-1.5 py-0.5 text-2xs", STAGE_CHIP[stage] ?? "bg-surface-3 text-foreground")}>{(LIFECYCLE_NAME[stage] ?? stage).toLowerCase()}</span>
+          <span className="text-foreground">{ticketLabel(t.TicketNo)}</span>
+          <span className="ml-auto text-subtle-foreground">{ago(t.ModifiedOn ?? t.CreatedOn)}</span>
+        </span>
+        <span className="mt-2 line-clamp-2 block text-meta leading-snug">{t.BriefDetails}</span>
+        {last?.ResponseType && (
+          <span className="mt-2 block truncate font-mono text-2xs">
+            <span className="text-subtle-foreground">L2 said </span><span className="text-foreground">{outcomeLabel(last.ResponseType).toLowerCase()}</span>
+          </span>
+        )}
+        <span className="mt-2 flex items-center gap-2 font-mono text-2xs text-subtle-foreground">
+          <span className="truncate">{(t.FirstLastName ?? "requester").toLowerCase()}</span>
+          {t.Area && t.Area !== "Common" && <span className="ml-auto shrink-0">{t.Area.toLowerCase()}</span>}
+        </span>
       </button>
     </li>
   );
