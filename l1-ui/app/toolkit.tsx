@@ -112,6 +112,7 @@ export default defineToolkit({
 
   show_knowledge_sources: {
     type: "backend",
+    display: "standalone",
     description:
       "Show the approved governed knowledge sources that support an L1 answer.",
     render: ({ result }) => {
@@ -123,6 +124,7 @@ export default defineToolkit({
 
   show_ticket: {
     type: "backend",
+    display: "standalone",
     description:
       "Show the authoritative Helpdesk ticket snapshot returned by Chitragupta.",
     render: ({ result }) => {
@@ -134,6 +136,7 @@ export default defineToolkit({
 
   show_tickets: {
     type: "backend",
+    display: "standalone",
     description:
       "Show the authenticated requester's authoritative Helpdesk ticket list.",
     render: ({ result }) => {
@@ -145,6 +148,7 @@ export default defineToolkit({
 
   show_l2_reply: {
     type: "backend",
+    display: "standalone",
     description:
       "Show a user-visible L2 publication for an existing Helpdesk ticket.",
     render: ({ result }) => {
