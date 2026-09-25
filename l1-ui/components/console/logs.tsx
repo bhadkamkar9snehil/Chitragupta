@@ -34,10 +34,13 @@ export function LogsView() {
   }, []);
 
   useEffect(() => {
-    load();
-    if (!follow) return;
+    const initial = setTimeout(load, 0);
+    if (!follow) return () => clearTimeout(initial);
     const id = setInterval(load, 2500);
-    return () => clearInterval(id);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(id);
+    };
   }, [follow, load]);
 
   const rows = useMemo(() => {
@@ -71,7 +74,7 @@ export function LogsView() {
               {name}
             </button>
           ))}
-          {data?.sources.map((s) => <Tag key={s.name} className={!s.available ? "text-destructive" : undefined}>{s.name} · {s.available ? `${s.records.length} tailed` : "unavailable"}</Tag>)}
+          {data?.sources.map((s) => <Tag key={s.name} variant={s.available ? "default" : "error"}>{s.name} · {s.available ? `${s.records.length} tailed` : "unavailable"}</Tag>)}
         </div>
       </header>
 

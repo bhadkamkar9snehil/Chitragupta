@@ -70,8 +70,8 @@ export function StatePill({ tone, children, className }: { tone: Tone; children:
   );
 }
 
-export function Tag({ children, className, mono }: { children: React.ReactNode; className?: string; mono?: boolean }) {
-  return <span className={cn("inline-flex h-6 items-center rounded-md border bg-surface-2 px-2 text-xs text-muted-foreground", mono && "font-mono", className)}>{children}</span>;
+export function Tag({ children, className, mono, variant = "default" }: { children: React.ReactNode; className?: string; mono?: boolean; variant?: "default" | "error" }) {
+  return <span className={cn("inline-flex h-6 items-center rounded-md border bg-surface-2 px-2 text-xs text-muted-foreground", variant === "error" && "text-destructive", mono && "font-mono", className)}>{children}</span>;
 }
 
 export function Avatar({ name, className }: { name: string; className?: string }) {
