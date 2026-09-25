@@ -62,18 +62,17 @@ export function OverviewView({ go }: { go: Go }) {
 
   return (
     <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-7xl space-y-4 px-4 py-5 lg:px-6">
+      <div className="mx-auto max-w-7xl space-y-3 px-4 py-3 lg:px-6">
         <header className="flex flex-wrap items-center gap-3">
           <IconTile icon={Gauge} />
           <div className="min-w-0 flex-1">
             <h1 className="text-title font-semibold tracking-tight">Command centre</h1>
-            <p className="text-xs text-subtle-foreground">Open work across L1 chat, the L2 engineer and L3 people · refreshes every 10 s</p>
           </div>
           {data && error && <p role="status" className="font-mono text-xs text-warning">refresh failed · showing last data</p>}
         </header>
 
-        <div className="grid gap-4 lg:grid-cols-3">
-          <Panel icon={Gauge} title="Open tickets" meta="where every open ticket is waiting" className="lg:col-span-2"
+        <div className="grid gap-3 lg:grid-cols-3 lg:items-start">
+          <Panel icon={Gauge} title="Open tickets" className="lg:col-span-2"
             actions={<Button size="sm" variant="ghost" onClick={go.tickets}>All tickets <ArrowRight /></Button>}>
             {c ? (
               <div className="space-y-4">
@@ -96,22 +95,22 @@ export function OverviewView({ go }: { go: Go }) {
             ) : <Skeleton className="h-28" />}
           </Panel>
 
-          <Panel icon={Radio} title="Live engineer" meta={live ? "investigating now" : c?.LastClaimOn ? `idle · last claim ${ago(c.LastClaimOn)}` : "idle"}
+          <Panel icon={Radio} title="Live engineer" meta={!data ? undefined : live ? "investigating now" : c?.LastClaimOn ? `last claim ${ago(c.LastClaimOn)}` : undefined}
             actions={!live ? <Button size="sm" variant="ghost" onClick={go.live}>Replay <ArrowRight /></Button> : undefined}>
             {data && <ModelServer sample={data.lmStudio} />}
             {!data ? <Skeleton className="h-28" /> : live ? (
-              <div className="flex h-full flex-col">
+              <div className="flex flex-col">
                 <p className="flex items-center gap-2 font-mono text-xs text-signal"><span className="size-2 rounded-full bg-signal motion-safe:animate-pulse" aria-hidden />{ticketLabel(live.TicketNo)} · {ago(live.ClaimedOn)}</p>
                 <p className="mt-1.5 line-clamp-2 text-sm font-medium">{live.BriefDetails}</p>
-                <div className="mt-auto flex flex-wrap gap-2 pt-4">
+                <div className="flex flex-wrap gap-2 pt-4">
                   <button onClick={go.live} className="flex h-9 items-center gap-2 rounded-full bg-foreground px-4 text-sm font-medium text-background hover:opacity-90">Watch it work <ArrowRight className="size-4" aria-hidden /></button>
                   <Button size="sm" variant="ghost" onClick={() => go.ticket(live.TicketID)}>Ticket</Button>
                 </div>
               </div>
             ) : (
-              <div className="flex h-full flex-col">
+              <div className="flex flex-col">
                 <p className="text-sm text-muted-foreground">No ticket is being investigated. The engineer claims the next one within two minutes.</p>
-                <div className="mt-auto grid grid-cols-3 gap-3 pt-4">
+                <div className="grid grid-cols-3 gap-3 pt-4">
                   <Stat label="Runs · 24 h" value={c?.RunsLast24h ?? 0} />
                   <Stat label="Jev · 24 h" value={c?.JevCallsLast24h ?? 0} tone="signal" />
                   <Stat label="Model · 24 h" value={c?.ModelCallsLast24h ?? 0} />
@@ -121,8 +120,8 @@ export function OverviewView({ go }: { go: Go }) {
           </Panel>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-3">
-          <Panel icon={BellRing} title="Needs attention" meta={data ? `${attention.length} of ${c?.OpenTickets ?? 0} open · escalated, unclaimed and stalled first` : "loading"} className="lg:col-span-2" pad="none">
+        <div className="grid gap-3 lg:grid-cols-3 lg:items-start">
+          <Panel icon={BellRing} title="Needs attention" meta={data ? `${attention.length} of ${c?.OpenTickets ?? 0} open` : undefined} className="lg:col-span-2" pad="none">
             {!data ? <div className="space-y-2 p-4"><Skeleton className="h-14" /><Skeleton className="h-14" /><Skeleton className="h-14" /></div> : attention.length ? (
               <ol className="divide-y">{attention.map((t) => <AttentionRow key={t.ID} ticket={t} onOpen={() => go.ticket(t.ID)} />)}</ol>
             ) : (
@@ -130,7 +129,7 @@ export function OverviewView({ go }: { go: Go }) {
             )}
           </Panel>
 
-          <Panel icon={Trophy} title="L2 outcomes" meta={`${outcomeTotal} recorded replies`} actions={<Button size="sm" variant="ghost" onClick={go.runs}>Runs <ArrowRight /></Button>}>
+          <Panel icon={Trophy} title="L2 outcomes" meta={data ? `${outcomeTotal} replies` : undefined} actions={<Button size="sm" variant="ghost" onClick={go.runs}>Runs <ArrowRight /></Button>}>
             {!data ? <Skeleton className="h-40" /> : outcomeTotal ? (
               <div className="space-y-4">
                 <Headline value={`${Math.round((resolved / outcomeTotal) * 100)}%`} unit="resolved" note="by L2 alone" />
@@ -146,7 +145,7 @@ export function OverviewView({ go }: { go: Go }) {
           </Panel>
         </div>
 
-        <Panel icon={Activity} title="Recent activity" meta={`${c?.ChatsLast24h ?? 0} chats and ${c?.RunsLast24h ?? 0} investigations in 24 h`} pad="tight"
+        <Panel icon={Activity} title="Recent activity" meta={c ? `${c.ChatsLast24h} chats · ${c.RunsLast24h} investigations · 24 h` : undefined} pad="tight"
           actions={<Legend inline rows={[{ label: "L1", tone: "faint" }, { label: "L2", tone: "signal" }, { label: "L3", tone: "warn" }]} className="hidden sm:flex" />}>
           {!data ? <Skeleton className="m-2 h-40" /> : (
             <ol>

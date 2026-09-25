@@ -200,17 +200,17 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
               <Journey ticket={t} onChat={() => setTab("chat")} onRun={onOpenRun} />
             </div>
           </div>
-          <div className="scrollbar-thin -mb-px mt-3 flex gap-4 overflow-x-auto" role="tablist">
+          <div className="scrollbar-thin my-3 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl border bg-canvas p-1" role="tablist">
             {tabs.map((x) => (
               <button
                 key={x.id}
                 role="tab"
                 aria-selected={tab === x.id}
                 onClick={() => setTab(x.id)}
-                className={cn("flex h-11 shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent text-meta sm:h-9 font-medium text-muted-foreground hover:text-foreground", tab === x.id && "border-signal text-foreground")}
+                className={cn("flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 text-meta font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground sm:h-9", tab === x.id && "bg-foreground text-background hover:bg-foreground hover:text-background")}
               >
                 {x.label}
-                <span className="rounded bg-surface-3 px-1.5 text-2xs tabular-nums">{x.n}</span>
+                <span className={cn("rounded px-1.5 font-mono text-2xs tabular-nums", tab === x.id ? "bg-background/15" : "bg-surface-3")}>{x.n}</span>
               </button>
             ))}
           </div>
@@ -319,10 +319,9 @@ function Journey({ ticket, onChat, onRun }: { ticket: Ticket; onChat: () => void
       {runs.length ? runs.map((r) => (
         <li key={r.ID} className="flex shrink-0 items-center gap-1">
           <button onClick={() => onRun(r.ID)} className={cn(step, link, !r.CompletedOn && "border-signal text-signal")}><Bot className="size-3" aria-hidden />L2 #{r.AttemptNo}{r.CompletedOn ? ` · ${outcomeLabel(r.ResponseType).toLowerCase()}` : " · working"}</button>
-          <span className="h-px w-3 bg-signal" aria-hidden />
+          {r !== latest && <span className="h-px w-3 bg-signal" aria-hidden />}
         </li>
       )) : <li className="flex shrink-0 items-center gap-1"><span className={cn(step, "border-dashed")}>L2 not claimed yet</span><span className="h-px w-3 bg-border-strong" aria-hidden /></li>}
-      <li><span className={cn(step, "text-foreground", latest?.CompletedOn && "border-signal/60")}>{ticket.StateLabel}</span></li>
     </ol>
   );
 }

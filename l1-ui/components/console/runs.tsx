@@ -143,11 +143,11 @@ function RunWorkspace({ id, onBack, onLive, onOpenTicket, drawerOpen, onDrawerTo
             <Button size="sm" variant="outline" onClick={() => onOpenTicket(run.TicketID)}>Open ticket</Button>
           </div>
         </div>
-        <div className="scrollbar-thin -mb-px flex gap-4 overflow-x-auto" role="tablist">
+        <div className="scrollbar-thin my-3 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl border bg-canvas p-1" role="tablist">
           {tabs.map((x) => (
-            <button key={x.id} role="tab" aria-selected={tab === x.id} onClick={() => setTab(x.id)} className={cn("flex h-11 shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent text-meta font-medium text-muted-foreground hover:text-foreground", tab === x.id && "border-signal text-foreground")}>
+            <button key={x.id} role="tab" aria-selected={tab === x.id} onClick={() => setTab(x.id)} className={cn("flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 text-meta font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground sm:h-9", tab === x.id && "bg-foreground text-background hover:bg-foreground hover:text-background")}>
               {x.label}
-              {x.n !== undefined && <span className="rounded bg-surface-3 px-1.5 text-2xs tabular-nums">{x.n}</span>}
+              {x.n !== undefined && <span className={cn("rounded px-1.5 font-mono text-2xs tabular-nums", tab === x.id ? "bg-background/15" : "bg-surface-3")}>{x.n}</span>}
             </button>
           ))}
         </div>

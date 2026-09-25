@@ -10,6 +10,7 @@ import { Attributes, Headline, Legend, PageTitle, Panel, SegmentBar, Segmented, 
 import { Button } from "@/components/ui/button";
 import { Dialog, Empty, Skeleton, Tip } from "@/components/ui/primitives";
 import { InspectorBlock } from "./inspect";
+import { RichText } from "@/components/helpdesk/rich-text";
 
 const COLUMNS = ["triage", "todo", "ready", "running", "review", "blocked", "done"];
 const LIFECYCLE = ["Being investigated", "Update posted", "With the support team", "Escalated to specialist", "Waiting for your reply", "Resolved"];
@@ -124,7 +125,7 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex shrink-0 flex-wrap items-center gap-3 border-b bg-canvas px-4 py-3 lg:px-6">
-        <PageTitle icon={KanbanSquare} className="flex-1" title="Board" meta={view === "kanban" ? "L2 task queue · up to 8 runs, one local-model slot · review 30 › rework 20 › new 10" : "open tickets grouped by support state"} />
+        <PageTitle icon={KanbanSquare} className="flex-1" title="Board" />
         <Segmented label="Board view" value={view} onChange={setView} options={[{ id: "kanban", label: "Agent tasks" }, { id: "lifecycle", label: "Ticket lifecycle" }]} />
         <Tip label="Refresh">
           <Button variant="ghost" size="icon-sm" aria-label="Refresh" onClick={refresh} disabled={refreshing}><RefreshCw className={cn(refreshing && "animate-spin")} /></Button>
@@ -218,9 +219,13 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
               {open.ticketId && <Button size="sm" variant="outline" onClick={() => { onOpenTicket(open.ticketId!); setOpen(null); }}>Open ticket</Button>}
             </div>
             {open.response && (
-              <div className="rounded-xl border bg-surface p-3">
-                <p className="font-mono text-xs"><span className="text-signal">proposes {outcomeLabel(open.response).toLowerCase()}</span><span className="text-subtle-foreground"> · evidence {(open.evidence ?? "unknown").toLowerCase()}</span></p>
-                {open.reply && <p className="mt-2 line-clamp-6 whitespace-pre-line text-meta text-muted-foreground">{open.reply}</p>}
+              <div className="rounded-xl border bg-surface">
+                <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+                  <span className="text-xs text-subtle-foreground">Proposed reply</span>
+                  <span className="ml-auto rounded-md bg-surface-3 px-2 py-1 font-mono text-xs text-foreground">{outcomeLabel(open.response)}</span>
+                  <span className={cn("rounded-md px-2 py-1 font-mono text-xs", open.evidence === "COMPLETE" ? "bg-signal-soft text-signal" : "bg-warning-soft text-warning")}>evidence {(open.evidence ?? "unknown").toLowerCase()}</span>
+                </div>
+                {open.reply && <div className="scrollbar-thin max-h-80 overflow-y-auto px-4 py-3"><RichText compact>{open.reply}</RichText></div>}
               </div>
             )}
             <Attributes rows={[
