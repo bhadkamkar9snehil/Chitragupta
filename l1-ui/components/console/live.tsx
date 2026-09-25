@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { ops, type Run, type TraceEvent } from "@/lib/api";
 import { ago, clock, describeEvent, duration, human, outcomeLabel, ticketLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Switch, Tag } from "@/components/ui/primitives";
+import { Switch } from "@/components/ui/primitives";
 import { Button } from "@/components/ui/button";
 import { Brain, type Trail } from "./brain";
 import { InspectorBlock } from "./inspect";
@@ -348,7 +348,13 @@ export function LiveView({ runId, onRun, onOpenRun }: { runId: string | null; on
               </div>
             </div>
           ) : run && visual ? (
-            <Brain trail={trail} ticketLabel={ticketLabel(run.TicketNo) || "Ticket"} mode={follow ? "live" : "replay"} autoplay={false} />
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="flex items-center justify-between gap-3 border-b bg-surface-2 px-4 py-2.5">
+                <p className="text-xs text-muted-foreground">{follow ? "Optional live visual map" : "Optional historical visual replay"}</p>
+                <Button variant="ghost" size="sm" onClick={() => setVisual(false)}>Back to run overview</Button>
+              </div>
+              <Brain trail={trail} ticketLabel={ticketLabel(run.TicketNo) || "Ticket"} mode={follow ? "live" : "replay"} autoplay={false} />
+            </div>
           ) : run ? (
             <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-5 lg:p-8">
               <div className="mx-auto max-w-4xl space-y-5">

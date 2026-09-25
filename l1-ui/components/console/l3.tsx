@@ -141,6 +141,7 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
       toast.success({ assign: "Picked up", note: "Note added", resolve: close ? "Escalation resolved and ticket closed" : "Escalation resolved", reopen: "Reopened" }[action]);
       setNote("");
       setSummary("");
+      setTicket(result.ticket);
       onChanged(result.escalation);
     } catch (err) {
       toast.error((err as Error).message);
