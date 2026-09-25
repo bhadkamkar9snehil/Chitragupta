@@ -6,8 +6,10 @@ import { pageTitle } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
-// The L2 engineer's walk, replayed: ticket → identifiers Jev resolved → tables surveyed (coloured by the role Jev
-// judged) → the step-by-step walk Jev chose over the world graph. Pure SVG; time drives every class.
+// The walk has two visual jobs and keeps them separate:
+// 1) the world Jev surveyed stays radial around the ticket;
+// 2) the chosen walk gets a dedicated chronological lane on the right.
+// Keeping those zones separate prevents a completed walk from painting labels and nodes over the survey ring.
 
 export type Trail = {
   route?: string;
@@ -20,15 +22,36 @@ export type Trail = {
   numbers?: Record<string, { source: string | null; confidence: number; candidates: string[] }>;
 };
 
-type Node = { id: string; label: string; kind: string; ring: number; x: number; y: number; role?: string; confidence?: number; finding?: string; at: number; judgedAt?: number };
+type Node = {
+  id: string;
+  label: string;
+  kind: string;
+  ring: number;
+  x: number;
+  y: number;
+  role?: string;
+  confidence?: number;
+  finding?: string;
+  at: number;
+  judgedAt?: number;
+  stepNo?: number;
+};
 type Edge = { from: string; to: string; at: number; kind: "resolve" | "survey" | "step"; options?: number };
 
-const W = 1000, H = 720, CX = W / 2, CY = H / 2;
+const W = 1200;
+const H = 720;
+const CX = 390;
+const CY = H / 2;
 const ROLE: Record<string, { fill: string; label: string }> = {
   cause: { fill: "fill-destructive", label: "Cause" },
   stuck: { fill: "fill-warning", label: "Stuck record" },
   sees: { fill: "fill-info", label: "What the user sees" },
   unrelated: { fill: "fill-subtle-foreground", label: "Unrelated" },
+};
+
+const short = (value: string, max = 28) => {
+  const label = pageTitle(value);
+  return label.length > max ? `${label.slice(0, max - 1)}…` : label;
 };
 
 function layout(trail: Trail, ticketLabel: string) {
@@ -38,47 +61,94 @@ function layout(trail: Trail, ticketLabel: string) {
     if (!nodes.has(n.id)) nodes.set(n.id, n);
     return nodes.get(n.id)!;
   };
-  const polar = (r: number, a: number) => ({ x: CX + r * Math.cos(a), y: CY + r * Math.sin(a) * 0.82 });
+  const polar = (r: number, a: number) => ({ x: CX + r * Math.cos(a), y: CY + r * Math.sin(a) * 0.86 });
+
   add({ id: "ticket", label: ticketLabel, kind: "ticket", ring: 0, x: CX, y: CY, at: 0 });
 
-  const values = [...new Set((trail.entities ?? []).map((e) => e.value))];
+  const values = [...new Set((trail.entities ?? []).map((e) => e.value).filter(Boolean))];
   values.forEach((v, i) => {
-    const p = polar(values.length === 1 ? 0 : 95, (i / Math.max(1, values.length)) * Math.PI * 2 - Math.PI / 2);
-    add({ id: `v:${v}`, label: v, kind: "identifier", ring: 1, ...(values.length === 1 ? { x: CX, y: CY - 70 } : p), at: 400 + i * 150 });
-    edges.push({ from: "ticket", to: `v:${v}`, at: 400 + i * 150, kind: "resolve" });
+    const count = Math.max(1, values.length);
+    const a = (i / count) * Math.PI * 2 - Math.PI / 2;
+    const p = values.length === 1 ? { x: CX, y: CY - 78 } : polar(92, a);
+    add({ id: `v:${v}`, label: v, kind: "identifier", ring: 1, ...p, at: 350 + i * 120 });
+    edges.push({ from: "ticket", to: `v:${v}`, at: 350 + i * 120, kind: "resolve" });
   });
 
   const survey = trail.survey ?? [];
-  const tSurvey = 400 + values.length * 150 + 300;
+  const tSurvey = 350 + values.length * 120 + 250;
   survey.forEach((s, i) => {
-    const a = (i / Math.max(1, survey.length)) * Math.PI * 2 - Math.PI / 2 + 0.08;
-    const r = 240 + (i % 2) * 34;
-    const at = tSurvey + i * 110;
-    add({ id: `n:${s.node}`, label: s.node, kind: s.kind, ring: 2, ...polar(r, a), role: s.role, confidence: s.confidence, finding: s.finding, at, judgedAt: tSurvey + survey.length * 110 + 300 + i * 60 });
+    const count = Math.max(1, survey.length);
+    const a = (i / count) * Math.PI * 2 - Math.PI / 2;
+    const r = 225 + (i % 2) * 30;
+    const at = tSurvey + i * 90;
+    add({
+      id: `n:${s.node}`,
+      label: s.node,
+      kind: s.kind,
+      ring: 2,
+      ...polar(r, a),
+      role: s.role,
+      confidence: s.confidence,
+      finding: s.finding,
+      at,
+      judgedAt: tSurvey + survey.length * 90 + 220 + i * 45,
+    });
     const from = s.value && nodes.has(`v:${s.value}`) ? `v:${s.value}` : "ticket";
     edges.push({ from, to: `n:${s.node}`, at, kind: "survey" });
   });
 
   const steps = trail.steps ?? [];
-  let t = tSurvey + survey.length * 170 + 700;
-  let prev: string | null = null;
+  const columns = steps.length > 10 ? 2 : 1;
+  const perColumn = Math.max(1, Math.ceil(steps.length / columns));
+  const top = 92;
+  const bottom = 628;
+  const spacing = perColumn <= 1 ? 0 : (bottom - top) / (perColumn - 1);
+  let t = tSurvey + survey.length * 135 + 600;
+  let previousStep: string | null = null;
+
   steps.forEach((s, i) => {
+    const column = Math.floor(i / perColumn);
+    const row = i % perColumn;
+    const x = columns === 1 ? 900 : 820 + column * 210;
+    const y = perColumn === 1 ? CY : top + row * spacing;
     const source = s.chose?.split(" ")[0];
-    const fromId = source && nodes.has(`n:${source}`) ? `n:${source}` : prev ?? (nodes.has(`n:${source}`) ? `n:${source}` : "ticket");
-    if (source && !nodes.has(`n:${source}`) && !prev) {
-      const p = polar(300, (i / Math.max(1, steps.length)) * Math.PI * 2);
-      add({ id: `n:${source}`, label: source, kind: "table", ring: 2, ...p, at: t - 200 });
-    }
-    const a = (i / Math.max(1, steps.length)) * Math.PI * 1.6 - Math.PI * 0.8 + Math.PI;
-    const target = add({ id: `n:${s.node}`, label: s.node, kind: s.kind, ring: 3, ...polar(345, a), role: s.role, confidence: s.confidence, finding: s.finding, at: t + 450, judgedAt: t + 650 });
-    edges.push({ from: nodes.has(`n:${source}`) ? `n:${source}` : fromId, to: target.id, at: t, kind: "step", options: trail.choices?.[i]?.options });
-    prev = target.id;
-    t += 1100;
+    const sourceId = source && nodes.has(`n:${source}`) ? `n:${source}` : previousStep ?? "ticket";
+    const id = `step:${i}:${s.node}`;
+    add({
+      id,
+      label: s.node,
+      kind: s.kind,
+      ring: 3,
+      x,
+      y,
+      role: s.role,
+      confidence: s.confidence,
+      finding: s.finding,
+      at: t + 400,
+      judgedAt: t + 580,
+      stepNo: i + 1,
+    });
+    edges.push({ from: sourceId, to: id, at: t, kind: "step", options: trail.choices?.[i]?.options });
+    previousStep = id;
+    t += 900;
   });
-  return { nodes: [...nodes.values()], edges, duration: t + 800 };
+
+  return { nodes: [...nodes.values()], edges, duration: t + 700, columns };
 }
 
-export function Brain({ trail, ticketLabel, autoplay = true, compact, mode = "replay" }: { trail: Trail | null; ticketLabel: string; autoplay?: boolean; compact?: boolean; mode?: "replay" | "live" }) {
+export function Brain({
+  trail,
+  ticketLabel,
+  autoplay = true,
+  compact,
+  mode = "replay",
+}: {
+  trail: Trail | null;
+  ticketLabel: string;
+  autoplay?: boolean;
+  compact?: boolean;
+  mode?: "replay" | "live";
+}) {
   const graph = useMemo(() => (trail ? layout(trail, ticketLabel) : null), [trail, ticketLabel]);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(autoplay);
@@ -132,58 +202,72 @@ export function Brain({ trail, ticketLabel, autoplay = true, compact, mode = "re
       <svg viewBox={`0 0 ${W} ${H}`} className="min-h-0 w-full flex-1" role="img" aria-label="World walk graph">
         <defs>
           <radialGradient id="glow">
-            <stop offset="0%" stopColor="var(--brand)" stopOpacity="0.35" />
+            <stop offset="0%" stopColor="var(--brand)" stopOpacity="0.32" />
             <stop offset="100%" stopColor="var(--brand)" stopOpacity="0" />
           </radialGradient>
         </defs>
-        {[95, 257, 345].map((r) => (
-          <ellipse key={r} cx={CX} cy={CY} rx={r} ry={r * 0.82} fill="none" className="stroke-border" strokeDasharray="2 6" />
+
+        <text x="34" y="34" className="fill-subtle-foreground text-2xs font-semibold uppercase tracking-wider">Surveyed context</text>
+        <text x="760" y="34" className="fill-subtle-foreground text-2xs font-semibold uppercase tracking-wider">Chosen walk</text>
+        {[92, 250].map((r) => (
+          <ellipse key={r} cx={CX} cy={CY} rx={r} ry={r * 0.86} fill="none" className="stroke-border" strokeDasharray="2 7" />
         ))}
+        <line x1="720" y1="54" x2="720" y2="666" className="stroke-border" strokeDasharray="3 7" />
+
         {graph.edges.map((e, i) => {
-          const a = byId.get(e.from), b = byId.get(e.to);
+          const a = byId.get(e.from);
+          const b = byId.get(e.to);
           if (!a || !b) return null;
           const lit = litEdge(e);
           const p = Math.min(1, Math.max(0, (now - e.at) / 450));
-          const mx = (a.x + b.x) / 2 + (e.kind === "step" ? (CY - (a.y + b.y) / 2) * 0.15 : 0);
-          const my = (a.y + b.y) / 2 + (e.kind === "step" ? ((a.x + b.x) / 2 - CX) * 0.15 : 0);
-          const bez = (u: number) => ({ x: (1 - u) ** 2 * a.x + 2 * (1 - u) * u * mx + u * u * b.x, y: (1 - u) ** 2 * a.y + 2 * (1 - u) * u * my + u * u * b.y });
+          const toWalkLane = e.kind === "step";
+          const mx = toWalkLane ? Math.max(a.x + 70, (a.x + b.x) / 2) : (a.x + b.x) / 2;
+          const my = toWalkLane ? (a.y + b.y) / 2 : (a.y + b.y) / 2;
+          const bez = (u: number) => ({
+            x: (1 - u) ** 2 * a.x + 2 * (1 - u) * u * mx + u * u * b.x,
+            y: (1 - u) ** 2 * a.y + 2 * (1 - u) * u * my + u * u * b.y,
+          });
           const spark = bez(p);
           return (
             <g key={i}>
               <path
                 d={`M${a.x},${a.y} Q${mx},${my} ${b.x},${b.y}`}
                 fill="none"
-                className={cn(
-                  "transition-all duration-500",
-                  e.kind === "step" ? "stroke-primary" : "stroke-border-strong",
-                  !lit && "stroke-transparent",
-                )}
+                className={cn("transition-all duration-500", e.kind === "step" ? "stroke-primary" : "stroke-border-strong", !lit && "stroke-transparent")}
                 strokeWidth={e.kind === "step" ? 2.2 : 1}
-                strokeOpacity={e.kind === "step" ? 0.9 : 0.55}
-                strokeDasharray={e.kind === "step" ? undefined : "3 4"}
+                strokeOpacity={e.kind === "step" ? 0.88 : 0.45}
+                strokeDasharray={e.kind === "step" ? undefined : "3 5"}
               />
               {firing(e) && <circle cx={spark.x} cy={spark.y} r={e.kind === "step" ? 5 : 3} className="fill-primary" />}
               {e.kind === "step" && lit && e.options ? (
-                <text x={mx} y={my - 6} textAnchor="middle" className="fill-subtle-foreground text-2xs">{`1 of ${e.options}`}</text>
+                <text x={mx} y={my - 7} textAnchor="middle" className="fill-subtle-foreground text-2xs">{`1 of ${e.options}`}</text>
               ) : null}
             </g>
           );
         })}
+
         {graph.nodes.map((n) => {
           const on = now >= n.at;
           const judged = n.judgedAt !== undefined && now >= n.judgedAt;
           const pulse = !live && on && now < n.at + 600;
-          const r = n.ring === 0 ? 26 : n.ring === 1 ? 14 : n.ring === 3 ? 10 : 7 + (n.confidence ?? 0.5) * 5;
+          const r = n.ring === 0 ? 26 : n.ring === 1 ? 13 : n.ring === 3 ? 13 : 7 + (n.confidence ?? 0.5) * 4;
           const role = judged && n.role ? ROLE[n.role] : null;
-          const label = n.ring === 0 ? n.label : pageTitle(n.label).slice(0, 26);
-          const outside = n.ring >= 2;
           const angle = Math.atan2(n.y - CY, n.x - CX);
-          const lx = outside ? n.x + Math.cos(angle) * (r + 6) : n.x;
-          const ly = outside ? n.y + Math.sin(angle) * (r + 6) + 3 : n.y + r + 14;
+          const meaningfulSurvey = n.ring === 2 && role && n.role !== "unrelated";
+          const showSurveyLabel = !compact && (meaningfulSurvey || hover?.id === n.id);
+          const sx = n.x + Math.cos(angle) * (r + 7);
+          const sy = n.y + Math.sin(angle) * (r + 7) + 3;
+          const current = step?.to === n.id;
           return (
-            <g key={n.id} onMouseEnter={() => setHover(n)} onMouseLeave={() => setHover(null)} className={cn("cursor-default transition-opacity duration-300", !on && "opacity-0")}>
-              {pulse && <circle cx={n.x} cy={n.y} r={r * 3.2} fill="url(#glow)" />}
+            <g
+              key={n.id}
+              onMouseEnter={() => setHover(n)}
+              onMouseLeave={() => setHover(null)}
+              className={cn("cursor-default transition-opacity duration-300", !on && "opacity-0")}
+            >
+              {pulse && <circle cx={n.x} cy={n.y} r={r * 3.1} fill="url(#glow)" />}
               {n.ring === 0 && <circle cx={n.x} cy={n.y} r={r + 10} fill="none" className="stroke-primary/40" strokeWidth={1.5} />}
+              {n.ring === 3 && current && <circle cx={n.x} cy={n.y} r={r + 7} fill="none" className="stroke-primary" strokeWidth={2} />}
               <circle
                 cx={n.x}
                 cy={n.y}
@@ -191,23 +275,36 @@ export function Brain({ trail, ticketLabel, autoplay = true, compact, mode = "re
                 className={cn(
                   "stroke-surface transition-colors duration-500",
                   n.ring === 0 ? "fill-primary" : n.ring === 1 ? "fill-foreground" : role ? role.fill : n.ring === 3 ? "fill-primary" : "fill-border-strong",
-                  step?.to === n.id && "stroke-primary",
                 )}
-                strokeWidth={step?.to === n.id ? 3 : 2}
+                strokeWidth={2}
               />
-              {(n.ring <= 1 || !compact) && (
+
+              {n.ring === 0 && (
+                <text x={n.x} y={n.y + 4} textAnchor="middle" className="fill-primary-foreground text-2xs font-semibold">{n.label}</text>
+              )}
+
+              {n.ring === 1 && (
+                <text x={n.x} y={n.y + r + 14} textAnchor="middle" className="fill-foreground text-2xs font-semibold">{short(n.label, 20)}</text>
+              )}
+
+              {showSurveyLabel && (
                 <text
-                  x={lx}
-                  y={ly}
-                  textAnchor={outside ? (Math.cos(angle) > 0.2 ? "start" : Math.cos(angle) < -0.2 ? "end" : "middle") : "middle"}
-                  className={cn("fill-muted-foreground text-2xs", n.ring <= 1 && "fill-foreground font-semibold", n.ring === 0 && "fill-primary-foreground")}
-                  dy={n.ring === 0 ? -r - 18 : 0}
+                  x={sx}
+                  y={sy}
+                  textAnchor={Math.cos(angle) > 0.2 ? "start" : Math.cos(angle) < -0.2 ? "end" : "middle"}
+                  className={cn("text-2xs", meaningfulSurvey ? "fill-foreground font-medium" : "fill-muted-foreground")}
                 >
-                  {n.ring === 0 ? "" : label}
+                  {short(n.label, 24)}
                 </text>
               )}
-              {n.ring === 0 && (
-                <text x={n.x} y={n.y + 4} textAnchor="middle" className="fill-primary-foreground text-2xs font-semibold">{label}</text>
+
+              {n.ring === 3 && (
+                <>
+                  <text x={n.x} y={n.y + 4} textAnchor="middle" className="fill-primary-foreground text-2xs font-bold">{n.stepNo}</text>
+                  <text x={n.x + 20} y={n.y + 4} textAnchor="start" className={cn("text-2xs", current ? "fill-foreground font-semibold" : "fill-muted-foreground")}>
+                    {short(n.label, graph.columns === 1 ? 30 : 22)}
+                  </text>
+                </>
               )}
             </g>
           );
@@ -218,7 +315,7 @@ export function Brain({ trail, ticketLabel, autoplay = true, compact, mode = "re
         <div className="pointer-events-none absolute left-3 top-3 max-w-sm rounded-lg border bg-surface p-3 text-xs shadow-pop animate-fade">
           <p className="font-semibold">{hover.ring === 1 ? `Identifier ${hover.label}` : pageTitle(hover.label)}</p>
           <p className="mt-0.5 text-subtle-foreground">
-            {hover.kind}
+            {hover.ring === 3 && hover.stepNo ? `Step ${hover.stepNo} · ` : ""}{hover.kind}
             {hover.role && ` · ${ROLE[hover.role]?.label ?? hover.role}`}
             {hover.confidence != null && ` · ${(hover.confidence * 100).toFixed(0)}% sure`}
           </p>
