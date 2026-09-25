@@ -417,7 +417,7 @@ function Snippet({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="relative">
-      <pre className="scrollbar-thin overflow-x-auto rounded-lg border bg-surface-2 p-3 pr-12 font-mono text-xs leading-relaxed">{code}</pre>
+      <pre className="whitespace-pre-wrap break-all rounded-lg border bg-surface-2 p-3 pr-12 font-mono text-xs leading-relaxed">{code}</pre>
       <Button
         variant="ghost"
         size="icon-sm"

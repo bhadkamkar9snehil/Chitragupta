@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, turn, type Message, type Session, type SourceRef, type Ticket } from "@/lib/api";
-import { ago, clock, dayGroup, plain, ticketLabel } from "@/lib/format";
+import { ago, clock, dayGroup, pageTitle, plain, ticketLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, Empty, Input, SearchInput, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Skeleton, StatePill, Tip } from "@/components/ui/primitives";
@@ -479,7 +479,7 @@ function Sources({ sources }: { sources: SourceRef[] }) {
       {sources.map((s) => (
         <span key={s.Slug} className="inline-flex h-6 items-center gap-1 rounded-md border bg-surface px-2 text-xs">
           <span className="text-subtle-foreground">{SOURCE_KIND[s.Type] ?? s.Type}</span>
-          <span className="max-w-56 truncate">{s.Title.replace(/^List_/, "").replace(/_/g, " ")}</span>
+          <span className="max-w-56 truncate">{pageTitle(s.Title)}</span>
         </span>
       ))}
     </div>

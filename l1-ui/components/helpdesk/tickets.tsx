@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, CircleDot, Headset, Inbox, MessageCircle, RotateCcw, Send, Star, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Ticket, type TimelineItem } from "@/lib/api";
-import { ago, RESPONSE_KIND, ticketLabel, when } from "@/lib/format";
+import { ago, RESPONSE_KIND, ticketLabel, when, whenShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, Empty, SearchInput, Skeleton, StatePill, Tag, Textarea } from "@/components/ui/primitives";
@@ -243,9 +243,9 @@ function TicketDetail({ id }: { id: string }) {
           </div>
 
           <aside className="space-y-5 text-sm lg:border-l lg:pl-6" aria-label="Ticket details">
-            <Detail label="Raised">{when(ticket.CreatedOn)}</Detail>
-            <Detail label="Last update">{when(ticket.ModifiedOn ?? ticket.CreatedOn)}</Detail>
-            {ticket.FirstReplyOn && <Detail label="First reply">{when(ticket.FirstReplyOn)}</Detail>}
+            <Detail label="Raised">{whenShort(ticket.CreatedOn)}</Detail>
+            <Detail label="Last update">{whenShort(ticket.ModifiedOn ?? ticket.CreatedOn)}</Detail>
+            {ticket.FirstReplyOn && <Detail label="First reply">{whenShort(ticket.FirstReplyOn)}</Detail>}
             <Detail label="Area">{ticket.Area ?? "—"}</Detail>
             <Detail label="Type">{ticket.Type ?? "—"}</Detail>
             <Detail label="Priority">{ticket.Priority?.replace(" Priority", "") ?? "Standard"}</Detail>
@@ -278,7 +278,7 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
   return (
     <div>
       <p className="text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">{label}</p>
-      <div className="mt-1">{children}</div>
+      <div className="mt-1 whitespace-nowrap">{children}</div>
     </div>
   );
 }

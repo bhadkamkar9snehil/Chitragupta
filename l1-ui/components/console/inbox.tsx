@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, ArrowLeft, Bot, CheckCircle2, Clock, Copy, Headset, Inbox, Layers, RefreshCw, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Message, type SourceRef, type Ticket } from "@/lib/api";
-import { ago, RESPONSE_KIND, ticketLabel, when } from "@/lib/format";
+import { ago, pageTitle, RESPONSE_KIND, ticketLabel, when, whenShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, Empty, SearchInput, Skeleton, StatePill, Tag, Tip } from "@/components/ui/primitives";
@@ -293,9 +293,9 @@ function TicketWorkspace({ id, onBack }: { id: string; onBack: () => void }) {
             ["Type", t.Type ?? "—"],
             ["Priority", t.Priority?.replace(" Priority", "") ?? "Standard"],
             ["Channel", t.Channel ?? "—"],
-            ["Created", when(t.CreatedOn)],
-            ["First reply", t.FirstReplyOn ? `${when(t.FirstReplyOn)}` : "—"],
-            ["Updated", when(t.ModifiedOn)],
+            ["Created", whenShort(t.CreatedOn)],
+            ["First reply", t.FirstReplyOn ? whenShort(t.FirstReplyOn) : "—"],
+            ["Updated", whenShort(t.ModifiedOn)],
             ["Rating", t.Rating ? "★".repeat(t.Rating) : "—"],
           ]}
         />
@@ -349,7 +349,7 @@ export function Transcript({ messages }: { messages: Message[] }) {
                 {m.LatencyMs ? <span>{(m.LatencyMs / 1000).toFixed(1)}s</span> : null}
                 {m.Feedback === 1 && <span className="text-success">Helpful</span>}
                 {m.Feedback === -1 && <span className="text-destructive">Not helpful</span>}
-                {sources.map((s) => <Tag key={s.Slug}>{s.Title}</Tag>)}
+                {sources.map((s) => <Tag key={s.Slug}>{pageTitle(s.Title)}</Tag>)}
               </p>
             </div>
           </li>

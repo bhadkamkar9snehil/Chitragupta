@@ -4,11 +4,11 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 export const buttonVariants = cva(
-  "inline-flex shrink-0 select-none items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium outline-none disabled:pointer-events-none disabled:opacity-45 focus-visible:ring-2 focus-visible:ring-ring motion-safe:transition-[background-color,color,box-shadow,transform] motion-safe:active:scale-[0.98] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex shrink-0 select-none items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium outline-none disabled:pointer-events-none disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-ring motion-safe:transition-[background-color,color,box-shadow,transform] motion-safe:active:scale-[0.98] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground shadow-lift hover:brightness-110",
+        default: "bg-primary text-primary-foreground shadow-lift hover:brightness-110 disabled:bg-surface-3 disabled:text-subtle-foreground disabled:shadow-none",
         soft: "bg-primary-soft text-primary-soft-foreground hover:brightness-95 dark:hover:brightness-110",
         outline: "border bg-surface hover:bg-surface-2",
         ghost: "text-muted-foreground hover:bg-surface-2 hover:text-foreground",

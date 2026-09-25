@@ -7,6 +7,12 @@ const day = new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short" })
 
 export const when = (value?: string | null) => (value ? dateTime.format(local(value)) : "");
 
+const short = new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+export const whenShort = (value?: string | null) => (value ? short.format(local(value)) : "");
+
+// XBatch world page titles as plant users read them ("List_RM_Available Heat" -> "RM Available Heat").
+export const pageTitle = (t: string) => t.replace(/^(XStudio_)?List_/, "").replace(/_Vw$|_USP$/i, "").replace(/_/g, " ");
+
 export function ago(value?: string | null) {
   if (!value) return "";
   const d = local(value);

@@ -12,9 +12,9 @@ import { Transcript } from "./inbox";
 
 const FILTERS = [
   { id: "", label: "All" },
-  { id: "answered", label: "Answered by assistant" },
-  { id: "ticket", label: "Raised a ticket" },
-  { id: "negative", label: "Marked not helpful" },
+  { id: "answered", label: "Answered" },
+  { id: "ticket", label: "Ticket raised" },
+  { id: "negative", label: "Not helpful" },
 ];
 
 export function ConversationsView({ sessionId, onSelect, onOpenTicket }: { sessionId: string | null; onSelect: (id: string | null) => void; onOpenTicket: (id: string) => void }) {

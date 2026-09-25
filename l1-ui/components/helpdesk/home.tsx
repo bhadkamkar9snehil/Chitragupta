@@ -32,7 +32,7 @@ export function Home() {
           <h1 className="text-2xl font-semibold tracking-tight md:text-display">
             {greeting()}, {first}
           </h1>
-          <p className="mt-1.5 max-w-xl text-body text-muted-foreground">{config.greeting}</p>
+          <p className="mt-1.5 max-w-xl text-pretty text-body text-muted-foreground">{config.greeting}</p>
           <form
             className="mt-5 flex items-end gap-2 rounded-xl border bg-background p-2 shadow-lift focus-within:border-border-strong focus-within:ring-2 focus-within:ring-ring"
             onSubmit={(e) => {
@@ -54,7 +54,7 @@ export function Home() {
               aria-label="Describe the problem"
               className="max-h-40 min-h-12 flex-1 resize-none bg-transparent px-2 py-1.5 text-base outline-none focus-visible:outline-none placeholder:text-subtle-foreground sm:text-body"
             />
-            <button type="submit" disabled={!draft.trim()} aria-label="Start conversation" className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground disabled:opacity-35">
+            <button type="submit" disabled={!draft.trim()} aria-label="Start conversation" className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground disabled:bg-surface-3 disabled:text-subtle-foreground">
               <ArrowUp className="size-4" />
             </button>
           </form>
