@@ -34,6 +34,10 @@ export function InboxView({ ticketId, onSelect }: { ticketId: string | null; onS
   }, []);
 
   useEffect(() => {
+    if (!ticketId) setDrawerOpen(true);
+  }, [ticketId]);
+
+  useEffect(() => {
     const t = setTimeout(() => {
       api.admin.tickets({ q: q || undefined, area: area || undefined, source: source || undefined }).then((r) => {
         setAll(r);

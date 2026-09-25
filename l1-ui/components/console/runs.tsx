@@ -41,6 +41,10 @@ export function RunsView({ runId, onSelect, onLive }: { runId: string | null; on
     return () => clearTimeout(t);
   }, [q]);
 
+  useEffect(() => {
+    if (!runId) setDrawerOpen(true);
+  }, [runId]);
+
   const outcomes = useMemo(() => [...new Set((runs ?? []).map((r) => r.ResponseType ?? ""))], [runs]);
   const shown = (runs ?? []).filter((r) => !outcome || (r.ResponseType ?? "") === outcome);
 

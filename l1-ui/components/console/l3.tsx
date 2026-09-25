@@ -29,6 +29,10 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
     ops.l3().then(setRows).catch((e: Error) => toast.error(e.message));
   }, [tick]);
 
+  useEffect(() => {
+    if (!escalationId) setDrawerOpen(true);
+  }, [escalationId]);
+
   const shown = (rows ?? []).filter((r) => (r.L3Status ?? "Open") === status);
   const selected = rows?.find((r) => r.ID === escalationId) ?? null;
   const mine = engineer ? (rows ?? []).filter((r) => r.AssignedToUserID?.toUpperCase() === engineer.ID.toUpperCase() && r.L3Status !== "Resolved").length : 0;
