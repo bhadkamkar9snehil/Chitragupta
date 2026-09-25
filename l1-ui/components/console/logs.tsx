@@ -89,7 +89,7 @@ export function LogsView() {
                   <span className={cn("size-2 shrink-0 rounded-full", failed ? "bg-destructive" : sourceName === "Observer events" ? "bg-primary" : "bg-border-strong")} aria-hidden />
                   <span className="w-28 shrink-0 text-2xs text-subtle-foreground">{sourceName}</span>
                   <span className="min-w-0 flex-1 truncate text-meta font-medium">{title(record)}</span>
-                  {d.tool_name && <span className="hidden max-w-48 truncate font-mono text-2xs text-muted-foreground md:block">{String(d.tool_name)}</span>}
+                  {d.tool_name != null && <span className="hidden max-w-48 truncate font-mono text-2xs text-muted-foreground md:block">{String(d.tool_name)}</span>}
                   <span className="shrink-0 text-2xs text-subtle-foreground">{stamp(record) ? ago(stamp(record)) : "—"}</span>
                 </button>
                 {isOpen && (
