@@ -61,15 +61,15 @@ export function TicketCard({
       aria-label={`Helpdesk ticket ${ticket.ticketNo}`}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0 flex-1">
           <div className="text-xs font-medium text-muted-foreground">
             Helpdesk ticket
           </div>
-          <div className="mt-0.5 text-base font-semibold tabular-nums">
+          <div className="mt-0.5 break-words text-base font-semibold tabular-nums">
             {ticket.ticketNo}
           </div>
         </div>
-        <div className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground">
+        <div className="max-w-full break-words rounded-md bg-secondary px-2 py-1 text-right text-xs font-medium text-secondary-foreground">
           {ticket.statusLabel}
         </div>
       </div>
@@ -131,10 +131,10 @@ export function TicketList({
                 className={index > 0 ? "border-t py-3" : "pb-3"}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm font-semibold tabular-nums">
+                  <span className="min-w-0 flex-1 break-words text-sm font-semibold tabular-nums">
                     {ticket.ticketNo}
                   </span>
-                  <span className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground">
+                  <span className="max-w-full break-words rounded-md bg-secondary px-2 py-1 text-right text-xs font-medium text-secondary-foreground">
                     {ticket.statusLabel}
                   </span>
                 </div>
@@ -180,7 +180,7 @@ export function L2ReplySurface({ reply }: Readonly<{ reply: L2Reply }>) {
           {replyLabels[reply.kind]}
         </span>
         <span aria-hidden="true">·</span>
-        <span className="tabular-nums">{reply.ticketNo}</span>
+        <span className="break-words tabular-nums">{reply.ticketNo}</span>
         {when ? (
           <>
             <span aria-hidden="true">·</span>
@@ -214,8 +214,9 @@ export function L2QuestionSurface({
       <section
         className="mt-2 w-full max-w-lg rounded-xl border bg-card p-4"
         aria-label={`Answered support question for ticket ${prompt.ticketNo}`}
+        role="status"
       >
-        <div className="text-xs font-medium text-muted-foreground">
+        <div className="break-words text-xs font-medium text-muted-foreground">
           Ticket {prompt.ticketNo}
         </div>
         <p className="mt-2 break-words text-sm font-medium leading-6">
@@ -261,7 +262,7 @@ export function L2QuestionSurface({
         void submit();
       }}
     >
-      <div className="text-xs font-medium text-muted-foreground">
+      <div className="break-words text-xs font-medium text-muted-foreground">
         Ticket {prompt.ticketNo}
       </div>
       <h3 className="mt-2 text-base font-semibold">Support needs more detail</h3>
