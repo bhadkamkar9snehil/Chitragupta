@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowRight, Bot, Cpu, Database, ShieldCheck, Sparkles, Waypoints, Wrench } from "lucide-react";
+import { ArrowRight, Bot, Clock3, Cpu, Database, MessageSquare, ShieldCheck, Sparkles, Waypoints, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { api, ops, type AiSettings, type Board, type ToolStats } from "@/lib/api";
 import { ago, describeEvent, human, ticketLabel, when } from "@/lib/format";
@@ -32,30 +32,15 @@ export function AgentsView({ onOpenRun }: { onOpenRun: (id: string) => void }) {
           <IconTile icon={Wrench} />
           <div>
             <h1 className="text-title font-semibold tracking-tight">Agents &amp; tools</h1>
-            <p className="text-xs text-subtle-foreground">Who does the work, what each one may touch, and how the tools are behaving</p>
           </div>
         </header>
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <AgentCard icon={Sparkles} name="Jev" role="Decides every step: route, which records matter, what happens next. Never writes text or SQL." accent
-            selected={focus === "jev"} onSelect={() => setFocus("jev")}
-            lines={tools ? [`${tools.jev.reduce((a, j) => a + j.Calls, 0)} decisions`, `${tools.jev.length} kinds of decision`] : undefined} />
-          {Object.entries(AGENT).map(([id, a]) => (
-            <AgentCard key={id} icon={Bot} name={a.name} role={a.role}
-              selected={focus === `agent:${id}`} onSelect={() => setFocus(`agent:${id}`)}
-              lines={board?.stats ? [Object.entries(board.stats.by_assignee[id] ?? {}).map(([s, n]) => `${n} ${s}`).join(" · ") || "No tasks on the board", id] : undefined} />
-          ))}
-          <AgentCard icon={Cpu} name="L1 assistant" role="Talks to requesters, finds XBatch knowledge, raises tickets."
-            selected={focus === "l1"} onSelect={() => setFocus("l1")}
-            lines={ai ? [`Writes with ${human(ai.provider)}`, ai.model] : undefined} />
-          {tools?.models.map((m) => (
-            <AgentCard key={m.Model} icon={Cpu} name={`L2 writer · ${m.Model}`} role="Only phrases replies when the evidence needs reasoning."
-              selected={focus === `model:${m.Model}`} onSelect={() => setFocus(`model:${m.Model}`)}
-              lines={[`${m.Calls} calls via ${m.Provider}`, `last ${ago(m.LastUsed)}`]} />
-          ))}
+        <div className="space-y-4">
+          <Panel icon={Waypoints} title="Who does the work" meta="how a problem moves between them · select one">
+            <AgentFlow focus={focus} onFocus={setFocus} tools={tools} board={board} ai={ai} />
+          </Panel>
+          <AgentInspector focus={focus} tools={tools} board={board} ai={ai} />
         </div>
-
-        <AgentInspector focus={focus} tools={tools} board={board} ai={ai} />
 
         <div className="grid gap-4 xl:grid-cols-3">
           <ToolGraph tools={tools} className="xl:col-span-2" />
@@ -108,22 +93,55 @@ export function AgentsView({ onOpenRun }: { onOpenRun: (id: string) => void }) {
   );
 }
 
-function AgentCard({ icon: Icon, name, role, lines, accent, selected, onSelect }: { icon: typeof Bot; name: string; role: string; lines?: string[]; accent?: boolean; selected: boolean; onSelect: () => void }) {
+// The workers as the path a problem takes: chat -> judgment -> investigation -> (writing) -> review.
+function AgentFlow({ focus, onFocus, tools, board, ai }: { focus: string; onFocus: (f: string) => void; tools: ToolStats | null; board: Board | null; ai: AiSettings | null }) {
+  const counts = (id: string) => board?.stats?.by_assignee[id] ?? {};
+  const tally = (id: string) => (board?.stats ? Object.entries(counts(id)).map(([st, n]) => `${n} ${st}`).join(" · ") || "idle" : undefined);
+  const model = tools?.models[0];
+  const steps: { id: string; icon: typeof Bot; name: string; does: string; value?: string; optional?: boolean; accent?: boolean }[] = [
+    { id: "l1", icon: MessageSquare, name: "L1 assistant", does: "answers or raises a ticket", value: ai?.model },
+    { id: "jev", icon: Sparkles, name: "Jev", does: "decides every step", value: tools ? `${tools.jev.reduce((a, j) => a + j.Calls, 0)} decisions` : undefined, accent: true },
+    { id: "agent:l2-jev-investigator", icon: Bot, name: "Investigator", does: "reads XBatch, proposes", value: tally("l2-jev-investigator") },
+    ...(model ? [{ id: `model:${model.Model}`, icon: Cpu, name: "Writer", does: "only if reasoning is needed", value: `${model.Calls} calls`, optional: true }] : []),
+    { id: "agent:l2-reviewer-primary", icon: ShieldCheck, name: "Reviewer", does: "checks before publishing", value: tally("l2-reviewer-primary") },
+  ];
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
-      className={cn("group rounded-2xl border bg-canvas p-4 text-left hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", selected && "border-signal")}
-    >
-      <div className="flex items-center gap-2.5">
-        <IconTile icon={Icon} active={accent} />
-        <p className="min-w-0 flex-1 truncate text-sm font-semibold">{name}</p>
-        <ArrowRight className="size-4 text-subtle-foreground transition-transform group-hover:translate-x-0.5" aria-hidden />
-      </div>
-      <p className="mt-2 text-meta text-muted-foreground">{role}</p>
-      {lines ? <div className="mt-3 flex flex-wrap gap-1.5">{lines.map((l) => <Tag key={l}>{l}</Tag>)}</div> : <Skeleton className="mt-3 h-6" />}
-    </button>
+    <div className="dot-grid rounded-lg p-3">
+      <ol className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        {steps.map((st, i) => (
+          <li key={st.id} className="flex items-center gap-2 sm:flex-1">
+            {i > 0 && <ArrowRight className={cn("hidden size-4 shrink-0 sm:block", st.optional ? "text-subtle-foreground" : "text-signal")} aria-hidden />}
+            <button
+              type="button"
+              onClick={() => onFocus(st.id)}
+              aria-pressed={focus === st.id}
+              className={cn(
+                "w-full min-w-32 rounded-xl border bg-surface p-3 text-left hover:border-border-strong",
+                st.optional && "border-dashed",
+                focus === st.id && "border-signal",
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <st.icon className={cn("size-4 shrink-0", st.accent ? "text-signal" : "text-muted-foreground")} aria-hidden />
+                <span className="truncate text-sm font-medium">{st.name}</span>
+              </span>
+              <span className="mt-1 block truncate text-xs text-subtle-foreground">{st.does}</span>
+              <span className="mt-2 block truncate font-mono text-xs tabular-nums">{st.value ?? "—"}</span>
+            </button>
+          </li>
+        ))}
+      </ol>
+      <button
+        type="button"
+        onClick={() => onFocus("agent:l2-investigator")}
+        aria-pressed={focus === "agent:l2-investigator"}
+        className={cn("mt-2 flex w-full items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-left text-xs text-subtle-foreground hover:border-border-strong", focus === "agent:l2-investigator" && "border-signal")}
+      >
+        <Clock3 className="size-3.5 shrink-0" aria-hidden />
+        <span className="font-medium text-foreground">Scheduler</span>
+        <span className="truncate">runs the scout every 2 min and audits the board · {tally("l2-investigator") ?? "—"}</span>
+      </button>
+    </div>
   );
 }
 
