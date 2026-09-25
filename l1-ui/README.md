@@ -280,15 +280,18 @@ The local proxy:
 - validates request and response shapes with Zod;
 - bounds messages, human-tool results, structured intake, free text, and evidence;
 - rejects request/response bodies above 512 KiB;
-- forwards the optional bearer token only server-to-server;
-- returns generic browser-facing service errors;
+- accepts JSON only and forwards the optional bearer token server-to-server;
+- restricts the configured upstream to HTTP(S) without URL credentials;
+- bounds upstream calls to 120 seconds;
+- returns generic browser-facing service errors and no-store responses;
 - never exposes the configured upstream URL to browser code.
 
 ## Local validation
 
-This app registers `@shadcn/lint` and enables token/style checks for app-owned
-UI code. Vendored Tool UI/shadcn source is excluded from local restyle rules but
-remains subject to TypeScript/runtime validation.
+This app uses the standard Next.js Core Web Vitals ESLint baseline plus
+`@shadcn/lint` token/style checks for app-owned UI code. Vendored Tool
+UI/shadcn source is excluded from local restyle rules but remains subject to the
+ordinary Next/React lint and TypeScript checks.
 
 Validation is local/manual only. Do not add GitHub Actions.
 
