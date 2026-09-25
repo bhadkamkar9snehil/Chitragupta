@@ -97,16 +97,63 @@ export function EventStream({ events, className }: { events: TraceEvent[]; class
   );
 }
 
-export function Json({ label, text }: { label: string; text: string }) {
-  let pretty = text;
-  try {
-    pretty = JSON.stringify(JSON.parse(text), null, 2);
-  } catch {}
+function JsonScalar({ value }: { value: unknown }) {
+  if (value === null) return <span className="font-mono text-subtle-foreground">null</span>;
+  if (typeof value === "string") return <span className="break-words font-mono text-foreground">{JSON.stringify(value)}</span>;
+  if (typeof value === "number") return <span className="font-mono tabular-nums text-info">{String(value)}</span>;
+  if (typeof value === "boolean") return <span className="font-mono text-warning">{String(value)}</span>;
+  return <span className="break-words font-mono text-muted-foreground">{String(value)}</span>;
+}
+
+function JsonTree({ value, depth = 0 }: { value: unknown; depth?: number }) {
+  if (value === null || typeof value !== "object") return <JsonScalar value={value} />;
+
+  const entries = Array.isArray(value)
+    ? value.map((item, index) => [String(index), item] as const)
+    : Object.entries(value as Record<string, unknown>);
+  const kind = Array.isArray(value) ? "items" : "fields";
+
   return (
-    <div>
-      <p className="font-semibold uppercase tracking-wider text-subtle-foreground">{label}</p>
-      <pre className="scrollbar-thin mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-all font-mono leading-relaxed text-muted-foreground">{pretty}</pre>
-    </div>
+    <details open={depth === 0} className="group/json min-w-0">
+      <summary className="cursor-pointer select-none py-0.5 font-mono text-2xs text-subtle-foreground marker:text-border-strong">
+        {Array.isArray(value) ? "[" : "{"}{entries.length} {kind}{Array.isArray(value) ? "]" : "}"}
+      </summary>
+      <div className="ml-2 border-l pl-2">
+        {entries.map(([key, child]) => (
+          <div key={key} className="grid min-w-0 grid-cols-[minmax(2.5rem,auto)_minmax(0,1fr)] gap-x-2 border-b border-border/60 py-1 last:border-b-0">
+            <span className="min-w-0 truncate font-mono text-2xs text-subtle-foreground" title={key}>{key}</span>
+            <div className="min-w-0 text-2xs leading-relaxed"><JsonTree value={child} depth={depth + 1} /></div>
+          </div>
+        ))}
+        {!entries.length && <span className="font-mono text-2xs text-subtle-foreground">empty</span>}
+      </div>
+    </details>
+  );
+}
+
+export function Json({ label, text }: { label: string; text: string }) {
+  let parsed: unknown;
+  let valid = true;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    valid = false;
+  }
+
+  return (
+    <section className="min-w-0 overflow-hidden rounded-md border bg-background" aria-label={label}>
+      <div className="flex items-center justify-between border-b bg-surface-2 px-2.5 py-1.5">
+        <p className="font-semibold uppercase tracking-wider text-subtle-foreground">{label}</p>
+        <span className="text-2xs text-subtle-foreground">{valid ? "Structured JSON" : "Plain text"}</span>
+      </div>
+      <div className="scrollbar-thin max-h-72 overflow-auto p-2.5">
+        {valid ? (
+          <JsonTree value={parsed} />
+        ) : (
+          <pre className="whitespace-pre-wrap break-words font-mono text-2xs leading-relaxed text-muted-foreground">{text}</pre>
+        )}
+      </div>
+    </section>
   );
 }
 
