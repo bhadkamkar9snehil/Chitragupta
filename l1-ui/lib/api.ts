@@ -268,7 +268,6 @@ export const ops = {
   live: (runId?: string, since?: string) =>
     call<{ run: Run | null; events?: TraceEvent[]; trail?: Run["Trail"] }>(`ops/live?${q({ runId, since })}`),
   board: () => call<Board>("ops/board"),
-  activity: () => call<Activity[]>("ops/activity"),
   l3: (status?: string) => call<Escalation[]>(`ops/l3?${q({ status })}`),
   l3Act: (id: string, body: { userId: string; action: "assign" | "note" | "resolve" | "reopen"; text?: string; public?: boolean; closeTicket?: boolean }) =>
     call<{ escalation: Escalation; ticket: Ticket }>(`ops/l3/${id}`, { method: "POST", body }),

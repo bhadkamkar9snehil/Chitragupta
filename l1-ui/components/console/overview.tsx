@@ -97,6 +97,7 @@ export function OverviewView({ go }: { go: Go }) {
           </Panel>
 
           <Panel icon={Radio} title="Live engineer" meta={live ? "investigating now" : c?.LastClaimOn ? `idle · last claim ${ago(c.LastClaimOn)}` : "idle"}>
+            {data && <ModelServer sample={data.lmStudio} />}
             {!data ? <Skeleton className="h-28" /> : live ? (
               <div className="flex h-full flex-col">
                 <p className="flex items-center gap-2 font-mono text-xs text-signal"><span className="size-2 rounded-full bg-signal motion-safe:animate-pulse" aria-hidden />{ticketLabel(live.TicketNo)} · {ago(live.ClaimedOn)}</p>
@@ -109,9 +110,10 @@ export function OverviewView({ go }: { go: Go }) {
             ) : (
               <div className="flex h-full flex-col">
                 <p className="text-sm text-muted-foreground">No ticket is being investigated. The engineer claims the next one within two minutes.</p>
-                <div className="mt-auto grid grid-cols-2 gap-3 pt-4">
+                <div className="mt-auto grid grid-cols-3 gap-3 pt-4">
                   <Stat label="Runs · 24 h" value={c?.RunsLast24h ?? 0} />
-                  <Stat label="Jev decisions · 24 h" value={c?.JevCallsLast24h ?? 0} tone="signal" />
+                  <Stat label="Jev · 24 h" value={c?.JevCallsLast24h ?? 0} tone="signal" />
+                  <Stat label="Model · 24 h" value={c?.ModelCallsLast24h ?? 0} />
                 </div>
                 <Button size="sm" variant="outline" className="mt-4 self-start" onClick={go.live}>Replay a past investigation</Button>
               </div>
@@ -196,5 +198,22 @@ function AttentionRow({ ticket, onOpen }: { ticket: AttentionTicket; onOpen: () 
         <span className={cn("shrink-0 self-start rounded-md px-2.5 py-1 text-xs font-medium sm:self-center", STATE_PILL[ticket.AttentionState])}>{ticket.AttentionState}</span>
       </button>
     </li>
+  );
+}
+
+// Last health sample of the local model server (LM Studio on the desktop): reachable, how fast, what is loaded.
+function ModelServer({ sample }: { sample: Overview["lmStudio"] }) {
+  let parsed: { latency_s?: number; models?: string[]; error?: string } | null = null;
+  try { parsed = sample ? JSON.parse(sample.ResultJson) : null; } catch { parsed = null; }
+  const ok = !!parsed && !parsed.error && (parsed.models?.length ?? 0) > 0;
+  return (
+    <p className="mb-3 flex items-center gap-2 border-b pb-3 font-mono text-2xs text-subtle-foreground" title={parsed?.models?.join(", ")}>
+      <span className={cn("size-1.5 shrink-0 rounded-full", !sample ? "bg-border-strong" : ok ? "bg-signal" : "bg-destructive")} aria-hidden />
+      <span className="min-w-0 truncate">
+        {!sample ? "local model server · never sampled" : ok
+          ? `local model server · ${Math.round((parsed!.latency_s ?? 0) * 1000)} ms · ${parsed!.models!.length} models · checked ${ago(sample.EventOn)}`
+          : `local model server unreachable · checked ${ago(sample.EventOn)}`}
+      </span>
+    </p>
   );
 }

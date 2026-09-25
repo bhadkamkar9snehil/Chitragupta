@@ -112,7 +112,7 @@ export function Console() {
   return (
     <TooltipProvider>
       <div className="flex h-dvh overflow-hidden bg-background">
-        <nav aria-label="Suite" className={cn("scrollbar-thin flex w-16 shrink-0 flex-col items-center overflow-y-auto border-r bg-canvas py-3", !navCollapsed && "xl:w-60 xl:items-stretch xl:px-2")}>
+        <nav aria-label="Suite" className={cn("scrollbar-thin flex w-16 shrink-0 flex-col items-center overflow-y-auto border-r bg-canvas py-3 *:shrink-0", !navCollapsed && "xl:w-60 xl:items-stretch xl:px-2")}>
           <div className={cn("flex w-full items-center justify-center gap-2.5 pb-3", !navCollapsed && "xl:justify-start xl:px-3")}>
             <BrandMark name={brand} compact />
             {!navCollapsed && (
