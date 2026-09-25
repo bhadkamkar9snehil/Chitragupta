@@ -1,485 +1,462 @@
-# Chitragupta — XStudio / Hermes L2 Helpdesk
+# Chitragupta — the XBatch Helpdesk
 
-Chitragupta is the autonomous L2 support pipeline built around the existing XStudio Helpdesk and Hermes Agent. XStudio remains the authoritative ticket system. Hermes investigates live evidence through a typed read-only tool surface, TypeSafe Jev provides fast System-One semantic guidance and primary review, and deterministic control code owns all lifecycle transitions, concurrency admission, and ticket publication.
+Chitragupta is a three-level support system for the XBatch / XStudio plant software at Jindal Shadeed.
 
-The sole normative architecture and lifecycle specification is **`Knowledge/L2_PIPELINE_STATE_MACHINE.md`**.
+- **L1: a chat helpdesk for plant users.** Someone describes a problem. The system either answers from the XBatch process knowledge, asks for the missing detail, or raises a ticket.
+- **L2: an autonomous support engineer.** It claims each ticket, reads the live XBatch database through an audited read-only tool surface, decides what the evidence means, and publishes a reply back to the ticket.
+- **L3: a desk for people.** When the fix needs a human or the cause is out of L2's reach, the ticket lands here with the evidence already gathered.
 
-## The Five Architectural Responsibilities
+XStudio's Helpdesk (`Complaint_Mst_Tbl`) stays the ticket system of record. TypeSafe **Jev** makes the fast typed judgments (route, relevance, verdict, review). A local model (Qwen on LM Studio) writes only when the evidence needs reasoning. Deterministic code owns every lifecycle transition, capacity limit and publication.
 
-```text
-                         ┌──────────────────────┐
-                         │ 1. XSTUDIO HELPDESK  │
-                         │                      │
-                         │ Complaint_Mst_Tbl    │
-                         │ user-visible state   │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                     ┌───────────────────────────┐
-                     │ 2. CHITRAGUPTA CONTROL    │
-                     │                           │
-                     │ deterministic lifecycle   │
-                     │ claim / WIP / queue       │
-                     │ retry / recovery          │
-                     │ review routing            │
-                     │ workflow / publication    │
-                     └────────────┬──────────────┘
-                                  │
-                                  ▼
-                     ┌───────────────────────────┐
-                     │ 3. JEV — SYSTEM ONE       │
-                     │                           │
-                     │ triage                    │
-                     │ evidence planning         │
-                     │ semantic judgments        │
-                     │ execution-depth choice    │
-                     │ primary semantic review   │
-                     └────────────┬──────────────┘
-                                  │
-                         when Qwen is required
-                                  │
-                                  ▼
-                     ┌───────────────────────────┐
-                     │ 4. HERMES / QWEN          │
-                     │    SYSTEM TWO             │
-                     │                           │
-                     │ compose                   │
-                     │ focused investigation     │
-                     │ bounded rework            │
-                     │ exceptional deep review   │
-                     └────────────┬──────────────┘
-                                  │
-                                  ▼
-                     ┌───────────────────────────┐
-                     │ 5. EVIDENCE / KNOWLEDGE   │
-                     │                           │
-                     │ xstudio_l2 typed reads    │
-                     │ live SQL                  │
-                     │ governed KB               │
-                     │ ticket/run ledger         │
-                     │ canonical Knowledge docs  │
-                     └───────────────────────────┘
-```
+![Support console: Command centre](docs/screenshots/console-command-centre.png)
 
-Chitragupta maps entirely to these five responsibilities:
-- **What happens to a Helpdesk ticket?** It is atomically claimed from `Complaint_Mst_Tbl` by `ticket_scout.py`, assessed by Jev System One with deterministic schema probes, assigned an execution depth (`QWEN_FREE`, `COMPOSE_ONLY`, or `FOCUSED_REASONING`), executed (via Qwen when needed), normalized into a frozen proposal, reviewed semantically by Jev, and deterministically published back to Helpdesk.
-- **What does Jev do?** System One semantic judgments: ticket triage, evidence planning, candidate ranking, execution-depth choice, meta-attention context budgeting, and primary semantic review of frozen proposals.
-- **What does Qwen do?** System Two local model reasoning: proposal synthesis (`COMPOSE_ONLY`), focused investigation with bounded live reads (`FOCUSED_REASONING`), rework on rejected proposals, and exceptional deep review fallback when Jev indicates uncertainty or conflict.
-- **What does SQL own?** Persistent run state (`Hermes_L2_Response_Trn_Tbl`), pipeline capacity enforcement (default 8 active runs), serialized single-slot local-model queue admission, and the authoritative incident store (`Complaint_Mst_Tbl`).
+---
 
-## Current production lifecycle
+## Contents
+
+1. [How a problem travels](#how-a-problem-travels)
+2. [The screens](#the-screens)
+3. [Architecture](#architecture)
+4. [The L2 pipeline](#the-l2-pipeline)
+5. [Knowledge](#knowledge)
+6. [The L1 API](#the-l1-api)
+7. [Running it](#running-it)
+8. [Operating it](#operating-it)
+9. [Repository map](#repository-map)
+10. [Design system](#design-system)
+11. [Change discipline](#change-discipline)
+
+---
+
+## How a problem travels
 
 ```text
-XStudio_Helpdesk.dbo.Complaint_Mst_Tbl
-        |
-        | ticket_scout.py: reconcile, then fill available pipeline slots
-        v
-atomic SQL pipeline admission (default max 8 active runs)
-        |
-        +---- ticket A: Jev + deterministic probes -> QWEN_FREE -> review/publish
-        |
-        +---- ticket B: Jev + deterministic probes -> QUEUED COMPOSE_ONLY
-        |
-        +---- ticket C: Jev + deterministic probes -> QUEUED FOCUSED_REASONING
-        |
-        +---- ... until pipeline cap or priority-aware Qwen backlog
-                                             |
-                                             v
-                              SQL-serialized local-model slot
-                                 exactly one RUNNING Qwen task
-                              review[30] > rework[20] > new[10]
-                                             |
-                                             v
-                              investigator / rework / local reviewer
-                                             |
-                                             v
-                                      frozen proposal
-                                             |
-                                             v
-                                     Jev PRIMARY REVIEW
-                               /          |          |          \
-                          APPROVE      REWORK    L3_ESCALATION  LOCAL_REVIEW
-                             |            |            |            |
-                             v            v            v            v
-                          publish      queue rework   L3 path   queue reviewer
+ Plant user                        L1  ·  .NET API + Next.js helpdesk
+ "GR not happening for heat 1603945"
+        │
+        ▼
+ ┌─────────────────────────────────────────────────────────────────────────┐
+ │ Jev decides the turn:  answer │ ask for details │ raise a ticket          │
+ │ GBrain searches the XBatch world; Jev keeps only relevant pages         │
+ │ the configured writer model phrases the reply (it never decides)        │
+ └───────────────┬─────────────────────────────────────────────────────────┘
+                 │ ticket row in Complaint_Mst_Tbl (+ link to the chat)
+                 ▼
+ L2  ·  Hermes + Jev + deterministic runtime (WSL)
+   ticket_scout (every 2 min) claims it atomically, within pipeline capacity
+   Jev gates: triage, safety, does known knowledge apply
+   world_walk: audited live reads of the tables the ticket's identifiers touch
+   Jev judges each record (cause / stuck / requester view / unrelated)
+   harness builds a fact table ─► Jev direct_answer picks the outcome
+       most tickets finish here with a fixed, evidence-backed reply (no model)
+       NEEDS_REASONING only ─► local model composes / investigates (one slot)
+   frozen proposal ─► Jev primary review ─► publish / rework (≤3) / escalate
+                 │
+                 ├─ RESOLUTION / UPDATE / QUESTION ─► reply on the ticket, requester sees it in L1
+                 └─ NEEDS_HUMAN_ACTION / L3_ESCALATION ─► L3 queue with findings
+                                                           │
+ L3  ·  people in the support console                     ▼
+   pick up, add notes, resolve (optionally close the ticket and tell the requester)
 ```
 
-There is one Kanban board and one deterministic lifecycle authority. A local reviewer card is **not** part of the normal happy path anymore; it is created only when Jev primary review cannot safely route the frozen proposal directly.
+Every step is recorded (run row, SQL action audit, trace events, Jev decisions), and the console replays any run step by step from those records.
 
-## Lifecycle invariants
+---
 
-- **Separate capacity domains.** Pipeline WIP defaults to 8 active SQL runs; all local-Qwen work shares one hard SQL-serialized RUNNING slot.
-- **Priority-aware waiting backpressure.** `L2_MAX_QWEN_WAITING` defaults to 4. Scout stops claiming new investigations when total queued $\ge$ 4. Rework (priority 20) and reviews (priority 30) are admitted unless equal/higher-priority work fills the threshold, so total queued work in SQL may legitimately exceed 4 to avoid starving ongoing runs.
-- **Priorities:** local deep review `30`, rework `20`, new investigation `10`; these priorities govern the one Qwen slot.
-- **Frozen local work.** The exact worker card specification is stored on the run before admission. A QUEUED run with no Kanban card is valid state, not an orphan.
-- **Review loop:** `review_cycle`, independent of SQL `AttemptNo`; `MAX_REVIEW_CYCLES = 3`.
-- **Central authority:** `Model_Bench/l2_pipeline_runtime.py` owns claim coordination, proposal normalization, Jev review routing, local-review fallback creation, rework/escalation, publication, and orphan recovery.
-- **Jev owns semantic judgments, not mechanics.** SQL safety, workflow binding, WIP, mutations, and publication remain deterministic.
-- **Event hook = acceleration only.** `xstudio-l2-orchestrator` triggers the same reconciler after Kanban completion/block.
-- **2-minute scout = correctness backstop.** It reconciles before every claim.
-- **Resolution binding fails closed.** A `RESOLUTION` cannot publish unless the live Helpdesk resolved status is bound.
-- **No model/Jev-controlled raw Helpdesk status.** Workflow values come from the deployment binding.
-- **No automatic Solution article per ticket.** KB promotion remains a separate governed lifecycle.
+## The screens
 
-The normative lifecycle specification is `Knowledge/L2_PIPELINE_STATE_MACHINE.md`.
+There are two surfaces on one Next.js app (`l1-ui`, port 3417). Both share one design system.
 
-## Agent-facing investigation surface
+### Requester helpdesk: `/`
 
-The worker has one typed evidence surface: `xstudio_l2`. Jev is **not** exposed as a worker tool; deterministic runtime code invokes reviewed System One workflows before/after the local model.
+The page plant users open, usually embedded in XStudio as `/?user={XStudioUserID}`.
 
-| Need | Tool / operation |
+| Home | Chat |
 |---|---|
-| Read a known table/view with validated identifiers | `xstudio_l2.select` |
-| Deterministically probe a Jev-selected real candidate by strong ticket identifier | `xstudio_l2.probe_table` |
-| Run composed read-only SQL | `xstudio_l2.query` |
-| Narrow likely tables from ticket text | `xstudio_l2.suggest_tables` |
-| Discover real SQL objects | `xstudio_l2.find_objects` |
-| Read one object definition | `xstudio_l2.get_definition` |
-| Validate table/column identifiers | `xstudio_l2.validate_identifiers` |
-| Execute an explicitly allowlisted read procedure | `xstudio_l2.read_procedure` |
-| Refresh the live ticket row | `xstudio_l2.get_ticket_context` |
-| Inspect the run SQL/action audit | `xstudio_l2.get_run_actions` |
-| Persist ticket-specific findings | `xstudio_l2.save_ledger` |
+| ![Helpdesk home](docs/screenshots/helpdesk-home.png) | ![Helpdesk chat](docs/screenshots/helpdesk-chat.png) |
 
-The worker-facing safety contract is structural:
+- **Home:** start a conversation, see tickets waiting on you, open tickets and recent chats.
+- **Messages:** streaming replies, with the XBatch pages each answer used, thumbs up or down, "Talk to support" to hand over, and a link to the ticket the chat raised.
+- **Tickets:** full timeline of each ticket (support replies, your answers), reply to questions, rate a resolution, and report "still not fixed".
+- Works as a narrow widget with bottom tabs on phones:
 
-- arbitrary SQL is read-only;
-- write/DDL/EXEC is rejected;
-- stored procedures require an explicit allowlist;
-- databases and schema identifiers are validated;
-- automatic `probe_table` refuses broad reads without a strong identifier-to-column mapping;
-- raw evidence is returned as read; Jev does not replace/filter SQL result rows inside `xstudio_l2`;
-- output is bounded;
-- repeated identical failures are circuit-broken;
-- terminal attempts to recreate database transport are blocked.
+<p align="center"><img src="docs/screenshots/helpdesk-mobile.png" width="300" alt="Helpdesk on a phone"></p>
 
-Ticket publication and Jev orchestration are never worker tools.
+![A ticket from the requester's side](docs/screenshots/helpdesk-ticket.png)
 
-## Worker roles
+### Support console: `/admin`
 
-### Jev-first investigator
+One sidebar, grouped by what the desk does. **New chat** (top of the nav, or Ctrl+K) starts a chat inside the console as the acting engineer. **Ctrl+K** also searches tickets and pages.
 
-Default profile: `l2-jev-investigator`.
+#### Command centre
+Open tickets by who owns them (L2 working, waiting on requester, with L3, unclaimed). Tickets needing attention, most urgent first. The live engineer card, with the last health check of the local model server. L2's outcome mix and a lane-coded activity feed. *(Screenshot at the top.)*
 
-Most of the old context-understanding burden is completed before this profile sees the card. It receives:
+#### Live engineer
+Each investigation drawn as the circuit it ran through: **ticket → Jev gates → audited probes → evidence → Jev verdict → local model → outcome**. Each connector carries the fact that crossed it (identifier, route, how many records were flagged, verdict confidence).
 
-1. reads the dispatch bundle and live evidence;
-2. uses the named `xstudio_*` tools for database/schema/ticket/ledger work;
-3. treats KB/history/mem0 as leads rather than ticket-specific proof;
-4. records meaningful ticket-specific findings in the run ledger;
-5. completes its own Kanban card with structured metadata.
-- Jev ticket characterization;
-- canonical route/route skill;
-- deterministic real schema candidates;
-- Jev candidate/evidence plan;
-- bounded live probe results;
-- Jev investigation assessment;
-- governed KB hits with applicability/negative-indicator judgments;
-- prior run ledger/history where relevant.
+- Every probed record is one square. Squares turn a colour once Jev judges them.
+- **Follow live** attaches to the run being worked now. **Replay** steps through a finished run event by event.
+- The work trace below is a waterfall of every Jev decision, walk step, tool call and model call. Click any stage, square or step for its details (probabilities, findings, audit IDs, raw payload).
 
-If the package is already sufficient, its scope is `COMPOSE_ONLY`; normally it should turn evidence into a concise structured proposal, not rediscover the schema. If evidence remains incomplete, it gets a small focused-read budget.
+![Live engineer: investigation circuit](docs/screenshots/console-live-engineer.png)
 
+#### Board
+Two views of the Hermes Kanban and the tickets:
 
-### Jev primary reviewer
+- **Agent tasks:** in-flight / stuck / superseded / done at a glance. Blocked reviews are split into **stuck (needs a person)** and **superseded by a later review/rework cycle**, which is expected. Each card shows kind and cycle, the proposed outcome and evidence status, the worker and time taken.
+- **Ticket lifecycle:** open tickets grouped by support state, with the same panels and cards.
 
-Jev is the default semantic reviewer of the frozen proposal. Deterministic thresholds decide whether its typed result can route directly to publish/rework/escalation.
+![Board](docs/screenshots/console-board.png)
 
-### Local deep reviewer
+#### Tickets
+Every ticket with views and filters. Each ticket shows its **journey** (L1 chat → raised → each L2 attempt → current state), and every step opens its record. Tabs: activity, the chat that raised it, and its L2 investigations. Properties sit on the right.
 
-Profile: `l2-reviewer-primary`.
+![Ticket with its journey](docs/screenshots/console-ticket.png)
 
-They are invoked only for `LOCAL_REVIEW`, Jev unavailability/low-confidence safety-gate failure, contradictory evidence, or genuinely deep reasoning. They verify the smallest disputed live fact rather than replaying the whole investigation.
+#### L1 · Conversations
+A support inbox. The views sit in the main nav (My chats, All, Open, Raised a ticket, Answered by assistant, Marked not helpful, Solved), then the list, the conversation, and a details rail. The rail shows who the requester is, what the chat led to (ticket state, last L2 outcome) and their other chats.
 
-## Response types
+- Your own chats are live and can be continued.
+- Everyone else's are read-only.
+
+![Conversations](docs/screenshots/console-conversations.png)
+
+#### L2 · Investigations
+Every run, searchable and filterable by outcome. Each run opens on **How it happened** (the same circuit as Live engineer, replayable), **What was told** (problem, findings, the reply, stored Jev decisions) and **Audited reads** (every SQL action with its query).
+
+![Investigation record](docs/screenshots/console-investigation.png)
+
+#### L3 · Escalations
+Everything L2 handed to people. Pick it up, add internal or requester-visible notes, resolve (optionally closing the ticket), or reopen. Each escalation links to the L2 investigation and the full ticket. Actions are recorded against the acting engineer (choose yourself at the bottom of the nav).
+
+![L3 escalations](docs/screenshots/console-l3.png)
+
+#### Pipeline health
+The runtime's own `status` and the performance report, laid out:
+
+- **Runtime:** ready to claim, local-model slots, anomalies.
+- **Claims:** time since the last claim, stall detection.
+- **Lifecycle invariants:** each must be 0.
+- **Outcomes, expected answers met, tool failure rates and causes.**
+- **Prompt size vs the spill limit.**
+- **The runs that missed their expected outcome.** Each opens its investigation.
+
+Window: 2 h, 6 h, 24 h or 7 d.
+
+![Pipeline health](docs/screenshots/console-pipeline-health.png)
+
+#### Agents & tools
+Who does the work (Jev, the worker profiles, the L1 assistant, the local writer). The **tool call graph** shows calls, latency or errors per tool, with the worst tool drawn as the hot path. Also: Jev decisions by kind, what agents may do (permission catalog) and recent audited SQL reads.
+
+![Agents and tools](docs/screenshots/console-agents-tools.png)
+
+#### Reports
+Demand calendar (requests per day, busiest day highlighted). Tickets, conversations, first-reply time, satisfaction and deflection. L2 runtime and compute (Jev, tool and model latency, tokens, GPU/CPU). Breakdowns by state, area and type.
+
+![Reports](docs/screenshots/console-reports.png)
+
+#### Runtime logs and Settings
+- **Runtime logs** tails the JSONL call trace and observer events written in WSL.
+- **Settings** holds the L1 writer model (OpenAI-compatible: LM Studio, Ollama, OpenAI, Gemini, Groq, OpenRouter; or Anthropic, or the Codex CLI for a ChatGPT plan), GBrain knowledge, the helpdesk name, greeting and **accent colour**, and the embed snippet.
+
+![Settings](docs/screenshots/console-settings.png)
+
+---
+
+## Architecture
+
+Five responsibilities. Each has exactly one owner.
+
+| # | Responsibility | Owner | Owns |
+|---|---|---|---|
+| 1 | **XStudio Helpdesk** | `XStudio_Helpdesk.dbo.Complaint_Mst_Tbl` | the ticket and its user-visible state |
+| 2 | **Chitragupta control** | `Model_Bench/l2_pipeline_runtime.py` + SQL procedures | claim, capacity, queue, retry, recovery, review routing, publication |
+| 3 | **Jev: System One** | `Model_Bench/jev/*`, `L1/api` (L1 turn decisions) | typed judgments: route, relevance, execution depth, verdict, primary review. Never writes text or SQL |
+| 4 | **Hermes / local model: System Two** | Hermes profiles on LM Studio (Qwen) | composing and focused reasoning, only when Jev says the facts need it |
+| 5 | **Evidence and knowledge** | `xstudio_l2` typed tool, audited SQL, GBrain world, governed KB | what is true right now, and what is known |
+
+The L1 layer (`L1/api` + `l1-ui`) is an adapter over the same system, not a sixth responsibility. It owns chat turns, ticket creation from chat, the requester's view of tickets, and the console. It shows L2 read-only and never re-implements the lifecycle.
+
+The normative lifecycle specification is **[`Knowledge/L2_PIPELINE_STATE_MACHINE.md`](Knowledge/L2_PIPELINE_STATE_MACHINE.md)**. The agent operating contract is **[`AGENTS.md`](AGENTS.md)**.
+
+### Where things run
+
+```text
+Windows laptop / server                          WSL (Ubuntu)
+├─ L1 API  (.NET, :5116)  ──── SQL ────┐         ├─ Hermes gateways (systemd --user)
+│    ├─ Jev (TypeSafe API)             │         │    l2-investigator      (hosts cron jobs)
+│    ├─ GBrain search ──── wsl.exe ────┼────────►│    l2-jev-investigator  (investigation / rework)
+│    ├─ runtime status ─── wsl.exe ────┼────────►│    l2-reviewer-primary  (local review fallback)
+│    └─ benchmark report (python)      │         ├─ l2_pipeline_runtime.py, ticket_scout.py (cron, 2 min)
+├─ l1-ui   (Next.js, :3417) ── /api/l1/* ─► API  ├─ GBrain (~/.hermes/xstudio-gbrain), Qdrant, mem0
+└─ Jev bridge (Windows Python)                   └─ Hermes Kanban (SQLite)
+                                       │
+            SQL Server  XStudio_Helpdesk / XStudio_Xbatch  (reached over Tailscale)
+            LM Studio   on the desktop (Tailscale)  — Qwen, one inference slot
+```
+
+---
+
+## The L2 pipeline
+
+### Lifecycle
+
+```text
+Complaint_Mst_Tbl
+   │  ticket_scout.py: reconcile first, then fill free pipeline slots
+   ▼
+atomic SQL admission (up to L2_MAX_PIPELINE_WIP = 8 active runs)
+   │
+   ├─ Jev triage + safety + knowledge applicability
+   ├─ world_walk over the generated XBatch world: audited reads, Jev role/step choices
+   ├─ fact table ─► Jev direct_answer
+   │     ANSWERED / CONFIRMED / CORRECTED / NOT_FOUND ─► fixed reply, published (QWEN_FREE)
+   │     NEEDS_REASONING ─► frozen work package, queued for the local model
+   ▼
+SQL-serialised local-model slot: exactly one RUNNING task
+   priority: review 30 > rework 20 > new investigation 10
+   ▼
+investigator / rework ─► frozen proposal ─► Jev PRIMARY REVIEW
+        APPROVE ─► deterministic publish
+        REWORK ─► bounded rework (review_cycle ≤ 3)
+        L3_ESCALATION ─► L3 queue
+        LOCAL_REVIEW ─► local reviewer, only on ambiguity or conflict
+```
+
+There is one Kanban board and one lifecycle authority. A local reviewer card is an exception path, not the normal route.
+
+### Execution modes
+
+| Mode | When | Model use |
+|---|---|---|
+| `QWEN_FREE` | Jev's verdict is supported by the audited fact table (`L3_ESCALATION`, `NEEDS_HUMAN_ACTION`, confirmed / corrected / answered) | none. The harness renders a fixed reply with verified claims |
+| `COMPOSE_ONLY` | evidence is sufficient but needs phrasing | small context, normally zero extra reads |
+| `FOCUSED_REASONING` | evidence is incomplete | larger bounded budget of focused live reads |
+
+### Invariants
+
+- **Two capacity domains.** Pipeline WIP (default 8 active runs, `L2_MAX_PIPELINE_WIP`) is separate from the one RUNNING local-model slot. The waiting threshold is `L2_MAX_QWEN_WAITING` (default 4). New investigations pause at the threshold; review and rework are still admitted so ongoing runs never starve.
+- **Frozen work.** The worker card is stored on the run before admission. A QUEUED run without a Kanban card is valid state.
+- **The review loop** uses `review_cycle`, not SQL `AttemptNo`. At most 3 cycles.
+- **UPDATE continuations** are capped at 3 per ticket version. The next one escalates to L3.
+- **Resolution binding fails closed.** A `RESOLUTION` cannot publish unless the live resolved status is bound (`deploy/helpdesk_workflow_binding.json`: eligible `Enter`, resolved `Closed`, waiting-user AskStatus `Ask`).
+- **Recovery has one owner:** `recover_orphan_runs` in the runtime.
+- **Jev owns semantics, never mechanics.** SQL safety, workflow binding, WIP, mutation and publication are code-owned.
+- **A `RESOLUTION` does not create an approved KB article.** Curation writes a `Candidate`, which is promoted only when a verified resolution on a different ticket reuses it.
+
+### Response types
 
 | Type | Meaning |
 |---|---|
-| `UPDATE` | Verified progress exists, but the ticket is not finally resolved. |
-| `QUESTION` | A specific requester fact is genuinely required. |
-| `RESOLUTION` | The outcome/fix is verified and may be closed through the bound workflow. |
-| `L3_ESCALATION` | The cause remains unresolved or is genuinely beyond L2 capability. |
-| `NEEDS_HUMAN_ACTION` | Cause and required action are known, but execution is outside the L2 worker's authority. |
+| `RESOLUTION` | outcome or fix verified; may close through the bound workflow |
+| `UPDATE` | verified progress, not yet resolved |
+| `QUESTION` | a specific requester fact is genuinely needed |
+| `NEEDS_HUMAN_ACTION` | cause and action known, but executing it is outside L2's authority |
+| `L3_ESCALATION` | cause unresolved or beyond L2 |
 
-The current deployment binding is stored in `deploy/helpdesk_workflow_binding.json`. Do not infer workflow status names from prose or model output.
+### The only way agents touch the database
 
-## Knowledge model
+Workers reach SQL **only** through the typed `xstudio_l2` tool (`xstudio-l2-tools` plugin + `Model_Bench/xstudio_l2_tool_bridge.py`). The model never writes SQL or names columns: `xstudio_read_table(table)` lets the harness pick the filter and columns.
 
-Knowledge is deliberately separated by authority and lifetime:
+| Need | Operation |
+|---|---|
+| read a table for the ticket's identifiers | `xstudio_read_table` / `probe_table` |
+| read a known table or view with validated identifiers | `select` |
+| composed read-only SQL | `query` |
+| discover objects and definitions | `find_objects`, `get_definition`, `suggest_tables`, `validate_identifiers` |
+| allowlisted read procedures | `read_procedure` |
+| live ticket row, run audit, findings ledger | `get_ticket_context`, `get_run_actions`, `save_ledger` |
 
-```text
-Git-tracked Knowledge/ documents
-    = canonical domain/runtime reference
+The safety contract is structural:
+- raw SQL is read-only, and write, DDL and `EXEC` are rejected;
+- procedures need an explicit allowlist;
+- identifiers are validated;
+- output is bounded, and identical repeated failures are circuit-broken;
+- model-driven use of interpreters, database drivers, `sqlcmd` or package installs is blocked by the plugin guard and `approvals.deny`.
 
-Knowledge/process_world.json + Knowledge/world/
-    = generated XBatch process graph and GBrain pages used by world_walk
+Publication and Jev are never worker tools.
 
-GBrain xstudio-knowledge source
-    = derived searchable index of the committed knowledge; never ticket evidence
+### Jev workflows (harness-owned)
 
-Governed SQL Solution articles
-    = reusable known-issue knowledge with lifecycle state
+| Workflow | Stage | Stored in |
+|---|---|---|
+| L1 turn decision | answer / ask / ticket, page relevance | L1 chat message `Decision` |
+| `TICKET_TRIAGE`, `TICKET_SECURITY`, `GBRAIN_APPLICABILITY` | gates | `JevTriageJson` |
+| `WORLD_WALK_ROUTE`, `_ROLE`, `_STEP`, `_COLUMNS` | world walk | trace events |
+| `JEV_DIRECT_ANSWER`, `JEV_INVESTIGATION` | verdict / execution depth | `JevInvestigationJson` |
+| `PRIMARY_REVIEW` | review of the frozen proposal | `JevReviewJson`, `JevReviewDecision` |
+| `TRACE_ASSESSMENT` | trace quality | `JevTraceJson` |
+| KB applicability / curation | after verified resolutions | `JevKBCurationJson` |
 
-Problem / ticket history
-    = episodic evidence and recurring-root-cause history
+Every System One call is also written to `Hermes_Agent_Trace_Trn_Tbl` as `EventType = jev_system_one`. There is one run spine and one observability stream, and no separate Jev tables.
 
-mem0
-    = compact reusable operational heuristics only
+---
 
-Qdrant
-    = retrieval index, not source of truth
-```
+## Knowledge
 
-For current-ticket claims, live SQL evidence outranks snapshots, prior tickets, retrieval hits, and memory.
+| Layer | What it is | Authority |
+|---|---|---|
+| `Knowledge/*.md`, `manifest.json`, `task-router.md` | canonical domain and runtime reference | Git |
+| `Knowledge/process_world.json` → `Knowledge/world/**` | the generated XBatch process world (`build_process_world.py` → `build_world_pages.py`) | Git, generated |
+| GBrain source `xstudio-knowledge` | searchable index of the committed world, used by L1 answers and `world_walk` | derived; `sync` reads **committed** files only |
+| governed SQL Solution articles | reusable known issues: `Candidate` → `Approved` | SQL |
+| ticket / problem history | episodic evidence | SQL |
+| mem0 | compact operational heuristics only (never interpreter or driver mechanics) | memory |
+| Qdrant | retrieval index | derived |
 
-Start routing with:
+For a claim about the current ticket, live SQL evidence outranks everything else.
 
-- `Knowledge/manifest.json` — machine-readable route map;
-- `Knowledge/task-router.md` — human-readable mirror;
-- `Knowledge/L2_PIPELINE_STATE_MACHINE.md` — normative architecture and lifecycle specification.
+---
 
-XBatch investigation uses one generated world: `build_process_world.py` writes
-`Knowledge/process_world.json`, `build_world_pages.py` renders
-`Knowledge/world/**` plus typed links, and `world_walk.py` traverses that world
-through GBrain while code performs audited live reads. The reviewer consumes the
-persisted current-run evidence; there is no parallel semantic atlas or recipe registry.
+## The L1 API
 
-## TypeSafe Jev System-One control fabric
+`L1/api` (.NET, `http://localhost:5116`). The browser only calls `/api/l1/**` on the UI, which proxies to the API (SSE included). SQL, Jev, GBrain, model keys and credentials stay server-side, and API keys are encrypted at rest.
 
-Jev is now a **primary semantic control layer** inside Chitragupta. It is not a free-form agent and it is not a parallel lifecycle engine. TypeSafe System One performs narrow typed semantic work (Choice, Noul, Score) while deterministic code retains authorization, SQL safety, workflow state, WIP, mutation, publication, and retry/rework limits.
+| Area | Routes |
+|---|---|
+| Accounts and config | `GET /api/users`, `/api/users/{id}`, `/api/config` |
+| Chat | `GET/POST /api/sessions`, `PATCH/DELETE /api/sessions/{id}`, `GET /api/sessions/{id}/messages`, `POST /api/sessions/{id}/turn` (SSE: `status`, `sources`, `token`, `ticket`, `done`), `POST /api/messages/{id}/feedback` |
+| Requester tickets | `GET /api/tickets`, `/api/tickets/{id}`, `POST …/reply`, `…/rating`, `…/follow-up` |
+| Console: desk | `GET /api/admin/tickets`, `/tickets/{id}`, `/conversations`, `/conversations/{id}`, `/stats`, `/lookups` |
+| Console: settings | `GET /api/admin/settings`, `PUT /settings/{section}`, `POST /ai/models`, `/ai/test`, `/knowledge/search` |
+| Operations | `GET /api/ops/overview`, `/runs`, `/runs/{id}`, `/live`, `/board`, `/l3`, `POST /l3/{id}`, `GET /tools`, `/logs` |
+| Pipeline health | `GET /api/ops/status` (runtime `status`, WSL), `GET /api/ops/performance?hours=N` (benchmark report). Read-only, cached 20–30 s, one at a time, with timeouts |
 
-~~~text
-SQL claim
-  -> Jev ticket triage
-       route / ambiguity / complexity / domain / known-issue likelihood
-  -> world_walk over the generated XBatch world
-       GBrain scope/links + audited live SQL reads + Jev typed relevance/step choices
-  -> Jev investigation assessment + meta-attention + execution depth
-       evidence sufficiency / response type / known-solution fit /
-       root-cause family / human-action need / local-reasoning need /
-       QWEN_FREE vs COMPOSE_ONLY vs FOCUSED_REASONING /
-       route-skill need / per-context-chunk presentation Score
-  -> deterministic execution/context compiler
-       mode-specific context budgets
-       whole-chunk FULL / COMPACT / SUMMARY / OMIT
-       current ticket + live SQL evidence pinned
-       route skill loaded only when semantically useful
-  -> either:
-       QWEN_FREE deterministic L3/human handoff candidate
-       OR persist frozen COMPOSE_ONLY / FOCUSED_REASONING work package
-  -> SQL-serialized one-Qwen admission
-       review > rework > new investigation
-  -> local worker only when admitted
-  -> frozen proposal
-  -> Jev PRIMARY REVIEW
-       APPROVE       -> deterministic publish
-       REWORK        -> bounded rework
-       L3_ESCALATION -> deterministic escalation
-       LOCAL_REVIEW  -> qwen local reviewer only for ambiguity/conflict/deep reasoning
-  -> deterministic publish/rework/escalation
+---
 
-xstudio-l2-trace
-  -> local append only
-  -> SQL trace drain
-  -> Jev trace assessment
-  -> semantic quality / silent-failure / attention metrics
+## Running it
 
-verified RESOLUTION
-  -> Jev near-duplicate KB rerank
-  -> REUSE_EXISTING / UPDATE_EXISTING / CREATE_CANDIDATE / NONE
-  -> governed KB workflow; no direct article promotion by Jev
-~~~
+### Prerequisites
 
-This deliberately removes the old assumption that every proposal must consume a second local-model review. The local reviewer is now an **exception/deep-review path**. Jev is the normal semantic reviewer; deterministic code decides whether its typed result meets the configured thresholds for direct publish/rework/escalation.
+- Windows with **WSL (Ubuntu)**, **.NET 10 SDK**, **Node ≥ 20.19**, **Python 3.12+** with `pyodbc` and ODBC Driver 18.
+- SQL Server with `XStudio_Helpdesk` and `XStudio_Xbatch`, reachable at the **Tailscale** address (see *Gotchas*).
+- LM Studio with the local model (on the desktop, over Tailscale).
+- In WSL: Hermes Agent under `~/.hermes`, the three L2 profiles, GBrain at `~/.hermes/xstudio-gbrain`.
 
-### Jev-first investigation
+### Environment
 
-l2-jev-investigator is the default investigator profile. It is a bounded Hermes coordinator, not a second broad reasoning agent.
+| Variable | Where | Used by |
+|---|---|---|
+| `MSSQL_MCP_SERVER`, `MSSQL_MCP_USER`, `MSSQL_MCP_PASSWORD` | Windows user env | L1 API, benchmark, Jev bridge |
+| same keys | each WSL profile `~/.hermes/profiles/<p>/.env` | L2 runtime and workers |
+| `TYPESAFE_API_KEY` (+ optional `TYPESAFE_DEFAULT_MODEL`, `TYPESAFE_BASE_URL`) | Windows env | Jev |
+| `L2_MAX_PIPELINE_WIP` (8), `L2_MAX_QWEN_WAITING` (4), `CHITRAGUPTA_JEV_*` | WSL profile env | runtime tuning |
+| `L1_API_URL` (default `http://127.0.0.1:5116`) | UI env | Next.js proxy |
 
-Before the profile starts, the runtime already:
+Never commit `.env` files or put credentials in prompts, cards, tickets or traces.
 
-1. runs parallel Jev ticket characterization;
-2. narrows real SQL candidates deterministically;
-3. has Jev choose/rate the useful candidates;
-4. runs probe_table only where a strong ticket identifier maps to a real allowlisted column;
-5. sends those bounded live rows plus approved KB candidates back through Jev investigation assessment;
-6. asks independent per-chunk meta-attention Scores in that **same** System One request;
-7. deterministically builds a model-facing context view by whole chunks rather than dumping/truncating the raw bundle.
-
-The current ticket and gathered live-SQL evidence cannot be attention-omitted; a Jev-selected known solution is likewise pinned to at least a compact representation. Lower-value history, KB alternatives and discovery backlog can be summarized or omitted, with recovery hints retained.
-
-`QWEN_FREE` (no-Qwen) is the target path: after the audited probes, the harness builds a fact table (fields the ticket names, recorded vs reported values, action IDs), Jev's `direct_answer` workflow picks CONFIRMED/CORRECTED/ANSWERED/NOT_FOUND/NEEDS_REASONING, and the harness renders a fixed reply with VERIFIED claims and publishes it. Jev never writes text; outcomes the facts contradict are refused. Only NEEDS_REASONING (or no audited facts) goes to the local model.
-
-If Qwen is still useful, **COMPOSE_ONLY** gets a smaller context budget and normally zero additional live reads; **FOCUSED_REASONING** gets the larger bounded recovery budget. The route-specific domain skill is attached only when the same Jev assessment says it materially helps the next System-2 step. This follows the TypeSafe-founder design idea that explicit dynamic context/skills should replace loading every possible tool/schema/skill up front.
-
-probe_table never issues a broad automatic query when no strong identifier maps to the candidate schema. In that case the package explicitly says automatic probing was not possible and the bounded coordinator decides whether one focused live read is justified.
-
-### Harness-owned Jev workflows
-
-Deterministic runtime code owns Jev invocation. The Windows bridge exposes only the production workflows the runtime currently needs: full-ticket trust screening, bounded evidence planning, investigation assessment/meta-attention, and primary proposal review. Ticket trust screening deliberately remains separate from triage because routing uses requester-grounded text and excludes model/L1 suspected-cause content to avoid confirmation bias, while security must inspect the broader untrusted ticket. KB trust screening is coalesced into KB applicability because those judgments truly share the same candidate state. There is no model-facing Jev tool and no arbitrary-question surface.
-
-### Storage: reuse the run and trace model
-
-Jev is another investigator/reviewer for the same Hermes run, so there is **no separate Jev business table**.
-
-Hermes_L2_Response_Trn_Tbl carries stage summaries:
-
-~~~text
-JevTriageJson
-JevInvestigationJson
-JevReviewJson
-JevTraceJson
-JevKBCurationJson
-ReviewMode
-JevReviewDecision
-JevReviewConfidence
-JevRiskScore
-LocalReviewRequired
-JevModel
-JevReviewedOn
-~~~
-
-Every System One call is also written to the existing Hermes_Agent_Trace_Trn_Tbl as EventType=jev_system_one. KB retrieval telemetry likewise reuses the trace stream. This keeps one run spine and one observability stream.
-
-### Shared implementation
-
-~~~text
-Model_Bench/jev/client.py                    one System One transport adapter
-Model_Bench/jev/ticket_triage.py            ticket characterization/routing
-Model_Bench/jev/investigation_assessment.py structured evidence interpretation + meta-attention
-Model_Bench/jev/reviewer.py                 primary semantic reviewer
-Model_Bench/jev/kb_applicability.py         KB applicability
-Model_Bench/jev/kb_curation.py              KB curation
-Model_Bench/jev/trace_assessment.py         trace quality
-Model_Bench/jev/audit.py                    existing-run + trace persistence
-Model_Bench/jev_workflow_bridge.py          Windows harness bridge
-deploy/profiles/l2-jev-investigator/        default Jev-first synthesis coordinator
-~~~
-
-The upstream TypeSafe skill is installed project-locally at `.agents/skills/typesafe-ai/SKILL.md`.
-
-### Active behavior and configuration
-
-Jev is active in harness-owned requester-grounded triage, separate full-ticket trust screening, evidence planning/assessment/meta-attention, coalesced KB applicability/trust checks, trace assessment, and primary review. Deterministic structural rules remain higher authority: explicit identifier routing, schema existence, read-only SQL, procedure allowlists, workflow binding, WIP, and publication state are code-owned.
-
-~~~text
-TYPESAFE_API_KEY                              required in Windows Python/service environment
-TYPESAFE_DEFAULT_MODEL                        default jev-latest
-TYPESAFE_BASE_URL                             optional API base override
-CHITRAGUPTA_JEV_ENABLED                       default 1
-CHITRAGUPTA_JEV_AUDIT_ENABLED                 default 1
-CHITRAGUPTA_JEV_MIN_CONFIDENCE                default 0.70
-CHITRAGUPTA_JEV_TIMEOUT_SECONDS               default 10
-CHITRAGUPTA_JEV_KB_ENABLED                    default 1
-CHITRAGUPTA_JEV_TRACE_ENABLED                 default 1
-CHITRAGUPTA_JEV_SECURITY_ENABLED              default 1
-CHITRAGUPTA_JEV_FIRST_INVESTIGATION_ENABLED   default 1
-CHITRAGUPTA_JEV_DIRECT_APPROVAL_CONFIDENCE    default 0.82
-CHITRAGUPTA_JEV_DIRECT_REWORK_CONFIDENCE      default 0.88
-L2_MAX_PIPELINE_WIP                           default 8
-L2_MAX_QWEN_WAITING                           default 4 (priority-aware queue admission threshold)
-~~~
-
-There is no repository credential fallback. Never commit `.env` secrets or put TypeSafe credentials into prompts, Kanban cards, ticket text, trace payloads, or model-visible configuration.
-
-## SQL runtime and deployment
-
-`Knowledge/00_Hermes_L2_FULL_INSTALL.sql` is the generated complete SQL bundle. The numbered source files are authoritative inputs; hardening sources `25_ticket_dispatch_hardening.sql` and `55_update_retry_hardening.sql` are already included in the generated full-install bundle.
-
-Do not apply those two files again merely because their source files exist. Edit the numbered source, regenerate the bundle, then deploy the generated bundle.
-
-For the multi-WIP migration, **SQL goes first**: apply the current generated bundle and run `Knowledge/98_pipeline_postflight.sql` before deploying/restarting the Python runtime. The new runtime reads `ExecutionMode` / `LocalModel*` columns and calls the SQL admission procedures; running new Python against old SQL is an invalid partial deployment.
-
-Deployment sequence is documented in `Knowledge/deploy-hermes-sql.md`.
-
-Hermes-side runtime deployment:
+### Start L1 locally
 
 ```bash
+dotnet run --project L1/api --launch-profile http
+npm --prefix l1-ui run dev -- -p 3417
+```
+
+Open `http://localhost:3417/admin` (console) and `http://localhost:3417/?user=<XStudio user ID>` (helpdesk). Both are also in `.claude/launch.json` as `l1-api` and `l1-ui`. Embed in XStudio as a page control that loads the URL in an iFrame: `http://<host>:3417/?user={XStudioUserID}`. `public/embed.js` provides a floating launcher.
+
+### Apply an update: one command
+
+`apply-helpdesk-update.ps1` (also on the **RepoPad** desktop macropad):
+1. fast-forwards `main` and refuses a dirty tree;
+2. runs `npm run check` and `npm run build`;
+3. validates the API build;
+4. restarts the API;
+5. starts the UI if it isn't running.
+
+Nothing restarts if a check fails.
+
+### L2 runtime and SQL
+
+```bash
+# SQL first: apply the generated bundle, then the postflight
+#   Knowledge/00_Hermes_L2_FULL_INSTALL.sql   (already includes 25_ and 55_ hardening; do not re-apply them)
+#   Knowledge/98_pipeline_postflight.sql
+# then the Hermes side (copies runtime/plugins/profiles, restarts gateways)
 bash Model_Bench/deploy_l2_pipeline_runtime.sh
 ```
 
-Local validation:
+Edit the numbered SQL sources and regenerate the bundle; never hand-edit the bundle. `.gitattributes` forces LF on `*.sh` and `*.sql`, because CRLF broke WSL scripts and install reproducibility. See `Knowledge/deploy-hermes-sql.md`.
+
+---
+
+## Operating it
+
+**Look first:** console → **Pipeline health**, or the same data from the command line:
 
 ```bash
-# Fast default for the code-edit loop.
-bash Model_Bench/validate_l2_pipeline_local.sh
-
-# Full live gate before deployment / after lifecycle changes.
-bash Model_Bench/validate_l2_pipeline_local.sh --full
-
-# Live checks only when the fast gate already passed.
-bash Model_Bench/validate_l2_pipeline_local.sh --live-only
+python Model_Bench/benchmark_l2_performance.py --hours 2          # the one live-health report; extend it, don't write ad hoc scripts
+python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status   # in WSL, with the profile .env loaded
 ```
 
-The fast gate avoids SQL/Hermes round-trips. Full validation still uses the real Windows/WSL/Hermes environment, but reconciliation now starts from one active-run/Kanban snapshot and does not re-query historical completed runs. This project does not rely on GitHub Actions as the authority for production validation.
+**Validate before deploying** (locally, against the real environment; GitHub Actions is not proof of live correctness):
 
-## Important runtime files
+```bash
+bash Model_Bench/validate_l2_pipeline_local.sh            # fast gate
+bash Model_Bench/validate_l2_pipeline_local.sh --full     # full live gate
+python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
+npm --prefix l1-ui run check && npm --prefix l1-ui run build
+```
+
+**Restart a worker profile** (WSL): `systemctl --user restart hermes-gateway-<profile>.service`.
+
+### Gotchas that have cost real hours
+
+- **Use the Tailscale SQL address (`100.94.169.57`), not the office LAN address (`10.2.6.204`).** Off the office network the LAN address is unreachable. Every WSL cron tick then fails with `HYT00 Login timeout`, the board looks "idle", and time-since-last-claim keeps climbing. Windows and all three WSL profiles must point at the same Tailscale address.
+- **Profile `.env` files are CRLF.** A raw `source` puts `\r` into the server name. Load with `set -a; source <(tr -d '\r' < .env); set +a`.
+- **SQL timestamps (`CreatedOn`, `EventOn`) are already IST.** Do not add 5:30. WSL's `date` and cron output filenames are **UTC**, which is not clock drift.
+- **Model calls are traced without a duration.** The console estimates model time from the gaps between steps. The gap before a worker session starts is queue wait and is reported separately.
+- **pyodbc hides procedure errors behind result sets** until `nextset()`. Drain before commit.
+- **GBrain `sync` reads committed git files.** Commit regenerated world pages before syncing.
+- **`XMES_Log_Trn_Tbl` is huge** (3.5 GB, PK only). Never `LIKE`-scan it live; use the build-time log index.
+
+---
+
+## Repository map
 
 ```text
-Model_Bench/l2_pipeline_runtime.py
-    Single deterministic lifecycle state machine.
-
-Model_Bench/ticket_scout.py
-    2-minute reconcile-first claim backstop.
-
-Model_Bench/reconcile_l2_pipeline.py
-    Small entrypoint into the central reconciler.
-
-Model_Bench/xstudio_l2_orchestrator_plugin/
-    Event-driven reconciler trigger; no lifecycle logic of its own.
-
-Model_Bench/xstudio_l2_tools_plugin/
-    Named xstudio_* tool registration and execution guard.
-
-Model_Bench/xstudio_l2_tool_bridge.py
-    Harness-owned Windows/SQL transport behind the typed tool.
-
-Model_Bench/jev/
-Model_Bench/jev_workflow_bridge.py
-    Harness-owned System-One workflows and Windows bridge.
-
-Model_Bench/jev_trace_assessor.py
-Model_Bench/jev_post_resolution_curation.py
-    Out-of-band trace-quality assessment and advisory KB curation.
-
-Model_Bench/kb_retrieval.py
-    Deterministic relevance gate plus Jev triage, applicability,
-    negative-indicator, and untrusted-context judgments.
-
-deploy/profiles/
-    Current deployable Hermes profile artifacts.
-
-deploy/skills/xstudio/
-    Current investigator/reviewer/domain skills.
-
-deploy/cron_jobs.txt
-    Mirrored schedule documentation; the scout is the sole mutating lifecycle cron backstop.
+L1/api/                       .NET L1 API: chat turns (Jev + GBrain + writer), tickets, console ops, pipeline health
+l1-ui/                        Next.js app: requester helpdesk (/) and support console (/admin)
+  components/ui/viz.tsx         the console's visual kit (panels, charts, gauges)
+  components/console/circuit.tsx   the investigation circuit (live + replay)
+Model_Bench/
+  l2_pipeline_runtime.py      the single deterministic lifecycle state machine
+  ticket_scout.py             2-minute reconcile-first claim backstop
+  world_walk.py, build_process_world.py, build_world_pages.py   the XBatch world
+  jev/, jev_workflow_bridge.py   System One workflows + Windows bridge
+  xstudio_l2_tool_bridge.py, xstudio_l2_tools_plugin/   the typed tool surface + guard
+  xstudio_l2_orchestrator_plugin/   event trigger into the same reconciler (acceleration only)
+  benchmark_l2_performance.py  the live-health report
+  validate_l2_pipeline_local.sh, test_l2_pipeline_runtime.py
+Knowledge/                    SQL sources + generated bundle, lifecycle spec, world, routing, design docs
+deploy/                       workflow binding, profiles, skills, plugins, cron mirror, GBrain schema pack
+apply-helpdesk-update.ps1     local apply (validate → restart)
+tools/RepoPad/                desktop macropad that runs the apply script
+docs/screenshots/             the screenshots in this README
+Plans/, Agent_Comms/          history and provenance only: not current instructions
 ```
 
-## Retired architecture
+---
 
-The following designs are historical and must not be restored into current runtime code or instructions:
+## Design system
 
-- a separate `l2-review` board;
-- `kanban_forward_bridge.py` cross-board choreography;
-- independently scheduled review-board dispatch;
-- pre-created / parent-gated reviewer cards;
-- backlog `< 3` claiming;
-- using SQL `AttemptNo` as the review-loop counter;
-- model-based verifier profile names;
-- investigator-driven `--draft-response` / `--approve-draft` choreography;
-- agent-composed Python/pyodbc/sqlcmd database transport.
+Both surfaces share one visual language (`l1-ui/components/ui/viz.tsx`, tokens in `l1-ui/app/globals.css`):
 
-Historical documents under `Plans/` and `Agent_Comms/` may describe those designs as history. They are not current operating instructions.
+- **Neutral graphite plus one accent.** The accent is set in Settings → Appearance (default `#4ceea8`). Every highlight, chart signal, "done" state and focus ring is **derived from its hue** with OKLCH relative colour, so changing it recolours everything consistently in light and dark mode.
+- **Panel shell:** dashed icon tile, title, one mono line of context, and an inset body. Mono numerals for data.
+- **Charts over tables** wherever the data is a composition, distribution, decision or timeline: `SegmentBar`/`Legend`, `TickGauge`, `ProbBars`, `Waterfall`, `HeatCalendar`, the tool call graph. Tables remain only for genuinely tabular records (audited reads).
+- Motion only when it carries state (a live stage pulsing, a wire the work is crossing).
+- Lint (`@shadcn/lint`) forbids raw colours, inline styles and arbitrary values in app code; primitives live in `components/ui`.
+
+---
 
 ## Change discipline
 
-Before changing lifecycle behavior:
+Before changing the ticket pipeline, read `AGENTS.md`, `Knowledge/L2_PIPELINE_STATE_MACHINE.md`, `Model_Bench/l2_pipeline_runtime.py` and its tests. Then:
 
-1. read `AGENTS.md`;
-2. read `Knowledge/L2_PIPELINE_STATE_MACHINE.md`;
-3. trace current callers into `l2_pipeline_runtime.py`;
-4. prefer removing dead duplicate paths over adding another coordinator;
-5. preserve SQL pipeline-capacity, single-Qwen admission, frozen-proposal, workflow-binding, publication, and audit safety unless a concrete defect requires changing them;
-6. run the local validation suite and inspect live pipeline state before deployment.
+1. Trace current callers into the runtime. Prefer deleting a duplicate path over adding a coordinator.
+2. Keep pipeline capacity, single-slot model admission, frozen proposals, workflow binding, publication and audit safety intact unless a concrete defect requires otherwise.
+3. Validate locally and look at live state before deploying.
 
-The repository should have one current explanation for each mechanism and one implementation authority for each lifecycle transition.
+**Retired, do not revive:** a separate `l2-review` board; `kanban_forward_bridge.py`; independently scheduled review dispatch; pre-created reviewer cards; backlog-`<3` claiming; `AttemptNo` as the review counter; model-named verifier profiles; `--draft-response` / `--approve-draft` choreography; agent-composed Python/pyodbc/sqlcmd transport; separate publisher/reject/repair cron jobs; poll-into-long-lived-chat. Documents under `Plans/` and `Agent_Comms/` may describe these as history.
+
+The repository keeps one current explanation for each mechanism and one implementation authority for each lifecycle transition.

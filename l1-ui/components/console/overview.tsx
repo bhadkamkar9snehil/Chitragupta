@@ -96,7 +96,8 @@ export function OverviewView({ go }: { go: Go }) {
             ) : <Skeleton className="h-28" />}
           </Panel>
 
-          <Panel icon={Radio} title="Live engineer" meta={live ? "investigating now" : c?.LastClaimOn ? `idle · last claim ${ago(c.LastClaimOn)}` : "idle"}>
+          <Panel icon={Radio} title="Live engineer" meta={live ? "investigating now" : c?.LastClaimOn ? `idle · last claim ${ago(c.LastClaimOn)}` : "idle"}
+            actions={!live ? <Button size="sm" variant="ghost" onClick={go.live}>Replay <ArrowRight /></Button> : undefined}>
             {data && <ModelServer sample={data.lmStudio} />}
             {!data ? <Skeleton className="h-28" /> : live ? (
               <div className="flex h-full flex-col">
@@ -115,7 +116,6 @@ export function OverviewView({ go }: { go: Go }) {
                   <Stat label="Jev · 24 h" value={c?.JevCallsLast24h ?? 0} tone="signal" />
                   <Stat label="Model · 24 h" value={c?.ModelCallsLast24h ?? 0} />
                 </div>
-                <Button size="sm" variant="outline" className="mt-4 self-start" onClick={go.live}>Replay a past investigation</Button>
               </div>
             )}
           </Panel>

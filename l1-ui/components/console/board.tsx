@@ -124,7 +124,7 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex shrink-0 flex-wrap items-center gap-3 border-b bg-canvas px-4 py-3 lg:px-6">
-        <PageTitle icon={KanbanSquare} className="flex-1" title="Board" meta={view === "kanban" ? "L2 task queue · one active run at a time · review 30 › rework 20 › new 10" : "open tickets grouped by support state"} />
+        <PageTitle icon={KanbanSquare} className="flex-1" title="Board" meta={view === "kanban" ? "L2 task queue · up to 8 runs, one local-model slot · review 30 › rework 20 › new 10" : "open tickets grouped by support state"} />
         <Segmented label="Board view" value={view} onChange={setView} options={[{ id: "kanban", label: "Agent tasks" }, { id: "lifecycle", label: "Ticket lifecycle" }]} />
         <Tip label="Refresh">
           <Button variant="ghost" size="icon-sm" aria-label="Refresh" onClick={refresh} disabled={refreshing}><RefreshCw className={cn(refreshing && "animate-spin")} /></Button>

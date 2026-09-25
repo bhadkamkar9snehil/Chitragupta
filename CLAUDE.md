@@ -15,7 +15,7 @@ Do **not** duplicate the lifecycle architecture here. The authoritative sources 
 
 - Branch: `main` only.
 - Live lifecycle: centralized Kanban state machine in `Model_Bench/l2_pipeline_runtime.py`.
-- Global SQL WIP: `1` active run.
+- Pipeline WIP: up to `8` active runs (`L2_MAX_PIPELINE_WIP`); exactly one RUNNING local-model (Qwen) slot, waiting threshold `4`.
 - Priorities: review `30`, rework `20`, new investigation `10`.
 - No-Qwen first: audited probes -> harness fact table -> Jev `direct_answer` picks the outcome -> fixed reply published. Jev never writes text; the local model runs only on NEEDS_REASONING.
 - XBatch investigation has one generated world: `Knowledge/process_world.json` -> `Knowledge/world/**` -> GBrain/world_walk. The retired semantic atlas/recipe registry is not a live dependency.
