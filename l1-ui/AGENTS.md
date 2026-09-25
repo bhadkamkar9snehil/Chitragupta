@@ -5,21 +5,27 @@ architectural responsibility and must not acquire business/workflow ownership.
 
 ## Boundaries
 
-- The one owner of L1 behaviour is `L1/api/Program.cs` (.NET): accounts, chat sessions and history,
-  Jev's answer/ask/ticket decision, ticket creation in `Complaint_Mst_Tbl`, ticket state labels,
-  L2 replies and the requester's answers. This app renders it.
-- Browser code calls only `/api/l1/**`; `app/api/l1/[...path]/route.ts` forwards to `L1_API_URL`.
-  SQL, Jev, LM Studio and every credential stay server-side.
-- Never reproduce the L2 lifecycle or infer ticket state in React: `StateLabel`/`StateTone` come from the API.
-- Account pick is identification, not authentication. Never read or show the XStudio `Password` column.
+- The one owner of L1 behaviour is `L1/api` (.NET): accounts, conversations, Jev's answer/ask/ticket decision,
+  GBrain world search + Jev relevance, the writer model (settings-driven), ticket creation in `Complaint_Mst_Tbl`,
+  ticket state labels, L2 replies, requester answers/ratings/follow-ups, console stats and settings.
+- Browser code calls only `/api/l1/**`; `app/api/l1/[...path]/route.ts` pipes to `L1_API_URL` (SSE included).
+  SQL, Jev, GBrain, model keys and every credential stay server-side; API keys are encrypted at rest.
+- Never reproduce the L2 lifecycle in React: `StateLabel`/`StateTone` come from the API; the console shows L2 runs
+  read-only.
+- XStudio's insert trigger rewrites `Complaint_Mst_Tbl.Source`; the chat channel is derived from the L1 session link.
+- Identity: `?user=<XStudio user ID>` from the embedding page, else a remembered account pick. Identification only;
+  never read or show the XStudio `Password` column.
 
-## Screens
+## Surfaces
 
-- Sign-in: search XStudio accounts, pick one (remembered per browser).
-- Sidebar: new chat, My tickets (count needing a reply), searchable chat history with rename/delete.
-- Chat: persisted conversation, example prompts, Markdown replies, raised-ticket card with live state.
-- My tickets: filters (all / needs your reply / open / resolved), ticket detail with every published
-  L2 reply, and a reply box that returns the ticket to the support team.
+- `/` requester helpdesk (embeddable; rail at >=768px, bottom tabs below): Home, Messages (streaming replies,
+  XBatch sources, feedback, Talk to support handoff, solved + rating), Tickets (filters, timeline, reply,
+  rating, still-not-fixed follow-up). Deep links: `#/messages[/id]`, `#/tickets[/id]`; `?theme=light|dark`.
+- `/admin` support console: Inbox (views, filters, activity / chat transcript / L2 runs, properties), Conversations
+  (decisions, sources, latency, feedback), Reports, Settings (AI provider, knowledge, appearance, embed). Ctrl+K.
+- `public/embed.js` floating launcher.
+- AI providers: OpenAI-compatible (LM Studio, Ollama, OpenAI, Gemini, Groq, OpenRouter, custom), Anthropic, and
+  the Codex CLI for a ChatGPT plan (the only official route for a plan).
 
 ## UI discipline
 

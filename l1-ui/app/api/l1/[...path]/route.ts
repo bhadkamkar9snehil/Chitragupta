@@ -1,7 +1,7 @@
 // The browser talks only to this route; the L1 API (and every credential behind it) stays server-side.
-import { NextResponse } from "next/server";
-
+// Bodies are piped, so chat turns stream through as server-sent events.
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const upstream = (process.env.L1_API_URL ?? "http://127.0.0.1:5116").replace(/\/$/, "");
 
@@ -14,15 +14,19 @@ async function forward(request: Request, { params }: { params: Promise<{ path: s
       headers: { "Content-Type": "application/json" },
       body: ["GET", "DELETE"].includes(request.method) ? undefined : await request.text(),
       cache: "no-store",
-      signal: AbortSignal.timeout(240_000),
+      signal: request.signal,
     });
-    return new NextResponse(await res.text(), {
+    return new Response(res.body, {
       status: res.status,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      headers: {
+        "Content-Type": res.headers.get("Content-Type") ?? "application/json",
+        "Cache-Control": "no-store",
+        "X-Accel-Buffering": "no",
+      },
     });
   } catch {
-    return NextResponse.json({ error: "The Helpdesk service is unavailable." }, { status: 502 });
+    return Response.json({ error: "The Helpdesk service is unavailable." }, { status: 502 });
   }
 }
 
-export { forward as GET, forward as POST, forward as PATCH, forward as DELETE };
+export { forward as GET, forward as POST, forward as PUT, forward as PATCH, forward as DELETE };

@@ -1,5 +1,5 @@
-import { Helpdesk } from "@/components/helpdesk/helpdesk";
+import { HelpdeskApp } from "@/components/helpdesk/app";
 
 export default function Page() {
-  return <Helpdesk />;
+  return <HelpdeskApp />;
 }

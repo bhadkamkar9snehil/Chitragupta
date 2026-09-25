@@ -1,257 +1,393 @@
-// L1 chat: the human front door to Chitragupta. Jev decides each turn (answer / ask / raise ticket),
-// Qwen (LM Studio) only phrases replies, tickets land in Complaint_Mst_Tbl for the L2 pipeline, and
-// the user sees L2's replies and answers L2's questions here. Quick and dirty on purpose.
-using System.Data;
-using System.Net.Http.Json;
+// L1 Helpdesk API: the one owner of L1 behaviour. Jev decides each turn (answer / ask / raise ticket) and
+// which GBrain world pages are relevant; the configured writer model only phrases replies; tickets land in
+// Complaint_Mst_Tbl for the L2 pipeline. The Next.js app (l1-ui) renders all of it.
+using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
-using Microsoft.Data.SqlClient;
+using L1Api;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+builder.Services.AddDataProtection();
+builder.Services.AddSingleton<Settings>();
 var app = builder.Build();
-app.UseCors();
+await Db.Migrate();
 
-string Env(string name, string fallback = "") => Environment.GetEnvironmentVariable(name) ?? fallback;
-string Conn(string db) => $"Server={Env("MSSQL_MCP_SERVER", "10.2.6.204")};Database={db};User Id={Env("MSSQL_MCP_USER", "sa")};" +
-                          $"Password={Env("MSSQL_MCP_PASSWORD")};TrustServerCertificate=True;Encrypt=True;Connect Timeout=30";
-var helpdesk = Conn("XStudio_Helpdesk");
-var config = Conn("XStudio_Configuration_Xbatch");
-var lmStudio = Env("L1_LMSTUDIO_URL", "http://100.111.69.102:1235/v1");
-var qwenModel = Env("L1_QWEN_MODEL", "qwen/qwen3.5-9b");
-var http = new HttpClient { Timeout = TimeSpan.FromSeconds(180) };
+var json = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNamingPolicy = null };
 
-async Task<List<Dictionary<string, object?>>> Query(string cs, string sql, params (string, object?)[] ps)
-{
-    await using var con = new SqlConnection(cs);
-    await con.OpenAsync();
-    await using var cmd = new SqlCommand(sql, con);
-    foreach (var (n, v) in ps) cmd.Parameters.AddWithValue(n, v ?? DBNull.Value);
-    await using var r = await cmd.ExecuteReaderAsync();
-    var rows = new List<Dictionary<string, object?>>();
-    while (await r.ReadAsync())
-    {
-        var row = new Dictionary<string, object?>();
-        for (var i = 0; i < r.FieldCount; i++) row[r.GetName(i)] = r.IsDBNull(i) ? null : r.GetValue(i);
-        rows.Add(row);
-    }
-    return rows;
-}
-
-// Chat storage lives beside the tickets; created on first start.
-await Query(helpdesk, """
-    IF OBJECT_ID('dbo.L1_Chat_Session_Tbl') IS NULL
-        CREATE TABLE dbo.L1_Chat_Session_Tbl (ID uniqueidentifier NOT NULL PRIMARY KEY DEFAULT NEWID(),
-            UserID varchar(36) NOT NULL, Title nvarchar(200) NULL, TicketNo varchar(100) NULL,
-            CreatedOn datetime NOT NULL DEFAULT GETDATE(), ModifiedOn datetime NOT NULL DEFAULT GETDATE());
-    IF OBJECT_ID('dbo.L1_Chat_Message_Tbl') IS NULL
-        CREATE TABLE dbo.L1_Chat_Message_Tbl (ID bigint IDENTITY PRIMARY KEY, SessionID uniqueidentifier NOT NULL,
-            Role varchar(20) NOT NULL, Content nvarchar(max) NOT NULL, CreatedOn datetime NOT NULL DEFAULT GETDATE());
-    SELECT 1 AS ok;
-    """);
-
-async Task<Dictionary<string, object?>?> User(string userId) =>
-    (await Query(config, "SELECT ID, Name, FullName, EmailID, ContactNo FROM dbo.XStudio_User_Mst_Tbl WHERE ID = @id", ("@id", userId)))
-    .FirstOrDefault();
-
-// Tickets the user raised (matched by email), with the latest published L2 reply.
-const string TicketSelect = """
-    SELECT TOP 30 c.ID, c.TicketNo, c.BriefDetails, c.Description, c.Status, c.AskStatus, c.CreatedOn, c.ModifiedOn, c.ReplyRemarks,
-           a.Name AS Area, r.ResponseType, r.ReplyText, r.CompletedOn
-    FROM dbo.Complaint_Mst_Tbl c
-    LEFT JOIN dbo.Area_Mst_Tbl a ON a.ID = c.AreaID
-    OUTER APPLY (SELECT TOP 1 ResponseType, ReplyText, CompletedOn FROM dbo.Hermes_L2_Response_Trn_Tbl x
-                 WHERE x.TicketID = c.ID AND x.IsDeleted = 0 AND x.ProcessStatus = 'COMPLETED' AND x.ReplyText IS NOT NULL
-                 ORDER BY x.CompletedOn DESC) r
-    WHERE ISNULL(c.IsDeleted, 0) = 0
-    """;
-async Task<List<Dictionary<string, object?>>> Tickets(string email) =>
-    (await Query(helpdesk, TicketSelect + " AND c.EmailID = @e ORDER BY c.CreatedOn DESC", ("@e", email))).Select(WithState).ToList();
-
-// What the requester should read as the ticket's state; the Helpdesk and L2 rows are the only inputs.
-static Dictionary<string, object?> WithState(Dictionary<string, object?> t)
-{
-    var (label, tone) = (t["Status"]?.ToString(), t["AskStatus"]?.ToString(), t["ResponseType"]?.ToString()) switch
-    {
-        ("Closed", _, _) => ("Resolved", "done"),
-        (_, "Ask", _) => ("Waiting for your reply", "attention"),
-        (_, _, "RESOLUTION") => ("Resolved", "done"),
-        (_, _, "NEEDS_HUMAN_ACTION") => ("With the support team", "progress"),
-        (_, _, "L3_ESCALATION") => ("Escalated to specialist", "progress"),
-        (_, _, "UPDATE") => ("Update posted", "progress"),
-        _ => ("Being investigated", "pending"),
-    };
-    t["StateLabel"] = label;
-    t["StateTone"] = tone;
-    return t;
-}
-
-async Task<JsonNode?> Jev(object state, object questions)
-{
-    var req = new HttpRequestMessage(HttpMethod.Post, Env("TYPESAFE_BASE_URL", "https://api.typesafe.ai") + "/v1/systemone")
-        { Content = JsonContent.Create(new { model = Env("TYPESAFE_DEFAULT_MODEL", "jev-latest"), state, questions }) };
-    req.Headers.Add("Authorization", "Bearer " + Env("TYPESAFE_API_KEY"));
-    try { var res = await http.SendAsync(req); return JsonNode.Parse(await res.Content.ReadAsStringAsync())?["answers"]; }
-    catch { return null; }
-}
-
-async Task<string> Qwen(string system, IEnumerable<(string role, string content)> turns)
-{
-    var messages = new List<object> { new { role = "system", content = system } };
-    messages.AddRange(turns.Select(t => new { role = t.role, content = t.content }));
-    try
-    {
-        var res = await http.PostAsJsonAsync(lmStudio + "/chat/completions",
-            new { model = qwenModel, messages, temperature = 0.2, max_tokens = 400 });
-        var text = JsonNode.Parse(await res.Content.ReadAsStringAsync())?["choices"]?[0]?["message"]?["content"]?.ToString() ?? "";
-        return Regex.Replace(text, @"(?s)<think>.*?</think>", "").Trim();
-    }
-    catch { return ""; }
-}
-
-const string System = """
-    You are the L1 support assistant for XBatch, the MES of Sohar Steel (EAF, LRF, CCM, rolling mill, SAP interface).
-    Be brief and plain. Never invent plant data, values or causes: you cannot see the database.
-    You may explain the status of the user's own tickets from the TICKETS section, word for word where it matters.
-    If the user reports a problem, ask only for what is missing: which heat / billet / work order / screen, when, what
-    they expected and what they see. Do not promise fixes.
+const string Persona = """
+    You are the first-line support assistant for XBatch, the MES of Sohar Steel (EAF, LRF, CCM, rolling mill, billet yard,
+    SAP interface). Write for plant users: short, plain, friendly, no jargon about databases or AI.
+    Never invent plant data, values, or causes: you cannot see live data. Use KNOWLEDGE only to explain which screen or
+    report shows something and how XBatch behaves; name screens by their visible names, never table or procedure names.
+    You may explain the user's own tickets from TICKETS, quoting the support team where it matters.
+    If the user reports a problem, ask only for what is missing: which heat / billet / work order / screen, when,
+    what they expected and what they see. Do not promise fixes. Use Markdown lists only when listing several items.
     """;
 
-app.MapGet("/api/users", async (string? q) => await Query(config, """
-    SELECT TOP 20 ID, Name, FullName, EmailID FROM dbo.XStudio_User_Mst_Tbl
-    WHERE ISNULL(IsDeleted, 0) = 0 AND (@q IS NULL OR Name LIKE '%' + @q + '%' OR FullName LIKE '%' + @q + '%') ORDER BY ISNULL(FullName, Name)
+// ---------------------------------------------------------------- accounts & public config
+app.MapGet("/api/users", async (string? q) => await Db.Query(Db.Config, """
+    SELECT TOP 25 ID, Name, FullName, EmailID FROM dbo.XStudio_User_Mst_Tbl
+    WHERE ISNULL(IsDeleted, 0) = 0 AND (@q IS NULL OR Name LIKE '%' + @q + '%' OR FullName LIKE '%' + @q + '%' OR EmailID LIKE '%' + @q + '%')
+    ORDER BY ISNULL(FullName, Name)
     """, ("@q", string.IsNullOrWhiteSpace(q) ? null : q)));
 
-app.MapGet("/api/users/{id}", async (string id) => await User(id) is { } u ? Results.Ok(u) : Results.NotFound());
+app.MapGet("/api/users/{id}", async (string id) => await Db.User(id) is { } u ? Results.Ok(u) : Results.NotFound());
 
-app.MapGet("/api/sessions", async (string userId) => await Query(helpdesk,
-    "SELECT ID, Title, TicketNo, ModifiedOn FROM dbo.L1_Chat_Session_Tbl WHERE UserID = @u ORDER BY ModifiedOn DESC", ("@u", userId)));
-
-app.MapPatch("/api/sessions/{id:guid}", async (Guid id, JsonObject body) => await Query(helpdesk,
-    "UPDATE dbo.L1_Chat_Session_Tbl SET Title = @t WHERE ID = @s; SELECT @@ROWCOUNT AS updated",
-    ("@t", Trim(body["title"]?.ToString()?.Trim(), 200)), ("@s", id)));
-
-app.MapDelete("/api/sessions/{id:guid}", async (Guid id) => await Query(helpdesk, """
-    DELETE FROM dbo.L1_Chat_Message_Tbl WHERE SessionID = @s; DELETE FROM dbo.L1_Chat_Session_Tbl WHERE ID = @s;
-    SELECT @@ROWCOUNT AS deleted;
-    """, ("@s", id)));
-
-// One ticket with every reply L2 published on it, oldest first.
-app.MapGet("/api/tickets/{id}", async (string id) =>
+app.MapGet("/api/config", async (Settings s) =>
 {
-    var t = (await Query(helpdesk, TicketSelect + " AND c.ID = @id", ("@id", id))).Select(WithState).FirstOrDefault();
-    if (t is null) return Results.NotFound();
-    t["Replies"] = await Query(helpdesk, """
-        SELECT ID, ResponseType, ReplyText, CompletedOn FROM dbo.Hermes_L2_Response_Trn_Tbl
-        WHERE TicketID = @id AND IsDeleted = 0 AND ProcessStatus = 'COMPLETED' AND ReplyText IS NOT NULL ORDER BY CompletedOn
-        """, ("@id", id));
-    return Results.Ok(t);
+    var all = await s.Public();
+    return Results.Ok(new { widget = all["widget"], ai = new { provider = all["ai"]!["provider"]?.ToString() } });
 });
 
-app.MapPost("/api/sessions", async (JsonObject body) => (await Query(helpdesk,
-    "INSERT INTO dbo.L1_Chat_Session_Tbl (UserID, Title) OUTPUT inserted.ID, inserted.Title VALUES (@u, N'New chat')",
+// ---------------------------------------------------------------- conversations
+app.MapGet("/api/sessions", async (string userId) => await Db.H("""
+    SELECT s.ID, s.Title, s.TicketNo, s.Status, s.Rating, s.CreatedOn, s.ModifiedOn,
+           (SELECT TOP 1 LEFT(Content, 160) FROM dbo.L1_Chat_Message_Tbl m WHERE m.SessionID = s.ID ORDER BY m.ID DESC) AS LastMessage,
+           (SELECT COUNT(*) FROM dbo.L1_Chat_Message_Tbl m WHERE m.SessionID = s.ID) AS MessageCount
+    FROM dbo.L1_Chat_Session_Tbl s WHERE s.UserID = @u ORDER BY s.ModifiedOn DESC
+    """, ("@u", userId)));
+
+app.MapPost("/api/sessions", async (JsonObject body) => (await Db.H(
+    "INSERT INTO dbo.L1_Chat_Session_Tbl (UserID, Title) OUTPUT inserted.ID, inserted.Title, inserted.Status, inserted.ModifiedOn VALUES (@u, N'New conversation')",
     ("@u", body["userId"]?.ToString()))).First());
 
-app.MapGet("/api/sessions/{id:guid}/messages", async (Guid id) => await Query(helpdesk,
-    "SELECT Role, Content, CreatedOn FROM dbo.L1_Chat_Message_Tbl WHERE SessionID = @s ORDER BY ID", ("@s", id)));
-
-app.MapGet("/api/tickets", async (string userId) =>
-    await User(userId) is { } u ? Results.Ok(await Tickets(u["EmailID"]?.ToString() ?? "")) : Results.NotFound());
-
-// The user answers an L2 QUESTION: the reply goes on the ticket and the ticket becomes eligible again.
-app.MapPost("/api/tickets/{id}/reply", async (string id, JsonObject body) => await Query(helpdesk, """
-    UPDATE dbo.Complaint_Mst_Tbl SET ReplyRemarks = @t, AskStatus = 'Enter', ModifiedOn = GETDATE() WHERE ID = @id;
-    SELECT @@ROWCOUNT AS updated;
-    """, ("@t", body["text"]?.ToString()), ("@id", id)));
-
-app.MapPost("/api/sessions/{id:guid}/messages", async (Guid id, JsonObject body) =>
+app.MapPatch("/api/sessions/{id:guid}", async (Guid id, JsonObject body) =>
 {
-    var userId = body["userId"]?.ToString() ?? "";
+    if (body["title"]?.ToString()?.Trim() is { Length: > 0 } title)
+        await Db.Exec("UPDATE dbo.L1_Chat_Session_Tbl SET Title = @t WHERE ID = @s", ("@t", Db.Trim(title, 200)), ("@s", id));
+    if (body["status"]?.ToString() is "open" or "resolved" && body["status"]!.ToString() is var status)
+        await Db.Exec("UPDATE dbo.L1_Chat_Session_Tbl SET Status = @st, ModifiedOn = GETDATE() WHERE ID = @s", ("@st", status), ("@s", id));
+    if (body["rating"] is JsonValue r && r.TryGetValue<int>(out var rating) && rating is >= 1 and <= 5)
+        await Db.Exec("UPDATE dbo.L1_Chat_Session_Tbl SET Rating = @r WHERE ID = @s", ("@r", rating), ("@s", id));
+    return Results.Ok();
+});
+
+app.MapDelete("/api/sessions/{id:guid}", async (Guid id) =>
+{
+    await Db.Exec("DELETE FROM dbo.L1_Chat_Message_Tbl WHERE SessionID = @s; DELETE FROM dbo.L1_Chat_Session_Tbl WHERE ID = @s", ("@s", id));
+    return Results.Ok();
+});
+
+app.MapGet("/api/sessions/{id:guid}/messages", async (Guid id) => await Db.H(
+    "SELECT ID, Role, Content, Decision, TicketNo, SourcesJson, Feedback, CreatedOn FROM dbo.L1_Chat_Message_Tbl WHERE SessionID = @s ORDER BY ID", ("@s", id)));
+
+app.MapPost("/api/messages/{id:long}/feedback", async (long id, JsonObject body) =>
+{
+    var v = body["value"]?.GetValue<int>() ?? 0;
+    await Db.Exec("UPDATE dbo.L1_Chat_Message_Tbl SET Feedback = @v WHERE ID = @id", ("@v", v is -1 or 1 ? v : null), ("@id", id));
+    return Results.Ok();
+});
+
+// One chat turn, streamed as server-sent events: status → sources → tokens → done.
+app.MapPost("/api/sessions/{id:guid}/turn", async (Guid id, JsonObject body, HttpContext http, Settings settings) =>
+{
     var text = body["text"]?.ToString()?.Trim() ?? "";
-    if (text.Length == 0 || await User(userId) is not { } user) return Results.BadRequest();
-    await Query(helpdesk, "INSERT INTO dbo.L1_Chat_Message_Tbl (SessionID, Role, Content) VALUES (@s, 'user', @c); SELECT 1 AS ok",
-        ("@s", id), ("@c", text));
-    var history = (await Query(helpdesk, "SELECT Role, Content FROM dbo.L1_Chat_Message_Tbl WHERE SessionID = @s ORDER BY ID", ("@s", id)))
-        .Select(m => (role: m["Role"]!.ToString()!, content: m["Content"]!.ToString()!)).ToList();
-    var session = (await Query(helpdesk, "SELECT TicketNo FROM dbo.L1_Chat_Session_Tbl WHERE ID = @s", ("@s", id))).First();
-    var tickets = await Tickets(user["EmailID"]?.ToString() ?? "");
-    var ticketText = string.Join("\n", tickets.Take(8).Select(t =>
-        $"{t["TicketNo"]}: \"{t["BriefDetails"]}\" — {t["StateLabel"]}. Support team's latest reply: {(t["ReplyText"] is null ? "none yet" : Trim(t["ReplyText"], 300))}"));
-    var transcript = string.Join("\n", history.Select(h => $"{h.role}: {h.content}"));
+    var handoff = body["handoff"]?.GetValue<bool>() == true;
+    var user = await Db.User(body["userId"]?.ToString());
+    if ((text.Length == 0 && !handoff) || user is null) return Results.BadRequest();
 
-    // Jev decides what to do; code acts on it.
-    var options = new Dictionary<string, string>
+    http.Response.Headers.ContentType = "text/event-stream";
+    http.Response.Headers.CacheControl = "no-store";
+    http.Response.Headers["X-Accel-Buffering"] = "no";
+    var ct = http.RequestAborted;
+    async Task Send(string evt, object data)
     {
-        ["answer"] = "Answer directly: a question about using this chat or about the user's existing tickets and their L2 replies",
-        ["ask"] = "The user reports a problem but key details are missing (which heat/billet/work order/screen, when, what is wrong)",
-        ["ticket"] = "The user reports a problem (data, screen, report, SAP, login, device, request) with enough detail to hand to L2 support",
-    };
-    var decision = session["TicketNo"] is not null ? "answer" : (await Jev(
-        new { conversation = transcript, users_existing_tickets = ticketText },
-        new { next = new { type = "choice", criteria = options,
-                           instructions = "What should L1 support do next with this conversation?" } }))?["next"]?["choice"]?.ToString() ?? "ask";
+        await http.Response.WriteAsync($"event: {evt}\ndata: {JsonSerializer.Serialize(data, json)}\n\n", ct);
+        await http.Response.Body.FlushAsync(ct);
+    }
 
-    string reply;
+    var clock = Stopwatch.StartNew();
+    var userMessageId = text.Length > 0
+        ? (await Db.H("INSERT INTO dbo.L1_Chat_Message_Tbl (SessionID, Role, Content) OUTPUT inserted.ID VALUES (@s, 'user', @c)",
+            ("@s", id), ("@c", text))).First()["ID"]
+        : null;
+    await Send("user", new { id = userMessageId });
+
+    var cfg = await settings.Load();
+    var history = (await Db.H("SELECT Role, Content FROM dbo.L1_Chat_Message_Tbl WHERE SessionID = @s ORDER BY ID", ("@s", id)))
+        .Select(m => (role: m["Role"]!.ToString()!, content: m["Content"]!.ToString()!)).ToList();
+    var session = (await Db.H("SELECT TicketNo FROM dbo.L1_Chat_Session_Tbl WHERE ID = @s", ("@s", id))).First();
+    var transcript = string.Join("\n", history.Select(h => $"{h.role}: {h.content}"));
+    var latest = history.LastOrDefault(h => h.role == "user").content ?? "";
+
+    await Send("status", new { text = handoff ? "Handing over to the support team" : "Reading your message" });
+    var ticketsTask = Tickets.ForUser(user["EmailID"]?.ToString(), 10);
+    var k = cfg["knowledge"]!;
+    var sourcesTask = !handoff && k["gbrain"]?.GetValue<bool>() == true
+        ? Knowledge.Search(latest, k["source"]?.ToString() ?? "xstudio-knowledge", k["limit"]?.GetValue<int>() ?? 4, ct)
+        : Task.FromResult(new List<Source>());
+    var tickets = await ticketsTask;
+    var ticketText = string.Join("\n", tickets.Select(t =>
+        $"{t["TicketNo"]}: \"{t["BriefDetails"]}\" — {t["StateLabel"]}. Support team's latest reply: {(t["ReplyText"] is null ? "none yet" : Db.Trim(t["ReplyText"], 300))}"));
+
+    var decision = handoff ? "ticket" : "answer";
+    if (!handoff && session["TicketNo"] is null)
+    {
+        await Send("status", new { text = "Deciding how to help" });
+        var options = new Dictionary<string, string>
+        {
+            ["answer"] = "Answer directly: a question about XBatch screens or behaviour, about using this helpdesk, or about the user's existing tickets",
+            ["ask"] = "The user reports a problem but key details are missing (which heat/billet/work order/screen, when, what is wrong)",
+            ["ticket"] = "The user reports a problem (data, screen, report, SAP, login, device, request) with enough detail to hand to the support team, or asks for a person",
+        };
+        decision = (await Jev.Ask(new { conversation = transcript, users_existing_tickets = ticketText },
+            new { next = new { type = "choice", criteria = options, instructions = "What should first-line support do next with this conversation?" } }))
+            ?["next"]?["choice"]?.ToString() ?? "ask";
+    }
+
+    var sources = new List<Source>();
+    if (decision != "ticket")
+    {
+        var hits = await sourcesTask;
+        if (hits.Count > 0)
+        {
+            await Send("status", new { text = "Checking XBatch knowledge" });
+            sources = await Knowledge.Relevant(transcript, hits);
+            await Send("sources", sources.Select(s => new { s.Slug, s.Title, s.Type }));
+        }
+    }
+
+    var reply = new StringBuilder();
     Dictionary<string, object?>? ticket = null;
+    var ai = settings.Ai(cfg);
     if (decision == "ticket")
     {
-        var ticketNo = await CreateTicket(user, history.Where(h => h.role == "user").Select(h => h.content).ToList(), transcript);
-        await Query(helpdesk, "UPDATE dbo.L1_Chat_Session_Tbl SET TicketNo = @t, Title = @ti, ModifiedOn = GETDATE() WHERE ID = @s; SELECT 1 AS ok",
-            ("@t", ticketNo), ("@ti", Trim(history.First(h => h.role == "user").content, 80)), ("@s", id));
-        reply = $"I have raised {ticketNo} for the support team with the details above. You will see their reply under My tickets; " +
-                "if they need more information they will ask there.";
-        ticket = (await Query(helpdesk, TicketSelect + " AND c.TicketNo = @n", ("@n", ticketNo))).Select(WithState).FirstOrDefault();
+        await Send("status", new { text = "Raising a ticket" });
+        var ticketNo = await Tickets.Create(user, history.Where(h => h.role == "user").Select(h => h.content).ToList(), transcript);
+        await Db.Exec("UPDATE dbo.L1_Chat_Session_Tbl SET TicketNo = @t, ModifiedOn = GETDATE() WHERE ID = @s", ("@t", ticketNo), ("@s", id));
+        ticket = await Tickets.One(ticketNo);
+        reply.Append($"I've raised **{ticketNo.Replace('_', ' ')}** for the support team with everything you told me. " +
+                     "They investigate it against XBatch directly; their reply will appear on the ticket, and if they need anything from you they will ask there.");
+        await Send("token", new { text = reply.ToString() });
+        await Send("ticket", ticket!);
     }
     else
     {
-        reply = await Qwen(System + "\nTICKETS:\n" + (ticketText.Length > 0 ? ticketText : "(none)")
-                           + (decision == "ask" ? "\nThe user reported a problem: ask for the missing details." : ""), history);
-        if (reply.Length == 0) reply = decision == "ask"
-            ? "Could you tell me which heat / billet / work order or screen this is about, when it happened, and what you see?"
-            : "Sorry, I could not answer that right now. Please try again, or describe the problem and I will raise a ticket.";
-        if (history.Count(h => h.role == "user") == 1)
-            await Query(helpdesk, "UPDATE dbo.L1_Chat_Session_Tbl SET Title = @t WHERE ID = @s; SELECT 1 AS ok", ("@t", Trim(text, 80)), ("@s", id));
+        await Send("status", new { text = "Writing a reply" });
+        var knowledge = string.Join("\n\n", sources.Select(s => $"[{s.Title}] {s.Snippet}"));
+        var system = Persona + "\nTICKETS:\n" + (ticketText.Length > 0 ? ticketText : "(none)")
+                     + "\nKNOWLEDGE:\n" + (knowledge.Length > 0 ? knowledge : "(none)")
+                     + (decision == "ask" ? "\nThe user reported a problem: ask for the missing details, briefly." : "");
+        try
+        {
+            await foreach (var chunk in Llm.Stream(ai, system, history, ct))
+            {
+                reply.Append(chunk);
+                await Send("token", new { text = chunk });
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            app.Logger.LogWarning(ex, "writer model failed");
+        }
+        if (reply.ToString().Trim().Length == 0)
+        {
+            reply.Clear().Append(decision == "ask"
+                ? "Could you tell me which heat, billet, work order or screen this is about, when it happened, and what you see?"
+                : "I couldn't answer that just now. Try again, or choose **Talk to support** and I'll raise a ticket.");
+            await Send("token", new { text = reply.ToString() });
+        }
     }
-    await Query(helpdesk, "INSERT INTO dbo.L1_Chat_Message_Tbl (SessionID, Role, Content) VALUES (@s, 'assistant', @c); UPDATE dbo.L1_Chat_Session_Tbl SET ModifiedOn = GETDATE() WHERE ID = @s; SELECT 1 AS ok",
-        ("@s", id), ("@c", reply));
-    return Results.Ok(new { decision, reply, ticket });
+
+    var sourcesJson = sources.Count > 0 ? JsonSerializer.Serialize(sources.Select(s => new { s.Slug, s.Title, s.Type }), json) : null;
+    var saved = (await Db.H("""
+        INSERT INTO dbo.L1_Chat_Message_Tbl (SessionID, Role, Content, Decision, TicketNo, SourcesJson, Model, LatencyMs)
+        OUTPUT inserted.ID VALUES (@s, 'assistant', @c, @d, @t, @src, @m, @l);
+        """, ("@s", id), ("@c", reply.ToString().Trim()), ("@d", decision), ("@t", ticket?["TicketNo"]), ("@src", sourcesJson),
+        ("@m", decision == "ticket" ? null : $"{ai.Provider}:{ai.Model}"), ("@l", (int)clock.ElapsedMilliseconds))).First()["ID"];
+    if (history.Count(h => h.role == "user") <= 1 && latest.Length > 0)
+        await Db.Exec("UPDATE dbo.L1_Chat_Session_Tbl SET Title = @t WHERE ID = @s AND Title = N'New conversation'", ("@t", Db.Trim(latest, 90)), ("@s", id));
+    await Db.Exec("UPDATE dbo.L1_Chat_Session_Tbl SET ModifiedOn = GETDATE(), Status = 'open' WHERE ID = @s", ("@s", id));
+    await Send("done", new { id = saved, decision, ticketNo = ticket?["TicketNo"] });
+    return Results.Empty;
 });
 
-// Deterministic ticket: requester fields, what they wrote, the transcript, identifiers found in it.
-// Area and complaint type are Jev choices over the Helpdesk's real lists.
-async Task<string> CreateTicket(Dictionary<string, object?> user, List<string> userLines, string transcript)
-{
-    var areas = await Query(helpdesk, "SELECT ID, Name FROM dbo.Area_Mst_Tbl WHERE ISNULL(IsDeleted,0) = 0");
-    var types = await Query(helpdesk, "SELECT ID, Name FROM dbo.ComplaintType_Mst_Tbl WHERE ISNULL(IsDeleted,0) = 0");
-    var areaOpts = areas.ToDictionary(a => a["ID"]!.ToString()!, a => a["Name"]!.ToString()!);
-    var typeOpts = types.ToDictionary(t => t["ID"]!.ToString()!, t => t["Name"]!.ToString()!);
-    var answers = await Jev(new { conversation = transcript }, new
-    {
-        area = new { type = "choice", criteria = areaOpts, instructions = "Which plant area is this problem about? (Common if unclear)" },
-        kind = new { type = "choice", criteria = typeOpts, instructions = "What kind of request is this?" },
-    });
-    var area = answers?["area"]?["choice"]?.ToString() ?? areas.First(a => a["Name"]!.ToString() == "Common")["ID"]!.ToString();
-    var kind = answers?["kind"]?["choice"]?.ToString() ?? types.First()["ID"]!.ToString();
-    var description = string.Join("\n", userLines);
-    var ids = Regex.Matches(description, @"(?<![\d.])(\d{7}_S\d+_\d+|\d{7,12})(?!\d)").Select(m => m.Value).Distinct().ToList();
-    var next = (await Query(helpdesk,
-        "SELECT ISNULL(MAX(TRY_CAST(REPLACE(TicketNo, 'Ticket_', '') AS int)), 0) + 1 AS n FROM dbo.Complaint_Mst_Tbl WHERE TicketNo LIKE 'Ticket[_]%'"))
-        .First()["n"];
-    var ticketNo = $"Ticket_{next}";
-    await Query(helpdesk, """
-        INSERT INTO dbo.Complaint_Mst_Tbl (ID, AreaID, CreatedBy, CreatedOn, ModifiedOn, IsDeleted, IsSystem, Source, ComplaintTypeID,
-            Description, BriefDetails, Status, TicketNo, Priority, FirstLastName, ContactNo, EmailID, messages, AskStatus,
-            SourceSystem, ConversationSummary, ExtractedEntitiesJson)
-        VALUES (NEWID(), @area, @user, GETDATE(), GETDATE(), 0, 0, 'L1-Chat', @kind, @desc, @brief, 'Enter', @no,
-            'EEF8F1D9-180E-49E4-95C3-3F5CB0408028', @name, @phone, @email, 'Enter', 'Enter', 'Xbatch', @summary, @entities);
-        SELECT 1 AS ok;
-        """, ("@area", area), ("@user", user["ID"]), ("@kind", kind), ("@desc", description), ("@brief", Trim(userLines.First(), 480)),
-        ("@no", ticketNo), ("@name", user["FullName"] ?? user["Name"]), ("@phone", user["ContactNo"]), ("@email", user["EmailID"]),
-        ("@summary", Trim(transcript, 4000)), ("@entities", JsonSerializer.Serialize(new { identifiers = ids })));
-    return ticketNo;
-}
+// ---------------------------------------------------------------- requester tickets
+app.MapGet("/api/tickets", async (string userId) =>
+    await Db.User(userId) is { } u ? Results.Ok(await Tickets.ForUser(u["EmailID"]?.ToString())) : Results.NotFound());
 
-static string Trim(object? v, int n) { var s = v?.ToString() ?? ""; return s.Length <= n ? s : s[..n]; }
+app.MapGet("/api/tickets/{id}", async (string id) =>
+{
+    if (await Tickets.One(id) is not { } t) return Results.NotFound();
+    t["Timeline"] = await Tickets.Timeline(t);
+    t["SessionID"] = (await Db.H("SELECT TOP 1 ID FROM dbo.L1_Chat_Session_Tbl WHERE TicketNo = @n", ("@n", t["TicketNo"]))).FirstOrDefault()?["ID"];
+    return Results.Ok(t);
+});
+
+// The requester answers the support team (or adds information): recorded, and the ticket goes back to L2.
+app.MapPost("/api/tickets/{id}/reply", async (string id, JsonObject body) =>
+{
+    var text = body["text"]?.ToString()?.Trim();
+    if (string.IsNullOrEmpty(text) || await Tickets.One(id) is not { } t) return Results.BadRequest();
+    await Db.Exec("INSERT INTO dbo.L1_Ticket_Event_Tbl (TicketID, UserID, Kind, Content) VALUES (@t, @u, 'answer', @c)",
+        ("@t", t["ID"]!.ToString()), ("@u", body["userId"]?.ToString()), ("@c", text));
+    await Db.Exec("UPDATE dbo.Complaint_Mst_Tbl SET ReplyRemarks = @c, AskStatus = 'Enter', ModifiedOn = GETDATE() WHERE ID = @id",
+        ("@c", text), ("@id", t["ID"]));
+    return Results.Ok();
+});
+
+app.MapPost("/api/tickets/{id}/rating", async (string id, JsonObject body) =>
+{
+    var rating = body["rating"]?.GetValue<int>() ?? 0;
+    if (rating is < 1 or > 5 || await Tickets.One(id) is not { } t) return Results.BadRequest();
+    await Db.Exec("INSERT INTO dbo.L1_Ticket_Event_Tbl (TicketID, UserID, Kind, Content, Rating) VALUES (@t, @u, 'rating', @c, @r)",
+        ("@t", t["ID"]!.ToString()), ("@u", body["userId"]?.ToString()), ("@c", body["comment"]?.ToString()), ("@r", rating));
+    return Results.Ok();
+});
+
+// "Still not fixed": a new ticket that points at the old one; the resolved ticket's lifecycle is not touched.
+app.MapPost("/api/tickets/{id}/follow-up", async (string id, JsonObject body) =>
+{
+    var text = body["text"]?.ToString()?.Trim();
+    var user = await Db.User(body["userId"]?.ToString());
+    if (string.IsNullOrEmpty(text) || user is null || await Tickets.One(id) is not { } t) return Results.BadRequest();
+    var line = $"Follow-up to {t["TicketNo"]} (\"{Db.Trim(t["BriefDetails"], 200)}\"): {text}";
+    var no = await Tickets.Create(user, [line], line);
+    await Db.Exec("INSERT INTO dbo.L1_Ticket_Event_Tbl (TicketID, UserID, Kind, Content) VALUES (@t, @u, 'follow_up', @c)",
+        ("@t", t["ID"]!.ToString()), ("@u", user["ID"]?.ToString()), ("@c", $"{no}: {text}"));
+    return Results.Ok(await Tickets.One(no));
+});
+
+// ---------------------------------------------------------------- support console
+var admin = app.MapGroup("/api/admin");
+
+admin.MapGet("/tickets", async (string? q, string? tone, string? area, string? source) =>
+{
+    var rows = (await Db.H(Tickets.Select(300) + """
+         AND (@q IS NULL OR c.TicketNo LIKE '%' + @q + '%' OR c.BriefDetails LIKE '%' + @q + '%' OR c.FirstLastName LIKE '%' + @q + '%' OR c.EmailID LIKE '%' + @q + '%')
+         AND (@area IS NULL OR a.Name = @area)
+         ORDER BY c.ModifiedOn DESC
+        """, ("@q", string.IsNullOrWhiteSpace(q) ? null : q), ("@area", string.IsNullOrWhiteSpace(area) ? null : area)))
+        .Select(Tickets.WithState)
+        .Where(r => string.IsNullOrWhiteSpace(source) || r["Channel"]?.ToString() == source);
+    return string.IsNullOrWhiteSpace(tone) ? rows.ToList() : rows.Where(r => r["StateTone"]?.ToString() == tone).ToList();
+});
+
+admin.MapGet("/tickets/{id}", async (string id) =>
+{
+    if (await Tickets.One(id) is not { } t) return Results.NotFound();
+    t["Timeline"] = await Tickets.Timeline(t);
+    t["Runs"] = await Db.H("""
+        SELECT ID, AttemptNo, ProcessStatus, ResponseType, Route, ClaimedOn, CompletedOn, ErrorMessage
+        FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE TicketID = @id AND IsDeleted = 0 ORDER BY CreatedOn DESC
+        """, ("@id", t["ID"]));
+    var chat = (await Db.H("SELECT TOP 1 ID FROM dbo.L1_Chat_Session_Tbl WHERE TicketNo = @n", ("@n", t["TicketNo"]))).FirstOrDefault();
+    t["Transcript"] = chat is null ? null : await Db.H(
+        "SELECT ID, Role, Content, Decision, SourcesJson, Feedback, Model, LatencyMs, CreatedOn FROM dbo.L1_Chat_Message_Tbl WHERE SessionID = @s ORDER BY ID",
+        ("@s", chat["ID"]));
+    return Results.Ok(t);
+});
+
+admin.MapGet("/conversations", async (string? q, string? filter) =>
+{
+    var rows = await Db.H("""
+        SELECT TOP 300 s.ID, s.UserID, s.Title, s.TicketNo, s.Status, s.Rating, s.CreatedOn, s.ModifiedOn,
+               (SELECT COUNT(*) FROM dbo.L1_Chat_Message_Tbl m WHERE m.SessionID = s.ID) AS MessageCount,
+               (SELECT COUNT(*) FROM dbo.L1_Chat_Message_Tbl m WHERE m.SessionID = s.ID AND m.Feedback = -1) AS Negative,
+               (SELECT TOP 1 LEFT(Content, 160) FROM dbo.L1_Chat_Message_Tbl m WHERE m.SessionID = s.ID ORDER BY m.ID DESC) AS LastMessage
+        FROM dbo.L1_Chat_Session_Tbl s
+        WHERE (@q IS NULL OR s.Title LIKE '%' + @q + '%' OR s.TicketNo LIKE '%' + @q + '%')
+          AND (@f IS NULL OR (@f = 'ticket' AND s.TicketNo IS NOT NULL) OR (@f = 'answered' AND s.TicketNo IS NULL)
+               OR (@f = 'negative' AND EXISTS (SELECT 1 FROM dbo.L1_Chat_Message_Tbl m WHERE m.SessionID = s.ID AND m.Feedback = -1)))
+        ORDER BY s.ModifiedOn DESC
+        """, ("@q", string.IsNullOrWhiteSpace(q) ? null : q), ("@f", string.IsNullOrWhiteSpace(filter) ? null : filter));
+    var ids = rows.Select(r => r["UserID"]!.ToString()!).Distinct().ToList();
+    var users = ids.Count == 0 ? [] : (await Db.Query(Db.Config,
+        $"SELECT CONVERT(varchar(36), ID) AS ID, ISNULL(FullName, Name) AS Name, EmailID FROM dbo.XStudio_User_Mst_Tbl WHERE CONVERT(varchar(36), ID) IN ({string.Join(",", ids.Select((_, i) => "@u" + i))})",
+        ids.Select((v, i) => ("@u" + i, (object?)v)).ToArray())).ToDictionary(u => u["ID"]!.ToString()!.ToUpperInvariant());
+    foreach (var r in rows)
+        if (users.TryGetValue(r["UserID"]!.ToString()!.ToUpperInvariant(), out var u)) { r["UserName"] = u["Name"]; r["UserEmail"] = u["EmailID"]; }
+    return rows;
+});
+
+admin.MapGet("/conversations/{id:guid}", async (Guid id) => await Db.H(
+    "SELECT ID, Role, Content, Decision, TicketNo, SourcesJson, Feedback, Model, LatencyMs, CreatedOn FROM dbo.L1_Chat_Message_Tbl WHERE SessionID = @s ORDER BY ID",
+    ("@s", id)));
+
+admin.MapGet("/stats", async (int? days) =>
+{
+    var d = Math.Clamp(days ?? 14, 1, 90);
+    var tickets = (await Db.H(Tickets.Select(2000) + " AND c.CreatedOn >= DATEADD(day, -@d, CAST(GETDATE() AS date)) ORDER BY c.CreatedOn",
+        ("@d", d))).Select(Tickets.WithState).ToList();
+    var chats = (await Db.H("""
+        SELECT CAST(CreatedOn AS date) AS Day, COUNT(*) AS Conversations, SUM(CASE WHEN TicketNo IS NULL THEN 1 ELSE 0 END) AS Answered
+        FROM dbo.L1_Chat_Session_Tbl WHERE CreatedOn >= DATEADD(day, -@d, CAST(GETDATE() AS date)) GROUP BY CAST(CreatedOn AS date)
+        """, ("@d", d)));
+    var feedback = (await Db.H("""
+        SELECT SUM(CASE WHEN Feedback = 1 THEN 1 ELSE 0 END) AS Up, SUM(CASE WHEN Feedback = -1 THEN 1 ELSE 0 END) AS Down,
+               AVG(CAST(LatencyMs AS float)) AS AvgLatencyMs
+        FROM dbo.L1_Chat_Message_Tbl WHERE Role = 'assistant' AND CreatedOn >= DATEADD(day, -@d, CAST(GETDATE() AS date))
+        """, ("@d", d))).First();
+    var firstReplyHours = tickets.Where(t => t["FirstReplyOn"] is DateTime).Select(t => ((DateTime)t["FirstReplyOn"]! - (DateTime)t["CreatedOn"]!).TotalHours).ToList();
+    var ratings = tickets.Where(t => t["Rating"] is int).Select(t => (int)t["Rating"]!).ToList();
+    var series = Enumerable.Range(0, d).Select(i => DateTime.Today.AddDays(i - d + 1)).Select(day => new
+    {
+        day = day.ToString("yyyy-MM-dd"),
+        tickets = tickets.Count(t => ((DateTime)t["CreatedOn"]!).Date == day),
+        resolved = tickets.Count(t => t["StateTone"]?.ToString() == "done" && ((DateTime)t["CreatedOn"]!).Date == day),
+        conversations = chats.Where(c => (DateTime)c["Day"]! == day).Sum(c => (int)c["Conversations"]!),
+        answered = chats.Where(c => (DateTime)c["Day"]! == day).Sum(c => (int)c["Answered"]!),
+    }).ToList();
+    return new
+    {
+        days = d,
+        totals = new
+        {
+            tickets = tickets.Count,
+            fromChat = tickets.Count(t => t["Channel"]?.ToString() == "Helpdesk chat"),
+            open = tickets.Count(t => t["StateTone"]?.ToString() != "done"),
+            waiting = tickets.Count(t => t["StateTone"]?.ToString() == "attention"),
+            resolved = tickets.Count(t => t["StateTone"]?.ToString() == "done"),
+            conversations = series.Sum(s => s.conversations),
+            answeredWithoutTicket = series.Sum(s => s.answered),
+            medianFirstReplyHours = firstReplyHours.Count == 0 ? (double?)null : firstReplyHours.Order().ElementAt(firstReplyHours.Count / 2),
+            csat = ratings.Count == 0 ? (double?)null : ratings.Average(),
+            ratings = ratings.Count,
+            thumbsUp = feedback["Up"], thumbsDown = feedback["Down"], avgLatencyMs = feedback["AvgLatencyMs"],
+        },
+        series,
+        byState = tickets.GroupBy(t => t["StateLabel"]!.ToString()!).Select(g => new { label = g.Key, count = g.Count() }).OrderByDescending(g => g.count),
+        byArea = tickets.GroupBy(t => t["Area"]?.ToString() ?? "Unassigned").Select(g => new { label = g.Key, count = g.Count() }).OrderByDescending(g => g.count),
+        byType = tickets.GroupBy(t => t["Type"]?.ToString() ?? "Unassigned").Select(g => new { label = g.Key, count = g.Count() }).OrderByDescending(g => g.count),
+    };
+});
+
+admin.MapGet("/lookups", async () => new
+{
+    areas = (await Db.H("SELECT Name FROM dbo.Area_Mst_Tbl WHERE ISNULL(IsDeleted,0) = 0 ORDER BY Name")).Select(r => r["Name"]),
+    sources = new[] { "Helpdesk chat", "Other" },
+});
+
+admin.MapGet("/settings", async (Settings s) => await s.Public());
+admin.MapPut("/settings/{section}", async (string section, JsonObject body, Settings s) =>
+{
+    await s.Save(section, body);
+    return Results.Ok(await s.Public());
+});
+
+admin.MapPost("/ai/models", async (JsonObject draft, Settings s) =>
+{
+    try { return Results.Ok(await Llm.Models(s.Ai(await s.Load(), draft))); }
+    catch (Exception ex) { return Results.Ok(new { error = Db.Trim(ex.Message, 300) }); }
+});
+
+admin.MapPost("/ai/test", async (JsonObject draft, Settings s) =>
+{
+    var clock = Stopwatch.StartNew();
+    try
+    {
+        var text = await Llm.Complete(s.Ai(await s.Load(), draft), "Reply with exactly: Connected.", [("user", "Say it.")]);
+        return Results.Ok(new { ok = text.Length > 0, reply = Db.Trim(text, 200), ms = clock.ElapsedMilliseconds });
+    }
+    catch (Exception ex) { return Results.Ok(new { ok = false, error = Db.Trim(ex.Message, 300), ms = clock.ElapsedMilliseconds }); }
+});
+
+admin.MapPost("/knowledge/search", async (JsonObject body, Settings s) =>
+{
+    var k = (await s.Load())["knowledge"]!;
+    return (await Knowledge.Search(body["q"]?.ToString() ?? "", k["source"]?.ToString() ?? "xstudio-knowledge", 8))
+        .Select(h => new Dictionary<string, object?> { ["Slug"] = h.Slug, ["Title"] = h.Title, ["Type"] = h.Type, ["Snippet"] = h.Snippet });
+});
 
 app.Run();
