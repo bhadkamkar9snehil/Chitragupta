@@ -166,7 +166,7 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
           <Empty icon={<KanbanSquare className="size-5" />} title="Board unavailable">The Hermes Kanban board could not be read from WSL.</Empty>
         )}
         {view === "kanban" && board?.available && (
-          <div className="flex min-h-128 gap-3 p-4 lg:px-6">
+          <div className="flex flex-col gap-3 p-4 md:min-h-128 md:flex-row lg:px-6">
             {columns.map((c) => c.tasks.length ? (
               <Column key={c.id} name={c.id} count={c.tasks.length} dot={STATUS_DOT[c.id]} hint={c.id === "blocked" ? `${superseded.length} superseded` : c.id === "running" ? "wip 1" : undefined}>
                 {c.tasks.map((t) => <TaskCard key={t.id} task={t} next={later(t)} onOpen={() => setOpen(t)} />)}
@@ -197,7 +197,7 @@ export function BoardView({ onOpenTicket, onOpenRun }: { onOpenTicket: (ticketNo
         )}
         {view === "lifecycle" && !tickets && <div className="flex gap-3 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-96 w-72 shrink-0" />)}</div>}
         {view === "lifecycle" && tickets && (
-          <div className="flex min-h-128 gap-3 p-4 lg:px-6">
+          <div className="flex flex-col gap-3 p-4 md:min-h-128 md:flex-row lg:px-6">
             {LIFECYCLE.map((stage) => {
               const items = tickets.filter((t) => t.StateLabel === stage);
               return items.length ? (
@@ -271,14 +271,14 @@ const STAGE_DOT: Record<string, string> = {
 
 function Column({ name, count, dot, hint, children }: { name: string; count: number; dot: string; hint?: string; children: React.ReactNode }) {
   return (
-    <section aria-label={name} className="flex w-76 min-w-76 max-w-md shrink-0 grow flex-col rounded-2xl border bg-canvas p-1.5">
+    <section aria-label={name} className="flex w-full shrink-0 flex-col rounded-2xl border bg-canvas p-1.5 md:w-76 md:min-w-76 md:max-w-md md:grow">
       <header className="flex items-center gap-2 px-2.5 pb-2 pt-1.5">
         <span className={cn("size-2 rounded-full", dot)} aria-hidden />
         <h2 className="text-meta font-semibold capitalize">{name}</h2>
         {hint && <span className="font-mono text-2xs text-subtle-foreground">{hint}</span>}
         <span className="ml-auto font-mono text-xs tabular-nums text-muted-foreground">{count}</span>
       </header>
-      <ul className="scrollbar-thin min-h-0 flex-1 space-y-1.5 overflow-y-auto rounded-xl border bg-surface p-1.5">{children}</ul>
+      <ul className="scrollbar-thin max-h-128 min-h-0 flex-1 space-y-1.5 overflow-y-auto rounded-xl border bg-surface p-1.5 md:max-h-none">{children}</ul>
     </section>
   );
 }
@@ -327,9 +327,9 @@ const STAGE_CHIP: Record<string, string> = {
 
 function EmptyRail({ name, dot }: { name: string; dot: string }) {
   return (
-    <section aria-label={`${name}, empty`} className="flex w-12 shrink-0 flex-col items-center gap-3 rounded-2xl border border-dashed py-3">
+    <section aria-label={`${name}, empty`} className="flex shrink-0 items-center gap-2 rounded-xl border border-dashed px-3 py-2 md:w-12 md:flex-col md:gap-3 md:rounded-2xl md:px-0 md:py-3">
       <span className={cn("size-2 rounded-full", dot)} aria-hidden />
-      <span className="vertical-text font-mono text-xs text-subtle-foreground">{name} · 0</span>
+      <span className="font-mono text-xs text-subtle-foreground md:vertical-text">{name} · 0</span>
     </section>
   );
 }

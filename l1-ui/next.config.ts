@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 
-const config: NextConfig = { devIndicators: false };
+// The dev server blocks script requests from other origins; allow Tailscale devices (phones) to test it.
+const config: NextConfig = { devIndicators: false, allowedDevOrigins: ["100.*.*.*", "*.ts.net"] };
 
 export default config;

@@ -200,14 +200,14 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
               <Journey ticket={t} onChat={() => setTab("chat")} onRun={onOpenRun} />
             </div>
           </div>
-          <div className="-mb-px mt-3 flex gap-4" role="tablist">
+          <div className="scrollbar-thin -mb-px mt-3 flex gap-4 overflow-x-auto" role="tablist">
             {tabs.map((x) => (
               <button
                 key={x.id}
                 role="tab"
                 aria-selected={tab === x.id}
                 onClick={() => setTab(x.id)}
-                className={cn("flex h-9 items-center gap-1.5 border-b-2 border-transparent text-meta font-medium text-muted-foreground hover:text-foreground", tab === x.id && "border-signal text-foreground")}
+                className={cn("flex h-11 shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent text-meta sm:h-9 font-medium text-muted-foreground hover:text-foreground", tab === x.id && "border-signal text-foreground")}
               >
                 {x.label}
                 <span className="rounded bg-surface-3 px-1.5 text-2xs tabular-nums">{x.n}</span>
@@ -308,20 +308,20 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
 function Journey({ ticket, onChat, onRun }: { ticket: Ticket; onChat: () => void; onRun: (id: string) => void }) {
   const runs = ticket.Runs ?? [];
   const latest = runs.at(-1);
-  const step = "inline-flex h-7 items-center gap-1.5 rounded-full border bg-canvas px-2.5 font-mono text-2xs text-muted-foreground";
+  const step = "inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border bg-canvas px-2.5 font-mono text-2xs text-muted-foreground";
   const link = "hover:border-border-strong hover:text-foreground";
   return (
     <ol className="scrollbar-thin mt-3 flex items-center gap-1 overflow-x-auto pb-1" aria-label="Ticket journey">
       {ticket.Transcript?.length ? (
-        <li className="flex items-center gap-1"><button onClick={onChat} className={cn(step, link)}><MessageSquare className="size-3" aria-hidden />L1 chat</button><span className="h-px w-3 bg-signal" aria-hidden /></li>
+        <li className="flex shrink-0 items-center gap-1"><button onClick={onChat} className={cn(step, link)}><MessageSquare className="size-3" aria-hidden />L1 chat</button><span className="h-px w-3 bg-signal" aria-hidden /></li>
       ) : null}
-      <li className="flex items-center gap-1"><span className={step}><TicketIcon className="size-3" aria-hidden />raised {whenShort(ticket.CreatedOn)}</span><span className={cn("h-px w-3", runs.length ? "bg-signal" : "bg-border-strong")} aria-hidden /></li>
+      <li className="flex shrink-0 items-center gap-1"><span className={step}><TicketIcon className="size-3" aria-hidden />raised {whenShort(ticket.CreatedOn)}</span><span className={cn("h-px w-3", runs.length ? "bg-signal" : "bg-border-strong")} aria-hidden /></li>
       {runs.length ? runs.map((r) => (
-        <li key={r.ID} className="flex items-center gap-1">
+        <li key={r.ID} className="flex shrink-0 items-center gap-1">
           <button onClick={() => onRun(r.ID)} className={cn(step, link, !r.CompletedOn && "border-signal text-signal")}><Bot className="size-3" aria-hidden />L2 #{r.AttemptNo}{r.CompletedOn ? ` · ${outcomeLabel(r.ResponseType).toLowerCase()}` : " · working"}</button>
           <span className="h-px w-3 bg-signal" aria-hidden />
         </li>
-      )) : <li className="flex items-center gap-1"><span className={cn(step, "border-dashed")}>L2 not claimed yet</span><span className="h-px w-3 bg-border-strong" aria-hidden /></li>}
+      )) : <li className="flex shrink-0 items-center gap-1"><span className={cn(step, "border-dashed")}>L2 not claimed yet</span><span className="h-px w-3 bg-border-strong" aria-hidden /></li>}
       <li><span className={cn(step, "text-foreground", latest?.CompletedOn && "border-signal/60")}>{ticket.StateLabel}</span></li>
     </ol>
   );

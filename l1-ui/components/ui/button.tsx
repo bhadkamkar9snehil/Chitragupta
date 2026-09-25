@@ -17,10 +17,10 @@ export const buttonVariants = cva(
       },
       size: {
         default: "h-10 px-4",
-        sm: "h-8 rounded-lg px-3 text-meta",
+        sm: "h-10 rounded-lg px-3 text-meta sm:h-8",
         lg: "h-11 px-5",
         icon: "size-10",
-        "icon-sm": "size-8",
+        "icon-sm": "size-10 sm:size-8",
       },
     },
     defaultVariants: { variant: "default", size: "default" },

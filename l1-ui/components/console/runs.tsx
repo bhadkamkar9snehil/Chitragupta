@@ -145,7 +145,7 @@ function RunWorkspace({ id, onBack, onLive, onOpenTicket, drawerOpen, onDrawerTo
         </div>
         <div className="scrollbar-thin -mb-px flex gap-4 overflow-x-auto" role="tablist">
           {tabs.map((x) => (
-            <button key={x.id} role="tab" aria-selected={tab === x.id} onClick={() => setTab(x.id)} className={cn("flex h-9 shrink-0 items-center gap-1.5 border-b-2 border-transparent text-meta font-medium text-muted-foreground hover:text-foreground", tab === x.id && "border-signal text-foreground")}>
+            <button key={x.id} role="tab" aria-selected={tab === x.id} onClick={() => setTab(x.id)} className={cn("flex h-11 shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent text-meta font-medium text-muted-foreground hover:text-foreground", tab === x.id && "border-signal text-foreground")}>
               {x.label}
               {x.n !== undefined && <span className="rounded bg-surface-3 px-1.5 text-2xs tabular-nums">{x.n}</span>}
             </button>

@@ -25,9 +25,11 @@ export function HealthView({ onOpenRun }: { onOpenRun: (id: string) => void }) {
   const load = useCallback(async () => {
     setBusy(true);
     const fail = (e: Error) => ({ at: new Date().toISOString(), ok: false, error: e.message, data: null });
-    const [s, p] = await Promise.all([ops.status().catch(fail), ops.performance(Number(hours)).catch(fail)]);
-    setStatus(s as Probe<RuntimeStatus>);
-    setPerf(p as Probe<Performance>);
+    // Independent: the report (SQL, ~4 s) must not wait for the runtime status (WSL, can be slower).
+    await Promise.all([
+      ops.status().catch(fail).then((s) => setStatus(s as Probe<RuntimeStatus>)),
+      ops.performance(Number(hours)).catch(fail).then((p) => setPerf(p as Probe<Performance>)),
+    ]);
     setBusy(false);
   }, [hours]);
 
@@ -58,7 +60,7 @@ export function HealthView({ onOpenRun }: { onOpenRun: (id: string) => void }) {
 
         <div className="grid gap-4 lg:grid-cols-3">
           <Panel icon={Cpu} title="Runtime" meta={status ? `l2_pipeline_runtime status · ${ago(status.at)}` : "asking the runtime"}>
-            {!status ? <Skeleton className="h-32" /> : !s ? <Failure what="The runtime status" error={status.error} /> : (
+            {!status ? <Waiting what="Asking the runtime in WSL" /> : !s ? <Failure what="The runtime status" error={status.error} /> : (
               <div className="space-y-4">
                 <p className={cn("flex items-center gap-2 font-mono text-sm", s.binding_ready_for_new_claims ? "text-signal" : "text-warning")}>
                   <span className={cn("size-2 rounded-full", s.binding_ready_for_new_claims ? "bg-signal" : "bg-warning")} aria-hidden />
@@ -79,7 +81,7 @@ export function HealthView({ onOpenRun }: { onOpenRun: (id: string) => void }) {
           </Panel>
 
           <Panel icon={Clock3} title="Claims" meta="is the engineer picking up work">
-            {!perf ? <Skeleton className="h-32" /> : !p ? <Failure what="The performance report" error={perf.error} /> : (
+            {!perf ? <Waiting what="Running the performance report" /> : !p ? <Failure what="The performance report" error={perf.error} /> : (
               <div className="space-y-3">
                 <Headline value={p.claim_health.MinutesSinceClaim == null ? "—" : fmtMinutes(p.claim_health.MinutesSinceClaim)} unit="since last claim"
                   note={p.claim_health.Stalled ? "stalled" : "not stalled"} noteTone={p.claim_health.Stalled ? "danger" : "signal"} />
@@ -93,7 +95,7 @@ export function HealthView({ onOpenRun }: { onOpenRun: (id: string) => void }) {
           </Panel>
 
           <Panel icon={ShieldCheck} title="Lifecycle invariants" meta="each must be 0">
-            {!p ? <Skeleton className="h-32" /> : (
+            {!p ? <Waiting what="Waiting for the performance report" /> : (
               <div className="space-y-3">
                 <Headline value={`${invariants.length - broken.length}/${invariants.length}`} unit="hold" note={broken.length ? `${broken.length} broken` : "all clear"} noteTone={broken.length ? "danger" : "signal"} />
                 <ul className="space-y-1">
@@ -226,3 +228,12 @@ function Failure({ what, error }: { what: string; error: string | null }) {
 
 const k = (n: number) => `${(n / 1000).toFixed(1)}k`;
 const fmtMinutes = (m: number) => (m < 60 ? `${Math.round(m)} min` : m < 2880 ? `${(m / 60).toFixed(1)} h` : `${(m / 1440).toFixed(1)} d`);
+
+function Waiting({ what }: { what: string }) {
+  return (
+    <div className="flex items-center gap-3 py-2 text-xs text-muted-foreground" role="status">
+      <RefreshCw className="size-4 shrink-0 animate-spin text-subtle-foreground" aria-hidden />
+      <span>{what}… this can take a few seconds.</span>
+    </div>
+  );
+}

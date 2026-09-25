@@ -182,7 +182,7 @@ input {
 }
 
 /* Collapsed empty board columns label themselves sideways. */
-.vertical-text {
+@utility vertical-text {
   writing-mode: vertical-rl;
 }
 

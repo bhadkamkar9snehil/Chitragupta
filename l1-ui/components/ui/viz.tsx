@@ -58,9 +58,9 @@ export function Panel({ icon, title, meta, actions, children, className, pad = "
 }) {
   return (
     <Tag className={cn("flex min-w-0 flex-col rounded-2xl border bg-canvas p-1.5", className)}>
-      <header className="flex min-h-14 items-center gap-3 px-2.5 pb-2.5 pt-1.5">
+      <header className="flex min-h-14 flex-wrap items-center gap-3 px-2.5 pb-2.5 pt-1.5">
         {icon && <IconTile icon={icon} />}
-        <div className="min-w-0 flex-1">
+        <div className="min-w-40 flex-1">
           <h2 className="truncate text-sm font-semibold tracking-tight">{title}</h2>
           {meta && <p className="line-clamp-2 text-xs text-subtle-foreground">{meta}</p>}
         </div>
@@ -95,7 +95,7 @@ export function Legend({ rows, className, inline }: { rows: LegendRow[]; classNa
           <>
             <Swatch tone={r.tone} />
             <span className={cn("min-w-0 truncate font-mono text-xs", r.active === false ? "text-subtle-foreground" : "text-muted-foreground")}>{r.label}</span>
-            {r.value !== undefined && <span className={cn("font-mono text-xs tabular-nums text-foreground", !inline && "ml-auto pl-3")}>{r.value}</span>}
+            {r.value !== undefined && <span className={cn("shrink-0 whitespace-nowrap font-mono text-xs tabular-nums text-foreground", !inline && "ml-auto pl-3")}>{r.value}</span>}
           </>
         );
         return (
@@ -238,7 +238,7 @@ export function Segmented<T extends string>({ options, value, onChange, label, c
           role="radio"
           aria-checked={value === o.id}
           onClick={() => onChange(o.id)}
-          className={cn("h-8 min-w-0 flex-1 rounded-md px-3 font-mono text-xs text-subtle-foreground hover:text-foreground sm:flex-none", value === o.id && "bg-surface-3 text-foreground")}
+          className={cn("h-10 min-w-0 flex-1 whitespace-nowrap rounded-md px-3 font-mono text-xs sm:h-8 text-subtle-foreground hover:text-foreground sm:flex-none", value === o.id && "bg-surface-3 text-foreground")}
         >
           {o.label}
         </button>
@@ -327,7 +327,7 @@ export function HeatCalendar({ days, unit, className }: { days: { day: string; v
 // Every screen opens the same way: dashed icon tile, title, one mono line of context, actions on the right.
 export function PageTitle({ icon, title, meta, children, className }: { icon: LucideIcon; title: ReactNode; meta?: ReactNode; children?: ReactNode; className?: string }) {
   return (
-    <div className={cn("flex min-w-0 items-center gap-3", className)}>
+    <div className={cn("flex min-w-56 items-center gap-3", className)}>
       <IconTile icon={icon} />
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-title font-semibold tracking-tight">{title}</h1>

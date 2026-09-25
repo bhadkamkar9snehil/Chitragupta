@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Command } from "cmdk";
 import {
-  BarChart3, Bot, FileJson2, HeartPulse, MessageSquarePlus, Gauge, Inbox, KanbanSquare, MessagesSquare, Moon, PanelLeftClose, PanelLeftOpen, Radio, Search, Settings as SettingsIcon, ShieldAlert, Sun,
+  BarChart3, Bot, MoreHorizontal, FileJson2, HeartPulse, MessageSquarePlus, Gauge, Inbox, KanbanSquare, MessagesSquare, Moon, PanelLeftClose, PanelLeftOpen, Radio, Search, Settings as SettingsIcon, ShieldAlert, Sun,
   Ticket as TicketIcon, UserRound, Wrench,
 } from "lucide-react";
 import { api, type Ticket, type User } from "@/lib/api";
@@ -74,6 +74,7 @@ export function Console() {
   const [brand, setBrand] = useState("XBatch Helpdesk");
   const [engineer, setEngineer] = useState<User | null>(null);
   const [picking, setPicking] = useState(false);
+  const [more, setMore] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [convView, setConvView] = useState<ViewId>("all");
   const [convCounts, setConvCounts] = useState<Partial<Record<ViewId, number>>>({});
@@ -114,7 +115,7 @@ export function Console() {
   return (
     <TooltipProvider>
       <div className="flex h-dvh overflow-hidden bg-background">
-        <nav aria-label="Suite" className={cn("scrollbar-thin flex w-16 shrink-0 flex-col items-center overflow-y-auto border-r bg-canvas py-3 *:shrink-0", !navCollapsed && "xl:w-60 xl:items-stretch xl:px-2")}>
+        <nav aria-label="Suite" className={cn("scrollbar-thin hidden w-16 shrink-0 flex-col md:flex items-center overflow-y-auto border-r bg-canvas py-3 *:shrink-0", !navCollapsed && "xl:w-60 xl:items-stretch xl:px-2")}>
           <div className={cn("flex w-full items-center justify-center gap-2.5 pb-3", !navCollapsed && "xl:justify-start xl:px-3")}>
             <BrandMark name={brand} compact />
             {!navCollapsed && (
@@ -222,7 +223,7 @@ export function Console() {
           </div>
         </nav>
 
-        <main className="flex min-w-0 flex-1 flex-col">
+        <main className="flex min-w-0 flex-1 flex-col pb-16 md:pb-0">
           {route.view === "overview" && (
             <OverviewView go={{ live: () => go("live"), l1: () => go("conversations"), runs: () => go("runs"), l3: () => go("l3"), tickets: () => go("inbox"), ticket: (id) => go("inbox", id), run: (id) => go("runs", id) }} />
           )}
@@ -240,7 +241,33 @@ export function Console() {
           {route.view === "reports" && <ReportsView />}
           {route.view === "settings" && <SettingsView tab={route.id ?? undefined} onTab={setId} />}
         </main>
+        <MobileTabs view={route.view} go={go} onMore={() => setMore(true)} />
       </div>
+      <Dialog open={more} onOpenChange={setMore} title="Menu" description={engineer ? `Acting as ${displayName(engineer)}` : "Choose who you are for L3 actions and chats"}>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => { setMore(false); go("conversations", "new"); }} className="flex h-11 items-center justify-center gap-2 rounded-lg bg-foreground text-sm font-medium text-background"><MessageSquarePlus className="size-4" aria-hidden />New chat</button>
+            <button onClick={() => { setMore(false); setPalette(true); }} className="flex h-11 items-center justify-center gap-2 rounded-lg border bg-surface text-sm"><Search className="size-4" aria-hidden />Search</button>
+          </div>
+          {GROUPS.map((g) => (
+            <div key={g.label}>
+              <p className="pb-1 font-mono text-2xs uppercase tracking-wider text-subtle-foreground">{g.label}</p>
+              <div className="grid grid-cols-2 gap-1">
+                {g.items.map((n) => (
+                  <button key={n.view} onClick={() => { setMore(false); go(n.view); }} aria-current={route.view === n.view ? "page" : undefined}
+                    className={cn("flex h-11 items-center gap-2 rounded-lg px-2.5 text-left text-sm text-muted-foreground hover:bg-surface-2", route.view === n.view && "bg-surface-3 text-foreground")}>
+                    <n.icon className="size-4 shrink-0" aria-hidden /><span className="leading-tight">{n.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div className="grid grid-cols-2 gap-2 border-t pt-3">
+            <button onClick={() => { setMore(false); setPicking(true); }} className="flex h-11 items-center gap-2 rounded-lg px-2.5 text-sm text-muted-foreground hover:bg-surface-2"><UserRound className="size-4" aria-hidden />Who you are</button>
+            <button onClick={() => { const dark = !document.documentElement.classList.contains("dark"); document.documentElement.classList.toggle("dark", dark); safe(() => localStorage.setItem("l1.theme", dark ? "dark" : "light"), undefined); }} className="flex h-11 items-center gap-2 rounded-lg px-2.5 text-sm text-muted-foreground hover:bg-surface-2"><Moon className="size-4 dark:hidden" aria-hidden /><Sun className="hidden size-4 dark:block" aria-hidden />Theme</button>
+          </div>
+        </div>
+      </Dialog>
       <Palette open={palette} onOpenChange={setPalette} go={go} onChat={() => go("conversations", "new")} />
       <EngineerPicker
         open={picking}
@@ -346,5 +373,30 @@ function Palette({ open, onOpenChange, go, onChat }: { open: boolean; onOpenChan
         </Command.Group>
       </Command.List>
     </Command.Dialog>
+  );
+}
+
+// Phones: the four desks people use most, everything else in the More sheet.
+const TABS: { view: View; label: string; icon: typeof Inbox }[] = [
+  { view: "overview", label: "Home", icon: Gauge },
+  { view: "inbox", label: "Tickets", icon: Inbox },
+  { view: "conversations", label: "Chats", icon: MessagesSquare },
+  { view: "live", label: "Live", icon: Radio },
+];
+
+function MobileTabs({ view, go, onMore }: { view: View; go: (v: View) => void; onMore: () => void }) {
+  const inTabs = TABS.some((t) => t.view === view);
+  return (
+    <nav aria-label="Suite" className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t bg-canvas md:hidden">
+      {TABS.map((t) => (
+        <button key={t.view} onClick={() => go(t.view)} aria-current={view === t.view ? "page" : undefined}
+          className={cn("flex h-16 flex-col items-center justify-center gap-1 text-2xs font-medium text-subtle-foreground", view === t.view && "text-signal")}>
+          <t.icon className="size-5" aria-hidden />{t.label}
+        </button>
+      ))}
+      <button onClick={onMore} className={cn("flex h-16 flex-col items-center justify-center gap-1 text-2xs font-medium text-subtle-foreground", !inTabs && "text-signal")}>
+        <MoreHorizontal className="size-5" aria-hidden />More
+      </button>
+    </nav>
   );
 }
