@@ -37,7 +37,7 @@ public static class Tickets
         WHERE ISNULL(c.IsDeleted, 0) = 0
         """;
 
-    // What a requester reads as the ticket's state; Helpdesk + L2 rows are the only inputs.
+    // What a requester reads as the ticket's state; Helpdesk, L2 and human L3 lifecycle rows are the server-owned inputs.
     public static Dictionary<string, object?> WithState(Dictionary<string, object?> t)
     {
         var (label, tone) = (t["Status"]?.ToString(), t["AskStatus"]?.ToString(), t["ResponseType"]?.ToString(), t["L3Status"]?.ToString()) switch

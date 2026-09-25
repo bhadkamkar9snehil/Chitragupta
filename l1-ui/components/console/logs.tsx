@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { CirclePause, CirclePlay, FileJson2, Radio, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CirclePause, FileJson2, Radio, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { ops, type RuntimeLogRecord, type RuntimeLogs } from "@/lib/api";
 import { ago } from "@/lib/format";
@@ -28,17 +28,17 @@ export function LogsView() {
   const [open, setOpen] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try { setData(await ops.logs()); }
     catch (e) { toast.error((e as Error).message); }
-  };
+  }, []);
 
   useEffect(() => {
     load();
     if (!follow) return;
     const id = setInterval(load, 2500);
     return () => clearInterval(id);
-  }, [follow]);
+  }, [follow, load]);
 
   const rows = useMemo(() => {
     const items = (data?.sources ?? []).flatMap((s) => s.records.map((record, index) => ({ source: s.name, record, key: `${s.name}:${stamp(record)}:${index}` })));

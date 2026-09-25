@@ -19,7 +19,8 @@ export function ReportsView() {
   const t = stats?.totals;
   const deflection = t && t.conversations ? Math.round((t.answeredWithoutTicket / t.conversations) * 100) : null;
   const helpful = t && (t.thumbsUp ?? 0) + (t.thumbsDown ?? 0) > 0 ? Math.round(((t.thumbsUp ?? 0) / ((t.thumbsUp ?? 0) + (t.thumbsDown ?? 0))) * 100) : null;
-  const rt = stats?.runtime.totals;
+  const runtime = stats?.runtime;
+  const rt = runtime?.totals;
 
   return (
     <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
@@ -27,7 +28,7 @@ export function ReportsView() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-heading font-semibold tracking-tight">Reports</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">Tickets raised in the period and how the helpdesk handled conversations.</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">Helpdesk demand, outcomes, investigation timing, model/tool performance and captured compute.</p>
           </div>
           <div className="flex rounded-lg border bg-surface p-0.5" role="radiogroup" aria-label="Period">
             {RANGES.map((r) => (
@@ -70,13 +71,13 @@ export function ReportsView() {
         </div>
 
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
-          <Panel title="Model tokens per day">{stats ? <DailyBars data={stats.runtime.series.map((s) => ({ day: String(s.Day), value: Number(s.Tokens) || 0 }))} unit="token" /> : <Skeleton className="h-48" />}</Panel>
-          <Panel title="Observed calls per day">{stats ? <DailyBars data={stats.runtime.series.map((s) => ({ day: String(s.Day), value: Number(s.ToolCalls) + Number(s.ModelCalls) + Number(s.JevCalls) }))} unit="call" /> : <Skeleton className="h-48" />}</Panel>
+          <Panel title="Model tokens per day">{!stats ? <Skeleton className="h-48" /> : runtime ? <DailyBars data={runtime.series.map((s) => ({ day: String(s.Day), value: Number(s.Tokens) || 0 }))} unit="token" /> : <TelemetryUnavailable />}</Panel>
+          <Panel title="Observed calls per day">{!stats ? <Skeleton className="h-48" /> : runtime ? <DailyBars data={runtime.series.map((s) => ({ day: String(s.Day), value: Number(s.ToolCalls) + Number(s.ModelCalls) + Number(s.JevCalls) }))} unit="call" /> : <TelemetryUnavailable />}</Panel>
         </div>
 
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
-          <Panel title="Slowest tools">{stats ? <RuntimeTable rows={stats.runtime.tools.map((x) => ({ label: x.Label, calls: x.Calls, errors: x.Errors, avg: x.AvgMs }))} /> : <Skeleton className="h-48" />}</Panel>
-          <Panel title="Writer models">{stats ? <RuntimeTable rows={stats.runtime.models.map((x) => ({ label: `${x.Provider} · ${x.Model}`, calls: x.Calls, errors: 0, avg: x.AvgMs, extra: x.Tokens == null ? "—" : `${compactNumber(x.Tokens)} tokens` }))} /> : <Skeleton className="h-48" />}</Panel>
+          <Panel title="Slowest tools">{!stats ? <Skeleton className="h-48" /> : runtime ? <RuntimeTable rows={runtime.tools.map((x) => ({ label: x.Label, calls: x.Calls, errors: x.Errors, avg: x.AvgMs }))} /> : <TelemetryUnavailable />}</Panel>
+          <Panel title="Writer models">{!stats ? <Skeleton className="h-48" /> : runtime ? <RuntimeTable rows={runtime.models.map((x) => ({ label: `${x.Provider} · ${x.Model}`, calls: x.Calls, errors: 0, avg: x.AvgMs, extra: x.Tokens == null ? "—" : `${compactNumber(x.Tokens)} tokens` }))} /> : <TelemetryUnavailable />}</Panel>
         </div>
 
         <div className="mt-3 grid gap-3 lg:grid-cols-3">
@@ -140,6 +141,7 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
 // Single series: one hue (brand), 4px rounded tops on a baseline, 2px gaps, hover tooltip per bar.
 function DailyBars({ data, unit }: { data: { day: string; value: number }[]; unit: string }) {
   const [hover, setHover] = useState<number | null>(null);
+  if (!data.length) return <p className="py-10 text-center text-sm text-muted-foreground">No {unit} data in this period.</p>;
   const max = Math.max(1, ...data.map((d) => d.value));
   const W = 600, H = 180, pad = 22, gutter = 28, bw = (W - gutter - 2) / data.length;
   const ticks = [0, Math.ceil(max / 2), max];
@@ -190,6 +192,10 @@ function DailyBars({ data, unit }: { data: { day: string; value: number }[]; uni
       )}
     </div>
   );
+}
+
+function TelemetryUnavailable() {
+  return <p className="py-10 text-center text-sm text-muted-foreground">Runtime telemetry will appear after the updated L1 API is running.</p>;
 }
 
 function RuntimeTable({ rows }: { rows: { label: string; calls: number; errors: number; avg: number | null; extra?: string }[] }) {

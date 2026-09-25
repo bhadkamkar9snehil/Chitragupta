@@ -89,7 +89,7 @@ export type Stats = {
   byState: { label: string; count: number }[];
   byArea: { label: string; count: number }[];
   byType: { label: string; count: number }[];
-  runtime: {
+  runtime?: {
     totals: {
       Runs: number; AvgRunSeconds: number | null; MaxRunSeconds: number | null; AvgSqlReadsPerRun: number | null;
       AvgToolMs: number | null; AvgJevMs: number | null; AvgModelMs: number | null; ToolErrors: number | null; ModelErrors: number;

@@ -68,7 +68,7 @@ export function Console() {
   const [brand, setBrand] = useState("XBatch Helpdesk");
   const [engineer, setEngineer] = useState<User | null>(null);
   const [picking, setPicking] = useState(false);
-  const [navCollapsed, setNavCollapsed] = useState(() => safe(() => localStorage.getItem("desk.nav.collapsed") === "1", false));
+  const [navCollapsed, setNavCollapsed] = useState(false);
 
   useEffect(() => {
     const sync = () => setRoute(parse());
@@ -80,6 +80,7 @@ export function Console() {
     }).catch(() => {});
     const id = safe(() => localStorage.getItem(ENGINEER_KEY), null);
     if (id) api.user(id).then(setEngineer).catch(() => {});
+    setNavCollapsed(safe(() => localStorage.getItem("desk.nav.collapsed") === "1", false));
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
