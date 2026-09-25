@@ -16,8 +16,8 @@ import { Transcript } from "./inbox";
 // views -> conversation list -> the conversation -> who it is and what it led to.
 // Your own chats (as the acting engineer) are live and can be continued; everyone else's are read-only.
 
-type ViewId = "mine" | "all" | "open" | "ticket" | "answered" | "negative" | "solved";
-const VIEWS: { id: ViewId; label: string; icon: typeof Inbox; match: (s: Session, me: string | null) => boolean }[] = [
+export type ViewId = "mine" | "all" | "open" | "ticket" | "answered" | "negative" | "solved";
+export const VIEWS: { id: ViewId; label: string; icon: typeof Inbox; match: (s: Session, me: string | null) => boolean }[] = [
   { id: "mine", label: "My chats", icon: UserRound, match: (s, me) => !!me && s.UserID?.toUpperCase() === me },
   { id: "all", label: "All conversations", icon: Inbox, match: () => true },
   { id: "open", label: "Open", icon: MessagesSquare, match: (s) => s.Status !== "resolved" },
@@ -27,7 +27,11 @@ const VIEWS: { id: ViewId; label: string; icon: typeof Inbox; match: (s: Session
   { id: "solved", label: "Solved", icon: CheckCircle2, match: (s) => s.Status === "resolved" },
 ];
 
-export function ConversationsView({ sessionId, onSelect, onOpenTicket, onOpenRun, engineer, askEngineer }: {
+export function ConversationsView({ view, onView, onCounts, showPicker, sessionId, onSelect, onOpenTicket, onOpenRun, engineer, askEngineer }: {
+  view: ViewId;
+  onView: (v: ViewId) => void;
+  onCounts: (counts: Partial<Record<ViewId, number>>) => void;
+  showPicker: boolean;
   sessionId: string | null;
   onSelect: (id: string | null) => void;
   onOpenTicket: (id: string) => void;
@@ -36,8 +40,6 @@ export function ConversationsView({ sessionId, onSelect, onOpenTicket, onOpenRun
   askEngineer: () => void;
 }) {
   const me = engineer?.ID.toUpperCase() ?? null;
-  const [view, setView] = useState<ViewId>(me ? "mine" : "all");
-  const [person, setPerson] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<Session[] | null>(null);
   const [started, setStarted] = useState<string[]>([]);
@@ -52,72 +54,29 @@ export function ConversationsView({ sessionId, onSelect, onOpenTicket, onOpenRun
 
   const all = useMemo(() => rows ?? [], [rows]);
   const current = VIEWS.find((v) => v.id === view)!;
-  const shown = all.filter((s) => current.match(s, me) && (!person || s.UserID?.toUpperCase() === person)
+  const shown = all.filter((s) => current.match(s, me)
     && (!q || `${s.Title} ${s.TicketNo} ${s.UserName} ${s.LastMessage}`.toLowerCase().includes(q.toLowerCase())));
-  const people = Object.values(all.reduce<Record<string, { id: string; name: string; n: number }>>((m, s) => {
-    const id = s.UserID?.toUpperCase() ?? "?";
-    m[id] = { id, name: s.UserName ?? "Unknown", n: (m[id]?.n ?? 0) + 1 };
-    return m;
-  }, {})).sort((a, b) => b.n - a.n).slice(0, 6);
+
+  // The view counts are shown in the main nav under L1 · Conversations.
+  useEffect(() => {
+    if (rows) onCounts(Object.fromEntries(VIEWS.map((v) => [v.id, rows.filter((s) => v.match(s, me)).length])));
+  }, [rows, me, onCounts]);
   const selected = all.find((s) => s.ID === sessionId) ?? null;
   const composing = sessionId === "new";
   const own = composing || (!!sessionId && started.includes(sessionId)) || (!!selected && !!me && selected.UserID?.toUpperCase() === me);
 
   return (
     <div className="flex min-h-0 flex-1">
-      <aside aria-label="Conversation views" className="scrollbar-thin hidden w-60 shrink-0 flex-col overflow-y-auto border-r bg-canvas p-3 lg:flex">
-        <div className="flex items-center gap-3 px-1 pb-3">
-          <IconTile icon={MessagesSquare} />
-          <div className="min-w-0">
-            <h1 className="truncate text-title font-semibold tracking-tight">Conversations</h1>
-            <p className="truncate font-mono text-2xs text-subtle-foreground">{rows ? `${all.length} with the assistant` : "loading"}</p>
-          </div>
-        </div>
-        <p className="px-2 pb-1 pt-2 font-mono text-2xs uppercase tracking-wider text-subtle-foreground">Views</p>
-        <ul className="space-y-0.5">
-          {VIEWS.map((v) => (
-            <li key={v.id}>
-              <button
-                onClick={() => { setView(v.id); setPerson(null); }}
-                aria-current={view === v.id && !person ? "page" : undefined}
-                className={cn("flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-meta text-muted-foreground hover:bg-surface-2 hover:text-foreground", view === v.id && !person && "bg-surface-3 text-foreground")}
-              >
-                <v.icon className="size-4 shrink-0" aria-hidden />
-                <span className="min-w-0 flex-1 truncate">{v.label}</span>
-                <span className="font-mono text-2xs tabular-nums text-subtle-foreground">{v.id === "mine" && !me ? "—" : all.filter((s) => v.match(s, me)).length}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-        {people.length > 0 && (
-          <>
-            <p className="px-2 pb-1 pt-5 font-mono text-2xs uppercase tracking-wider text-subtle-foreground">Requesters</p>
-            <ul className="space-y-0.5">
-              {people.map((p) => (
-                <li key={p.id}>
-                  <button
-                    onClick={() => { setView("all"); setPerson(p.id); }}
-                    aria-current={person === p.id ? "page" : undefined}
-                    className={cn("flex h-9 w-full items-center gap-2.5 rounded-lg px-2 text-left text-meta text-muted-foreground hover:bg-surface-2 hover:text-foreground", person === p.id && "bg-surface-3 text-foreground")}
-                  >
-                    <Avatar name={p.name} className="size-6" />
-                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                    <span className="font-mono text-2xs tabular-nums text-subtle-foreground">{p.n}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </aside>
-
       <section aria-label="Conversations" className={cn("flex min-h-0 w-full flex-col border-r bg-canvas md:w-80 md:shrink-0", sessionId && "hidden md:flex")}>
         <div className="space-y-2 border-b px-3 py-3">
           <div className="flex items-center gap-2">
-            <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{person ? people.find((p) => p.id === person)?.name : current.label}</h2>
-            <span className="font-mono text-2xs text-subtle-foreground">{shown.length}</span>
+            <IconTile icon={current.icon} />
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-title font-semibold tracking-tight">{current.label}</h1>
+              <p className="truncate font-mono text-2xs text-subtle-foreground">L1 conversations · {rows ? `${shown.length} of ${all.length}` : "loading"}</p>
+            </div>
           </div>
-          <select value={view} onChange={(e) => { setView(e.target.value as ViewId); setPerson(null); }} aria-label="View" className="h-10 w-full rounded-lg border bg-canvas px-2 text-meta lg:hidden">
+          <select value={view} onChange={(e) => onView(e.target.value as ViewId)} aria-label="View" className={cn("h-10 w-full rounded-lg border bg-canvas px-2 text-meta", !showPicker && "xl:hidden")}>
             {VIEWS.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
           </select>
           <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search title, ticket, person" aria-label="Search conversations" />

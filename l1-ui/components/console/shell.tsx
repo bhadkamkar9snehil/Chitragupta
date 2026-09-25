@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Command } from "cmdk";
 import {
   BarChart3, Bot, FileJson2, MessageSquarePlus, Gauge, Inbox, KanbanSquare, MessagesSquare, Moon, PanelLeftClose, PanelLeftOpen, Radio, Search, Settings as SettingsIcon, ShieldAlert, Sun,
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { Avatar, Dialog, Kbd, SearchInput, StatePill, Tip, TooltipProvider } from "@/components/ui/primitives";
 import { applyBrand, BrandMark } from "@/components/helpdesk/app";
 import { InboxView } from "./inbox";
-import { ConversationsView } from "./conversations";
+import { ConversationsView, VIEWS as CONVERSATION_VIEWS, type ViewId } from "./conversations";
 import { ReportsView } from "./reports";
 import { SettingsView } from "./settings";
 import { OverviewView } from "./overview";
@@ -73,6 +73,9 @@ export function Console() {
   const [engineer, setEngineer] = useState<User | null>(null);
   const [picking, setPicking] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(false);
+  const [convView, setConvView] = useState<ViewId>("all");
+  const [convCounts, setConvCounts] = useState<Partial<Record<ViewId, number>>>({});
+  const onConvCounts = useCallback((c: Partial<Record<ViewId, number>>) => setConvCounts(c), []);
 
   useEffect(() => {
     const sync = () => setRoute(parse());
@@ -146,7 +149,7 @@ export function Console() {
             <div key={g.label} className={cn("w-full", navCollapsed ? "py-1" : "mt-2", navCollapsed && groupIndex > 0 && "mt-1 border-t pt-2")}>
               {!navCollapsed && <p className="hidden px-2.5 pb-1 pt-2 text-2xs font-semibold uppercase tracking-wider text-subtle-foreground xl:block">{g.label}</p>}
               <div className="space-y-0.5">
-                {g.items.map((n) => (
+                {g.items.flatMap((n) => [
                   <Tip key={n.view} label={n.label} side="right">
                     <button
                       onClick={() => go(n.view)}
@@ -161,8 +164,24 @@ export function Console() {
                       <n.icon className={cn("size-4.5 xl:size-4", n.view === "live" && "text-signal")} aria-hidden />
                       {!navCollapsed && <span className="hidden xl:inline">{n.label}</span>}
                     </button>
-                  </Tip>
-                ))}
+                  </Tip>,
+                ].concat(n.view === "conversations" && route.view === "conversations" && !navCollapsed ? [
+                  // Conversation views nest under their nav item (one sidebar, as in Libredesk).
+                  <ul key="conv-views" className="ml-4 hidden space-y-0.5 border-l pl-2 xl:block" aria-label="Conversation views">
+                    {CONVERSATION_VIEWS.map((v) => (
+                      <li key={v.id}>
+                        <button
+                          onClick={() => { setConvView(v.id); go("conversations"); }}
+                          aria-current={convView === v.id ? "page" : undefined}
+                          className={cn("flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-meta text-muted-foreground hover:bg-surface-2 hover:text-foreground", convView === v.id && "bg-surface-3 text-foreground")}
+                        >
+                          <span className="min-w-0 flex-1 truncate">{v.label}</span>
+                          <span className="font-mono text-2xs tabular-nums text-subtle-foreground">{v.id === "mine" && !engineer ? "—" : convCounts[v.id] ?? ""}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>,
+                ] : []))}
               </div>
             </div>
           ))}
@@ -208,7 +227,7 @@ export function Console() {
           {route.view === "live" && <LiveView key={route.id ? "replay" : "live"} runId={route.id ?? null} onRun={setId} onOpenRun={(id) => go("runs", id)} />}
           {route.view === "board" && <BoardView onOpenTicket={(id) => go("inbox", id)} onOpenRun={(id) => go("runs", id)} />}
           {route.view === "inbox" && <InboxView ticketId={route.id ?? null} onSelect={setId} onOpenRun={(id) => go("runs", id)} />}
-          {route.view === "conversations" && <ConversationsView sessionId={route.id ?? null} onSelect={setId} onOpenTicket={(id) => go("inbox", id)} onOpenRun={(id) => go("runs", id)} engineer={engineer} askEngineer={() => setPicking(true)} />}
+          {route.view === "conversations" && <ConversationsView view={convView} onView={setConvView} onCounts={onConvCounts} showPicker={navCollapsed} sessionId={route.id ?? null} onSelect={setId} onOpenTicket={(id) => go("inbox", id)} onOpenRun={(id) => go("runs", id)} engineer={engineer} askEngineer={() => setPicking(true)} />}
           {route.view === "runs" && <RunsView runId={route.id ?? null} onSelect={setId} onLive={(id) => go("live", id)} onOpenTicket={(id) => go("inbox", id)} />}
           {route.view === "l3" && (
             <L3View escalationId={route.id ?? null} onSelect={setId} engineer={engineer} askEngineer={() => setPicking(true)} onOpenRun={(id) => go("runs", id)} onOpenTicket={(id) => go("inbox", id)} />
