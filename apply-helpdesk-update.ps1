@@ -4,6 +4,62 @@ $Repo = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ApiProject = Join-Path $Repo "L1\api\L1Api.csproj"
 $Ui = Join-Path $Repo "l1-ui"
 
+function Install-RepoPad {
+    $project = Join-Path $Repo "tools\RepoPad\RepoPad.csproj"
+    if (-not (Test-Path $project)) { return }
+
+    Write-Host "Building RepoPad..." -ForegroundColor Cyan
+
+    $padRoot = Join-Path $env:LOCALAPPDATA "RepoPad"
+    $versionsRoot = Join-Path $padRoot "versions"
+    New-Item -ItemType Directory -Force -Path $versionsRoot | Out-Null
+
+    $version = (git rev-parse --short=12 HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $version) { throw "Could not determine RepoPad version." }
+
+    $installDir = Join-Path $versionsRoot $version
+    $exe = Join-Path $installDir "RepoPad.exe"
+    if (-not (Test-Path $exe)) {
+        New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+        dotnet publish $project -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o $installDir
+        if ($LASTEXITCODE -ne 0) { throw "RepoPad build failed. No services were restarted." }
+    }
+
+    $configPath = Join-Path $padRoot "repos.json"
+    $existing = @()
+    if (Test-Path $configPath) {
+        try {
+            $current = Get-Content $configPath -Raw | ConvertFrom-Json
+            if ($current.repos) { $existing = @($current.repos) }
+        } catch {
+            Write-Host "RepoPad config was unreadable; rebuilding it." -ForegroundColor Yellow
+        }
+    }
+
+    $entry = [pscustomobject]@{
+        id = "chitragupta"
+        name = "CHITRAGUPTA"
+        subtitle = "Helpdesk"
+        path = $Repo
+        script = "apply-helpdesk-update.ps1"
+        accent = "#D85E2B"
+        url = "http://localhost:3417/admin"
+    }
+    $repos = @($existing | Where-Object { $_.id -ne "chitragupta" }) + @($entry)
+    [pscustomobject]@{ repos = $repos } | ConvertTo-Json -Depth 6 | Set-Content -Path $configPath -Encoding UTF8
+
+    $desktop = [Environment]::GetFolderPath("Desktop")
+    $shortcutPath = Join-Path $desktop "RepoPad.lnk"
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $exe
+    $shortcut.WorkingDirectory = $padRoot
+    $shortcut.Description = "Repository apply macropad"
+    $shortcut.Save()
+
+    Write-Host "RepoPad ready: $shortcutPath" -ForegroundColor Green
+}
+
 Write-Host "== Chitragupta Helpdesk local apply ==" -ForegroundColor Cyan
 Set-Location $Repo
 
@@ -33,6 +89,8 @@ if ($LASTEXITCODE -ne 0) { throw "UI production build failed. No services were r
 Set-Location $Repo
 git restore -- l1-ui/next-env.d.ts 2>$null
 if ($LASTEXITCODE -ne 0) { throw "Failed to restore generated next-env.d.ts after build." }
+
+Install-RepoPad
 
 Write-Host "Restarting L1 API..." -ForegroundColor Cyan
 Get-Process L1Api -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -93,3 +151,4 @@ if ($dirtyAfter) {
 Write-Host ""
 Write-Host "Ready. API :5116 and Helpdesk UI :3417 are running." -ForegroundColor Green
 Write-Host "Refresh http://localhost:3417/admin" -ForegroundColor Green
+Write-Host "RepoPad is available from the Desktop shortcut for future applies." -ForegroundColor Green
