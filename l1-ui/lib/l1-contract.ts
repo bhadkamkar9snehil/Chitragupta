@@ -13,8 +13,17 @@ export const KnowledgeSourceSchema = z.object({
   excerpt: z.string().trim().min(1).max(600).optional(),
 });
 
+const KnowledgeSourceListSchema = z
+  .array(KnowledgeSourceSchema)
+  .max(8)
+  .refine(
+    (sources) =>
+      new Set(sources.map((source) => source.id)).size === sources.length,
+    { message: "Knowledge source IDs must be unique." },
+  );
+
 export const KnowledgeSourcesResultSchema = z.object({
-  sources: z.array(KnowledgeSourceSchema).min(1).max(8),
+  sources: KnowledgeSourceListSchema.min(1),
 });
 
 export const TicketSnapshotSchema = z.object({
@@ -107,7 +116,7 @@ export const L1MessageResponseSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("message"),
     text: LongTextSchema,
-    sources: z.array(KnowledgeSourceSchema).max(8).optional(),
+    sources: KnowledgeSourceListSchema.optional(),
   }),
   z.object({
     type: z.literal("collect_intake"),
