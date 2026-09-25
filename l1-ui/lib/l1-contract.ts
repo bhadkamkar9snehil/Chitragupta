@@ -33,7 +33,7 @@ export const TicketSnapshotSchema = z.object({
   summary: z.string().trim().min(1).max(1_200),
   statusLabel: z.string().trim().min(1).max(80),
   attentionRequired: z.boolean().default(false),
-  domain: z.string().trim().min(1).max(80).optional(),
+  systemLabel: z.string().trim().min(1).max(80).optional(),
   area: z.string().trim().min(1).max(80).optional(),
   createdOn: DateTextSchema.optional(),
   updatedOn: DateTextSchema.optional(),
