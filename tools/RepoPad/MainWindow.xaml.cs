@@ -200,7 +200,7 @@ public partial class MainWindow : Window
 
         try
         {
-            Process.Start(new ProcessStartInfo("explorer.exe", $""{_selectedRepo.Path}"")
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{_selectedRepo.Path}\"")
             {
                 UseShellExecute = true
             });
