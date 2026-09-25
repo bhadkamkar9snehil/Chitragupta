@@ -59,6 +59,24 @@ function displayToolCallId(prefix: string, turn: number) {
   return `${prefix}-${turn}`;
 }
 
+function createConversationId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join("-");
+}
+
 export function L1RuntimeProvider({
   children,
 }: Readonly<{ children: ReactNode }>) {
@@ -68,7 +86,7 @@ export function L1RuntimeProvider({
     () => ({
       async run({ messages, abortSignal, unstable_getMessage }) {
         if (!conversationIdRef.current) {
-          conversationIdRef.current = crypto.randomUUID();
+          conversationIdRef.current = createConversationId();
         }
 
         const toolResults = unstable_getMessage().content.flatMap((part) => {
