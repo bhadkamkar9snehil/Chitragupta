@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 // The console's one visual language: a panel shell (dashed icon tile + title + meta) around an inset body,
 // mono numerals, one mint signal for what matters and greys for everything else.
 
-export type VizTone = "signal" | "strong" | "mid" | "faint" | "danger" | "warn" | "info";
+export type VizTone = "signal" | "strong" | "mid" | "faint" | "danger" | "warn" | "caution" | "info";
 
 export const TONE_BG: Record<VizTone, string> = {
   signal: "bg-signal",
@@ -16,6 +16,7 @@ export const TONE_BG: Record<VizTone, string> = {
   faint: "bg-border-strong",
   danger: "bg-destructive",
   warn: "bg-warning",
+  caution: "bg-warning/45",
   info: "bg-info",
 };
 export const TONE_FILL: Record<VizTone, string> = {
@@ -25,6 +26,7 @@ export const TONE_FILL: Record<VizTone, string> = {
   faint: "fill-border-strong",
   danger: "fill-destructive",
   warn: "fill-warning",
+  caution: "fill-warning/45",
   info: "fill-info",
 };
 export const TONE_TEXT: Record<VizTone, string> = {
@@ -34,6 +36,7 @@ export const TONE_TEXT: Record<VizTone, string> = {
   faint: "text-subtle-foreground",
   danger: "text-destructive",
   warn: "text-warning",
+  caution: "text-warning",
   info: "text-info",
 };
 

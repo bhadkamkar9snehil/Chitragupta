@@ -94,8 +94,9 @@ public static class Ops
               (SELECT COUNT(*) FROM dbo.Hermes_L2_Response_Trn_Tbl WHERE IsDeleted = 0 AND CreatedOn >= DATEADD(hour, -24, GETDATE())
                  AND (ErrorMessage IS NOT NULL OR UPPER(ISNULL(ProcessStatus,'')) = 'FAILED')) AS FailedRunsLast24h
             """)).First();
+        // Every open ticket with its owner lane and hours since last progress; the command centre plots them all.
         var attention = await Db.H("""
-            SELECT TOP 10
+            SELECT TOP 300
               CONVERT(varchar(36), c.ID) AS ID, c.TicketNo, c.BriefDetails, c.Priority, c.Status, c.AskStatus,
               c.CreatedOn, p.LastProgressOn,
               DATEDIFF(hour, c.CreatedOn, GETDATE()) AS AgeHours,
@@ -154,7 +155,56 @@ public static class Ops
         var lm = (await Db.H("""
             SELECT TOP 1 EventOn, ResultJson FROM dbo.Hermes_Agent_Trace_Trn_Tbl WHERE EventType = 'lmstudio_sample' ORDER BY EventOn DESC
             """)).FirstOrDefault();
-        return new { counts, attention, outcomes, lmStudio = lm, activity = await Activity(40), live = await LiveRun() };
+        // Support flow, all time: conversations -> tickets -> each ticket's latest L2 outcome -> L3 state.
+        var flow = (await Db.H("""
+            SELECT
+              (SELECT COUNT(*) FROM dbo.L1_Chat_Session_Tbl) AS Chats,
+              (SELECT COUNT(*) FROM dbo.L1_Chat_Session_Tbl WHERE TicketNo IS NOT NULL) AS ChatsToTicket,
+              (SELECT COUNT(*) FROM dbo.Complaint_Mst_Tbl WHERE ISNULL(IsDeleted,0) = 0) AS Tickets,
+              (SELECT COUNT(*) FROM dbo.Complaint_Mst_Tbl WHERE ISNULL(IsDeleted,0) = 0 AND Status = 'Closed') AS TicketsClosed,
+              (SELECT COUNT(*) FROM dbo.Hermes_L3_Escalation_Trn_Tbl WHERE IsDeleted = 0 AND ISNULL(L3Status,'Open') <> 'Resolved') AS L3Open,
+              (SELECT COUNT(*) FROM dbo.Hermes_L3_Escalation_Trn_Tbl WHERE IsDeleted = 0 AND L3Status = 'Resolved') AS L3Resolved
+            """)).First();
+        var ticketOutcomes = await Db.H("""
+            SELECT Label, COUNT(*) AS Count FROM (
+              SELECT CASE WHEN r.ID IS NULL THEN 'UNCLAIMED' WHEN r.IsActive = 1 THEN 'ACTIVE' ELSE ISNULL(r.ResponseType, 'NO_OUTCOME') END AS Label
+              FROM dbo.Complaint_Mst_Tbl c
+              OUTER APPLY (SELECT TOP 1 rr.ID, rr.IsActive, rr.ResponseType FROM dbo.Hermes_L2_Response_Trn_Tbl rr
+                           WHERE rr.TicketID = c.ID AND rr.IsDeleted = 0 ORDER BY rr.CreatedOn DESC) r
+              WHERE ISNULL(c.IsDeleted,0) = 0
+            ) x GROUP BY Label
+            """);
+        // Intake by day and hour for the last 7 days (timestamps are stored in plant time).
+        var intake = await Db.H("""
+            SELECT CONVERT(varchar(10), CONVERT(date, At), 23) AS Day, DATEPART(hour, At) AS Hour,
+                   SUM(CASE WHEN Kind = 't' THEN 1 ELSE 0 END) AS Tickets, SUM(CASE WHEN Kind = 'c' THEN 1 ELSE 0 END) AS Chats
+            FROM (
+              SELECT CreatedOn AS At, 't' AS Kind FROM dbo.Complaint_Mst_Tbl WHERE ISNULL(IsDeleted,0) = 0 AND CreatedOn >= DATEADD(day, -6, CONVERT(date, GETDATE()))
+              UNION ALL
+              SELECT CreatedOn, 'c' FROM dbo.L1_Chat_Session_Tbl WHERE CreatedOn >= DATEADD(day, -6, CONVERT(date, GETDATE()))
+            ) x GROUP BY CONVERT(date, At), DATEPART(hour, At)
+            """);
+        // Claim -> publish for every completed run in the last 30 days, and outcomes per day for 14 days.
+        var durations = await Db.H("""
+            SELECT DATEDIFF(second, ClaimedOn, CompletedOn) AS Seconds, ResponseType
+            FROM dbo.Hermes_L2_Response_Trn_Tbl
+            WHERE IsDeleted = 0 AND ClaimedOn IS NOT NULL AND CompletedOn IS NOT NULL AND CompletedOn >= DATEADD(day, -30, GETDATE())
+            """);
+        var daily = await Db.H("""
+            SELECT CONVERT(varchar(10), CONVERT(date, CompletedOn), 23) AS Day, ISNULL(ResponseType, 'NO_OUTCOME') AS Label, COUNT(*) AS Count
+            FROM dbo.Hermes_L2_Response_Trn_Tbl
+            WHERE IsDeleted = 0 AND CompletedOn >= DATEADD(day, -13, CONVERT(date, GETDATE()))
+            GROUP BY CONVERT(date, CompletedOn), ResponseType
+            """);
+        var hourly = await Db.H("""
+            SELECT DATEDIFF(hour, EventOn, GETDATE()) AS HoursAgo,
+                   SUM(CASE WHEN EventType = 'jev_system_one' THEN 1 ELSE 0 END) AS Jev,
+                   SUM(CASE WHEN EventType = 'post_api_request' THEN 1 ELSE 0 END) AS Model
+            FROM dbo.Hermes_Agent_Trace_Trn_Tbl
+            WHERE EventOn >= DATEADD(hour, -24, GETDATE()) AND EventType IN ('jev_system_one', 'post_api_request')
+            GROUP BY DATEDIFF(hour, EventOn, GETDATE())
+            """);
+        return new { counts, attention, outcomes, lmStudio = lm, activity = await Activity(40), live = await LiveRun(), flow, ticketOutcomes, intake, durations, daily, hourly };
     }
 
     // One feed across the suite: L2 runs, L3 changes, ticket activity, L1 conversations.

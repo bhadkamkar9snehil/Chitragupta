@@ -250,6 +250,12 @@ export type Overview = {
   lmStudio: { EventOn: string; ResultJson: string } | null;
   activity: Activity[];
   live: Run | null;
+  flow?: { Chats: number; ChatsToTicket: number; Tickets: number; TicketsClosed: number; L3Open: number; L3Resolved: number };
+  ticketOutcomes?: { Label: string; Count: number }[];
+  intake?: { Day: string; Hour: number; Tickets: number; Chats: number }[];
+  durations?: { Seconds: number; ResponseType: string | null }[];
+  daily?: { Day: string; Label: string; Count: number }[];
+  hourly?: { HoursAgo: number; Jev: number; Model: number }[];
 };
 export type KanbanTask = {
   id: string; title: string; status: string; assignee: string | null; priority: string | null; createdAt: number | null;
