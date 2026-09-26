@@ -3,11 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Bot, Database, PanelLeftClose, PanelLeftOpen, Radio } from "lucide-react";
 import { toast } from "sonner";
-import { ops, type Run, type TraceEvent } from "@/lib/api";
-import { ago, duration, human, outcomeLabel, ticketLabel, when } from "@/lib/format";
+import { api, ops, type Run, type Ticket, type TraceEvent } from "@/lib/api";
+import { ago, duration, human, outcomeLabel, ticketLabel, when, whenShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Empty, SearchInput, Skeleton, Tag } from "@/components/ui/primitives";
+import { Empty, SearchInput, Skeleton, StatePill, Tag } from "@/components/ui/primitives";
 import { RichText } from "@/components/helpdesk/rich-text";
 import { Json } from "./live";
 import { InspectorBlock } from "./inspect";
@@ -31,7 +31,7 @@ export function Outcome({ type, active }: { type: string | null; active?: boolea
   return <span className={cn("inline-flex h-6 items-center rounded-md px-2 font-mono text-xs", OUTCOME_TONE[type ?? ""] ?? "bg-surface-3 text-muted-foreground")}>{outcomeLabel(type)}</span>;
 }
 
-export function RunsView({ runId, onSelect, onLive, onOpenTicket }: { runId: string | null; onSelect: (id: string | null) => void; onLive: (id: string) => void; onOpenTicket: (id: string) => void }) {
+export function RunsView({ runId, onSelect, onLive, onOpenTicket, onOpenL3 }: { runId: string | null; onSelect: (id: string | null) => void; onLive: (id: string) => void; onOpenTicket: (id: string) => void; onOpenL3: () => void }) {
   const [q, setQ] = useState("");
   const [outcome, setOutcome] = useState("");
   const [runs, setRuns] = useState<Run[] | null>(null);
@@ -88,7 +88,7 @@ export function RunsView({ runId, onSelect, onLive, onOpenTicket }: { runId: str
         </ul>
       </section>
       <div className={cn("min-h-0 min-w-0 flex-1 flex-col", runId ? "flex" : "hidden md:flex")}>
-        {runId ? <RunWorkspace key={runId} id={runId} onBack={() => onSelect(null)} onLive={onLive} onOpenTicket={onOpenTicket} drawerOpen={drawerOpen} onDrawerToggle={() => setCollapsedRunId((current) => current === runId ? null : runId)} /> : (
+        {runId ? <RunWorkspace key={runId} id={runId} onBack={() => onSelect(null)} onLive={onLive} onOpenTicket={onOpenTicket} onOpenL3={onOpenL3} drawerOpen={drawerOpen} onDrawerToggle={() => setCollapsedRunId((current) => current === runId ? null : runId)} /> : (
           <Empty className="m-auto" icon={<Bot className="size-5" />} title="Pick a run">See how the engineer walked XBatch, what Jev decided at each step, and what it read.</Empty>
         )}
       </div>
@@ -100,9 +100,9 @@ const JEV_FIELDS: [keyof Run, string][] = [
   ["JevTriageJson", "Triage"], ["JevInvestigationJson", "Investigation"], ["JevReviewJson", "Review"], ["JevTraceJson", "Trace assessment"], ["JevKBCurationJson", "Knowledge curation"], ["ActionsTakenJson", "Actions taken"],
 ];
 
-function RunWorkspace({ id, onBack, onLive, onOpenTicket, drawerOpen, onDrawerToggle }: { id: string; onBack: () => void; onLive: (id: string) => void; onOpenTicket: (id: string) => void; drawerOpen: boolean; onDrawerToggle: () => void }) {
+function RunWorkspace({ id, onBack, onLive, onOpenTicket, onOpenL3, drawerOpen, onDrawerToggle }: { id: string; onBack: () => void; onLive: (id: string) => void; onOpenTicket: (id: string) => void; onOpenL3: () => void; drawerOpen: boolean; onDrawerToggle: () => void }) {
   const [run, setRun] = useState<(Run & { Events: TraceEvent[] }) | null>(null);
-  const [tab, setTab] = useState<"circuit" | "summary" | "sql">("circuit");
+  const [tab, setTab] = useState<"story" | "circuit" | "sql">("story");
 
   useEffect(() => {
     ops.run(id).then(setRun).catch((e: Error) => toast.error(e.message));
@@ -111,8 +111,8 @@ function RunWorkspace({ id, onBack, onLive, onOpenTicket, drawerOpen, onDrawerTo
   if (!run) return <div className="space-y-3 p-6"><Skeleton className="h-6 w-1/3" /><Skeleton className="h-96" /></div>;
 
   const tabs = [
+    { id: "story" as const, label: "Outcome" },
     { id: "circuit" as const, label: "How it happened" },
-    { id: "summary" as const, label: "What was told" },
     { id: "sql" as const, label: "Audited reads", n: run.SqlActionList?.length ?? 0 },
   ];
 
@@ -153,35 +153,18 @@ function RunWorkspace({ id, onBack, onLive, onOpenTicket, drawerOpen, onDrawerTo
         </div>
       </header>
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-        {tab === "summary" && (
-          <div className="mx-auto max-w-5xl space-y-5 p-4 lg:p-6">
-            {([["Problem", run.ProblemSummary], ["Findings", run.Findings], ["Root cause", run.RootCause], ["Resolution / next action", run.Resolution], ["What the requester was told", run.ReplyText]] as const)
-              .filter(([, v]) => v)
-              .map(([k, v]) => (
-                <section key={k}>
-                  <h3 className="text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">{k}</h3>
-                  <div className="mt-1.5 rounded-xl border bg-surface p-4"><RichText compact>{String(v)}</RichText></div>
-                </section>
-              ))}
-            {run.ErrorMessage && <p className="rounded-lg bg-destructive-soft p-3 text-sm text-destructive">{run.ErrorMessage}</p>}
-            <div className="flex flex-wrap gap-2">
-              {run.EscalateToL3 && <Tag>Escalated to L3</Tag>}
-              {run.IsResolved && <Tag>Marked resolved</Tag>}
-              {run.RequiresUserInput && <Tag>Needs requester input</Tag>}
-            </div>
+        {tab === "story" && <RunStory run={run} onOpenTicket={onOpenTicket} onOpenL3={onOpenL3} onHow={() => setTab("circuit")} />}
+        {tab === "circuit" && (
+          <div className="p-4 lg:p-6">
+            <InvestigationCircuit run={run} events={run.Events} trail={run.Trail ?? null} live={false} titled={false} />
             {JEV_FIELDS.some(([k]) => run[k]) && (
-              <details className="rounded-xl border bg-surface">
+              <details className="mt-4 rounded-xl border bg-surface">
                 <summary className="cursor-pointer px-4 py-3 text-sm font-medium">Stored Jev decisions (raw)</summary>
                 <div className="space-y-4 border-t p-4 text-xs">
                   {JEV_FIELDS.filter(([k]) => run[k]).map(([k, label]) => <Json key={k} label={label} text={String(run[k])} />)}
                 </div>
               </details>
             )}
-          </div>
-        )}
-        {tab === "circuit" && (
-          <div className="p-4 lg:p-6">
-            <InvestigationCircuit run={run} events={run.Events} trail={run.Trail ?? null} live={false} titled={false} />
           </div>
         )}
         {tab === "sql" && (
@@ -215,5 +198,97 @@ function RunWorkspace({ id, onBack, onLive, onOpenTicket, drawerOpen, onDrawerTo
 
       </div>
     </div>
+  );
+}
+
+// The investigation as a story, outcome first: what happened, where it came from, what L2 found,
+// what happens next. "How" (the circuit, Jev decisions, audited reads) is the next tab.
+function RunStory({ run, onOpenTicket, onOpenL3, onHow }: { run: Run; onOpenTicket: (id: string) => void; onOpenL3: () => void; onHow: () => void }) {
+  const [ticket, setTicket] = useState<Ticket | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.admin.ticket(run.TicketID).then((t) => { if (alive) setTicket(t); }).catch(() => {});
+    return () => { alive = false; };
+  }, [run.TicketID]);
+
+  const chat = (ticket?.Transcript ?? []).filter((m) => m.Role === "user");
+  const next = run.IsActive
+    ? { text: "L2 is still working on it.", tone: "signal" as const }
+    : run.RequiresUserInput
+      ? { text: `Waiting for ${run.FirstLastName ?? "the requester"} to answer the question in the reply.`, tone: "warn" as const }
+      : run.EscalateToL3
+        ? { text: "With L3 people: someone needs to pick it up and act on the findings.", tone: "warn" as const }
+        : run.IsResolved
+          ? { text: "Resolved. The ticket is closed unless the requester reports it again.", tone: "signal" as const }
+          : run.ResponseType === "UPDATE"
+            ? { text: "L2 will look again when it is next eligible.", tone: undefined }
+            : { text: "No further action is recorded.", tone: undefined };
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-3 p-4 lg:p-6">
+      <Step n={1} title="Outcome">
+        <div className="flex flex-wrap items-center gap-2">
+          <Outcome type={run.ResponseType} active={run.IsActive} />
+          {ticket && <StatePill tone={ticket.StateTone}>{ticket.StateLabel}</StatePill>}
+          {run.CompletedOn && <span className="font-mono text-2xs text-subtle-foreground">{when(run.CompletedOn)} · took {duration(run.Seconds)}</span>}
+        </div>
+        {run.ReplyText ? (
+          <div className="mt-3 rounded-xl border bg-canvas p-4">
+            <p className="mb-2 text-xs text-subtle-foreground">What {run.FirstLastName ?? "the requester"} was told</p>
+            <RichText compact>{run.ReplyText}</RichText>
+          </div>
+        ) : <p className="mt-3 text-sm text-muted-foreground">No reply has been published yet.</p>}
+        {run.ErrorMessage && <p className="mt-3 rounded-lg bg-destructive-soft p-3 text-sm text-destructive">{run.ErrorMessage}</p>}
+      </Step>
+
+      <Step n={2} title="Where it started">
+        <p className="text-sm">
+          <span className="font-medium">{run.FirstLastName ?? "The requester"}</span>
+          <span className="text-muted-foreground"> {chat.length ? "asked the L1 assistant" : "raised a ticket"}{ticket ? ` · ${whenShort(ticket.CreatedOn)}` : ""}</span>
+        </p>
+        {chat.length ? (
+          <ul className="mt-2 space-y-1.5">
+            {chat.slice(0, 3).map((m) => <li key={m.ID} className="rounded-lg bg-surface-3 px-3 py-2 text-sm">{m.Content}</li>)}
+          </ul>
+        ) : (
+          <p className="mt-2 rounded-lg bg-surface-3 px-3 py-2 text-sm">{ticket?.Description || run.BriefDetails}</p>
+        )}
+        {chat.length > 0 && <p className="mt-2 font-mono text-2xs text-subtle-foreground">L1 raised {ticketLabel(run.TicketNo)} for L2</p>}
+      </Step>
+
+      <Step n={3} title="What L2 found">
+        {run.Findings || run.RootCause ? (
+          <div className="space-y-3">
+            {run.RootCause && <div><p className="mb-1 text-xs text-subtle-foreground">Root cause</p><RichText compact>{run.RootCause}</RichText></div>}
+            {run.Findings && <div><p className="mb-1 text-xs text-subtle-foreground">Findings</p><RichText compact>{run.Findings}</RichText></div>}
+          </div>
+        ) : <p className="text-sm text-muted-foreground">{run.IsActive ? "Still investigating." : "No findings were recorded."}</p>}
+        <button onClick={onHow} className="mt-3 font-mono text-xs text-signal hover:underline">How it found this →</button>
+      </Step>
+
+      <Step n={4} title="What happens next" last>
+        <p className={cn("text-sm", next.tone === "warn" ? "text-warning" : next.tone === "signal" ? "text-signal" : "text-foreground")}>{next.text}</p>
+        {run.Resolution && <div className="mt-3"><p className="mb-1 text-xs text-subtle-foreground">Recommended action</p><RichText compact>{run.Resolution}</RichText></div>}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" onClick={() => onOpenTicket(run.TicketID)}>Open ticket</Button>
+          {run.EscalateToL3 && <Button size="sm" onClick={onOpenL3}>Go to L3 escalations</Button>}
+        </div>
+      </Step>
+    </div>
+  );
+}
+
+function Step({ n, title, children, last }: { n: number; title: string; children: React.ReactNode; last?: boolean }) {
+  return (
+    <section className="relative flex gap-4">
+      <div className="flex flex-col items-center">
+        <span className="grid size-7 shrink-0 place-items-center rounded-full border bg-canvas font-mono text-xs">{n}</span>
+        {!last && <span className="mt-1 w-px flex-1 bg-border-strong" aria-hidden />}
+      </div>
+      <div className="min-w-0 flex-1 pb-4">
+        <h3 className="mb-2 pt-0.5 text-sm font-semibold">{title}</h3>
+        {children}
+      </div>
+    </section>
   );
 }
