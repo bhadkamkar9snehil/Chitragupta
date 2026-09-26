@@ -183,7 +183,7 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
               <span className="text-2xs text-subtle-foreground">Escalated {when(e.EscalatedOn)}</span>
             </div>
             <h2 className="mt-1 text-title font-semibold leading-snug tracking-tight">{e.BriefDetails}</h2>
-            <p className="mt-1 break-words text-xs text-muted-foreground">{e.FirstLastName} · {e.EmailID}{e.Area ? ` · ${e.Area}` : ""} · ticket {e.TicketStatus === "Closed" ? "closed" : "open"}</p>
+            <p className="mt-1 break-words text-xs text-muted-foreground">{e.FirstLastName} · {e.EmailID}{e.Area ? ` · ${e.Area} area` : ""} · Ticket {e.TicketStatus === "Closed" ? "closed" : "open"}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Button variant={showTicket ? "soft" : "outline"} size="sm" onClick={toggleTicketContext}>
                 {showTicket ? "Hide ticket context" : "Ticket context"}
@@ -254,7 +254,7 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
                   <Switch checked={close} onCheckedChange={setClose} aria-label="Close the ticket" /> Close the ticket
                 </label>
                 <Button type="submit" className="mt-3 w-full" disabled={!summary.trim() || busy}>
-                  <CheckCircle2 /> Resolve escalation
+                  <CheckCircle2 /> {close ? "Resolve and close ticket" : "Resolve, keep ticket open"}
                 </Button>
               </form>
             )}

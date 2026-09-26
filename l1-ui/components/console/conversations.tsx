@@ -90,7 +90,7 @@ export function ConversationsView({ view, onView, onCounts, showPicker, sessionI
                     <span className="line-clamp-2 text-meta font-medium leading-snug">{s.Title || "New conversation"}</span>
                     <span className="ml-auto shrink-0 pt-px text-2xs tabular-nums text-subtle-foreground">{ago(s.ModifiedOn)}</span>
                   </span>
-                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">{s.UserName ?? "Unknown"} · {plain(s.LastMessage)}</span>
+                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">{s.UserName ?? "Unknown"} · {plain(s.LastMessage).replace(/Ticket_(\d+)/g, "Ticket $1")}</span>
                   <span className="mt-1.5 flex flex-wrap gap-1 text-2xs font-medium">
                     {s.TicketNo ? <span className="rounded bg-signal-soft px-1.5 py-0.5 font-mono text-signal">{ticketLabel(s.TicketNo)}</span> : <span className="rounded bg-surface-3 px-1.5 py-0.5 text-muted-foreground">Answered by assistant</span>}
                     {s.Status === "resolved" && <span className="rounded bg-surface-3 px-1.5 py-0.5 text-muted-foreground">Solved{s.Rating ? ` · ${s.Rating}★` : ""}</span>}
@@ -137,7 +137,7 @@ function ReadOnly({ id, session, onBack }: { id: string; session: Session | null
         </div>
       </header>
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-8">
-        <div className="mx-auto max-w-3xl">{messages ? <Transcript messages={messages} /> : <Skeleton className="h-40" />}</div>
+        <div className="mx-auto max-w-3xl">{messages ? <Transcript messages={messages} requester={session?.UserName} /> : <Skeleton className="h-40" />}</div>
       </div>
     </>
   );
@@ -149,9 +149,8 @@ function Details({ session, others, onSelect, onOpenTicket, onOpenRun }: { sessi
   useEffect(() => {
     let alive = true;
     if (!session.TicketNo) return;
-    api.admin.tickets({ q: session.TicketNo })
-      .then((r) => r.find((t) => t.TicketNo === session.TicketNo))
-      .then((t) => (t ? api.admin.ticket(t.ID) : null))
+    // The ticket endpoint accepts a ticket number, so this is one request.
+    api.admin.ticket(session.TicketNo)
       .then((t) => { if (alive) setTicket(t); })
       .catch(() => {});
     return () => { alive = false; };

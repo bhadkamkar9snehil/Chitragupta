@@ -107,13 +107,25 @@ export class ApiError extends Error {
   }
 }
 
+const FAILURE: Record<number, string> = {
+  400: "The Helpdesk service rejected that request. Check what you entered and try again.",
+  404: "That record no longer exists. Refresh the list.",
+  502: "The Helpdesk service is not running. Start the L1 API, then retry.",
+  503: "The Helpdesk service is starting up. Retry in a few seconds.",
+};
+
 async function call<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
-  const res = await fetch(`/api/l1/${path}`, {
-    method: init?.method ?? "GET",
-    headers: { "Content-Type": "application/json" },
-    body: init?.body === undefined ? undefined : JSON.stringify(init.body),
-  });
-  if (!res.ok) throw new ApiError(res.status, res.status === 502 ? "The Helpdesk service is unavailable." : "Something went wrong. Please try again.");
+  let res: Response;
+  try {
+    res = await fetch(`/api/l1/${path}`, {
+      method: init?.method ?? "GET",
+      headers: { "Content-Type": "application/json" },
+      body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+    });
+  } catch {
+    throw new ApiError(0, "Can't reach the console server. Check that it is running and your connection is up.");
+  }
+  if (!res.ok) throw new ApiError(res.status, FAILURE[res.status] ?? `The Helpdesk service failed (${res.status}). Retry; if it repeats, check Runtime logs.`);
   const text = await res.text();
   return (text ? JSON.parse(text) : null) as T;
 }

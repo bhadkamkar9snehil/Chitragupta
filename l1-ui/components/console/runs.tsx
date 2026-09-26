@@ -131,11 +131,11 @@ function RunWorkspace({ id, onBack, onLive, onOpenTicket, onOpenL3, drawerOpen, 
             </div>
             <h2 className="mt-1 text-title font-semibold leading-snug tracking-tight">{run.BriefDetails}</h2>
             <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
-              <span>Route {human(run.Route) || "—"}</span>
+              <span>{human(run.Route) || "No route"}</span>
               <span>Claimed {when(run.ClaimedOn)}</span>
-              <span>Took {duration(run.Seconds)}</span>
+              <span className="tabular-nums">{run.IsActive ? "Running for" : "Took"} {duration(run.Seconds)}</span>
               {run.JevReviewDecision && <span>Jev review {outcomeLabel(run.JevReviewDecision)}{run.JevReviewConfidence != null ? ` · ${Math.round(run.JevReviewConfidence * 100)}%` : ""}</span>}
-              {run.LocalModelPurpose && <span>Writer · {human(run.LocalModelPurpose)}</span>}
+              {run.LocalModelPurpose && <span>Local model used for {human(run.LocalModelPurpose).toLowerCase()}</span>}
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
@@ -152,7 +152,7 @@ function RunWorkspace({ id, onBack, onLive, onOpenTicket, onOpenL3, drawerOpen, 
           ))}
         </div>
       </header>
-      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+      <div role="tabpanel" aria-label={tabs.find((x) => x.id === tab)?.label} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
         {tab === "story" && <RunStory run={run} onLive={onLive} onOpenTicket={onOpenTicket} onOpenL3={onOpenL3} onHow={() => setTab("circuit")} />}
         {tab === "circuit" && (
           <div className="p-4 lg:p-6">

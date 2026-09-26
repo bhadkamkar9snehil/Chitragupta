@@ -227,7 +227,7 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
                 })}
               </ol>
             )}
-            {tab === "chat" && (t.Transcript?.length ? <Transcript messages={t.Transcript} /> : <Empty icon={<Bot className="size-5" />} title="No chat">This ticket was not raised from the helpdesk chat.</Empty>)}
+            {tab === "chat" && (t.Transcript?.length ? <Transcript messages={t.Transcript} requester={t.FirstLastName} /> : <Empty icon={<Bot className="size-5" />} title="No chat">This ticket was not raised from the helpdesk chat.</Empty>)}
           </div>
         </div>
       </div>
@@ -305,16 +305,18 @@ function Props({ rows }: { rows: [string, string][] }) {
 
 const DECISION: Record<string, string> = { answer: "Answered", ask: "Asked for details", ticket: "Raised ticket" };
 
-export function Transcript({ messages }: { messages: Message[] }) {
+export function Transcript({ messages, requester }: { messages: Message[]; requester?: string | null }) {
   return (
     <ol className="space-y-5">
       {messages.map((m) => {
         const sources: SourceRef[] = m.SourcesJson ? JSON.parse(m.SourcesJson) : [];
         return (
           <li key={m.ID} className={cn("flex gap-3", m.Role === "user" && "flex-row-reverse")}>
-            <span className={cn("grid size-7 shrink-0 place-items-center rounded-full", m.Role === "user" ? "border bg-surface text-muted-foreground" : "bg-signal-soft text-signal")} aria-hidden>
-              {m.Role === "user" ? <UserIcon className="size-3.5" /> : <Bot className="size-3.5" />}
-            </span>
+            {m.Role === "user" && requester ? <Avatar name={requester} className="size-7" /> : (
+              <span className={cn("grid size-7 shrink-0 place-items-center rounded-full", m.Role === "user" ? "border bg-surface text-muted-foreground" : "bg-signal-soft text-signal")} aria-hidden>
+                {m.Role === "user" ? <UserIcon className="size-3.5" /> : <Bot className="size-3.5" />}
+              </span>
+            )}
             <div className={cn("min-w-0 max-w-xl", m.Role === "user" && "text-right")}>
               <div className={cn("inline-block rounded-xl px-3.5 py-2.5 text-left", m.Role === "user" ? "bg-surface-3" : "border bg-surface")}>
                 <RichText compact>{m.Content}</RichText>
