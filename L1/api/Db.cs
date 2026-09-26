@@ -36,10 +36,13 @@ public static class Db
 
     // Console reads run beside the L2 pipeline's writes. A deadlock victim (1205) was rolled back, so one retry is
     // always safe; a timeout (-2) is retried only for pure SELECTs, since a write may already have committed.
+    // Pure SELECTs also read uncommitted: dashboards must not queue behind the pipeline's open write transactions.
     public static async Task<List<Dictionary<string, object?>>> H(string sql, params (string, object?)[] ps)
     {
+        if (sql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase))
+            sql = "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;\n" + sql;
         try { return await Query(Helpdesk, sql, ps); }
-        catch (SqlException e) when (e.Number == 1205 || (e.Number == -2 && sql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)))
+        catch (SqlException e) when (e.Number == 1205 || (e.Number == -2 && sql.StartsWith("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED", StringComparison.Ordinal)))
         {
             await Task.Delay(250);
             return await Query(Helpdesk, sql, ps);
