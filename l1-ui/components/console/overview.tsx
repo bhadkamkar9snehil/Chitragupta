@@ -19,7 +19,7 @@ type Go = {
   run: (id: string) => void;
 };
 
-const OUTCOME_TONE: Record<string, VizTone> = { RESOLUTION: "signal", NEEDS_HUMAN_ACTION: "strong", L3_ESCALATION: "warn", UPDATE: "mid", QUESTION: "faint" };
+const OUTCOME_TONE: Record<string, VizTone> = { RESOLUTION: "signal", NEEDS_HUMAN_ACTION: "warn", L3_ESCALATION: "warn", UPDATE: "mid", QUESTION: "faint" };
 
 export function OverviewView({ go }: { go: Go }) {
   const [data, setData] = useState<Overview | null>(null);

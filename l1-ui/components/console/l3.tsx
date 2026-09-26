@@ -21,6 +21,8 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
   onOpenRun: (id: string) => void;
   onOpenTicket: (id: string) => void;
 }) {
+  // Arriving from a ticket or investigation ("ticket:<no>") filters the queue to that ticket until cleared.
+  const [ticketFilter, setTicketFilter] = useState<string | null>(escalationId?.startsWith("ticket:") ? escalationId.slice(7) : null);
   const [status, setStatus] = useState("Open");
   const [rows, setRows] = useState<Escalation[] | null>(null);
   const [tick, setTick] = useState(0);
@@ -32,16 +34,22 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
   }, [tick]);
 
 
-  const shown = (rows ?? []).filter((r) => (r.L3Status ?? "Open") === status);
-  const selected = rows?.find((r) => r.ID === escalationId) ?? null;
+  const shown = (rows ?? []).filter((r) => (ticketFilter ? r.TicketNo === ticketFilter : (r.L3Status ?? "Open") === status));
+  const selected = rows?.find((r) => r.ID === escalationId) ?? (ticketFilter && escalationId?.startsWith("ticket:") ? shown[0] ?? null : null);
   const mine = engineer ? (rows ?? []).filter((r) => r.AssignedToUserID?.toUpperCase() === engineer.ID.toUpperCase() && r.L3Status !== "Resolved").length : 0;
 
   return (
     <div className="flex min-h-0 flex-1">
-      <section aria-label="L3 queue" className={cn("flex min-h-0 w-full flex-col border-r bg-canvas md:w-96 md:shrink-0", escalationId && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
+      <section aria-label="L3 queue" className={cn("flex min-h-0 w-full flex-col border-r bg-canvas md:w-96 md:shrink-0", escalationId && !escalationId.startsWith("ticket:") && "hidden", drawerOpen && "md:flex", !drawerOpen && "md:hidden")}>
         <div className="space-y-2 border-b px-3 py-3">
           <PageTitle icon={ShieldAlert} title="L3 escalations" meta={`handed over by L2 for a person${engineer && mine ? ` · ${mine} assigned to you` : ""}`}>
           </PageTitle>
+          {ticketFilter ? (
+            <div className="flex items-center gap-2 rounded-lg border border-signal/40 bg-signal-soft px-3 py-2 text-meta text-signal">
+              <span className="min-w-0 flex-1 truncate">Showing {ticketLabel(ticketFilter)} only · {shown.length} escalation{shown.length === 1 ? "" : "s"}</span>
+              <button onClick={() => { setTicketFilter(null); onSelect(null); }} className="font-medium underline-offset-4 hover:underline">Clear filter</button>
+            </div>
+          ) : (
           <div className="flex gap-1" role="tablist">
             {STATUSES.map((s) => (
               <button key={s} role="tab" aria-selected={status === s} onClick={() => setStatus(s)} className={cn("min-h-11 rounded-md px-2 text-meta text-muted-foreground hover:bg-surface-2 sm:min-h-7", status === s && "bg-surface-3 font-medium text-foreground")}>
@@ -49,13 +57,14 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
               </button>
             ))}
           </div>
+          )}
         </div>
         <ul className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
           {!rows && [0, 1, 2].map((i) => <li key={i} className="border-b p-3"><Skeleton className="h-16" /></li>)}
           {shown.map((r) => (
             <li key={r.ID} className="border-b">
-              <button onClick={() => onSelect(r.ID)} aria-current={escalationId === r.ID ? "true" : undefined} className={cn("relative w-full px-3 py-3 text-left hover:bg-surface-2", escalationId === r.ID && "bg-surface-2 hover:bg-surface-2")}>
-                {escalationId === r.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
+              <button onClick={() => onSelect(r.ID)} aria-current={selected?.ID === r.ID ? "true" : undefined} className={cn("relative w-full px-3 py-3 text-left hover:bg-surface-2", selected?.ID === r.ID && "bg-surface-2 hover:bg-surface-2")}>
+                {selected?.ID === r.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
                 <span className="flex items-center gap-2">
                   <span className="font-mono text-xs text-muted-foreground">{ticketLabel(r.TicketNo)}</span>
                   <span className={cn(

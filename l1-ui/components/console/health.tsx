@@ -14,7 +14,7 @@ import { Attributes, Headline, Legend, PageTitle, Panel, SegmentBar, Segmented, 
 
 const WINDOWS = [{ id: "2", label: "2 h" }, { id: "6", label: "6 h" }, { id: "24", label: "24 h" }, { id: "168", label: "7 d" }] as const;
 type Window = (typeof WINDOWS)[number]["id"];
-const OUTCOME_TONE: Record<string, VizTone> = { RESOLUTION: "signal", NEEDS_HUMAN_ACTION: "strong", L3_ESCALATION: "warn", UPDATE: "mid", QUESTION: "faint" };
+const OUTCOME_TONE: Record<string, VizTone> = { RESOLUTION: "signal", NEEDS_HUMAN_ACTION: "warn", L3_ESCALATION: "warn", UPDATE: "mid", QUESTION: "faint" };
 
 export function HealthView({ onOpenRun }: { onOpenRun: (id: string) => void }) {
   const [hours, setHours] = useState<Window>("24");

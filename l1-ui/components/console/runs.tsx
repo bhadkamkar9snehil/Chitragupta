@@ -16,7 +16,7 @@ import { PageTitle } from "@/components/ui/viz";
 
 const OUTCOME_TONE: Record<string, string> = {
   RESOLUTION: "bg-success-soft text-success",
-  NEEDS_HUMAN_ACTION: "bg-surface-3 text-foreground",
+  NEEDS_HUMAN_ACTION: "bg-warning-soft text-warning",
   L3_ESCALATION: "bg-warning-soft text-warning",
   UPDATE: "bg-surface-3 text-muted-foreground",
 };
@@ -31,7 +31,7 @@ export function Outcome({ type, active }: { type: string | null; active?: boolea
   return <span className={cn("inline-flex h-6 items-center rounded-md px-2 font-mono text-xs", OUTCOME_TONE[type ?? ""] ?? "bg-surface-3 text-muted-foreground")}>{outcomeLabel(type)}</span>;
 }
 
-export function RunsView({ runId, onSelect, onLive, onOpenTicket, onOpenL3 }: { runId: string | null; onSelect: (id: string | null) => void; onLive: (id: string) => void; onOpenTicket: (id: string) => void; onOpenL3: () => void }) {
+export function RunsView({ runId, onSelect, onLive, onOpenTicket, onOpenL3 }: { runId: string | null; onSelect: (id: string | null) => void; onLive: (id: string) => void; onOpenTicket: (id: string) => void; onOpenL3: (ticketNo: string) => void }) {
   const [q, setQ] = useState("");
   const [outcome, setOutcome] = useState("");
   const [runs, setRuns] = useState<Run[] | null>(null);
@@ -44,8 +44,10 @@ export function RunsView({ runId, onSelect, onLive, onOpenTicket, onOpenL3 }: { 
   }, [q]);
 
 
-  const outcomes = useMemo(() => [...new Set((runs ?? []).map((r) => r.ResponseType ?? ""))], [runs]);
-  const shown = (runs ?? []).filter((r) => !outcome || (r.ResponseType ?? "") === outcome);
+  // Needs-human-action and L3 escalation both mean a person must act: one filter.
+  const group = (t: string | null) => (t === "NEEDS_HUMAN_ACTION" || t === "L3_ESCALATION" ? "PEOPLE" : t ?? "");
+  const outcomes = useMemo(() => [...new Set((runs ?? []).map((r) => group(r.ResponseType)))], [runs]);
+  const shown = (runs ?? []).filter((r) => !outcome || group(r.ResponseType) === outcome);
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -57,7 +59,7 @@ export function RunsView({ runId, onSelect, onLive, onOpenTicket, onOpenL3 }: { 
           <div className="flex gap-1 overflow-x-auto" role="tablist">
             {["", ...outcomes].map((o) => (
               <button key={o || "all"} role="tab" aria-selected={outcome === o} onClick={() => setOutcome(o)} className={cn("min-h-11 shrink-0 rounded-md px-2 text-meta text-muted-foreground hover:bg-surface-2 sm:min-h-7", outcome === o && "bg-surface-3 font-medium text-foreground")}>
-                {o ? outcomeLabel(o) : "All"} <span className="text-2xs text-subtle-foreground">{(runs ?? []).filter((r) => !o || (r.ResponseType ?? "") === o).length}</span>
+                {o === "PEOPLE" ? "Handed to people" : o ? outcomeLabel(o) : "All"} <span className="text-2xs text-subtle-foreground">{(runs ?? []).filter((r) => !o || group(r.ResponseType) === o).length}</span>
               </button>
             ))}
           </div>
@@ -100,7 +102,7 @@ const JEV_FIELDS: [keyof Run, string][] = [
   ["JevTriageJson", "Triage"], ["JevInvestigationJson", "Investigation"], ["JevReviewJson", "Review"], ["JevTraceJson", "Trace assessment"], ["JevKBCurationJson", "Knowledge curation"], ["ActionsTakenJson", "Actions taken"],
 ];
 
-function RunWorkspace({ id, onBack, onLive, onOpenTicket, onOpenL3, drawerOpen, onDrawerToggle }: { id: string; onBack: () => void; onLive: (id: string) => void; onOpenTicket: (id: string) => void; onOpenL3: () => void; drawerOpen: boolean; onDrawerToggle: () => void }) {
+function RunWorkspace({ id, onBack, onLive, onOpenTicket, onOpenL3, drawerOpen, onDrawerToggle }: { id: string; onBack: () => void; onLive: (id: string) => void; onOpenTicket: (id: string) => void; onOpenL3: (ticketNo: string) => void; drawerOpen: boolean; onDrawerToggle: () => void }) {
   const [run, setRun] = useState<(Run & { Events: TraceEvent[] }) | null>(null);
   const [tab, setTab] = useState<"story" | "circuit" | "sql">("story");
 
@@ -203,7 +205,7 @@ function RunWorkspace({ id, onBack, onLive, onOpenTicket, onOpenL3, drawerOpen, 
 
 // The investigation as a story, outcome first: what happened, where it came from, what L2 found,
 // what happens next. "How" (the circuit, Jev decisions, audited reads) is the next tab.
-function RunStory({ run, onOpenTicket, onOpenL3, onHow }: { run: Run; onOpenTicket: (id: string) => void; onOpenL3: () => void; onHow: () => void }) {
+function RunStory({ run, onOpenTicket, onOpenL3, onHow }: { run: Run; onOpenTicket: (id: string) => void; onOpenL3: (ticketNo: string) => void; onHow: () => void }) {
   const [ticket, setTicket] = useState<Ticket | null>(null);
   useEffect(() => {
     let alive = true;
@@ -271,7 +273,7 @@ function RunStory({ run, onOpenTicket, onOpenL3, onHow }: { run: Run; onOpenTick
         {run.Resolution && <div className="mt-3"><p className="mb-1 text-xs text-subtle-foreground">Recommended action</p><RichText compact>{run.Resolution}</RichText></div>}
         <div className="mt-3 flex flex-wrap gap-2">
           <Button size="sm" variant="outline" onClick={() => onOpenTicket(run.TicketID)}>Open ticket</Button>
-          {run.EscalateToL3 && <Button size="sm" onClick={onOpenL3}>Go to L3 escalations</Button>}
+          {run.EscalateToL3 && run.TicketNo && <Button size="sm" onClick={() => onOpenL3(run.TicketNo!)}>Open its L3 escalation</Button>}
         </div>
       </Step>
     </div>

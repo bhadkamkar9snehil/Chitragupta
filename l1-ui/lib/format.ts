@@ -70,6 +70,6 @@ export function describeEvent(e: { EventType: string; ToolName: string | null; M
 }
 
 export const outcomeLabel = (t?: string | null) =>
-  ({ RESOLUTION: "Resolved", NEEDS_HUMAN_ACTION: "Needs human action", L3_ESCALATION: "Escalated to L3", UPDATE: "Update", QUESTION: "Question" } as Record<string, string>)[t ?? ""] ?? (t ? human(t) : "In progress");
+  ({ RESOLUTION: "Resolved", NEEDS_HUMAN_ACTION: "Handed to people · fix known", L3_ESCALATION: "Handed to people · cause open", UPDATE: "Update", QUESTION: "Question" } as Record<string, string>)[t ?? ""] ?? (t ? human(t) : "In progress");
 
 export const duration = (s?: number | null) => (s == null ? "—" : s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${(s / 3600).toFixed(1)}h`);
