@@ -34,7 +34,17 @@ public static class Db
         return rows;
     }
 
-    public static Task<List<Dictionary<string, object?>>> H(string sql, params (string, object?)[] ps) => Query(Helpdesk, sql, ps);
+    // Console reads run beside the L2 pipeline's writes. A deadlock victim (1205) was rolled back, so one retry is
+    // always safe; a timeout (-2) is retried only for pure SELECTs, since a write may already have committed.
+    public static async Task<List<Dictionary<string, object?>>> H(string sql, params (string, object?)[] ps)
+    {
+        try { return await Query(Helpdesk, sql, ps); }
+        catch (SqlException e) when (e.Number == 1205 || (e.Number == -2 && sql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)))
+        {
+            await Task.Delay(250);
+            return await Query(Helpdesk, sql, ps);
+        }
+    }
     public static async Task Exec(string sql, params (string, object?)[] ps) => await Query(Helpdesk, sql + "; SELECT 1 AS ok", ps);
 
     // L1's own tables, created or extended on start. Tickets themselves stay in Complaint_Mst_Tbl.
