@@ -163,13 +163,13 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
   const activity = (t.Timeline?.filter((item) => !(item.Kind === "created" && plain(item.Text).toLowerCase() === plain(t.BriefDetails).toLowerCase()))) ?? [];
   const tabs = [
     { id: "activity" as const, label: "Activity", n: activity.length },
-    { id: "chat" as const, label: "Chat transcript", n: t.Transcript?.length ?? 0 },
+    ...(t.Transcript?.length ? [{ id: "chat" as const, label: "Chat", n: t.Transcript.length }] : []),
   ];
 
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="shrink-0 border-b bg-canvas px-4 pt-3">
+        <header className="shrink-0 border-b bg-canvas px-4 py-3">
           <div className="flex items-start gap-2">
             <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Back" onClick={onBack}>
               <ArrowLeft />
@@ -178,8 +178,8 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
               {drawerOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
             </Button>
             <div className="min-w-0 flex-1">
-              <div className="flex items-start gap-3">
-                <h2 className="min-w-0 flex-1 text-title font-semibold leading-snug tracking-tight">
+              <div className="flex flex-col-reverse items-start gap-2 sm:flex-row sm:gap-3">
+                <h2 className="min-w-0 flex-1 text-body font-semibold leading-snug tracking-tight sm:text-title">
                   <button
                     className="mr-2 font-mono text-muted-foreground hover:text-foreground"
                     title="Copy ticket number"
@@ -187,12 +187,12 @@ function TicketWorkspace({ id, onBack, onOpenRun, drawerOpen, onDrawerToggle }: 
                   >{ticketLabel(t.TicketNo)}</button>
                   {t.BriefDetails}
                 </h2>
-                <StatePill tone={t.StateTone} className="mt-0.5 shrink-0">{t.StateLabel}</StatePill>
+                <StatePill tone={t.StateTone} className="shrink-0 sm:mt-0.5">{t.StateLabel}</StatePill>
               </div>
               <Trail ticket={t} onChat={() => setTab("chat")} onRun={onOpenRun} />
             </div>
           </div>
-          <div className="scrollbar-thin my-3 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl border bg-canvas p-1" role="tablist">
+          <div className={cn("scrollbar-thin mt-3 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl border bg-canvas p-1", tabs.length < 2 && "hidden")} role="tablist">
             {tabs.map((x) => (
               <button
                 key={x.id}
@@ -281,7 +281,7 @@ function Trail({ ticket: t, onChat, onRun }: { ticket: Ticket; onChat: () => voi
   const link = "text-foreground underline-offset-4 hover:underline";
   const high = t.Priority && !/standard|normal|medium/i.test(t.Priority) ? t.Priority.replace(" Priority", "") : null;
   return (
-    <p className="scrollbar-thin mt-1 flex items-center gap-x-2 overflow-x-auto whitespace-nowrap pb-1 text-xs text-muted-foreground">
+    <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 pb-1 text-xs text-muted-foreground">
       <span>{t.FirstLastName || t.EmailID}</span>
       <span aria-hidden>·</span>
       <span>{whenShort(t.CreatedOn)}</span>
