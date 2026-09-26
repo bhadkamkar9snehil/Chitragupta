@@ -125,7 +125,10 @@ async function call<T>(path: string, init?: { method?: string; body?: unknown })
   } catch {
     throw new ApiError(0, "Can't reach the console server. Check that it is running and your connection is up.");
   }
-  if (!res.ok) throw new ApiError(res.status, FAILURE[res.status] ?? `The Helpdesk service failed (${res.status}). Retry; if it repeats, check Runtime logs.`);
+  if (!res.ok) {
+    const cause = res.status >= 500 && res.status !== 502 && res.status !== 503 ? (await res.text().catch(() => "")).split("\n").find((l) => l.trim())?.trim().slice(0, 180) : "";
+    throw new ApiError(res.status, FAILURE[res.status] ?? `The Helpdesk service failed (${res.status})${cause ? `: ${cause}` : ""}. Retry; if it repeats, check Runtime logs.`);
+  }
   const text = await res.text();
   return (text ? JSON.parse(text) : null) as T;
 }

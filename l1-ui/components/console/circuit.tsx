@@ -60,6 +60,10 @@ function fromRun(run: Run, stage: string): Record<string, Answer> | null {
 
 const firstChoice = (a: Record<string, Answer> | null) => Object.values(a ?? {}).find((x) => x.choice);
 const sorted = (p?: Record<string, number>) => Object.entries(p ?? {}).sort((a, b) => b[1] - a[1]);
+// Jev offers options by id ("o2", "k0", "f1"); the option text itself is not stored in the trace.
+const OPTION: Record<string, string> = { o: "Option", k: "Kind", f: "Finding", r: "Role" };
+const optionLabel = (id: string) => { const m = id.match(/^([a-z])(\d+)$/i); return m ? `${OPTION[m[1].toLowerCase()] ?? m[1].toUpperCase()} ${m[2]}` : human(id); };
+const isOpaque = (p?: Record<string, number>) => Object.keys(p ?? {}).some((k) => /^[a-z]\d+$/i.test(k));
 const maxNoul = (a: Record<string, Answer> | null, match?: RegExp) =>
   Object.entries(a ?? {}).filter(([k, v]) => v.noul != null && (!match || match.test(k))).reduce((m, [, v]) => Math.max(m, v.noul ?? 0), 0);
 const at = (value: string) => new Date(value.replace("Z", "")).getTime();
@@ -329,11 +333,11 @@ export function InvestigationCircuit({ run, events, trail, live, onOpenRun, titl
       </section>
 
       <div className="grid gap-4 xl:grid-cols-5">
-        <Panel icon={ScanSearch} title="Work trace" meta={`${x.shown.length} steps · ${ms(x.span)} end to end`} className="xl:col-span-3" pad="tight"
+        <Panel icon={ScanSearch} title="Work trace" meta={`${x.shown.length} steps · ${ms(x.span)} end to end · each phase on its own scale`} className="xl:col-span-3" pad="tight"
           actions={<Legend inline rows={[{ label: "Jev", tone: "signal" }, { label: "walk", tone: "strong" }, { label: "tool", tone: "mid" }, { label: "model", tone: "info" }]} className="hidden sm:flex" />}>
           {spans.length ? (
             <div className="scrollbar-thin max-h-104 overflow-y-auto">
-              <Waterfall spans={spans} total={worked} selected={pick.kind === "event" ? pick.id : null} onPick={(id) => select({ kind: "event", id })} />
+              <Waterfall mono={false} spans={spans} total={worked} selected={pick.kind === "event" ? pick.id : null} onPick={(id) => select({ kind: "event", id })} />
             </div>
           ) : <p className="p-6 text-center text-sm text-muted-foreground">No steps recorded yet.</p>}
         </Panel>
@@ -341,7 +345,7 @@ export function InvestigationCircuit({ run, events, trail, live, onOpenRun, titl
         <Panel
           icon={Waypoints}
           title={picked ? describeEvent(picked).title : pickedFinding ? pickedFinding.node : STATION_TITLE[pick.kind === "station" ? pick.id : "evidence"]}
-          meta={picked ? `${clock(picked.EventOn)} · ${x.took.get(picked.ID)?.estimated ? "≈" : ""}${ms(x.took.get(picked.ID)?.ms)}` : pickedFinding ? `${pickedFinding.origin} · ${role(pickedFinding.role).label}` : "Select a stage, a probe or a step"}
+          meta={picked ? `${clock(picked.EventOn)} · ${x.took.get(picked.ID) && x.took.get(picked.ID)!.ms == null ? "waited in the queue" : `${x.took.get(picked.ID)?.estimated ? "≈" : ""}${ms(x.took.get(picked.ID)?.ms)}`}` : pickedFinding ? `${pickedFinding.origin} · ${role(pickedFinding.role).label}` : "Select a stage, a probe or a step"}
           className="xl:col-span-2"
           actions={picked?.ResultJson || picked?.ArgsJson ? <Segmented label="Inspector view" value={view} onChange={setView} options={[{ id: "inspect", label: "Details" }, { id: "raw", label: "Raw" }]} /> : undefined}
         >
@@ -364,7 +368,7 @@ export function InvestigationCircuit({ run, events, trail, live, onOpenRun, titl
 // The run's clock includes queue waits (tens of minutes) around seconds of work. Cut every idle gap
 // over a minute out of the scale and mark it, so the working steps are readable.
 function traceSpans(x: Investigation): { spans: Span[]; worked: number } {
-  const GAP = 60_000;
+  const GAP = 15_000;
   let cut = 0;
   let prevEnd: number | null = null;
   const spans = x.shown.map((e): Span => {
@@ -372,16 +376,30 @@ function traceSpans(x: Investigation): { spans: Span[]; worked: number } {
     const start = end - x.dur(e);
     let gap: string | undefined;
     if (prevEnd != null && start - prevEnd > GAP) {
-      gap = `waited ${ms(start - prevEnd)}${e.EventType === "post_api_request" ? " for a worker" : ""}`;
+      gap = start - prevEnd > 60_000 ? `waited ${ms(start - prevEnd)}${e.EventType === "post_api_request" ? " for a worker" : ""}` : `${ms(start - prevEnd)} idle`;
       cut += start - prevEnd - 1000;
     }
     prevEnd = Math.max(prevEnd ?? 0, end);
     return {
       id: e.ID, label: describeEvent(e).title, sub: `+${ms(start)}`, start: start - cut, end: end - cut, tone: eventTone(e), gap,
-      right: e.Status === "error" || e.ErrorMessage ? "error" : `${x.took.get(e.ID)?.estimated ? "≈" : ""}${ms(x.took.get(e.ID)?.ms)}`,
+      right: e.Status === "error" || e.ErrorMessage ? "error" : x.took.get(e.ID) && x.took.get(e.ID)!.ms == null ? "queued" : `${x.took.get(e.ID)?.estimated ? "≈" : ""}${ms(x.took.get(e.ID)?.ms)}`,
     };
   });
-  return { spans, worked: Math.max(1, x.span - cut) };
+  // Waits for a worker (over a minute) split the run into phases; each phase gets the full width,
+  // so the investigator's seconds are as readable as the reviewer's minutes.
+  const SCALE = 1000;
+  let from = 0;
+  spans.forEach((sp, i) => {
+    const last = i === spans.length - 1 || spans[i + 1].gap?.startsWith("waited");
+    if (!last) return;
+    const phase = spans.slice(from, i + 1);
+    const lo = Math.min(...phase.map((p) => p.start)), hi = Math.max(...phase.map((p) => p.end));
+    const k = SCALE / Math.max(1, hi - lo);
+    phase.forEach((p) => { p.start = (p.start - lo) * k; p.end = (p.end - lo) * k; });
+    if (spans[i + 1]?.gap) spans[i + 1].gap += " · next phase on its own scale";
+    from = i + 1;
+  });
+  return { spans, worked: SCALE };
 }
 
 const STATION_TITLE: Record<StationId, string> = {
@@ -543,18 +561,19 @@ function EventDetail({ event, run, took }: { event: TraceEvent; run: Run; took?:
       {event.ErrorMessage && <p className="rounded-lg bg-destructive-soft p-3 text-xs text-destructive">{event.ErrorMessage}</p>}
       {choices.map(([q, a]) => (
         <div key={q}>
-          <p className="mb-2 flex items-baseline justify-between gap-2 text-xs"><span className="text-subtle-foreground">{human(q)}</span><span className="font-mono text-signal">{human(a.choice)} · {pct(a.confidence)}</span></p>
-          {a.probabilities && <ProbBars scores={sorted(a.probabilities)} chosen={a.choice} />}
+          <p className="mb-2 flex items-baseline justify-between gap-2 text-xs"><span className="text-subtle-foreground">{human(q)}</span><span className="text-signal">Chose <b className="font-medium">{optionLabel(a.choice!)}</b> · {pct(a.confidence)} sure</span></p>
+          {a.probabilities && <ProbBars scores={sorted(a.probabilities)} chosen={a.choice} format={optionLabel} />}
+          {isOpaque(a.probabilities) && <p className="mt-1.5 text-2xs text-subtle-foreground">Jev picks among numbered options; their text is not stored in the trace.</p>}
         </div>
       ))}
-      {nouls.length > 0 && <ProbBars scores={nouls.map(([k, a]) => [k, a.noul ?? 0])} max={8} />}
+      {nouls.length > 0 && <div><p className="mb-2 text-xs text-subtle-foreground">Risk signals · higher is worse</p><ProbBars scores={nouls.map(([k, a]) => [k, a.noul ?? 0])} max={8} /></div>}
       <Attributes rows={[
         { k: "step", v: describeEvent(event).title },
-        { k: "status", v: event.Status ?? "—", tone: event.Status === "error" ? "danger" : undefined },
-        { k: "duration", v: took?.estimated ? `≈${ms(took.ms)} since the previous step` : ms(took?.ms ?? event.DurationMs), tone: "signal" },
+        { k: "status", v: event.Status === "ok" ? "OK" : event.Status ? human(event.Status) : "—", tone: event.Status === "error" ? "danger" : undefined },
+        { k: "duration", v: took && took.ms == null ? "waited in the worker queue" : took?.estimated ? `≈${ms(took.ms)} since the previous step` : ms(took?.ms ?? event.DurationMs) },
         { k: "at", v: when(event.EventOn) },
         ...(event.Model ? [{ k: "model", v: event.Model }] : []),
-        ...(event.ToolName ? [{ k: "name", v: event.ToolName, copy: event.ToolName }] : []),
+        ...(event.ToolName ? [{ k: "stage id", v: event.ToolName, copy: event.ToolName }] : []),
         { k: "trace id", v: event.ID.slice(0, 8) + "…", copy: event.ID },
       ]} />
     </div>

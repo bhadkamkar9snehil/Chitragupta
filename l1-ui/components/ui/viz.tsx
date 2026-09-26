@@ -205,14 +205,14 @@ export function Sparkline({ values, threshold, tone = "mid", className, label }:
 }
 
 // Probabilities returned by a Jev decision, highest first; the chosen one is signal.
-export function ProbBars({ scores, chosen, max = 5, className }: { scores: [string, number][]; chosen?: string; max?: number; className?: string }) {
+export function ProbBars({ scores, chosen, max = 5, className, format }: { scores: [string, number][]; chosen?: string; max?: number; className?: string; format?: (name: string) => string }) {
   return (
     <ul className={cn("space-y-1.5", className)}>
       {scores.slice(0, max).map(([name, p]) => {
         const hit = chosen ? name === chosen : false;
         return (
           <li key={name} className="flex items-center gap-2.5 text-xs">
-            <span className={cn("w-28 shrink-0 truncate font-mono", hit ? "text-foreground" : "text-subtle-foreground")} title={name}>{name.replace(/_/g, " ").toLowerCase()}</span>
+            <span className={cn("w-36 shrink-0 truncate", hit ? "font-medium text-foreground" : "text-muted-foreground")} title={name}>{format ? format(name) : name.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase())}</span>
             <span className="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-3">
               <span className={cn("absolute inset-y-0 left-0 rounded-full", hit ? "bg-signal" : "bg-subtle-foreground")} style={{ width: `${Math.max(1.5, Math.min(100, p * 100))}%` }} />
             </span>
@@ -230,7 +230,7 @@ export function Attributes({ rows, className }: { rows: { k: string; v: ReactNod
     <dl className={cn("divide-y", className)}>
       {rows.map((r) => (
         <div key={r.k} className="group flex min-h-10 items-center gap-3 py-2">
-          <dt className="w-32 shrink-0 text-xs text-muted-foreground">{r.k}</dt>
+          <dt className="w-32 shrink-0 text-xs text-muted-foreground first-letter:uppercase">{r.k}</dt>
           <dd className={cn("min-w-0 flex-1 break-words text-xs tabular-nums", r.copy && "font-mono", r.tone ? TONE_TEXT[r.tone] : "text-foreground")}>{r.v}</dd>
           {r.copy && <CopyButton text={r.copy} label={r.k} />}
         </div>
@@ -276,7 +276,7 @@ export function Segmented<T extends string>({ options, value, onChange, label, c
 // Waterfall of spans against a shared time axis (traces view).
 export type Span = { id: string; label: string; sub?: string; start: number; end: number; tone: VizTone; right?: string; gap?: string };
 
-export function Waterfall({ spans, total, selected, onPick, className }: { spans: Span[]; total: number; selected?: string | null; onPick?: (id: string) => void; className?: string }) {
+export function Waterfall({ spans, total, selected, onPick, className, mono = true }: { spans: Span[]; total: number; selected?: string | null; onPick?: (id: string) => void; className?: string; mono?: boolean }) {
   const T = Math.max(1, total);
   return (
     <ol className={cn("space-y-0.5", className)}>
@@ -297,7 +297,7 @@ export function Waterfall({ spans, total, selected, onPick, className }: { spans
               className={cn("grid w-full grid-cols-[minmax(0,11rem)_minmax(0,1fr)_3.5rem] items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-surface-2 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_4rem]", selected === s.id && "bg-surface-2")}
             >
               <span className="min-w-0">
-                <span className="block truncate font-mono text-xs text-foreground">{s.label}</span>
+                <span className={cn("block truncate text-foreground", mono ? "font-mono text-xs" : "text-meta")}>{s.label}</span>
                 {s.sub && <span className="block truncate text-2xs text-subtle-foreground">{s.sub}</span>}
               </span>
               <span className="relative h-2 rounded-full">
