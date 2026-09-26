@@ -129,7 +129,7 @@ export function StackColumns({ columns, label, height = 140, tickEvery = 1, mark
     <div ref={ref} className={cn("relative", className)}>
       <div className="relative" style={{ height }}>
         <span className="absolute inset-x-0 top-0 border-t border-border" aria-hidden />
-        <span className="absolute -top-2 right-0 bg-surface pl-1.5 font-mono text-2xs text-subtle-foreground tabular-nums">{max}{unit}</span>
+        <span className="absolute -top-2 right-0 bg-surface pl-1.5 font-mono text-2xs text-subtle-foreground tabular-nums">{max >= 10_000 ? new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(max) : max}{unit}</span>
         <span className="absolute inset-x-0 bottom-0 border-t border-border-strong" aria-hidden />
         <div className="absolute inset-0 flex items-end gap-0.5" role="img" aria-label={label}>
           {columns.map((c) => {
@@ -258,6 +258,8 @@ export function PromptBar({ avg, max, limit, scale, label, format }: { avg: numb
 
 // A composition bar whose length is its share of the largest row (tool calls): volume and failure share at once.
 export function VolumeBar({ share, segments, label, className }: { share: number; segments: { value: number; tone: VizTone | "hatch"; label: string }[]; label: string; className?: string }) {
+  if (!segments.some((x) => x.value > 0) || share <= 0)
+    return <span className={cn("block h-2.5", className)} role="img" aria-label={label}><span className="mt-1 block h-0.5 rounded-full bg-surface-3" /></span>;
   return (
     <span className={cn("block", className)}>
       <span className="block" style={{ width: `${Math.max(4, Math.min(1, share) * 100)}%` }}>
