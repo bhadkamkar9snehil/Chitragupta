@@ -64,8 +64,8 @@ const TONE: Record<Tone, string> = {
 
 export function StatePill({ tone, children, className }: { tone: Tone; children: React.ReactNode; className?: string }) {
   return (
-    <span className={cn("inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-md px-2 font-mono text-xs", TONE[tone], className)}>
-      <i className={cn("size-1.5 rounded-full", tone === "attention" && "motion-safe:animate-pulse")} aria-hidden />
+    <span className={cn("inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs font-medium", TONE[tone], className)}>
+      <i className="size-1.5 rounded-full" aria-hidden />
       {children}
     </span>
   );
@@ -73,6 +73,19 @@ export function StatePill({ tone, children, className }: { tone: Tone; children:
 
 export function Tag({ children, className, mono, variant = "default" }: { children: React.ReactNode; className?: string; mono?: boolean; variant?: "default" | "error" }) {
   return <span className={cn("inline-flex h-6 items-center rounded-md bg-canvas px-2 text-xs text-muted-foreground", variant === "error" && "text-destructive", mono && "font-mono", className)}>{children}</span>;
+}
+
+// One queue row for every list-and-detail desk (Tickets, L1, L2, L3): full-bleed, divided, same selected state.
+export function QueueRow({ selected, onClick, avatar, children }: { selected?: boolean; onClick: () => void; avatar?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <li className="border-b">
+      <button onClick={onClick} aria-current={selected ? "true" : undefined} className={cn("relative w-full px-3 py-3 text-left hover:bg-surface-2", selected && "bg-surface-2", avatar && "flex gap-3")}>
+        {selected && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
+        {avatar}
+        {avatar ? <span className="min-w-0 flex-1">{children}</span> : children}
+      </button>
+    </li>
+  );
 }
 
 export function Avatar({ name, className }: { name: string; className?: string }) {

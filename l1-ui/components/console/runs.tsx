@@ -7,7 +7,7 @@ import { api, ops, type Run, type Ticket, type TraceEvent } from "@/lib/api";
 import { ago, duration, human, outcomeLabel, ticketLabel, when, whenShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Empty, SearchInput, Skeleton, StatePill } from "@/components/ui/primitives";
+import { Empty, QueueRow, SearchInput, Skeleton, Tag } from "@/components/ui/primitives";
 import { RichText } from "@/components/helpdesk/rich-text";
 import { Json } from "./live";
 import { InspectorBlock } from "./inspect";
@@ -21,14 +21,17 @@ const OUTCOME_TONE: Record<string, string> = {
   UPDATE: "bg-surface-3 text-muted-foreground",
 };
 
-export function Outcome({ type, active }: { type: string | null; active?: boolean }) {
+// The one outcome chip used by L1, L2 and L3. `short` drops the "Handed to people · " prefix inside the L3 queue,
+// where every row has already been handed to people.
+export function Outcome({ type, active, short }: { type: string | null; active?: boolean; short?: boolean }) {
   if (active)
     return (
-      <span className="inline-flex h-6 items-center gap-1.5 rounded-md bg-signal-soft px-2 font-mono text-xs text-signal">
+      <span className="inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-md bg-signal-soft px-2 text-xs font-medium text-signal">
         <Radio className="size-3 motion-safe:animate-pulse" aria-hidden /> Working
       </span>
     );
-  return <span className={cn("inline-flex h-6 items-center rounded-md px-2 font-mono text-xs", OUTCOME_TONE[type ?? ""] ?? "bg-surface-3 text-muted-foreground")}>{outcomeLabel(type)}</span>;
+  const label = outcomeLabel(type);
+  return <span className={cn("inline-flex h-6 items-center whitespace-nowrap rounded-md px-2 text-xs font-medium", OUTCOME_TONE[type ?? ""] ?? "bg-surface-3 text-muted-foreground")}>{short ? label.replace(/^Handed to people · (\w)/, (_, c: string) => c.toUpperCase()) : label}</span>;
 }
 
 export function RunsView({ runId, onSelect, onLive, onOpenTicket, onOpenL3 }: { runId: string | null; onSelect: (id: string | null) => void; onLive: (id: string) => void; onOpenTicket: (id: string) => void; onOpenL3: (ticketNo: string) => void }) {
@@ -57,9 +60,9 @@ export function RunsView({ runId, onSelect, onLive, onOpenTicket, onOpenL3 }: { 
           <PageTitle icon={Bot} title="L2 investigations" meta={runs ? `${runs.length} runs · newest first` : "loading"}>
           </PageTitle>
           <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ticket, subject or route" aria-label="Search runs" />
-          <div className="flex flex-wrap gap-1" role="tablist">
+          <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by outcome">
             {["", ...outcomes].map((o) => (
-              <button key={o || "all"} role="tab" aria-selected={outcome === o} onClick={() => setOutcome(o)} className={cn("min-h-11 shrink-0 rounded-md px-2 text-meta text-muted-foreground hover:bg-surface-2 sm:min-h-7", outcome === o && "bg-surface-3 font-medium text-foreground")}>
+              <button key={o || "all"} aria-pressed={outcome === o} onClick={() => setOutcome(o)} className={cn("min-h-11 shrink-0 rounded-md px-2 text-meta text-muted-foreground hover:bg-surface-2 sm:min-h-7", outcome === o && "bg-surface-3 font-medium text-foreground")}>
                 {o === "PEOPLE" ? "Handed to people" : o === "WORKING" ? "Working" : o ? outcomeLabel(o) : "All"} <span className="text-2xs tabular-nums text-subtle-foreground">{(runs ?? []).filter((r) => !o || group(r) === o).length}</span>
               </button>
             ))}
@@ -68,9 +71,7 @@ export function RunsView({ runId, onSelect, onLive, onOpenTicket, onOpenL3 }: { 
         <ul className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
           {!runs && [0, 1, 2].map((i) => <li key={i} className="border-b p-3"><Skeleton className="h-14" /></li>)}
           {shown.map((r) => (
-            <li key={r.ID} className="border-b">
-              <button onClick={() => onSelect(r.ID)} aria-current={runId === r.ID ? "true" : undefined} className={cn("relative w-full px-3 py-3 text-left hover:bg-surface-2", runId === r.ID && "bg-surface-2 hover:bg-surface-2")}>
-                {runId === r.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
+            <QueueRow key={r.ID} selected={runId === r.ID} onClick={() => onSelect(r.ID)}>
                 <span className="flex items-center gap-2">
                   <span className="font-mono text-xs text-muted-foreground">{ticketLabel(r.TicketNo)}</span>
                   <Outcome type={r.ResponseType} active={r.IsActive} />
@@ -78,14 +79,10 @@ export function RunsView({ runId, onSelect, onLive, onOpenTicket, onOpenL3 }: { 
                 </span>
                 <span className="mt-1 line-clamp-2 block text-meta leading-snug">{r.BriefDetails}</span>
                 <span className="mt-1.5 flex flex-wrap gap-x-3 text-2xs text-subtle-foreground">
-                  <span>{human(r.Route) || "No route"}</span>
-                  <span>{r.JevCalls} Jev</span>
-                  <span>{r.SqlActions} reads</span>
-                  <span>{duration(r.Seconds)}</span>
-                  {r.LocalModelState && <span>Writer used</span>}
+                  <span>{r.FirstLastName ?? "Unknown requester"}</span>
+                  <span className="tabular-nums">{r.IsActive ? "running" : "took"} {duration(r.Seconds)}</span>
                 </span>
-              </button>
-            </li>
+            </QueueRow>
           ))}
           {runs && !shown.length && <li><Empty icon={<Bot className="size-5" />} title="No runs">Nothing matches.</Empty></li>}
         </ul>
@@ -129,7 +126,7 @@ function RunWorkspace({ id, onBack, onLive, onOpenTicket, onOpenL3, drawerOpen, 
           </Button>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-xs text-muted-foreground">{ticketLabel(run.TicketNo)} · attempt {run.AttemptNo}</span>
+              <span className="font-mono text-xs text-muted-foreground">{ticketLabel(run.TicketNo)}{run.AttemptNo > 1 ? ` · attempt ${run.AttemptNo}` : ""}</span>
               <Outcome type={run.ResponseType} active={run.IsActive} />
             </div>
             <h2 className="mt-1 text-title font-semibold leading-snug tracking-tight">{run.BriefDetails}</h2>
@@ -232,8 +229,8 @@ function RunStory({ run, onLive, onOpenTicket, onOpenL3, onHow }: { run: Run; on
       <Step n={1} title="Outcome">
         <div className="flex flex-wrap items-center gap-2">
           {!run.IsActive && <Outcome type={run.ResponseType} />}
-          {ticket && <StatePill tone={ticket.StateTone}>{ticket.StateLabel}</StatePill>}
-          {run.CompletedOn && <span className="font-mono text-2xs text-subtle-foreground">{when(run.CompletedOn)} · took {duration(run.Seconds)}</span>}
+          {ticket && <Tag>Requester sees “{ticket.StateLabel}”</Tag>}
+          {run.CompletedOn && <span className="text-2xs tabular-nums text-subtle-foreground">{when(run.CompletedOn)} · took {duration(run.Seconds)}</span>}
         </div>
         {run.ReplyText ? (
           <div className="mt-3 rounded-xl border bg-canvas p-4">
@@ -256,7 +253,7 @@ function RunStory({ run, onLive, onOpenTicket, onOpenL3, onHow }: { run: Run; on
         ) : (
           <p className="mt-2 rounded-lg bg-surface-3 px-3 py-2 text-sm">{ticket?.Description || run.BriefDetails}</p>
         )}
-        {chat.length > 0 && <p className="mt-2 font-mono text-2xs text-subtle-foreground">L1 raised {ticketLabel(run.TicketNo)} for L2</p>}
+        {chat.length > 0 && <p className="mt-2 text-2xs text-subtle-foreground">L1 raised {ticketLabel(run.TicketNo)} for L2</p>}
       </Step>
 
       <Step n={3} title="What L2 found">

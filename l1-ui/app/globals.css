@@ -12,11 +12,11 @@
   --surface: oklch(1 0 0);
   --surface-2: oklch(0.965 0 0);
   --surface-3: oklch(0.925 0 0);
-  --muted-foreground: oklch(0.46 0 0);
-  --subtle-foreground: oklch(0.6 0 0);
+  --muted-foreground: oklch(0.42 0 0);
+  --subtle-foreground: oklch(0.52 0 0);
   --border: oklch(0.9 0 0);
   --border-strong: oklch(0.82 0 0);
-  --signal: oklch(from var(--brand) 0.6 0.13 h);
+  --signal: oklch(from var(--brand) 0.5 0.12 h);
   --signal-soft: oklch(from var(--brand) 0.95 0.04 h);
   --signal-muted: oklch(from var(--brand) 0.8 0.07 h);
   --primary: var(--foreground);
@@ -26,7 +26,7 @@
   --ring: color-mix(in oklch, var(--signal) 60%, transparent);
   --success: var(--signal);
   --success-soft: var(--signal-soft);
-  --warning: oklch(0.63 0.14 70);
+  --warning: oklch(0.52 0.13 60);
   --warning-soft: oklch(0.95 0.05 85);
   --info: oklch(0.5 0.05 250);
   --info-soft: oklch(0.95 0.015 250);
@@ -45,7 +45,7 @@
   --surface-2: oklch(0.25 0 0);
   --surface-3: oklch(0.29 0 0);
   --muted-foreground: oklch(0.74 0 0);
-  --subtle-foreground: oklch(0.57 0 0);
+  --subtle-foreground: oklch(0.64 0 0);
   --border: oklch(0.275 0 0);
   --border-strong: oklch(0.36 0 0);
   --signal: oklch(from var(--brand) 0.86 0.15 h);

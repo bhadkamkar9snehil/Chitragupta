@@ -4,13 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Bot, CheckCircle2, Inbox, MessagesSquare, ThumbsDown, Ticket as TicketIcon, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Message, type Session, type Ticket, type User } from "@/lib/api";
-import { ago, outcomeLabel, plain, ticketLabel, whenShort } from "@/lib/format";
+import { ago, plain, ticketLabel, whenShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Avatar, Empty, SearchInput, Skeleton, StatePill } from "@/components/ui/primitives";
+import { Avatar, Empty, QueueRow, SearchInput, Skeleton } from "@/components/ui/primitives";
 import { Attributes, IconTile } from "@/components/ui/viz";
 import { ConsoleChat } from "@/components/helpdesk/app";
 import { Transcript } from "./inbox";
+import { Outcome } from "./runs";
 
 // One place for every L1 conversation, laid out like a support inbox:
 // views -> conversation list -> the conversation -> who it is and what it led to.
@@ -73,7 +74,7 @@ export function ConversationsView({ view, onView, onCounts, showPicker, sessionI
             <IconTile icon={current.icon} />
             <div className="min-w-0 flex-1">
               <h1 className="truncate text-title font-semibold tracking-tight">{current.label}</h1>
-              <p className="truncate font-mono text-2xs text-subtle-foreground">L1 conversations · {rows ? `${shown.length} of ${all.length}` : "loading"}</p>
+              <p className="truncate text-xs text-subtle-foreground">L1 conversations · {rows ? `${shown.length} of ${all.length}` : "loading"}</p>
             </div>
           </div>
           <select value={view} onChange={(e) => onView(e.target.value as ViewId)} aria-label="View" className={cn("h-10 w-full rounded-lg border bg-canvas px-2 text-meta", !showPicker && "xl:hidden")}>
@@ -81,27 +82,21 @@ export function ConversationsView({ view, onView, onCounts, showPicker, sessionI
           </select>
           <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search title, ticket, person" aria-label="Search conversations" />
         </div>
-        <ul className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-1.5">
-          {!rows && [0, 1, 2].map((i) => <li key={i} className="p-1.5"><Skeleton className="h-16" /></li>)}
+        <ul className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+          {!rows && [0, 1, 2].map((i) => <li key={i} className="border-b p-3"><Skeleton className="h-16" /></li>)}
           {shown.map((s) => (
-            <li key={s.ID}>
-              <button onClick={() => onSelect(s.ID)} aria-current={sessionId === s.ID ? "true" : undefined} className={cn("relative flex w-full gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-surface-2", sessionId === s.ID && "bg-surface-3 hover:bg-surface-3")}>
-                {sessionId === s.ID && <span className="absolute inset-y-2.5 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
-                <Avatar name={s.UserName || "?"} className="mt-0.5 size-7" />
-                <span className="min-w-0 flex-1">
+            <QueueRow key={s.ID} selected={sessionId === s.ID} onClick={() => onSelect(s.ID)} avatar={<Avatar name={s.UserName || "?"} className="mt-0.5 size-7" />}>
                   <span className="flex items-start gap-2">
                     <span className="line-clamp-2 text-meta font-medium leading-snug">{s.Title || "New conversation"}</span>
                     <span className="ml-auto shrink-0 pt-px text-2xs tabular-nums text-subtle-foreground">{ago(s.ModifiedOn)}</span>
                   </span>
                   <span className="mt-0.5 block truncate text-xs text-muted-foreground">{s.UserName ?? "Unknown"} · {plain(s.LastMessage)}</span>
-                  <span className="mt-1.5 flex flex-wrap gap-1 font-mono text-2xs">
-                    {s.TicketNo ? <span className="rounded bg-signal-soft px-1.5 py-0.5 text-signal">{ticketLabel(s.TicketNo)}</span> : <span className="rounded bg-surface-3 px-1.5 py-0.5 text-muted-foreground">answered by assistant</span>}
-                    {s.Status === "resolved" && <span className="rounded bg-surface-3 px-1.5 py-0.5 text-muted-foreground">solved{s.Rating ? ` · ${s.Rating}★` : ""}</span>}
+                  <span className="mt-1.5 flex flex-wrap gap-1 text-2xs font-medium">
+                    {s.TicketNo ? <span className="rounded bg-signal-soft px-1.5 py-0.5 font-mono text-signal">{ticketLabel(s.TicketNo)}</span> : <span className="rounded bg-surface-3 px-1.5 py-0.5 text-muted-foreground">Answered by assistant</span>}
+                    {s.Status === "resolved" && <span className="rounded bg-surface-3 px-1.5 py-0.5 text-muted-foreground">Solved{s.Rating ? ` · ${s.Rating}★` : ""}</span>}
                     {(s.Negative ?? 0) > 0 && <span className="rounded bg-destructive-soft px-1.5 py-0.5 text-destructive">{s.Negative} not helpful</span>}
                   </span>
-                </span>
-              </button>
-            </li>
+            </QueueRow>
           ))}
           {rows && !shown.length && <li><Empty icon={<MessagesSquare className="size-5" />} title="Nothing here">{view === "mine" && !me ? "Choose who you are to see your own chats." : "No conversation matches this view."}</Empty></li>}
         </ul>
@@ -138,7 +133,7 @@ function ReadOnly({ id, session, onBack }: { id: string; session: Session | null
         <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Back" onClick={onBack}><ArrowLeft /></Button>
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-semibold">{session?.Title || "Conversation"}</h2>
-          <p className="truncate font-mono text-2xs text-subtle-foreground">{session?.UserName ?? "requester"} · read-only · started {whenShort(session?.CreatedOn)}</p>
+          <p className="truncate text-xs text-subtle-foreground">{session?.UserName ?? "requester"} · read-only · started {whenShort(session?.CreatedOn)}</p>
         </div>
       </header>
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-8">
@@ -173,21 +168,20 @@ function Details({ session, others, onSelect, onOpenTicket, onOpenRun }: { sessi
         </div>
       </div>
       <Attributes rows={[
-        { k: "status", v: session.Status === "resolved" ? "solved" : "open", tone: session.Status === "resolved" ? undefined : "signal" },
-        { k: "messages", v: session.MessageCount ?? "—" },
-        { k: "not helpful", v: session.Negative ?? 0, tone: session.Negative ? "danger" : undefined },
-        { k: "rating", v: session.Rating ? `${session.Rating} / 5` : "—" },
-        { k: "started", v: whenShort(session.CreatedOn) },
+        { k: "Status", v: session.Status === "resolved" ? "Solved" : "Open" },
+        { k: "Messages", v: session.MessageCount ?? "—" },
+        { k: "Not helpful", v: session.Negative ?? 0, tone: session.Negative ? "danger" : undefined },
+        { k: "Rating", v: session.Rating ? `${session.Rating} / 5` : "—" },
+        { k: "Started", v: whenShort(session.CreatedOn) },
       ]} />
       <div>
-        <p className="pb-2 font-mono text-2xs uppercase tracking-wider text-subtle-foreground">Led to</p>
+        <h3 className="pb-2 text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">Led to</h3>
         {!session.TicketNo ? (
           <p className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">Answered by the assistant. No ticket was raised.</p>
         ) : !shownTicket ? <Skeleton className="h-24" /> : (
           <div className="space-y-2 rounded-xl border bg-surface p-3">
-            <p className="flex items-center gap-2 font-mono text-xs"><span>{ticketLabel(shownTicket.TicketNo)}</span><StatePill tone={shownTicket.StateTone} className="ml-auto">{shownTicket.StateLabel}</StatePill></p>
+            <p className="flex items-center gap-2"><span className="font-mono text-xs">{ticketLabel(shownTicket.TicketNo)}</span>{last && <span className="ml-auto"><Outcome type={last.ResponseType} active={!last.CompletedOn} /></span>}</p>
             <p className="line-clamp-2 text-meta">{shownTicket.BriefDetails}</p>
-            {last && <p className="font-mono text-2xs text-subtle-foreground">L2 #{last.AttemptNo} · {last.CompletedOn ? outcomeLabel(last.ResponseType).toLowerCase() : "working"}</p>}
             <div className="flex flex-wrap gap-2 pt-1">
               <Button size="sm" variant="outline" onClick={() => onOpenTicket(shownTicket.ID)}>Open ticket</Button>
               {last && <Button size="sm" variant="ghost" onClick={() => onOpenRun(last.ID)}>How L2 handled it</Button>}
@@ -197,13 +191,13 @@ function Details({ session, others, onSelect, onOpenTicket, onOpenRun }: { sessi
       </div>
       {others.length > 0 && (
         <div>
-          <p className="pb-2 font-mono text-2xs uppercase tracking-wider text-subtle-foreground">Other conversations</p>
+          <h3 className="pb-2 text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">Other conversations</h3>
           <ul className="space-y-1">
             {others.map((s) => (
               <li key={s.ID}>
                 <button onClick={() => onSelect(s.ID)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-surface-2">
                   <span className="min-w-0 flex-1 truncate text-meta">{s.Title || "Conversation"}</span>
-                  <span className="shrink-0 font-mono text-2xs text-subtle-foreground">{s.TicketNo ? ticketLabel(s.TicketNo) : ago(s.ModifiedOn)}</span>
+                  <span className="shrink-0 text-2xs tabular-nums text-subtle-foreground">{ago(s.ModifiedOn)}</span>
                 </button>
               </li>
             ))}

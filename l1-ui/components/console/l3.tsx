@@ -8,19 +8,18 @@ import { ago, displayName, ticketLabel, when } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PageTitle } from "@/components/ui/viz";
 import { Button } from "@/components/ui/button";
-import { Empty, Label, Skeleton, Switch, Tag, Textarea } from "@/components/ui/primitives";
+import { Empty, Label, QueueRow, Skeleton, Switch, Tag, Textarea } from "@/components/ui/primitives";
 import { Outcome } from "./runs";
 import { RichText } from "@/components/helpdesk/rich-text";
 
 const STATUSES = ["Open", "In progress", "Resolved"];
 
-// One status chip for the queue and the detail header, same shape as the L2 outcome chip.
+// Open escalations speak L2's outcome words ("fix known" / "cause open"); a person's progress replaces them.
+// UNRESOLVED is how the escalation table records an L3_ESCALATION outcome.
 function EscalationState({ e }: { e: Escalation }) {
-  const [label, tone] = e.L3Status === "Resolved" ? ["Resolved", "bg-success-soft text-success"]
-    : e.L3Status === "In progress" ? ["In progress", "bg-signal-soft text-signal"]
-      : e.EscalationCategory === "UNRESOLVED" ? ["Unresolved by L2", "bg-warning-soft text-warning"] : [null, ""];
-  if (!label) return <Outcome type={e.EscalationCategory} />;
-  return <span className={cn("inline-flex h-6 items-center whitespace-nowrap rounded-md px-2 font-mono text-xs", tone)}>{label}</span>;
+  if (e.L3Status === "Resolved" || e.L3Status === "In progress")
+    return <span className={cn("inline-flex h-6 items-center whitespace-nowrap rounded-md px-2 text-xs font-medium", e.L3Status === "Resolved" ? "bg-success-soft text-success" : "bg-signal-soft text-signal")}>{e.L3Status}</span>;
+  return <Outcome type={e.EscalationCategory === "UNRESOLVED" ? "L3_ESCALATION" : e.EscalationCategory} short />;
 }
 
 function StepHeading({ n, done, title, children }: { n: number; done?: boolean; title: string; children?: React.ReactNode }) {
@@ -74,9 +73,9 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
               <button onClick={() => { setTicketFilter(null); onSelect(null); }} className="font-medium underline-offset-4 hover:underline">Clear filter</button>
             </div>
           ) : (
-          <div className="flex gap-1" role="tablist">
+          <div className="flex gap-1" role="group" aria-label="Filter by status">
             {STATUSES.map((s) => (
-              <button key={s} role="tab" aria-selected={status === s} onClick={() => setStatus(s)} className={cn("min-h-11 rounded-md px-2 text-meta text-muted-foreground hover:bg-surface-2 sm:min-h-7", status === s && "bg-surface-3 font-medium text-foreground")}>
+              <button key={s} aria-pressed={status === s} onClick={() => setStatus(s)} className={cn("min-h-11 rounded-md px-2 text-meta text-muted-foreground hover:bg-surface-2 sm:min-h-7", status === s && "bg-surface-3 font-medium text-foreground")}>
                 {s} <span className="text-2xs text-subtle-foreground">{(rows ?? []).filter((r) => (r.L3Status ?? "Open") === s).length}</span>
               </button>
             ))}
@@ -86,9 +85,7 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
         <ul className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
           {!rows && [0, 1, 2].map((i) => <li key={i} className="border-b p-3"><Skeleton className="h-16" /></li>)}
           {shown.map((r) => (
-            <li key={r.ID} className="border-b">
-              <button onClick={() => onSelect(r.ID)} aria-current={selected?.ID === r.ID ? "true" : undefined} className={cn("relative w-full px-3 py-3 text-left hover:bg-surface-2", selected?.ID === r.ID && "bg-surface-2 hover:bg-surface-2")}>
-                {selected?.ID === r.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
+            <QueueRow key={r.ID} selected={selected?.ID === r.ID} onClick={() => onSelect(r.ID)}>
                 <span className="flex items-center gap-2">
                   <span className="font-mono text-xs text-muted-foreground">{ticketLabel(r.TicketNo)}</span>
                   <EscalationState e={r} />
@@ -100,8 +97,7 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
                   {r.Area && <span>{r.Area}</span>}
                   {r.AssignedToUserID && <span className="flex items-center gap-1"><UserRound className="size-3" aria-hidden /> Assigned</span>}
                 </span>
-              </button>
-            </li>
+            </QueueRow>
           ))}
           {rows && !shown.length && <li><Empty icon={<ShieldAlert className="size-5" />} title={ticketFilter ? `No escalation for ${ticketLabel(ticketFilter)}` : `Nothing ${status.toLowerCase()}`}>The queue is clear here.</Empty></li>}
         </ul>

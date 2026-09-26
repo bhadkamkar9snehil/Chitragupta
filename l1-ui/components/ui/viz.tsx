@@ -204,8 +204,8 @@ export function Attributes({ rows, className }: { rows: { k: string; v: ReactNod
     <dl className={cn("divide-y", className)}>
       {rows.map((r) => (
         <div key={r.k} className="group flex min-h-10 items-center gap-3 py-2">
-          <dt className="w-32 shrink-0 font-mono text-xs text-subtle-foreground">{r.k}</dt>
-          <dd className={cn("min-w-0 flex-1 break-words font-mono text-xs", r.tone ? TONE_TEXT[r.tone] : "text-foreground")}>{r.v}</dd>
+          <dt className="w-32 shrink-0 text-xs text-muted-foreground">{r.k}</dt>
+          <dd className={cn("min-w-0 flex-1 break-words text-xs tabular-nums", r.copy && "font-mono", r.tone ? TONE_TEXT[r.tone] : "text-foreground")}>{r.v}</dd>
           {r.copy && <CopyButton text={r.copy} label={r.k} />}
         </div>
       ))}
@@ -336,7 +336,7 @@ export function PageTitle({ icon, title, meta, children, className }: { icon: Lu
       <IconTile icon={icon} />
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-title font-semibold tracking-tight">{title}</h1>
-        {meta && <p className="truncate font-mono text-2xs text-subtle-foreground">{meta}</p>}
+        {meta && <p className="truncate text-xs text-subtle-foreground">{meta}</p>}
       </div>
       {children && <div className="flex shrink-0 items-center gap-1.5">{children}</div>}
     </div>

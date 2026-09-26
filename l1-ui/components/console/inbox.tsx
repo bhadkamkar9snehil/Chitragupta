@@ -7,7 +7,7 @@ import { api, type Message, type SourceRef, type Ticket } from "@/lib/api";
 import { ago, human, outcomeLabel, pageTitle, plain, RESPONSE_KIND, ticketLabel, when, whenShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Avatar, Empty, SearchInput, Skeleton, StatePill, Tag, Tip } from "@/components/ui/primitives";
+import { Avatar, Empty, QueueRow, SearchInput, Skeleton, StatePill, Tag, Tip } from "@/components/ui/primitives";
 import { RichText } from "@/components/helpdesk/rich-text";
 import { PageTitle } from "@/components/ui/viz";
 
@@ -95,15 +95,7 @@ export function InboxView({ ticketId, onSelect, onOpenRun }: { ticketId: string 
         <ul className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
           {!rows && [0, 1, 2, 3].map((i) => <li key={i} className="border-b p-3"><Skeleton className="h-14" /></li>)}
           {shown.map((t) => (
-            <li key={t.ID} className="border-b">
-              <button
-                onClick={() => onSelect(t.ID)}
-                aria-current={ticketId === t.ID ? "true" : undefined}
-                className={cn("relative flex w-full gap-3 px-3 py-3 text-left hover:bg-surface-2", ticketId === t.ID && "bg-surface-2 hover:bg-surface-2")}
-              >
-                {ticketId === t.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
-                <Avatar name={t.FirstLastName || t.EmailID || "?"} className="mt-0.5 size-7" />
-                <span className="min-w-0 flex-1">
+            <QueueRow key={t.ID} selected={ticketId === t.ID} onClick={() => onSelect(t.ID)} avatar={<Avatar name={t.FirstLastName || t.EmailID || "?"} className="mt-0.5 size-7" />}>
                   <span className="flex items-baseline gap-2">
                     <span className="truncate text-meta font-medium">{t.FirstLastName || t.EmailID}</span>
                     <span className="ml-auto shrink-0 text-2xs text-subtle-foreground">{ago(t.ModifiedOn ?? t.CreatedOn)}</span>
@@ -115,9 +107,7 @@ export function InboxView({ ticketId, onSelect, onOpenRun }: { ticketId: string 
                     <StatePill tone={t.StateTone}>{t.StateLabel}</StatePill>
                     {t.Priority && !t.Priority.startsWith("Standard") && <Tag>{t.Priority.replace(" Priority", "")}</Tag>}
                   </span>
-                </span>
-              </button>
-            </li>
+            </QueueRow>
           ))}
           {rows && !shown.length && (
             <li><Empty icon={<Inbox className="size-5" />} title="No tickets here">Change the view or filters.</Empty></li>

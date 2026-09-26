@@ -10,7 +10,7 @@ export const buttonVariants = cva(
       variant: {
         default: "bg-foreground text-background hover:opacity-90 disabled:bg-surface-3 disabled:text-subtle-foreground",
         soft: "border border-signal/40 bg-signal-soft text-signal hover:border-signal",
-        outline: "bg-canvas text-foreground hover:bg-surface-3",
+        outline: "border border-border-strong bg-canvas text-foreground hover:bg-surface-3",
         ghost: "text-muted-foreground hover:bg-surface-2 hover:text-foreground",
         destructive: "bg-destructive-soft text-destructive hover:brightness-110",
         link: "h-auto px-0 text-signal underline-offset-4 hover:underline",
