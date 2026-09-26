@@ -226,14 +226,15 @@ public static class Ops
         """);
 
     public static Task<List<Dictionary<string, object?>>> L3(string? status) => Db.H("""
-        SELECT e.ID, e.TicketID, e.TicketNo, e.RunID, e.EscalationCategory, e.L3Status, e.ProblemSummary, e.Findings, e.RootCause,
+        SELECT e.ID, e.TicketID, e.TicketNo, e.RunID, e.EscalationCategory,
+               CASE WHEN e.L3Status IN ('InProgress', 'Assigned') THEN 'In progress' ELSE e.L3Status END AS L3Status, e.ProblemSummary, e.Findings, e.RootCause,
                e.SuggestedAction, e.ReplyText, e.EscalatedOn, e.AssignedToUserID, e.AssignedOn, e.L3Remarks, e.L3ResolutionSummary,
                e.ResolvedOn, e.ResolvedByUserID, c.BriefDetails, c.FirstLastName, c.EmailID, c.Status AS TicketStatus, a.Name AS Area
         FROM dbo.Hermes_L3_Escalation_Trn_Tbl e
         LEFT JOIN dbo.Complaint_Mst_Tbl c ON CONVERT(varchar(36), c.ID) = CONVERT(varchar(36), e.TicketID)
         LEFT JOIN dbo.Area_Mst_Tbl a ON a.ID = c.AreaID
-        WHERE e.IsDeleted = 0 AND (@s IS NULL OR ISNULL(e.L3Status, 'Open') = @s)
-        ORDER BY CASE ISNULL(e.L3Status, 'Open') WHEN 'Open' THEN 0 WHEN 'In progress' THEN 1 ELSE 2 END, e.EscalatedOn DESC
+        WHERE e.IsDeleted = 0 AND (@s IS NULL OR CASE WHEN e.L3Status IN ('InProgress', 'Assigned') THEN 'In progress' ELSE ISNULL(e.L3Status, 'Open') END = @s)
+        ORDER BY CASE ISNULL(e.L3Status, 'Open') WHEN 'Open' THEN 0 WHEN 'Assigned' THEN 1 WHEN 'InProgress' THEN 1 ELSE 2 END, e.EscalatedOn DESC
         """, ("@s", string.IsNullOrWhiteSpace(status) ? null : status));
 
     // Human L3 actions. Resolving can close the ticket and leave a requester-visible note; the L2 run history is untouched.
@@ -252,7 +253,7 @@ public static class Ops
         switch (action)
         {
             case "assign":
-                await Db.Exec("UPDATE dbo.Hermes_L3_Escalation_Trn_Tbl SET AssignedToUserID = @u, AssignedOn = GETDATE(), L3Status = 'In progress', ModifiedOn = GETDATE() WHERE ID = @id",
+                await Db.Exec("UPDATE dbo.Hermes_L3_Escalation_Trn_Tbl SET AssignedToUserID = @u, AssignedOn = GETDATE(), L3Status = 'InProgress', ModifiedOn = GETDATE() WHERE ID = @id",
                     ("@u", actor["ID"]?.ToString()), ("@id", id));
                 await Note("Assignment", $"Picked up by {name}", false);
                 break;
