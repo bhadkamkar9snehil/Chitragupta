@@ -233,7 +233,7 @@ export function Console() {
           {route.view === "conversations" && <ConversationsView view={convView} onView={setConvView} onCounts={onConvCounts} showPicker={navCollapsed} sessionId={route.id ?? null} onSelect={setId} onOpenTicket={(id) => go("inbox", id)} onOpenRun={(id) => go("runs", id)} engineer={engineer} askEngineer={() => setPicking(true)} />}
           {route.view === "runs" && <RunsView runId={route.id ?? null} onSelect={setId} onLive={(id) => go("live", id)} onOpenTicket={(id) => go("inbox", id)} onOpenL3={(no) => go("l3", `ticket:${no}`)} />}
           {route.view === "l3" && (
-            <L3View escalationId={route.id ?? null} onSelect={setId} engineer={engineer} askEngineer={() => setPicking(true)} onOpenRun={(id) => go("runs", id)} onOpenTicket={(id) => go("inbox", id)} />
+            <L3View key={route.id?.startsWith("ticket:") ? route.id : "l3"} escalationId={route.id ?? null} onSelect={setId} engineer={engineer} askEngineer={() => setPicking(true)} onOpenRun={(id) => go("runs", id)} onOpenTicket={(id) => go("inbox", id)} />
           )}
           {route.view === "agents" && <AgentsView onOpenRun={(id) => go("runs", id)} />}
           {route.view === "health" && <HealthView onOpenRun={(id) => go("runs", id)} />}
