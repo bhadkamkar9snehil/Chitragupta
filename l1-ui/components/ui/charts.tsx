@@ -266,3 +266,117 @@ export function VolumeBar({ share, segments, label, className }: { share: number
     </span>
   );
 }
+
+// ---------- Fan-out graph (one agent -> its tools), animation carries data ----------
+// Line width = share of calls. Dots travel each line at the tool's average latency (slow tool, slow dots),
+// dot density follows call volume, and the red share of dots is the tool's failure rate.
+
+export type FanRow = { id: string; label: string; sub: string; chip: ReactNode; chipTone?: "danger" | "signal" | "muted"; share: number; errRate: number; latencyMs: number | null; hot?: boolean };
+
+const ROW = 64, GAP = 8, EDGE_W = 112;
+
+function travelSeconds(ms: number | null) {
+  if (!ms || ms <= 0) return 1.6;
+  return Math.min(7, Math.max(0.7, 0.6 + Math.log10(ms / 20) * 1.4));
+}
+
+export function FanOut({ source, sub, rows, reduced, className }: { source: string; sub: string; rows: FanRow[]; reduced?: boolean; className?: string }) {
+  const { ref, tip, on } = useTip();
+  const H = rows.length * (ROW + GAP) - GAP;
+  const cy = H / 2;
+  return (
+    <div ref={ref} className={cn("dot-grid relative flex flex-col items-stretch gap-3 rounded-lg p-3 md:flex-row md:items-center md:gap-0", className)}>
+      <div className="shrink-0 rounded-xl border border-signal bg-surface px-3 py-2.5 md:w-40">
+        <p className="font-mono text-sm">{source}</p>
+        <p className="font-mono text-xs text-subtle-foreground">{sub}</p>
+      </div>
+      <svg width={EDGE_W} height={H} viewBox={`0 0 ${EDGE_W} ${H}`} className="hidden shrink-0 md:block" aria-hidden>
+        {rows.map((r, i) => {
+          const y = i * (ROW + GAP) + ROW / 2;
+          const d = `M0 ${cy} C ${EDGE_W * 0.55} ${cy}, ${EDGE_W * 0.45} ${y}, ${EDGE_W} ${y}`;
+          const n = Math.max(1, Math.min(7, Math.round(1 + r.share * 10)));
+          const red = r.errRate > 0 ? Math.max(1, Math.round(n * r.errRate)) : 0;
+          const dur = travelSeconds(r.latencyMs);
+          return (
+            <g key={r.id}>
+              <path d={d} fill="none" strokeWidth={Math.max(1, Math.min(6, 1 + r.share * 14))} strokeLinecap="round" className={r.hot ? "stroke-signal/60" : "stroke-border-strong"} />
+              {!reduced && Array.from({ length: n }, (_, k) => (
+                <circle key={k} r={2.6} className={k < red ? "fill-destructive" : "fill-signal"}>
+                  <animateMotion dur={`${dur}s`} begin={`${-(k / n) * dur}s`} repeatCount="indefinite" path={d} />
+                </circle>
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+      <ol className="min-w-0 flex-1 space-y-2">
+        {rows.map((r) => (
+          <li key={r.id} tabIndex={0} className={cn("flex h-16 items-center gap-3 rounded-xl border bg-surface px-3 outline-none focus-visible:ring-2 focus-visible:ring-ring", r.hot && "border-signal")}
+            {...on(<>{r.label}<br />{Math.round(r.share * 100)}% of calls · {(r.errRate * 100).toFixed(1)}% failed · avg {r.latencyMs == null ? "—" : r.latencyMs < 1000 ? `${Math.round(r.latencyMs)} ms` : `${(r.latencyMs / 1000).toFixed(1)} s`}</>)}>
+            <span className={cn("size-2 shrink-0 rounded-full", r.errRate > 0.1 ? "bg-destructive" : r.hot ? "bg-signal" : "bg-subtle-foreground")} aria-hidden />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-mono text-sm">{r.label}</span>
+              <span className="block truncate font-mono text-xs text-subtle-foreground">{r.sub}</span>
+            </span>
+            <span className={cn("shrink-0 rounded-md px-2 py-1 font-mono text-xs tabular-nums", r.chipTone === "danger" ? "bg-destructive-soft text-destructive" : r.chipTone === "signal" ? "bg-signal-soft text-signal" : "bg-surface-2 text-muted-foreground")}>{r.chip}</span>
+          </li>
+        ))}
+      </ol>
+      <TipLayer tip={tip} />
+    </div>
+  );
+}
+
+// ---------- Swimlanes (who did what, when) ----------
+
+export type LaneMark = { key: string; lane: string; track: number; start: number; end?: number; tone: VizTone; tip: ReactNode; onClick?: () => void };
+
+export function Swimlanes({ lanes, tracks, marks, domain, label, className }: {
+  lanes: { id: string; label: string; sub?: string }[];
+  tracks: string[];
+  marks: LaneMark[];
+  domain: [number, number];
+  label: string;
+  className?: string;
+}) {
+  const { ref, tip, on } = useTip();
+  const [t0, t1] = domain;
+  const span = Math.max(1, t1 - t0);
+  const x = (t: number) => Math.max(0, Math.min(100, ((t - t0) / span) * 100));
+  const hhmm = (t: number) => new Date(t).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: span < 180_000 ? "2-digit" : undefined, hour12: false, timeZone: "Asia/Kolkata" });
+  const ticks = Array.from({ length: 5 }, (_, i) => t0 + (span * i) / 4);
+  return (
+    <div ref={ref} className={cn("relative", className)}>
+      <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 sm:grid-cols-[9rem_minmax(0,1fr)]" role="img" aria-label={label}>
+        {lanes.map((lane) => (
+          <div key={lane.id} className="contents">
+            <div className="flex flex-col justify-center border-t border-border py-2">
+              <span className="truncate text-xs font-medium">{lane.label}</span>
+              {lane.sub && <span className="truncate font-mono text-2xs text-subtle-foreground">{lane.sub}</span>}
+            </div>
+            <div className="relative border-t border-border py-2">
+              {tracks.map((t, ti) => (
+                <div key={t} className="relative my-1 h-4" title={t}>
+                  <span className="absolute inset-x-0 top-1/2 border-t border-dashed border-border" aria-hidden />
+                  {marks.filter((m) => m.lane === lane.id && m.track === ti).map((m) => {
+                    const left = x(m.start), w = m.end != null ? Math.max(0.35, x(m.end) - left) : 0;
+                    return (
+                      <button key={m.key} type="button" onClick={m.onClick} aria-label={typeof m.tip === "string" ? m.tip : undefined}
+                        className={cn("absolute top-1/2 -translate-y-1/2 rounded-[3px] outline-none ring-surface hover:ring-2 hover:ring-foreground/50 focus-visible:ring-2 focus-visible:ring-foreground", TONE_BG[m.tone], m.end != null ? "h-3 min-w-[3px]" : "size-2.5 -translate-x-1/2 rounded-full ring-2")}
+                        style={{ left: `${left}%`, width: m.end != null ? `${w}%` : undefined }} {...on(m.tip)} />
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+        <span />
+        <div className="relative h-5 border-t border-border-strong font-mono text-2xs text-subtle-foreground" aria-hidden>
+          {ticks.map((t, i) => <span key={i} className={cn("absolute top-1", i === 0 ? "left-0" : i === 4 ? "right-0" : "-translate-x-1/2")} style={i > 0 && i < 4 ? { left: `${(i / 4) * 100}%` } : undefined}>{hhmm(t)}</span>)}
+        </div>
+      </div>
+      <TipLayer tip={tip} />
+    </div>
+  );
+}
