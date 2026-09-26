@@ -7,7 +7,7 @@ import { ago, clock, outcomeLabel, ticketLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/primitives";
-import { Headline, IconTile, Legend, Panel, Segmented, Stat, type VizTone } from "@/components/ui/viz";
+import { Headline, IconTile, Legend, OUTCOMES, Panel, Segmented, Stat, type VizTone } from "@/components/ui/viz";
 import { DotLanes, FlowGraph, HourHeat, StackColumns, type Column, type FlowLink, type FlowNode } from "@/components/ui/charts";
 
 type Go = {
@@ -20,16 +20,6 @@ type Go = {
   run: (id: string) => void;
 };
 
-// One colour per outcome everywhere on this page: resolved is the signal, anything a person must pick up is amber
-// (solid when the fix is known, muted when the cause is still open), updates light grey.
-// Checked with the dataviz palette validator: adjacent pairs clear CVD and normal-vision separation in both themes.
-const OUTCOMES: { id: string; tone: VizTone }[] = [
-  { id: "RESOLUTION", tone: "signal" },
-  { id: "UPDATE", tone: "faint" },
-  { id: "NEEDS_HUMAN_ACTION", tone: "warn" },
-  { id: "L3_ESCALATION", tone: "caution" },
-];
-const toneOf = (label: string): VizTone => OUTCOMES.find((o) => o.id === label)?.tone ?? "faint";
 
 const pct = (n: number, d: number) => (d ? `${Math.round((n / d) * 100)}%` : "—");
 

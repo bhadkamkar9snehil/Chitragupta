@@ -2,7 +2,7 @@
 
 import { useRef, useState, type FocusEvent, type MouseEvent, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { TONE_BG, TONE_FILL, type VizTone } from "./viz";
+import { SegmentBar, TONE_BG, TONE_FILL, type VizTone } from "./viz";
 
 // Command-centre charts in the console's panel language: thin marks, 2px surface gaps, one mint signal,
 // greys for context, amber only where a person must act. Every mark has a hover/focus tooltip.
@@ -237,5 +237,32 @@ export function DotLanes({ lanes, bins, dots, label, className }: { lanes: { id:
       </div>
       <TipLayer tip={tip} />
     </div>
+  );
+}
+
+// ---------- Bars on a shared scale ----------
+
+// Average and largest prompt on one shared scale, with the spill limit as a vertical line.
+export function PromptBar({ avg, max, limit, scale, label, format }: { avg: number; max: number; limit: number; scale: number; label: string; format: (n: number) => string }) {
+  const at = (v: number) => `${Math.min(100, (v / scale) * 100)}%`;
+  const over = max > limit;
+  return (
+    <div className="relative h-3" role="img" aria-label={`${label}: average ${format(avg)}, largest ${format(max)}, limit ${format(limit)} characters`}>
+      <span className="absolute inset-y-1 left-0 right-0 rounded-full bg-surface-3" aria-hidden />
+      <span className={cn("absolute inset-y-1 left-0 rounded-full", over ? "bg-destructive/35" : "bg-subtle-foreground/40")} style={{ width: at(max) }} aria-hidden />
+      <span className="absolute inset-y-0 left-0 rounded-full bg-signal" style={{ width: at(avg) }} aria-hidden />
+      <span className="absolute -inset-y-1 border-l border-dashed border-foreground/70" style={{ left: at(limit) }} aria-hidden />
+    </div>
+  );
+}
+
+// A composition bar whose length is its share of the largest row (tool calls): volume and failure share at once.
+export function VolumeBar({ share, segments, label, className }: { share: number; segments: { value: number; tone: VizTone | "hatch"; label: string }[]; label: string; className?: string }) {
+  return (
+    <span className={cn("block", className)}>
+      <span className="block" style={{ width: `${Math.max(4, Math.min(1, share) * 100)}%` }}>
+        <SegmentBar label={label} segments={segments} />
+      </span>
+    </span>
   );
 }

@@ -40,6 +40,29 @@ export const TONE_TEXT: Record<VizTone, string> = {
   info: "text-info",
 };
 
+// Resolved is the signal; anything a person must pick up is amber (solid = fix known, muted = cause open);
+// updates light grey. Adjacent pairs pass the dataviz CVD and normal-vision checks in light and dark.
+export const OUTCOMES: { id: string; tone: VizTone }[] = [
+  { id: "RESOLUTION", tone: "signal" },
+  { id: "UPDATE", tone: "faint" },
+  { id: "NEEDS_HUMAN_ACTION", tone: "warn" },
+  { id: "L3_ESCALATION", tone: "caution" },
+];
+export const outcomeTone = (id: string): VizTone => OUTCOMES.find((o) => o.id === id)?.tone ?? "faint";
+
+// Capacity as discrete slots (pipeline WIP, local-model slot, queue): filled pips up to `used` of `max`.
+export function SlotMeter({ label, used, max, tone = "signal" }: { label: string; used: number; max: number; tone?: VizTone }) {
+  return (
+    <div className="flex items-center gap-3 text-xs" role="img" aria-label={`${label}: ${used} of ${max}`}>
+      <span className="w-32 shrink-0 text-muted-foreground">{label}</span>
+      <span className="flex min-w-0 flex-1 gap-1" aria-hidden>
+        {Array.from({ length: max }, (_, i) => <span key={i} className={cn("h-3 max-w-8 flex-1 rounded-[3px]", i < used ? TONE_BG[tone] : "bg-surface-3")} />)}
+      </span>
+      <span className="w-10 shrink-0 text-right font-mono tabular-nums text-foreground">{used}/{max}</span>
+    </div>
+  );
+}
+
 export function IconTile({ icon: Icon, active, className }: { icon: LucideIcon; active?: boolean; className?: string }) {
   return (
     <span className={cn("grid size-9 shrink-0 place-items-center rounded-lg border border-dashed", active ? "border-signal text-signal" : "border-border-strong text-foreground", className)} aria-hidden>
