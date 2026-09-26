@@ -4,14 +4,38 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, ExternalLink, Hand, PanelLeftClose, PanelLeftOpen, ShieldAlert, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { api, ops, type Escalation, type Ticket, type User } from "@/lib/api";
-import { ago, displayName, outcomeLabel, ticketLabel, when } from "@/lib/format";
+import { ago, displayName, ticketLabel, when } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { PageTitle, Segmented } from "@/components/ui/viz";
+import { PageTitle } from "@/components/ui/viz";
 import { Button } from "@/components/ui/button";
 import { Empty, Label, Skeleton, Switch, Tag, Textarea } from "@/components/ui/primitives";
+import { Outcome } from "./runs";
 import { RichText } from "@/components/helpdesk/rich-text";
 
 const STATUSES = ["Open", "In progress", "Resolved"];
+
+// One status chip for the queue and the detail header, same shape as the L2 outcome chip.
+function EscalationState({ e }: { e: Escalation }) {
+  const [label, tone] = e.L3Status === "Resolved" ? ["Resolved", "bg-success-soft text-success"]
+    : e.L3Status === "In progress" ? ["In progress", "bg-signal-soft text-signal"]
+      : e.EscalationCategory === "UNRESOLVED" ? ["Unresolved by L2", "bg-warning-soft text-warning"] : [null, ""];
+  if (!label) return <Outcome type={e.EscalationCategory} />;
+  return <span className={cn("inline-flex h-6 items-center whitespace-nowrap rounded-md px-2 font-mono text-xs", tone)}>{label}</span>;
+}
+
+function StepHeading({ n, done, title, children }: { n: number; done?: boolean; title: string; children?: React.ReactNode }) {
+  return (
+    <div className="flex gap-2.5">
+      <span className={cn("mt-px grid size-5 shrink-0 place-items-center rounded-full font-mono text-2xs font-semibold", done ? "bg-success-soft text-success" : "bg-surface-3 text-muted-foreground")}>
+        {done ? <CheckCircle2 className="size-3" aria-label="Done" /> : n}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold">{title}</p>
+        {children && <p className="mt-0.5 text-xs text-muted-foreground">{children}</p>}
+      </div>
+    </div>
+  );
+}
 
 export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRun, onOpenTicket }: {
   escalationId: string | null;
@@ -67,20 +91,11 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
                 {selected?.ID === r.ID && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
                 <span className="flex items-center gap-2">
                   <span className="font-mono text-xs text-muted-foreground">{ticketLabel(r.TicketNo)}</span>
-                  <span className={cn(
-                    "rounded px-1.5 py-0.5 text-2xs font-semibold",
-                    r.L3Status === "Resolved" ? "bg-success-soft text-success"
-                      : r.L3Status === "In progress" ? "bg-signal-soft text-signal"
-                        : r.EscalationCategory === "UNRESOLVED" ? "bg-warning-soft text-warning" : "bg-surface-3 text-foreground",
-                  )}>
-                    {r.L3Status === "Resolved" ? "Resolved"
-                      : r.L3Status === "In progress" ? "In progress"
-                        : r.EscalationCategory === "UNRESOLVED" ? "Unresolved by L2" : outcomeLabel(r.EscalationCategory)}
-                  </span>
+                  <EscalationState e={r} />
                   <span className="ml-auto text-2xs text-subtle-foreground">{ago(r.EscalatedOn)}</span>
                 </span>
                 <span className="mt-1 line-clamp-2 block text-meta leading-snug">{r.BriefDetails}</span>
-                <span className="mt-1.5 flex gap-3 text-2xs text-subtle-foreground">
+                <span className="mt-1.5 flex flex-wrap gap-x-3 text-2xs text-subtle-foreground">
                   <span>{r.FirstLastName}</span>
                   {r.Area && <span>{r.Area}</span>}
                   {r.AssignedToUserID && <span className="flex items-center gap-1"><UserRound className="size-3" aria-hidden /> Assigned</span>}
@@ -88,7 +103,7 @@ export function L3View({ escalationId, onSelect, engineer, askEngineer, onOpenRu
               </button>
             </li>
           ))}
-          {rows && !shown.length && <li><Empty icon={<ShieldAlert className="size-5" />} title={`Nothing ${status.toLowerCase()}`}>The queue is clear here.</Empty></li>}
+          {rows && !shown.length && <li><Empty icon={<ShieldAlert className="size-5" />} title={ticketFilter ? `No escalation for ${ticketLabel(ticketFilter)}` : `Nothing ${status.toLowerCase()}`}>The queue is clear here.</Empty></li>}
         </ul>
       </section>
       <div className={cn("min-h-0 min-w-0 flex-1 flex-col", escalationId ? "flex" : "hidden md:flex")}>
@@ -153,7 +168,9 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
     }
   }
 
-  const sections = [["What the requester reported", e.BriefDetails], ["L2's problem summary", e.ProblemSummary], ["Findings", e.Findings], ["Root cause", e.RootCause], ["Suggested action", e.SuggestedAction], ["What the requester was told", e.ReplyText]] as const;
+  // The requester's words are already the heading; L2's summary only earns a section when it says something new.
+  const sameAsTitle = (v: string | null) => !v || v.trim() === (e.BriefDetails ?? "").trim();
+  const sections = [["L2's problem summary", sameAsTitle(e.ProblemSummary) ? null : e.ProblemSummary], ["Findings", e.Findings], ["Root cause", e.RootCause], ["Suggested action", e.SuggestedAction], ["What the requester was told", e.ReplyText]] as const;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -166,7 +183,7 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-xs text-muted-foreground">{ticketLabel(e.TicketNo)}</span>
-              <Tag>{e.L3Status ?? "Open"}</Tag>
+              <EscalationState e={e} />
               <span className="text-2xs text-subtle-foreground">Escalated {when(e.EscalatedOn)}</span>
             </div>
             <h2 className="mt-1 text-title font-semibold leading-snug tracking-tight">{e.BriefDetails}</h2>
@@ -181,12 +198,12 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
           </div>
         </div>
       </header>
-      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+      <div className="scrollbar-thin @container min-h-0 flex-1 overflow-y-auto">
         {showTicket && (
           <TicketContext ticket={ticket} loading={ticketLoading} onOpenFull={() => onOpenTicket(e.TicketID)} />
         )}
-        <div className="mx-auto grid max-w-6xl gap-6 p-4 lg:grid-cols-5 lg:p-6">
-          <div className="space-y-5 lg:col-span-3">
+        <div className="mx-auto grid max-w-6xl gap-6 p-4 @3xl:grid-cols-5 @3xl:p-6">
+          <div className="min-w-0 space-y-5 @3xl:col-span-3">
             {sections.filter(([, v]) => v).map(([k, v]) => (
               <section key={k}>
                 <h3 className="text-2xs font-semibold uppercase tracking-wider text-subtle-foreground">{k}</h3>
@@ -200,25 +217,13 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
               </section>
             )}
           </div>
-          <aside className="space-y-4 lg:col-span-2" aria-label="Actions">
+          <aside className="space-y-4 @3xl:col-span-2" aria-label="Actions">
             <div className="rounded-xl border bg-surface p-4">
-              <p className="text-sm font-semibold">Human handoff workflow</p>
-              <ol className="mt-3 space-y-2 text-meta">
-                <li className="flex gap-2"><span className={cn("grid size-5 shrink-0 place-items-center rounded-full text-2xs font-semibold", e.AssignedToUserID ? "bg-success-soft text-success" : "bg-surface-3 text-muted-foreground")}>1</span><span><strong>Pick up</strong><span className="block text-xs text-muted-foreground">Own the escalation so the team knows who is acting.</span></span></li>
-                <li className="flex gap-2"><span className="grid size-5 shrink-0 place-items-center rounded-full bg-surface-3 text-2xs font-semibold text-muted-foreground">2</span><span><strong>Update if needed</strong><span className="block text-xs text-muted-foreground">Send the requester an update or keep an internal note.</span></span></li>
-                <li className="flex gap-2"><span className={cn("grid size-5 shrink-0 place-items-center rounded-full text-2xs font-semibold", resolved ? "bg-success-soft text-success" : "bg-surface-3 text-muted-foreground")}>3</span><span><strong>Resolve handoff</strong><span className="block text-xs text-muted-foreground">Record the human resolution and optionally close the ticket.</span></span></li>
-              </ol>
-            </div>
-
-            <div className="rounded-xl border bg-surface p-4">
-              <p className="text-sm font-semibold">Owner</p>
-              {e.AssignedToUserID ? (
-                <p className="mt-1 text-meta text-muted-foreground">
-                  {engineer && e.AssignedToUserID.toUpperCase() === engineer.ID.toUpperCase() ? "You" : "Another engineer"} · since {when(e.AssignedOn)}
-                </p>
-              ) : (
-                <p className="mt-1 text-meta text-muted-foreground">Nobody has picked this up.</p>
-              )}
+              <StepHeading n={1} done={!!e.AssignedToUserID} title="Pick up">
+                {e.AssignedToUserID
+                  ? `${engineer && e.AssignedToUserID.toUpperCase() === engineer.ID.toUpperCase() ? "You own this" : "Another engineer owns this"} · since ${when(e.AssignedOn)}`
+                  : "Nobody owns this yet. Pick it up so the team knows who is acting."}
+              </StepHeading>
               {!resolved && (!e.AssignedToUserID || !engineer || e.AssignedToUserID.toUpperCase() !== engineer.ID.toUpperCase()) && (
                 <Button className="mt-3 w-full" variant="soft" disabled={busy} onClick={() => act("assign")}>
                   <Hand /> {engineer ? `Pick up as ${displayName(engineer).split(" ")[0]}` : "Choose who you are to pick up"}
@@ -227,8 +232,9 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
             </div>
 
             <form className="rounded-xl border bg-surface p-4" onSubmit={(ev) => { ev.preventDefault(); if (note.trim()) act("note", note.trim()); }}>
-              <Label htmlFor="note">Update / internal note</Label>
-              <Textarea id="note" rows={3} className="mt-1.5" value={note} onChange={(ev) => setNote(ev.target.value)} placeholder="What you checked, who you contacted…" />
+              <StepHeading n={2} title="Update if needed">Send the requester an update, or keep an internal note.</StepHeading>
+              <Label htmlFor="note" className="sr-only">Update or internal note</Label>
+              <Textarea id="note" rows={3} className="mt-3" value={note} onChange={(ev) => setNote(ev.target.value)} placeholder="What you checked, who you contacted…" />
               <div className="mt-2 flex items-center justify-between gap-2">
                 <label className="flex items-center gap-2 text-meta text-muted-foreground">
                   <Switch checked={visible} onCheckedChange={setVisible} aria-label="Send update to requester" /> {visible ? "Send to requester" : "Internal only"}
@@ -239,15 +245,15 @@ function Detail({ e, engineer, askEngineer, onBack, onChanged, onOpenRun, onOpen
 
             {resolved ? (
               <div className="rounded-xl border border-success/40 bg-success-soft/50 p-4">
-                <p className="flex items-center gap-2 text-sm font-semibold text-success"><CheckCircle2 className="size-4" aria-hidden /> Resolved {when(e.ResolvedOn)}</p>
+                <StepHeading n={3} done title="Resolved">{when(e.ResolvedOn)}</StepHeading>
                 {e.L3ResolutionSummary && <p className="mt-2 whitespace-pre-wrap text-sm">{e.L3ResolutionSummary}</p>}
                 <Button className="mt-3" size="sm" variant="outline" disabled={busy} onClick={() => act("reopen")}>Reopen</Button>
               </div>
             ) : (
               <form className="rounded-xl border bg-surface p-4" onSubmit={(ev) => { ev.preventDefault(); if (summary.trim()) act("resolve", summary.trim()); }}>
-                <Label htmlFor="resolve">Resolve handoff</Label>
-                <p className="mt-1 text-xs text-muted-foreground">This resolution is requester-visible. Close the ticket when no further support action is required.</p>
-                <Textarea id="resolve" rows={4} className="mt-2" value={summary} onChange={(ev) => setSummary(ev.target.value)} placeholder="What was done, what the requester should know, and any next step." />
+                <StepHeading n={3} title="Resolve">The requester sees this. Close the ticket when no further support action is needed.</StepHeading>
+                <Label htmlFor="resolve" className="sr-only">Resolution</Label>
+                <Textarea id="resolve" rows={4} className="mt-3" value={summary} onChange={(ev) => setSummary(ev.target.value)} placeholder="What was done, what the requester should know, and any next step." />
                 <label className="mt-2 flex items-center gap-2 text-meta text-muted-foreground">
                   <Switch checked={close} onCheckedChange={setClose} aria-label="Close the ticket" /> Close the ticket
                 </label>
@@ -284,7 +290,7 @@ function TicketContext({ ticket, loading, onOpenFull }: { ticket: Ticket | null;
           <Button variant="outline" size="sm" onClick={onOpenFull}>Open full ticket <ExternalLink /></Button>
         </div>
         {ticket?.Timeline?.length ? (
-          <ol className="mt-3 grid gap-2 lg:grid-cols-3">
+          <ol className="mt-3 grid gap-2 @3xl:grid-cols-3">
             {ticket.Timeline.slice(-3).map((item, i) => (
               <li key={i} className="rounded-lg border bg-surface p-3">
                 <p className="text-2xs text-subtle-foreground">{item.Actor === "support" ? "Support" : "Requester"} · {when(item.At)}</p>

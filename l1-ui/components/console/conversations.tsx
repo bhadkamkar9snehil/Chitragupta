@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Bot, CheckCircle2, Inbox, MessagesSquare, ThumbsDown, Ticket as TicketIcon, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Message, type Session, type Ticket, type User } from "@/lib/api";
-import { ago, outcomeLabel, ticketLabel, whenShort } from "@/lib/format";
+import { ago, outcomeLabel, plain, ticketLabel, whenShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, Empty, SearchInput, Skeleton, StatePill } from "@/components/ui/primitives";
@@ -89,13 +89,13 @@ export function ConversationsView({ view, onView, onCounts, showPicker, sessionI
                 {sessionId === s.ID && <span className="absolute inset-y-2.5 left-0 w-0.5 rounded-full bg-signal" aria-hidden />}
                 <Avatar name={s.UserName || "?"} className="mt-0.5 size-7" />
                 <span className="min-w-0 flex-1">
-                  <span className="flex items-baseline gap-2">
-                    <span className="truncate text-meta font-medium">{s.Title || "New conversation"}</span>
-                    <span className="ml-auto shrink-0 font-mono text-2xs text-subtle-foreground">{ago(s.ModifiedOn)}</span>
+                  <span className="flex items-start gap-2">
+                    <span className="line-clamp-2 text-meta font-medium leading-snug">{s.Title || "New conversation"}</span>
+                    <span className="ml-auto shrink-0 pt-px text-2xs tabular-nums text-subtle-foreground">{ago(s.ModifiedOn)}</span>
                   </span>
-                  <span className="block truncate text-xs text-muted-foreground">{s.UserName ?? "Unknown"} · {s.LastMessage}</span>
+                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">{s.UserName ?? "Unknown"} · {plain(s.LastMessage)}</span>
                   <span className="mt-1.5 flex flex-wrap gap-1 font-mono text-2xs">
-                    {s.TicketNo ? <span className="rounded bg-signal-soft px-1.5 py-0.5 text-signal">{ticketLabel(s.TicketNo)}</span> : <span className="rounded bg-surface-3 px-1.5 py-0.5 text-muted-foreground">answered</span>}
+                    {s.TicketNo ? <span className="rounded bg-signal-soft px-1.5 py-0.5 text-signal">{ticketLabel(s.TicketNo)}</span> : <span className="rounded bg-surface-3 px-1.5 py-0.5 text-muted-foreground">answered by assistant</span>}
                     {s.Status === "resolved" && <span className="rounded bg-surface-3 px-1.5 py-0.5 text-muted-foreground">solved{s.Rating ? ` · ${s.Rating}★` : ""}</span>}
                     {(s.Negative ?? 0) > 0 && <span className="rounded bg-destructive-soft px-1.5 py-0.5 text-destructive">{s.Negative} not helpful</span>}
                   </span>
@@ -122,7 +122,7 @@ export function ConversationsView({ view, onView, onCounts, showPicker, sessionI
         )}
       </div>
 
-      {selected && <Details session={selected} others={all.filter((s) => s.UserID === selected.UserID && s.ID !== selected.ID).slice(0, 5)} onSelect={onSelect} onOpenTicket={onOpenTicket} onOpenRun={onOpenRun} />}
+      {selected && <Details key={selected.ID} session={selected} others={all.filter((s) => s.UserID === selected.UserID && s.ID !== selected.ID).slice(0, 5)} onSelect={onSelect} onOpenTicket={onOpenTicket} onOpenRun={onOpenRun} />}
     </div>
   );
 }

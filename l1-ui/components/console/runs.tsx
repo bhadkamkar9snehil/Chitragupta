@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Bot, Database, PanelLeftClose, PanelLeftOpen, Radio } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bot, Database, PanelLeftClose, PanelLeftOpen, Radio } from "lucide-react";
 import { toast } from "sonner";
 import { api, ops, type Run, type Ticket, type TraceEvent } from "@/lib/api";
 import { ago, duration, human, outcomeLabel, ticketLabel, when, whenShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Empty, SearchInput, Skeleton, StatePill, Tag } from "@/components/ui/primitives";
+import { Empty, SearchInput, Skeleton, StatePill } from "@/components/ui/primitives";
 import { RichText } from "@/components/helpdesk/rich-text";
 import { Json } from "./live";
 import { InspectorBlock } from "./inspect";
@@ -45,9 +45,10 @@ export function RunsView({ runId, onSelect, onLive, onOpenTicket, onOpenL3 }: { 
 
 
   // Needs-human-action and L3 escalation both mean a person must act: one filter.
-  const group = (t: string | null) => (t === "NEEDS_HUMAN_ACTION" || t === "L3_ESCALATION" ? "PEOPLE" : t ?? "");
-  const outcomes = useMemo(() => [...new Set((runs ?? []).map((r) => group(r.ResponseType)))], [runs]);
-  const shown = (runs ?? []).filter((r) => !outcome || group(r.ResponseType) === outcome);
+  // A run still in flight has no ResponseType yet; it gets its own "Working" filter, never a second "All".
+  const group = (r: Run) => (r.IsActive || !r.ResponseType ? "WORKING" : r.ResponseType === "NEEDS_HUMAN_ACTION" || r.ResponseType === "L3_ESCALATION" ? "PEOPLE" : r.ResponseType);
+  const outcomes = useMemo(() => [...new Set((runs ?? []).map(group))], [runs]);
+  const shown = (runs ?? []).filter((r) => !outcome || group(r) === outcome);
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -56,10 +57,10 @@ export function RunsView({ runId, onSelect, onLive, onOpenTicket, onOpenL3 }: { 
           <PageTitle icon={Bot} title="L2 investigations" meta={runs ? `${runs.length} runs · newest first` : "loading"}>
           </PageTitle>
           <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ticket, subject or route" aria-label="Search runs" />
-          <div className="flex gap-1 overflow-x-auto" role="tablist">
+          <div className="flex flex-wrap gap-1" role="tablist">
             {["", ...outcomes].map((o) => (
               <button key={o || "all"} role="tab" aria-selected={outcome === o} onClick={() => setOutcome(o)} className={cn("min-h-11 shrink-0 rounded-md px-2 text-meta text-muted-foreground hover:bg-surface-2 sm:min-h-7", outcome === o && "bg-surface-3 font-medium text-foreground")}>
-                {o === "PEOPLE" ? "Handed to people" : o ? outcomeLabel(o) : "All"} <span className="text-2xs text-subtle-foreground">{(runs ?? []).filter((r) => !o || group(r.ResponseType) === o).length}</span>
+                {o === "PEOPLE" ? "Handed to people" : o === "WORKING" ? "Working" : o ? outcomeLabel(o) : "All"} <span className="text-2xs tabular-nums text-subtle-foreground">{(runs ?? []).filter((r) => !o || group(r) === o).length}</span>
               </button>
             ))}
           </div>
@@ -155,7 +156,7 @@ function RunWorkspace({ id, onBack, onLive, onOpenTicket, onOpenL3, drawerOpen, 
         </div>
       </header>
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-        {tab === "story" && <RunStory run={run} onOpenTicket={onOpenTicket} onOpenL3={onOpenL3} onHow={() => setTab("circuit")} />}
+        {tab === "story" && <RunStory run={run} onLive={onLive} onOpenTicket={onOpenTicket} onOpenL3={onOpenL3} onHow={() => setTab("circuit")} />}
         {tab === "circuit" && (
           <div className="p-4 lg:p-6">
             <InvestigationCircuit run={run} events={run.Events} trail={run.Trail ?? null} live={false} titled={false} />
@@ -205,7 +206,7 @@ function RunWorkspace({ id, onBack, onLive, onOpenTicket, onOpenL3, drawerOpen, 
 
 // The investigation as a story, outcome first: what happened, where it came from, what L2 found,
 // what happens next. "How" (the circuit, Jev decisions, audited reads) is the next tab.
-function RunStory({ run, onOpenTicket, onOpenL3, onHow }: { run: Run; onOpenTicket: (id: string) => void; onOpenL3: (ticketNo: string) => void; onHow: () => void }) {
+function RunStory({ run, onLive, onOpenTicket, onOpenL3, onHow }: { run: Run; onLive: (id: string) => void; onOpenTicket: (id: string) => void; onOpenL3: (ticketNo: string) => void; onHow: () => void }) {
   const [ticket, setTicket] = useState<Ticket | null>(null);
   useEffect(() => {
     let alive = true;
@@ -230,7 +231,7 @@ function RunStory({ run, onOpenTicket, onOpenL3, onHow }: { run: Run; onOpenTick
     <div className="mx-auto max-w-3xl space-y-3 p-4 lg:p-6">
       <Step n={1} title="Outcome">
         <div className="flex flex-wrap items-center gap-2">
-          <Outcome type={run.ResponseType} active={run.IsActive} />
+          {!run.IsActive && <Outcome type={run.ResponseType} />}
           {ticket && <StatePill tone={ticket.StateTone}>{ticket.StateLabel}</StatePill>}
           {run.CompletedOn && <span className="font-mono text-2xs text-subtle-foreground">{when(run.CompletedOn)} · took {duration(run.Seconds)}</span>}
         </div>
@@ -265,14 +266,14 @@ function RunStory({ run, onOpenTicket, onOpenL3, onHow }: { run: Run; onOpenTick
             {run.Findings && <div><p className="mb-1 text-xs text-subtle-foreground">Findings</p><RichText compact>{run.Findings}</RichText></div>}
           </div>
         ) : <p className="text-sm text-muted-foreground">{run.IsActive ? "Still investigating." : "No findings were recorded."}</p>}
-        <button onClick={onHow} className="mt-3 font-mono text-xs text-signal hover:underline">How it found this →</button>
+        <button onClick={onHow} className="mt-3 inline-flex items-center gap-1 rounded text-meta font-medium text-signal underline-offset-4 hover:underline">How it found this <ArrowRight className="size-3.5" aria-hidden /></button>
       </Step>
 
       <Step n={4} title="What happens next" last>
         <p className={cn("text-sm", next.tone === "warn" ? "text-warning" : next.tone === "signal" ? "text-signal" : "text-foreground")}>{next.text}</p>
         {run.Resolution && <div className="mt-3"><p className="mb-1 text-xs text-subtle-foreground">Recommended action</p><RichText compact>{run.Resolution}</RichText></div>}
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={() => onOpenTicket(run.TicketID)}>Open ticket</Button>
+          {run.IsActive ? <Button size="sm" onClick={() => onLive(run.ID)}>Follow live</Button> : <Button size="sm" variant="outline" onClick={() => onOpenTicket(run.TicketID)}>Open ticket</Button>}
           {run.EscalateToL3 && run.TicketNo && <Button size="sm" onClick={() => onOpenL3(run.TicketNo!)}>Open its L3 escalation</Button>}
         </div>
       </Step>
