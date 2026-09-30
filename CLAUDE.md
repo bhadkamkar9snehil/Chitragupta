@@ -13,7 +13,7 @@ This file is a thin entry point by design: durable rules live in `AGENTS.md` fir
 
 ## Current deployment facts that matter
 
-- Branch: `main` only.
+- Branches: `main` (Hermes version, deployed) and `no-hermes` (handrolled engine, plan in `docs/plans/no-hermes-architecture.md`). Fixes to shared code land on `main` and merge into `no-hermes`.
 - Live lifecycle: centralized Kanban state machine in `Model_Bench/l2_pipeline_runtime.py`.
 - Pipeline WIP: up to `8` active runs (`L2_MAX_PIPELINE_WIP`); exactly one RUNNING local-model (Qwen) slot, waiting threshold `4`.
 - Priorities: review `30`, rework `20`, new investigation `10`.
