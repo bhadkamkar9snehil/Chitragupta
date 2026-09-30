@@ -13,7 +13,8 @@ Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $work | Out-Null
 $env:GBRAIN_HOME = $work
 $env:LMSTUDIO_BASE_URL = $LmStudio
-function G { & $Gbrain @args 2>&1 | Where-Object { $_ -notmatch 'UPGRADE_AVAILABLE|self-upgrade' } }
+function G { $ErrorActionPreference = 'Continue'  # gbrain writes progress to stderr; 'Stop' would turn that into a failure
+    & $Gbrain @args 2>&1 | Where-Object { $_ -notmatch 'UPGRADE_AVAILABLE|self-upgrade' } }
 
 G init --pglite --embedding-model lmstudio:text-embedding-nomic-embed-text-v1.5 --embedding-dimensions 768 | Out-Null
 $pack = "$work\.gbrain\schema-packs\xbatch-world"
@@ -22,8 +23,15 @@ Copy-Item "$root\deploy\gbrain\xbatch-world\pack.yaml" "$pack\pack.yaml"
 G schema validate xbatch-world
 G schema use xbatch-world | Out-Null
 G sources add xstudio-knowledge --path $root --name "XBatch world" --federated | Out-Null
-G sync --source xstudio-knowledge --repo $root --src-subpath Knowledge/world --no-pull --no-extract --yes --json
-G embed --stale --include-null-signature
+# Retry until the source is fully imported and embedded (a dropped LM Studio link fails individual pages).
+for ($try = 1; $try -le 4; $try++) {
+    G sync --source xstudio-knowledge --repo $root --src-subpath Knowledge/world --no-pull --no-extract --yes --json
+    G embed --stale --include-null-signature
+    $src = (G sources status --json | Out-String | ConvertFrom-Json).sources | Where-Object source_id -eq 'xstudio-knowledge'
+    Write-Host "attempt ${try}: pages $($src.total_pages), chunks $($src.total_chunks), embedded $($src.embedded_chunks)"
+    if ($src.total_pages -ge 2400 -and $src.embedded_chunks -eq $src.total_chunks) { break }
+    if ($try -eq 4) { throw "Index incomplete after 4 attempts (is LM Studio reachable?)." }
+}
 # The typed links between pages (writes, reads, calls, ...): a second step after the import, through the same binary.
 $env:CHITRAGUPTA_GBRAIN_BIN = $Gbrain; $env:CHITRAGUPTA_GBRAIN_HOME = $work; Remove-Item env:CHITRAGUPTA_GBRAIN_URL -ErrorAction SilentlyContinue
 python "$root\Model_Bench\world_links.py"
