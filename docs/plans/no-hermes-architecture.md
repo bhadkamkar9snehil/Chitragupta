@@ -54,6 +54,7 @@ What Hermes cost: WSL + systemd, the CRLF `.env` bug, the native-Windows cron-fe
 **D6. Engine as a service: WinSW.** Off-the-shelf service host (an exe plus one XML) with restart-on-failure and log rotation; not a hand-written supervisor. API and engine stay separate services so an API redeploy does not kill a run.
 
 **D7. GBrain: keep, run natively.** Evidence from github.com/garrytan/gbrain:
+- **Correction (2026-09-30, from the live `config.json`):** the live world brain runs on **PostgreSQL 16 + pgvector in WSL** (`engine: postgres`, GBrain 0.50.5.0), not PGLite; embeddings are `lmstudio:text-embedding-nomic-embed-text-v1.5`, 768 dimensions, served by the LM Studio host (port 1235 lists it). The world is 2,407 files, far below PGLite's documented ~50k-page range. A second home, `~/.hermes/l2-gbrain`, is provisioned by `sync_l2_gbrain.py` with `init --pglite` (empty today). Packaging Postgres+pgvector on Windows is heavy, so S1 must test **PGLite for the world**. The risk is PGLite being single-process (the same lock failure that broke embedded Qdrant): the API and the engine must reach GBrain through one owner process (`gbrain serve`), not concurrent CLI calls.
 - Requires Bun 1.3.11+, PGLite default store, `GBRAIN_HOME` for state. Commands we use exist: `search`, `sync`, `embed`, `serve`, `sources`, `schema`, `doctor`.
 - The README states no Windows support either way. Open Windows issues exist (#5595 managed-persistence EPERM, #5475 shared-skill publication, #5414 backup restore fsync); all three are in features we do not use, but they show Windows is not yet clean. **Spike S1 is therefore a gate.**
 - Install via git checkout + `bun install && bun link`, not `bun install -g` (postinstall migrations are blocked on global installs).
@@ -88,6 +89,20 @@ Gateways, profiles, the approvals deny-list, the `hermes`/`wsl` wrapper code (`r
 - `hermes-gateway-infra-guardian` runs live but is not in this repo; identify before removal.
 - Which process dispatches Kanban cards today is unverified (`dispatch_in_gateway: false` on `l2-jev-investigator`); moot once we own the dispatcher, but it decides the slot-rule wiring.
 - Branch drift: shared code (SQL, console, Knowledge) diverges; fixes land on `main` and merge into `no-hermes`.
+
+## 8a. Prerequisites (checked 2026-09-30)
+
+Have: .NET SDK 10.0.203, Python 3.14.4 (wheels for `pyodbc` 5.3.0 cp314 and `openai` 3.22.1 download cleanly), Node, Bun 1.4.2 (Windows, WinGet), WiX 5.0.2 (dotnet tool), ODBC Drivers 17 and 18, git; LM Studio on :1235 serving chat models (incl. `qwen/qwen3.5-9b`) and the nomic embedding model; SQL reachable over Tailscale with working credentials.
+
+Needed before building:
+1. **Baseline on `main`:** one live E2E run after the mem0/Qdrant removal, and record outcomes for the seeded tickets. Without it gate G2 has nothing to compare against.
+2. **One engine per database.** `main` (Hermes) and `no-hermes` must never both claim from the same Helpdesk DB. Parity runs need either main's gateways stopped or a restored copy of the DB.
+3. **GBrain S1 inputs:** PGLite vs PostgreSQL for the world (see D7), and single-owner access design.
+4. **A clean Windows target for gate G3** (Windows Sandbox or a spare VM); not this laptop.
+5. **Code signing decision:** unsigned MSI/EXE triggers SmartScreen on other servers.
+6. **`infra-guardian` decision:** it is a Hermes agent acting as an operations watchdog. Proposed replacement: WinSW restart-on-failure plus a health view in the console. Owner to confirm.
+7. **Target-server requirements to state in the install guide:** outbound internet for Jev (TypeSafe), network path to SQL and LM Studio.
+8. **POSIX audit (measured):** only 7 non-test Python files carry `fcntl`/`/home`/`~/.hermes`/`wsl`/`systemctl` coupling (`l2_pipeline_runtime.py` has 20 matching lines); the port is small.
 
 ## 8. Branch policy
 
