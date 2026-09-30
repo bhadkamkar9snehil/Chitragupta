@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using L1Api;
 
+Connections.Apply();  // bootstrap settings file -> environment, before anything reads it
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDataProtection();
 builder.Services.AddSingleton<Settings>();
@@ -283,6 +284,10 @@ app.MapPost("/api/tickets/{id}/follow-up", async (string id, JsonObject body) =>
 
 // ---------------------------------------------------------------- support console
 var admin = app.MapGroup("/api/admin");
+
+admin.MapGet("/connections", () => Connections.Public());
+admin.MapPut("/connections", (JsonObject body) => { Connections.Save(body); return Results.Ok(Connections.Public()); });
+admin.MapPost("/connections/test/{name}", async (string name, JsonObject? body) => await Connections.Test(name, body));
 
 admin.MapGet("/tickets", async (string? q, string? tone, string? area, string? source) =>
 {

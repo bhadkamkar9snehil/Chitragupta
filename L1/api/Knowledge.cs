@@ -12,8 +12,8 @@ public static class Knowledge
     // GBrain runs natively (Bun). Home and binary are overridable; the defaults are where the installer puts them.
     static string Home => Environment.GetEnvironmentVariable("CHITRAGUPTA_GBRAIN_HOME")
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".chitragupta", "gbrain");
-    static string Bin => Environment.GetEnvironmentVariable("CHITRAGUPTA_GBRAIN_BIN")
-        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".bun", "bin", "gbrain.exe");
+    public static string DefaultBin => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".bun", "bin", "gbrain.exe");
+    static string Bin => Environment.GetEnvironmentVariable("CHITRAGUPTA_GBRAIN_BIN") ?? DefaultBin;
 
     public static async Task<List<Source>> Search(string query, string sourceId, int limit, CancellationToken ct = default)
     {

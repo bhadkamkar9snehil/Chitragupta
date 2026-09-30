@@ -21,6 +21,10 @@ from typing import Any, Callable
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import chitragupta_config  # noqa: E402
+
+CONFIG_MTIME = chitragupta_config.apply()  # before the runtime and cards read their environment
+
 import cards  # noqa: E402
 import l2_pipeline_runtime as rt  # noqa: E402
 
@@ -116,6 +120,9 @@ def main() -> None:
     threading.Thread(target=dispatcher, name="dispatcher", daemon=True).start()
     last_audit = 0.0
     while True:
+        if chitragupta_config.apply() != CONFIG_MTIME:  # the Connections panel saved new settings: restart to use them
+            log.info("configuration changed, exiting for the service manager to restart")
+            os._exit(75)
         tick("scout", rt.scout)
         drain()
         if time.time() - last_audit >= AUDIT_EVERY:

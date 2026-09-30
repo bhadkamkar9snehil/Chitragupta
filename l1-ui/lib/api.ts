@@ -163,8 +163,19 @@ export const api = {
     save: (section: keyof AllSettings, body: object) => call<AllSettings>(`admin/settings/${section}`, { method: "PUT", body }),
     models: (draft: Partial<AiSettings>) => call<string[] | { error: string }>("admin/ai/models", { method: "POST", body: draft }),
     test: (draft: Partial<AiSettings>) => call<{ ok: boolean; reply?: string; error?: string; ms: number }>("admin/ai/test", { method: "POST", body: draft }),
+    connections: () => call<Connections>("admin/connections"),
+    saveConnections: (body: object) => call<Connections>("admin/connections", { method: "PUT", body }),
+    testConnection: (name: string, body: object) => call<{ ok: boolean; detail?: string }>(`admin/connections/test/${name}`, { method: "POST", body }),
     searchKnowledge: (text: string) => call<{ Slug: string; Title: string; Type: string; Snippet: string }[]>("admin/knowledge/search", { method: "POST", body: { q: text } }),
   },
+};
+
+export type Connections = {
+  sql: { server?: string | null; user?: string | null; password_set: boolean };
+  lm_studio: { base_url?: string | null };
+  jev: { api_key_set: boolean; base_url?: string | null };
+  gbrain: { home?: string | null; bin?: string | null };
+  path: string;
 };
 
 export type TurnEvent =

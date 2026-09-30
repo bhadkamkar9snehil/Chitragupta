@@ -11,8 +11,9 @@ public static class Db
         $"Server={Env("MSSQL_MCP_SERVER", "10.2.6.204")};Database={db};User Id={Env("MSSQL_MCP_USER", "sa")};" +
         $"Password={Env("MSSQL_MCP_PASSWORD")};TrustServerCertificate=True;Encrypt=True;Connect Timeout=30";
 
-    public static readonly string Helpdesk = Conn("XStudio_Helpdesk");
-    public static readonly string Config = Conn("XStudio_Configuration_Xbatch");
+    // Read per call: the Connections panel can change the server or password without a restart.
+    public static string Helpdesk => Conn("XStudio_Helpdesk");
+    public static string Config => Conn("XStudio_Configuration_Xbatch");
 
     public static async Task<List<Dictionary<string, object?>>> Query(string cs, string sql, params (string, object?)[] ps)
     {

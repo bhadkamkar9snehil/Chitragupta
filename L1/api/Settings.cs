@@ -17,7 +17,7 @@ public class Settings(IDataProtectionProvider dp)
         ["ai"] = new JsonObject
         {
             ["provider"] = "lmstudio", ["kind"] = "openai",
-            ["baseUrl"] = Environment.GetEnvironmentVariable("L1_LMSTUDIO_URL") ?? "http://100.111.69.102:1235/v1",
+            ["baseUrl"] = Environment.GetEnvironmentVariable("L1_LMSTUDIO_URL") ?? Environment.GetEnvironmentVariable("LMSTUDIO_BASE_URL") ?? "http://localhost:1234/v1",
             ["model"] = Environment.GetEnvironmentVariable("L1_QWEN_MODEL") ?? "qwen/qwen3.5-9b",
             ["temperature"] = 0.2, ["maxTokens"] = 600, ["command"] = "codex",
         },

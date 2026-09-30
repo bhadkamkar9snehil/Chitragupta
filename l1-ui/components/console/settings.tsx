@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bot, BookOpen, Check, Code2, Copy, Loader2, Palette, Plus, RefreshCw, Settings as SettingsIcon, Trash2 } from "lucide-react";
+import { Bot, BookOpen, Check, Code2, Copy, Loader2, Palette, Plug, Plus, RefreshCw, Settings as SettingsIcon, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { api, type AiSettings, type AllSettings } from "@/lib/api";
+import { api, type AiSettings, type AllSettings, type Connections } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { PageTitle, Panel } from "@/components/ui/viz";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ type Preset = { id: string; name: string; kind: AiSettings["kind"]; baseUrl: str
 
 // Every option here is an officially supported API. A ChatGPT plan can only be used through the Codex CLI.
 const PRESETS: Preset[] = [
-  { id: "lmstudio", name: "LM Studio", kind: "openai", baseUrl: "http://100.111.69.102:1235/v1", key: false, note: "Local models over LM Studio's OpenAI-compatible server." },
+  { id: "lmstudio", name: "LM Studio", kind: "openai", baseUrl: "http://localhost:1234/v1", key: false, note: "Local models over LM Studio's OpenAI-compatible server." },
   { id: "ollama", name: "Ollama", kind: "openai", baseUrl: "http://localhost:11434/v1", key: false, note: "Local models through Ollama's OpenAI-compatible endpoint." },
   { id: "openai", name: "OpenAI", kind: "openai", baseUrl: "https://api.openai.com/v1", key: true, note: "OpenAI API key from platform.openai.com." },
   { id: "anthropic", name: "Anthropic", kind: "anthropic", baseUrl: "https://api.anthropic.com/v1", key: true, note: "Claude models with an Anthropic API key." },
@@ -26,6 +26,7 @@ const PRESETS: Preset[] = [
 ];
 
 const TABS = [
+  { id: "connections", label: "Connections", icon: Plug },
   { id: "ai", label: "AI provider", icon: Bot },
   { id: "knowledge", label: "Knowledge", icon: BookOpen },
   { id: "appearance", label: "Appearance", icon: Palette },
@@ -34,7 +35,7 @@ const TABS = [
 
 export function SettingsView({ tab, onTab }: { tab?: string; onTab: (t: string) => void }) {
   const [settings, setSettings] = useState<AllSettings | null>(null);
-  const current = TABS.some((t) => t.id === tab) ? tab! : "ai";
+  const current = TABS.some((t) => t.id === tab) ? tab! : "connections";
 
   useEffect(() => {
     api.admin.settings().then(setSettings).catch((e: Error) => toast.error(e.message));
@@ -43,7 +44,7 @@ export function SettingsView({ tab, onTab }: { tab?: string; onTab: (t: string) 
   return (
     <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-5xl px-4 py-6 lg:px-8">
-        <PageTitle icon={SettingsIcon} title="Settings" meta="assistant model · knowledge · accent colour · embed" />
+        <PageTitle icon={SettingsIcon} title="Settings" meta="connections · assistant model · knowledge · accent colour · embed" />
         <div className="mt-5 flex flex-col gap-6 md:flex-row">
           <nav className="flex gap-1 overflow-x-auto md:w-48 md:shrink-0 md:flex-col" aria-label="Settings sections">
             {TABS.map((t) => (
@@ -58,7 +59,9 @@ export function SettingsView({ tab, onTab }: { tab?: string; onTab: (t: string) 
             ))}
           </nav>
           <div className="min-w-0 flex-1">
-            {!settings ? (
+            {current === "connections" ? (
+              <ConnectionsForm />
+            ) : !settings ? (
               <Skeleton className="h-96" />
             ) : current === "ai" ? (
               <AiForm key={JSON.stringify(settings.ai)} initial={settings.ai} onSaved={setSettings} />
@@ -91,6 +94,89 @@ function Field({ label, hint, htmlFor, children }: { label: string; hint?: strin
       <Label htmlFor={htmlFor}>{label}</Label>
       <div className="mt-1.5">{children}</div>
       {hint && <p className="mt-1.5 text-xs text-subtle-foreground">{hint}</p>}
+    </div>
+  );
+}
+
+// What a fresh install needs after it launches. Saved to the server's chitragupta.json; the engine restarts itself to use it.
+function ConnectionsForm() {
+  const [initial, setInitial] = useState<Connections | null>(null);
+  const [draft, setDraft] = useState<Record<string, Record<string, string>>>({});
+  const [result, setResult] = useState<Record<string, { ok: boolean; text: string }>>({});
+  const [busy, setBusy] = useState("");
+
+  useEffect(() => {
+    api.admin.connections().then(setInitial).catch((e: Error) => toast.error(e.message));
+  }, []);
+  if (!initial) return <Skeleton className="h-96" />;
+
+  const value = (s: keyof Connections, k: string) => draft[s]?.[k] ?? ((initial[s] as Record<string, unknown>)?.[k] as string | null | undefined) ?? "";
+  const set = (s: string, k: string, v: string) => setDraft((d) => ({ ...d, [s]: { ...d[s], [k]: v } }));
+  const dirty = Object.values(draft).some((sec) => Object.values(sec).some((v) => v !== undefined));
+  const test = async (name: string) => {
+    setBusy(name);
+    try {
+      const r = await api.admin.testConnection(name, draft);
+      setResult((x) => ({ ...x, [name]: { ok: r.ok, text: r.detail ?? (r.ok ? "Connected" : "Failed") } }));
+    } catch (e) {
+      setResult((x) => ({ ...x, [name]: { ok: false, text: (e as Error).message } }));
+    } finally {
+      setBusy("");
+    }
+  };
+  const save = async () => {
+    setBusy("save");
+    try {
+      setInitial(await api.admin.saveConnections(draft));
+      setDraft({});
+      toast.success("Connections saved", { description: "The engine restarts itself to use them." });
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+  const footer = (name: string) => (
+    <>
+      {result[name] && <span className={cn("mr-auto text-meta", result[name].ok ? "text-success" : "text-destructive")} role="status">{result[name].text}</span>}
+      <Button variant="outline" disabled={!!busy} onClick={() => test(name)}>
+        {busy === name && <Loader2 className="animate-spin" />} Test connection
+      </Button>
+      <Button disabled={!dirty || !!busy} onClick={save}>Save</Button>
+    </>
+  );
+
+  return (
+    <div className="space-y-4">
+      <Card title="Database" description="The XStudio SQL Server holding the Helpdesk and XBatch databases." footer={footer("sql")}>
+        <Field label="Server" htmlFor="sqlServer" hint="Host or IP, with the port if it is not 1433.">
+          <Input id="sqlServer" value={value("sql", "server")} onChange={(e) => set("sql", "server", e.target.value)} spellCheck={false} />
+        </Field>
+        <Field label="User" htmlFor="sqlUser">
+          <Input id="sqlUser" value={value("sql", "user")} onChange={(e) => set("sql", "user", e.target.value)} spellCheck={false} />
+        </Field>
+        <Field label="Password" htmlFor="sqlPassword" hint={`Stored in ${initial.path} on this server. Leave empty to keep the current one.`}>
+          <Input id="sqlPassword" type="password" autoComplete="off" value={draft.sql?.password ?? ""} onChange={(e) => set("sql", "password", e.target.value)} placeholder={initial.sql.password_set ? "••••••••••••" : "Password"} />
+        </Field>
+      </Card>
+      <Card title="Language model server" description="LM Studio (or any OpenAI-compatible server) running the investigation model and the knowledge embeddings." footer={footer("lm_studio")}>
+        <Field label="Server URL" htmlFor="lmUrl" hint="Ending in /v1.">
+          <Input id="lmUrl" value={value("lm_studio", "base_url")} onChange={(e) => set("lm_studio", "base_url", e.target.value)} placeholder="http://localhost:1234/v1" spellCheck={false} />
+        </Field>
+      </Card>
+      <Card title="Jev" description="The System One service that triages tickets and reviews proposals." footer={footer("jev")}>
+        <Field label="API key" htmlFor="jevKey" hint="Needs outbound internet from this server. Leave empty to keep the current key.">
+          <Input id="jevKey" type="password" autoComplete="off" value={draft.jev?.api_key ?? ""} onChange={(e) => set("jev", "api_key", e.target.value)} placeholder={initial.jev.api_key_set ? "••••••••••••" : "Paste key"} />
+        </Field>
+      </Card>
+      <Card title="Knowledge index" description="GBrain, the searchable XBatch world." footer={footer("gbrain")}>
+        <Field label="Program" htmlFor="gbBin" hint="Path to gbrain.exe. Empty uses the installed one.">
+          <Input id="gbBin" value={value("gbrain", "bin")} onChange={(e) => set("gbrain", "bin", e.target.value)} spellCheck={false} />
+        </Field>
+        <Field label="Data folder" htmlFor="gbHome" hint="Where the index is kept. Empty uses the default.">
+          <Input id="gbHome" value={value("gbrain", "home")} onChange={(e) => set("gbrain", "home", e.target.value)} spellCheck={false} />
+        </Field>
+      </Card>
     </div>
   );
 }
