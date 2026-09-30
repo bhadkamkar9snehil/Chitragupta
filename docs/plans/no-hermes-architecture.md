@@ -137,7 +137,47 @@ Live findings: a ticket that hit the 400 crashed its first card and the runtime'
 
 ## 10. To do later (owner's list, 2026-09-30)
 
-1. **GBrain migration gap.** The native index was rebuilt from the committed world (2,406 pages, same count as the WSL brain), not copied. The typed links step (`Model_Bench/world_links.py`, loads `Knowledge/world/links.jsonl`) was not run on the native index, so `get_links`/graph walks return nothing there. Run it (and `gbrain extract --stale`) in `build-brain.ps1`, rebuild `brain.zip`, and re-run `Model_Bench/e2e/run_world.py` (the 10 retrieval cases) before calling GBrain migrated.
-2. **Logs and history continuity.** Keep the same logging principle as before (call trace, observer events, worker logs, trace drain to SQL, readable ticket notes) and confirm every stream still lands where the console reads it; decide what to do with the old WSL logs and Hermes Kanban history (runs and outcomes are already in SQL).
+1. **GBrain migration gap (being fixed 2026-09-30).** The native index was rebuilt from the committed world (2,406 pages, same count as the WSL brain), not copied. The typed links step (`Model_Bench/world_links.py`, loads `Knowledge/world/links.jsonl`) was not run on the native index, so `get_links`/graph walks return nothing there. Run it (and `gbrain extract --stale`) in `build-brain.ps1`, rebuild `brain.zip`, and re-run `Model_Bench/e2e/run_world.py` (the 10 retrieval cases) before calling GBrain migrated.
+2. **Logs and history continuity.** Keep the same logging principle as before (call trace, observer events, worker logs, trace drain to SQL, readable ticket notes) and confirm every stream still lands where the console reads it; old WSL logs and Hermes Kanban history are NOT migrated (owner decision: not needed; runs and outcomes are already in SQL).
 3. **Docs.** Update README, AGENTS.md/CLAUDE.md, the state-machine contract, `Knowledge/` design docs and the deploy notes to describe the Hermes-free system.
 4. **Stronger L1.** Not every conversation should become an L2 ticket. Define what L1 answers itself (how-to, where-to-find, status of the user's own tickets), what it asks back for (missing heat/billet/screen/time), and what becomes a ticket (real data discrepancy or fault). Add an explicit gate before ticket creation, with an evaluation set of past conversations to measure it (answered correctly vs. wrongly escalated vs. wrongly not escalated). Evaluate using Jev at L1 for this decision: its probability outputs fit a gate with a threshold, and L1 already calls Jev for triage.
+
+## 11. L1 gate: what L1 answers, asks, or turns into a ticket
+
+Constraint that shapes everything: the only models are **Qwen 3.5 9B** (local, slow, unreliable at decisions and tools) and **Jev** (cloud; good at probabilities and yes/no judgments, cannot write text). So: Jev judges, code decides with thresholds, Qwen only phrases the final words. No decision ever rests on Qwen.
+
+**Three outcomes per turn (already the shape of L1):** ANSWER, ASK, TICKET. The gate makes TICKET the exception, not the default.
+
+**What L1 can do without L2**
+1. Explain and navigate: which screen or report shows something, how XBatch behaves (from the GBrain world; Jev already keeps only relevant pages at a 0.60 gate).
+2. Explain the requester's own tickets and their status.
+3. Collect what is missing before anything else (see the question bank below).
+4. Offer a known fix when an approved solution article matches (KB Candidate -> Approved), and ask the requester to confirm it worked.
+5. Answer simple fact questions from the same harness-owned fact probes L2 already uses without Qwen (4 of 7 re-run tickets were answered that way in about 70 s). L1 would reuse that code path, never model-written SQL. This is the biggest lever and needs a decision on read access from L1.
+
+**Gate signals (one batched Jev call per turn, typed scores, not free text)**
+- is this a how-to / where-to-find question (yes -> ANSWER if a knowledge hit passes the relevance gate)
+- does it report a data discrepancy or fault
+- does it name an identifier (heat, billet, work order, screen) and a time
+- is it a duplicate of one of the requester's open tickets (then add to that ticket, no new one)
+- urgency / plant impact
+- how confident Jev is in each of the above
+
+**Rule sketch (thresholds set from data, not guessed)**
+- ANSWER when how-to score is high and a relevant knowledge page exists.
+- ASK when it looks like a fault but a required identifier or time is missing. At most two questions, then ticket with what we have.
+- TICKET when fault score is high and the needed fields are present, when the requester says the answer did not help or insists, or when Jev is unsure on anything plant-affecting (wrong non-escalation costs more than an extra ticket, so start conservative).
+- If Jev is down: never guess. ASK for missing fields, otherwise TICKET.
+
+**How to make the questions (two different kinds)**
+1. *Questions we ask Jev (the gate).* A small fixed bank written once by us: one concern per question, short, with explicit definitions and examples, answered as a score or label. Versioned in Git and tested against the labelled conversation set before use. Jev never writes free text here.
+2. *Questions we ask the requester.* Not invented by Qwen. Each problem type has a checklist of required fields (heat or billet or work order number, screen or report name, when, what they expected, what they see). Jev labels the problem type and which fields are missing; the question text comes from fixed templates; Qwen only smooths the wording. One question at a time. The checklists are generated from the world (process_world and task router already know which identifiers each route needs) and reviewed by a person once.
+
+**Evaluation before switching anything on**
+- Build a labelled set from real history: the existing conversations and tickets, labelled with what actually happened (L2 resolved, L2 escalated to L3, needed human action, answered at L1 and rated well or badly).
+- Measure: containment (answered at L1 and stayed answered), wrongly escalated, wrongly not escalated, requester rating, time to answer.
+- Roll out in stages: shadow mode (compute the gate, change nothing, compare), then enforce for low-risk how-to only, then widen class by class.
+- Log every gate decision with the Jev scores, the final L2 outcome and the requester's feedback; review regularly; move frequent resolved L2 cases into KB articles so L1 can answer them next time.
+
+**Open questions for the owner:** the acceptable missed-escalation rate, who reviews the question bank and checklists, and whether L1 may run the read-only fact probes.
+
