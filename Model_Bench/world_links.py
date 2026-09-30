@@ -22,7 +22,7 @@ def prune(brain: Brain, pages: list[dict]) -> int:
     """GBrain sync keeps pages whose files were removed on a full import (a key merged away).
     The world is generated, so a world page with no file is stale: soft-delete it."""
     world_dir = LINKS.parent
-    files = {("knowledge/world/" + str(p.relative_to(world_dir).with_suffix(""))).lower() for p in world_dir.rglob("*.md")}
+    files = {("knowledge/world/" + p.relative_to(world_dir).with_suffix("").as_posix()).lower() for p in world_dir.rglob("*.md")}
     removed = 0
     for slug in (p["slug"] for p in pages if p["slug"].startswith("knowledge/world/") and p["slug"].lower() not in files):
         try:

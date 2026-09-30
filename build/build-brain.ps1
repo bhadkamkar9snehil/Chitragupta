@@ -24,6 +24,10 @@ G schema use xbatch-world | Out-Null
 G sources add xstudio-knowledge --path $root --name "XBatch world" --federated | Out-Null
 G sync --source xstudio-knowledge --repo $root --src-subpath Knowledge/world --no-pull --no-extract --yes --json
 G embed --stale --include-null-signature
+# The typed links between pages (writes, reads, calls, ...): a second step after the import, through the same binary.
+$env:CHITRAGUPTA_GBRAIN_BIN = $Gbrain; $env:CHITRAGUPTA_GBRAIN_HOME = $work; Remove-Item env:CHITRAGUPTA_GBRAIN_URL -ErrorAction SilentlyContinue
+python "$root\Model_Bench\world_links.py"
+if ($LASTEXITCODE -ne 0) { throw "world_links.py reported missing link endpoints." }
 $token = [regex]::Match((G auth create chitragupta --scopes read | Out-String), 'gbrain_[A-Za-z0-9_\-]+').Value
 if (-not $token) { throw "Could not create the access token." }
 Set-Content "$PSScriptRoot\cache\brain.token" $token -NoNewline
