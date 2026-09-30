@@ -2,7 +2,7 @@
 
 Read `AGENTS.md` first. It is the stable operational contract for this repo.
 
-Do **not** duplicate the lifecycle architecture here. The authoritative sources are:
+This file is a thin entry point by design: durable rules live in `AGENTS.md` first, and this file only digests them. Do **not** duplicate the lifecycle architecture here. The authoritative sources are:
 
 - `AGENTS.md` — current agent operating contract.
 - `Knowledge/L2_PIPELINE_STATE_MACHINE.md` — normative ticket lifecycle.
@@ -36,6 +36,20 @@ Do **not** duplicate the lifecycle architecture here. The authoritative sources 
 - The generated SQL full-install bundle includes the `25` and `55` hardening sources.
 - `.gitattributes` forces LF on `*.sh` and `*.sql` because Windows CRLF conversion broke WSL scripts and install reproducibility.
 
+## Working agreements (full text: `AGENTS.md` §1b)
+
+- End goal: a self-sustaining L2 helpdesk. Jev decides and selects, the harness does the heavy lifting, Qwen only writes when reasoning is needed. Never tailor anything to synthetic test tickets.
+- Research and reuse before building; never guess settings. Dev SQL `10.2.6.204` is the owner's own: act without asking, never hand the owner commands you can run, never store a pasted credential.
+- Do not restart gateways, toggle cron, or load/unload LM Studio models unless asked. Reuse `benchmark_l2_performance.py`, `seed_real_xbatch_tickets.py`, `reset_l2_test_tickets.py`; no throwaway scripts.
+- `main` only; commit and push every finished change; audit other agents' branches and claims locally before merging. Research goes to Antigravity/Codex via `Agent_Comms/`, not to your own subagents.
+- Report in IST, plain English, short bullets.
+
+## L1 console facts (full text: `AGENTS.md` §19)
+
+- `l1-ui/` (Next.js, :3417) plus `L1/api/` (.NET, :5116); run both as standalone processes and restart the API after editing `L1/api/*.cs`.
+- One `QueueRow`, one `Outcome` chip, charts from `components/ui/charts.tsx`; mono only for ids and numbers; amber only where a person must act.
+- `L3Status` allows `Open/Assigned/InProgress/Resolved/Rejected` only; ticket `StateLabel` is requester-facing.
+
 ## Before changing the ticket pipeline
 
 Read:
@@ -59,6 +73,8 @@ python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
 python Model_Bench/benchmark_l2_performance.py --hours 2   # live health; extend it, do not write ad hoc scripts
 python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
 ```
+
+Console changes: `npx tsc --noEmit` and `npx eslint components lib` in `l1-ui/`, then check the screens at 1600, 768 and 375 px against real tickets (`AGENTS.md` §19).
 
 ## Historical material
 
