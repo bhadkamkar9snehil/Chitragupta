@@ -11,7 +11,15 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDataProtection();
 builder.Services.AddSingleton<Settings>();
 var app = builder.Build();
-await Db.Migrate();
+// The API must start with nothing connected; SQL is configured after launch. Migrate in the background and retry.
+_ = Task.Run(async () =>
+{
+    while (true)
+    {
+        try { await Db.Migrate(); return; }
+        catch (Exception e) { app.Logger.LogWarning("SQL unavailable, migration will retry in 30s: {Message}", e.Message); await Task.Delay(30_000); }
+    }
+});
 
 var json = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNamingPolicy = null };
 
