@@ -18,6 +18,7 @@ public static class Connections
         ("lm_studio", "base_url", "LMSTUDIO_BASE_URL", false),
         ("jev", "api_key", "TYPESAFE_API_KEY", true), ("jev", "base_url", "TYPESAFE_BASE_URL", false),
         ("gbrain", "url", "CHITRAGUPTA_GBRAIN_URL", false), ("gbrain", "token", "CHITRAGUPTA_GBRAIN_TOKEN", true),
+        ("gbrain", "client_id", "CHITRAGUPTA_GBRAIN_CLIENT_ID", false), ("gbrain", "client_secret", "CHITRAGUPTA_GBRAIN_CLIENT_SECRET", true),
         ("gbrain", "home", "CHITRAGUPTA_GBRAIN_HOME", false), ("gbrain", "bin", "CHITRAGUPTA_GBRAIN_BIN", false),
     ];
 

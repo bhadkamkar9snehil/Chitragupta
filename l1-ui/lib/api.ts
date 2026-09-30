@@ -174,7 +174,7 @@ export type Connections = {
   sql: { server?: string | null; user?: string | null; password_set: boolean };
   lm_studio: { base_url?: string | null };
   jev: { api_key_set: boolean; base_url?: string | null };
-  gbrain: { url?: string | null; token_set: boolean };
+  gbrain: { url?: string | null; client_id?: string | null; client_secret_set: boolean };
   path: string;
 };
 

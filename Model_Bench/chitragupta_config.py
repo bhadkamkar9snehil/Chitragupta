@@ -21,6 +21,8 @@ ENV = {
     ("jev", "base_url"): "TYPESAFE_BASE_URL",
     ("gbrain", "url"): "CHITRAGUPTA_GBRAIN_URL",
     ("gbrain", "token"): "CHITRAGUPTA_GBRAIN_TOKEN",
+    ("gbrain", "client_id"): "CHITRAGUPTA_GBRAIN_CLIENT_ID",
+    ("gbrain", "client_secret"): "CHITRAGUPTA_GBRAIN_CLIENT_SECRET",
     ("gbrain", "home"): "CHITRAGUPTA_GBRAIN_HOME",
     ("gbrain", "bin"): "CHITRAGUPTA_GBRAIN_BIN",
 }

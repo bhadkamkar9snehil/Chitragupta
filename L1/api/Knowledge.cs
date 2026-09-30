@@ -18,6 +18,7 @@ public static class Knowledge
         if (string.IsNullOrWhiteSpace(url)) return [];
         try
         {
+            token = await Bearer(url, token, ct);
             var body = new JsonObject
             {
                 ["jsonrpc"] = "2.0", ["id"] = 1, ["method"] = "tools/call",
@@ -40,6 +41,23 @@ public static class Knowledge
                 .Where(s => s.Slug.Length > 0).DistinctBy(s => s.Slug).ToList();
         }
         catch { return []; }
+    }
+
+    // A client granted the knowledge source (links and page reads need it) is exchanged for a short-lived token; else the static token.
+    static string? cached; static DateTime cachedUntil;
+    static async Task<string?> Bearer(string url, string? fallback, CancellationToken ct)
+    {
+        var id = Environment.GetEnvironmentVariable("CHITRAGUPTA_GBRAIN_CLIENT_ID");
+        if (string.IsNullOrWhiteSpace(id)) return fallback;
+        if (cached is not null && DateTime.UtcNow < cachedUntil) return cached;
+        using var res = await Http.PostAsync(url.TrimEnd('/') + "/token", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["grant_type"] = "client_credentials", ["client_id"] = id, ["scope"] = "read",
+            ["client_secret"] = Environment.GetEnvironmentVariable("CHITRAGUPTA_GBRAIN_CLIENT_SECRET") ?? "",
+        }), ct);
+        var grant = JsonNode.Parse(await res.Content.ReadAsStringAsync(ct));
+        cachedUntil = DateTime.UtcNow.AddSeconds(Math.Max(60, (grant?["expires_in"]?.GetValue<int>() ?? 3600) - 120));
+        return cached = grant?["access_token"]?.ToString();
     }
 
     // Jev keeps only hits that help answer this requester: one batched noul call, same 0.60 gate as L2's walk.

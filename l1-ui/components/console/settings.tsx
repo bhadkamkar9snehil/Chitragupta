@@ -173,8 +173,11 @@ function ConnectionsForm() {
         <Field label="Service URL" htmlFor="gbUrl" hint="The GBrain service on this server.">
           <Input id="gbUrl" value={value("gbrain", "url")} onChange={(e) => set("gbrain", "url", e.target.value)} placeholder="http://127.0.0.1:3131" spellCheck={false} />
         </Field>
-        <Field label="Access token" htmlFor="gbToken" hint="Created by the installer. Leave empty to keep the current token.">
-          <Input id="gbToken" type="password" autoComplete="off" value={draft.gbrain?.token ?? ""} onChange={(e) => set("gbrain", "token", e.target.value)} placeholder={initial.gbrain.token_set ? "••••••••••••" : "Paste token"} />
+        <Field label="Client ID" htmlFor="gbClient" hint="Created with the knowledge index.">
+          <Input id="gbClient" value={value("gbrain", "client_id")} onChange={(e) => set("gbrain", "client_id", e.target.value)} spellCheck={false} />
+        </Field>
+        <Field label="Client secret" htmlFor="gbSecret" hint="Leave empty to keep the current secret.">
+          <Input id="gbSecret" type="password" autoComplete="off" value={draft.gbrain?.client_secret ?? ""} onChange={(e) => set("gbrain", "client_secret", e.target.value)} placeholder={initial.gbrain.client_secret_set ? "••••••••••••" : "Paste secret"} />
         </Field>
       </Card>
     </div>

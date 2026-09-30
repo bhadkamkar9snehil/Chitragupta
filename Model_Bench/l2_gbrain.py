@@ -133,13 +133,35 @@ def server_url() -> str:
     return os.environ.get("CHITRAGUPTA_GBRAIN_URL", "").strip().rstrip("/")
 
 
+_bearer_cache: dict[str, Any] = {"token": "", "expires": 0.0}
+
+
+def _bearer(timeout: int) -> str:
+    """OAuth client credentials (a client granted the knowledge source, which links and page reads need), exchanged
+    for a short-lived token and cached; falls back to a static bearer token."""
+    client_id = os.environ.get("CHITRAGUPTA_GBRAIN_CLIENT_ID", "").strip()
+    if not client_id:
+        return os.environ.get("CHITRAGUPTA_GBRAIN_TOKEN", "")
+    import time
+    import urllib.parse
+    import urllib.request
+    if _bearer_cache["token"] and time.time() < _bearer_cache["expires"]:
+        return _bearer_cache["token"]
+    body = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": client_id,
+                                   "client_secret": os.environ.get("CHITRAGUPTA_GBRAIN_CLIENT_SECRET", ""), "scope": "read"}).encode()
+    with urllib.request.urlopen(urllib.request.Request(server_url() + "/token", data=body), timeout=timeout) as response:
+        grant = json.loads(response.read())
+    _bearer_cache.update(token=grant["access_token"], expires=time.time() + max(60, int(grant.get("expires_in", 3600)) - 120))
+    return _bearer_cache["token"]
+
+
 def http_tool(tool: str, args: dict, *, timeout: int = DEFAULT_TIMEOUT) -> Any:
     """One MCP tools/call over HTTP (bearer token). The reply is a server-sent event carrying JSON-RPC."""
     import urllib.request
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": args}}).encode()
     req = urllib.request.Request(server_url() + "/mcp", data=body, headers={
         "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
-        "Authorization": "Bearer " + os.environ.get("CHITRAGUPTA_GBRAIN_TOKEN", "")})
+        "Authorization": "Bearer " + _bearer(timeout)})
     with urllib.request.urlopen(req, timeout=timeout) as response:
         raw = response.read().decode("utf-8", "replace")
     data = next((line[5:].strip() for line in raw.splitlines() if line.startswith("data:")), raw)
