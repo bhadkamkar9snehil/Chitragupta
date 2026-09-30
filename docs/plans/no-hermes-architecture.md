@@ -134,3 +134,10 @@ Live findings: a ticket that hit the 400 crashed its first card and the runtime'
 
 **Not verified (needs an elevated install):** service registration, the firewall rule, the wizard pages, restart-on-failure, uninstall. Known gaps: `chitragupta.json` restriction to SYSTEM/Administrators is applied by the API when it saves (the installed template is inherited); `infra-guardian` is not replaced yet (planned: WinSW restart plus a health view); the Hermes-era learning plugin, `sync_l2_gbrain.py` and their tests are unused and should be deleted.
 
+
+## 10. To do later (owner's list, 2026-09-30)
+
+1. **GBrain migration gap.** The native index was rebuilt from the committed world (2,406 pages, same count as the WSL brain), not copied. The typed links step (`Model_Bench/world_links.py`, loads `Knowledge/world/links.jsonl`) was not run on the native index, so `get_links`/graph walks return nothing there. Run it (and `gbrain extract --stale`) in `build-brain.ps1`, rebuild `brain.zip`, and re-run `Model_Bench/e2e/run_world.py` (the 10 retrieval cases) before calling GBrain migrated.
+2. **Logs and history continuity.** Keep the same logging principle as before (call trace, observer events, worker logs, trace drain to SQL, readable ticket notes) and confirm every stream still lands where the console reads it; decide what to do with the old WSL logs and Hermes Kanban history (runs and outcomes are already in SQL).
+3. **Docs.** Update README, AGENTS.md/CLAUDE.md, the state-machine contract, `Knowledge/` design docs and the deploy notes to describe the Hermes-free system.
+4. **Stronger L1.** Not every conversation should become an L2 ticket. Define what L1 answers itself (how-to, where-to-find, status of the user's own tickets), what it asks back for (missing heat/billet/screen/time), and what becomes a ticket (real data discrepancy or fault). Add an explicit gate before ticket creation, with an evaluation set of past conversations to measure it (answered correctly vs. wrongly escalated vs. wrongly not escalated). Evaluate using Jev at L1 for this decision: its probability outputs fit a gate with a threshold, and L1 already calls Jev for triage.
