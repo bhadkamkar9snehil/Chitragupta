@@ -19,6 +19,8 @@ ENV = {
     ("lm_studio", "base_url"): "LMSTUDIO_BASE_URL",
     ("jev", "api_key"): "TYPESAFE_API_KEY",
     ("jev", "base_url"): "TYPESAFE_BASE_URL",
+    ("gbrain", "url"): "CHITRAGUPTA_GBRAIN_URL",
+    ("gbrain", "token"): "CHITRAGUPTA_GBRAIN_TOKEN",
     ("gbrain", "home"): "CHITRAGUPTA_GBRAIN_HOME",
     ("gbrain", "bin"): "CHITRAGUPTA_GBRAIN_BIN",
 }

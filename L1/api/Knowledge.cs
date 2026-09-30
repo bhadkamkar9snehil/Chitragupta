@@ -1,6 +1,6 @@
 // L1's knowledge is the same generated XBatch world L2 walks: GBrain source `xstudio-knowledge`.
-// GBrain runs natively; one CLI call per turn. Jev decides which hits are relevant; code never ranks by hand.
-using System.Diagnostics;
+// GBrain runs as one service (`gbrain serve --http`) because its embedded database admits a single process;
+// every client, including this one, asks it over MCP/HTTP. Jev decides which hits are relevant; code never ranks by hand.
 using System.Text.Json.Nodes;
 
 namespace L1Api;
@@ -9,27 +9,32 @@ public record Source(string Slug, string Title, string Type, string Snippet);
 
 public static class Knowledge
 {
-    // GBrain runs natively (Bun). Home and binary are overridable; the defaults are where the installer puts them.
-    static string Home => Environment.GetEnvironmentVariable("CHITRAGUPTA_GBRAIN_HOME")
-        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".chitragupta", "gbrain");
-    public static string DefaultBin => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".bun", "bin", "gbrain.exe");
-    static string Bin => Environment.GetEnvironmentVariable("CHITRAGUPTA_GBRAIN_BIN") ?? DefaultBin;
+    static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(20) };
 
-    public static async Task<List<Source>> Search(string query, string sourceId, int limit, CancellationToken ct = default)
+    public static async Task<List<Source>> Search(string query, string sourceId, int limit, CancellationToken ct = default, string? url = null, string? token = null)
     {
-        var psi = new ProcessStartInfo(Bin) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        psi.Environment["GBRAIN_HOME"] = Home;
-        foreach (var a in new[] { "search", query, "--source-id", sourceId, "--limit", limit.ToString(), "--json" }) psi.ArgumentList.Add(a);
+        url ??= Environment.GetEnvironmentVariable("CHITRAGUPTA_GBRAIN_URL");
+        token ??= Environment.GetEnvironmentVariable("CHITRAGUPTA_GBRAIN_TOKEN");
+        if (string.IsNullOrWhiteSpace(url)) return [];
         try
         {
-            using var proc = Process.Start(psi)!;
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(20));
-            var output = await proc.StandardOutput.ReadToEndAsync(timeout.Token);
-            await proc.WaitForExitAsync(timeout.Token);
-            var start = output.IndexOf('[');
+            var body = new JsonObject
+            {
+                ["jsonrpc"] = "2.0", ["id"] = 1, ["method"] = "tools/call",
+                ["params"] = new JsonObject { ["name"] = "search", ["arguments"] = new JsonObject { ["query"] = query, ["limit"] = limit } },
+            };
+            using var req = new HttpRequestMessage(HttpMethod.Post, url.TrimEnd('/') + "/mcp") { Content = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json") };
+            req.Headers.Accept.ParseAdd("application/json, text/event-stream");
+            req.Headers.Authorization = new("Bearer", token);
+            using var res = await Http.SendAsync(req, ct);
+            var raw = await res.Content.ReadAsStringAsync(ct);
+            var data = raw.Split('\n').FirstOrDefault(l => l.StartsWith("data:"))?[5..].Trim() ?? raw;
+            var text = string.Concat(JsonNode.Parse(data)?["result"]?["content"]?.AsArray().Select(c => c?["text"]?.ToString()) ?? []);
+            var start = text.IndexOf('[');
             if (start < 0) return [];
-            return (JsonNode.Parse(output[start..])?.AsArray() ?? [])
+            // A bearer token searches its granted sources; keep the wanted one.
+            return (JsonNode.Parse(text[start..])?.AsArray() ?? [])
+                .Where(n => n?["source_id"]?.ToString() is null or "" || n["source_id"]!.ToString() == sourceId)
                 .Select(n => new Source(n?["slug"]?.ToString() ?? "", n?["title"]?.ToString() ?? "", n?["type"]?.ToString() ?? "",
                                         Db.Trim(n?["chunk_text"]?.ToString(), 1200)))
                 .Where(s => s.Slug.Length > 0).DistinctBy(s => s.Slug).ToList();

@@ -170,11 +170,11 @@ function ConnectionsForm() {
         </Field>
       </Card>
       <Card title="Knowledge index" description="GBrain, the searchable XBatch world." footer={footer("gbrain")}>
-        <Field label="Program" htmlFor="gbBin" hint="Path to gbrain.exe. Empty uses the installed one.">
-          <Input id="gbBin" value={value("gbrain", "bin")} onChange={(e) => set("gbrain", "bin", e.target.value)} spellCheck={false} />
+        <Field label="Service URL" htmlFor="gbUrl" hint="The GBrain service on this server.">
+          <Input id="gbUrl" value={value("gbrain", "url")} onChange={(e) => set("gbrain", "url", e.target.value)} placeholder="http://127.0.0.1:3131" spellCheck={false} />
         </Field>
-        <Field label="Data folder" htmlFor="gbHome" hint="Where the index is kept. Empty uses the default.">
-          <Input id="gbHome" value={value("gbrain", "home")} onChange={(e) => set("gbrain", "home", e.target.value)} spellCheck={false} />
+        <Field label="Access token" htmlFor="gbToken" hint="Created by the installer. Leave empty to keep the current token.">
+          <Input id="gbToken" type="password" autoComplete="off" value={draft.gbrain?.token ?? ""} onChange={(e) => set("gbrain", "token", e.target.value)} placeholder={initial.gbrain.token_set ? "••••••••••••" : "Paste token"} />
         </Field>
       </Card>
     </div>

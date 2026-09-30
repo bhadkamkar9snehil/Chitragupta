@@ -111,7 +111,7 @@ def binary() -> str:
 
 
 def available() -> bool:
-    return shutil.which(binary()) is not None
+    return bool(server_url()) or shutil.which(binary()) is not None
 
 
 def _env() -> dict[str, str]:
@@ -127,11 +127,44 @@ def _env() -> dict[str, str]:
     return env
 
 
+def server_url() -> str:
+    """The GBrain service (`gbrain serve --http`), when configured. PGLite admits one process, so on a server
+    every client goes through it; without it the CLI and a private stdio session are used."""
+    return os.environ.get("CHITRAGUPTA_GBRAIN_URL", "").strip().rstrip("/")
+
+
+def http_tool(tool: str, args: dict, *, timeout: int = DEFAULT_TIMEOUT) -> Any:
+    """One MCP tools/call over HTTP (bearer token). The reply is a server-sent event carrying JSON-RPC."""
+    import urllib.request
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": args}}).encode()
+    req = urllib.request.Request(server_url() + "/mcp", data=body, headers={
+        "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+        "Authorization": "Bearer " + os.environ.get("CHITRAGUPTA_GBRAIN_TOKEN", "")})
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        raw = response.read().decode("utf-8", "replace")
+    data = next((line[5:].strip() for line in raw.splitlines() if line.startswith("data:")), raw)
+    message = json.loads(data)
+    if "error" in message:
+        raise RuntimeError(message["error"])
+    result = message.get("result") or {}
+    text = "".join(c.get("text", "") for c in result.get("content", []))
+    if result.get("isError"):
+        raise RuntimeError(text[:300])
+    try:
+        return json.loads(text)
+    except ValueError:
+        return {"text": text}
+
+
 class Brain:
     """One `gbrain serve` (MCP stdio) session for many fast calls: the world walk reads pages and
-    links step by step, where a CLI process per call (~0.7 s each) would dominate."""
+    links step by step, where a CLI process per call (~0.7 s each) would dominate. With a configured
+    GBrain service the calls go there instead and no process is started."""
 
     def __init__(self) -> None:
+        if server_url():
+            self.proc = None
+            return
         self.proc = subprocess.Popen([binary(), "serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL, text=True, env=_env(), bufsize=1)
         self.next_id = 0
@@ -153,6 +186,8 @@ class Brain:
                 return msg["result"]
 
     def call(self, tool: str, **args) -> Any:
+        if self.proc is None:
+            return http_tool(tool, args)
         result = self.request("tools/call", {"name": tool, "arguments": args})
         text = "".join(c.get("text", "") for c in result.get("content", []))
         if result.get("isError"):
@@ -201,6 +236,13 @@ def parse_json(text: str) -> Any:
 
 def source_status(source_id: str, *, timeout: int = DEFAULT_TIMEOUT, runner=None) -> dict[str, Any]:
     """Read one source's raw status through the canonical GBrain process transport."""
+    if server_url():
+        # A bearer token cannot read per-source status, and the served index is prebuilt (static), so health is
+        # a real search answering from the source. ponytail: no page counts here; the CLI path still reports them.
+        found = search_source("XBatch", source_id=source_id, limit=1, timeout=timeout)
+        if not (found.get("ok") and found.get("results")):
+            return {"ok": False, "error": found.get("error") or "GBrain service returned nothing for the source"}
+        return {"ok": True, "source": {"source_id": source_id, "embed_coverage_pct": 100, "failed_jobs_24h": 0, "queue_depth": 0}}
     rc, out, err = run(["sources", "status", "--json"], timeout=timeout, runner=runner)
     if rc != 0:
         return {"ok": False, "error": (err or out).strip() or f"gbrain status exited {rc}"}
@@ -216,6 +258,15 @@ def source_status(source_id: str, *, timeout: int = DEFAULT_TIMEOUT, runner=None
 def search_source(query: str, *, source_id: str, limit: int, timeout: int = DEFAULT_TIMEOUT,
                   snippet_chars: int | None = None, runner=None) -> dict[str, Any]:
     """Search exactly one GBrain source; callers own ranking/filtering policy."""
+    if server_url():
+        # A bearer token searches its granted (federated) sources; pick the wanted one from the rows.
+        try:
+            rows = http_tool("search", {"query": query, "limit": max(1, int(limit)),
+                                        **({"snippet_chars": int(snippet_chars)} if snippet_chars is not None else {})}, timeout=timeout)
+        except (OSError, RuntimeError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)[-1000:] or "gbrain search failed"}
+        rows = rows if isinstance(rows, list) else []
+        return {"ok": True, "results": [r for r in rows if isinstance(r, dict) and r.get("source_id") == source_id]}
     args = ["search", query, "--source-id", source_id, "--limit", str(max(1, int(limit)))]
     if snippet_chars is not None:
         args += ["--snippet-chars", str(max(1, int(snippet_chars))),

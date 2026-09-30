@@ -17,6 +17,7 @@ public static class Connections
         ("sql", "server", "MSSQL_MCP_SERVER", false), ("sql", "user", "MSSQL_MCP_USER", false), ("sql", "password", "MSSQL_MCP_PASSWORD", true),
         ("lm_studio", "base_url", "LMSTUDIO_BASE_URL", false),
         ("jev", "api_key", "TYPESAFE_API_KEY", true), ("jev", "base_url", "TYPESAFE_BASE_URL", false),
+        ("gbrain", "url", "CHITRAGUPTA_GBRAIN_URL", false), ("gbrain", "token", "CHITRAGUPTA_GBRAIN_TOKEN", true),
         ("gbrain", "home", "CHITRAGUPTA_GBRAIN_HOME", false), ("gbrain", "bin", "CHITRAGUPTA_GBRAIN_BIN", false),
     ];
 
@@ -112,12 +113,12 @@ public static class Connections
                 }
                 case "gbrain":
                 {
-                    var bin = Value(candidate, "gbrain", "bin", "CHITRAGUPTA_GBRAIN_BIN");
-                    var psi = new ProcessStartInfo(bin.Length > 0 ? bin : Knowledge.DefaultBin, "--version") { RedirectStandardOutput = true, UseShellExecute = false };
-                    using var p = Process.Start(psi)!;
-                    var output = (await p.StandardOutput.ReadToEndAsync()).Trim();
-                    await p.WaitForExitAsync();
-                    return new { ok = p.ExitCode == 0, detail = output };
+                    var url = Value(candidate, "gbrain", "url", "CHITRAGUPTA_GBRAIN_URL").TrimEnd('/');
+                    if (url.Length == 0) return new { ok = false, detail = "No GBrain service URL." };
+                    using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                    var health = JsonNode.Parse(await http.GetStringAsync(url + "/health"));
+                    var hits = await Knowledge.Search("XBatch", "xstudio-knowledge", 1, url: url, token: Value(candidate, "gbrain", "token", "CHITRAGUPTA_GBRAIN_TOKEN"));
+                    return new { ok = hits.Count > 0, detail = $"GBrain {health?["version"]} ({health?["engine"]}); search returned {hits.Count} hit(s)" };
                 }
                 default: return new { ok = false, detail = "Unknown connection." };
             }
