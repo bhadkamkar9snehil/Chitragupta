@@ -7,8 +7,6 @@ model:
 agent:
   max_turns: 20
   reasoning_effort: none
-memory:
-  provider: mem0
 approvals:
   deny:
     - '*sqlcmd*-q*update*'

@@ -77,8 +77,6 @@ The surrounding implementation mechanisms are not additional architecture:
 - **Cron / event hook** = lifecycle triggering and liveness
 - **Tests / postflight** = verification
 - **Deployment scripts** = deployment
-- **Qdrant** = retrieval index, never authority
-- **mem0** = bounded operational heuristics, never ticket truth
 
 No sixth architectural box exists.
 
@@ -503,8 +501,6 @@ That suggestion does not directly promote or mutate an article.
 | Git-tracked `Knowledge/` | Canonical domain/runtime reference | Authoritative reference |
 | Approved SQL Solution article | Reusable known-issue guidance | Governing hypothesis (requires live verification) |
 | Problem/ticket history | Episodic and recurring-root-cause evidence | Historical lead |
-| mem0 | Compact durable operational heuristics | Operational hints only |
-| Qdrant | Fast semantic retrieval index | Index only (never authority) |
 
 A KB hit, previous ticket, snapshot, or memory item is a lead. A current-ticket factual claim must be verified against live evidence whenever live verification is possible.
 

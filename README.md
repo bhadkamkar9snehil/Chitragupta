@@ -188,7 +188,7 @@ Windows laptop / server                          WSL (Ubuntu)
 │    ├─ GBrain search ──── wsl.exe ────┼────────►│    l2-jev-investigator  (investigation / rework)
 │    ├─ runtime status ─── wsl.exe ────┼────────►│    l2-reviewer-primary  (local review fallback)
 │    └─ benchmark report (python)      │         ├─ l2_pipeline_runtime.py, ticket_scout.py (cron, 2 min)
-├─ l1-ui   (Next.js, :3417) ── /api/l1/* ─► API  ├─ GBrain (~/.hermes/xstudio-gbrain), Qdrant, mem0
+├─ l1-ui   (Next.js, :3417) ── /api/l1/* ─► API  ├─ GBrain (~/.hermes/xstudio-gbrain)
 └─ Jev bridge (Windows Python)                   └─ Hermes Kanban (SQLite)
                                        │
             SQL Server  XStudio_Helpdesk / XStudio_Xbatch  (reached over Tailscale)
@@ -301,8 +301,6 @@ Every System One call is also written to `Hermes_Agent_Trace_Trn_Tbl` as `EventT
 | GBrain source `xstudio-knowledge` | searchable index of the committed world, used by L1 answers and `world_walk` | derived; `sync` reads **committed** files only |
 | governed SQL Solution articles | reusable known issues: `Candidate` → `Approved` | SQL |
 | ticket / problem history | episodic evidence | SQL |
-| mem0 | compact operational heuristics only (never interpreter or driver mechanics) | memory |
-| Qdrant | retrieval index | derived |
 
 For a claim about the current ticket, live SQL evidence outranks everything else.
 

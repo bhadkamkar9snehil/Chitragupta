@@ -51,8 +51,6 @@ The surrounding implementation mechanisms are not additional architecture:
 - Cron / event hook = lifecycle triggering and liveness
 - Tests / postflight = verification
 - Deployment scripts = deployment
-- Qdrant = retrieval index, never authority
-- mem0 = bounded operational heuristics, never ticket truth
 
 No sixth architectural box exists.
 
@@ -289,7 +287,6 @@ Evidence hierarchy:
 2. verified `Knowledge/` reference material;
 3. approved/retrieved solution articles as hypotheses;
 4. same-ticket prior ledger/attempt history;
-5. mem0 operational hints.
 
 Never fabricate a table, view, column, SP, ticket status, or identifier.
 
@@ -304,8 +301,6 @@ Preferred investigation path, all through the named `xstudio_*` tools in the `xs
 
 The model never writes SQL or names columns. Model-composed select/query and schema
 exploration tools were removed on 2026-09-23 (most of those calls failed).
-
-Do not put per-ticket facts into shared mem0.
 
 ## 8a. Agent execution surface is typed and harness-owned
 
@@ -352,9 +347,11 @@ Rules:
   contract before each LLM turn so a pre-migration card's stale command text
   cannot steer a worker back to the retired path.
 - Interpreter paths, driver setup, and dependency mechanics are deterministic
-  harness concerns. They belong in code and config, never in mem0.
+  harness concerns. They belong in code and config.
 
 ## 9. KB and memory boundaries
+
+Qdrant and mem0 were removed on 2026-09-30 (`docs/decisions/2026-09-30-drop-qdrant-mem0.md`); do not reinstall them. Agent knowledge is the dispatch bundle, GBrain world, KB articles and ledgers only.
 
 The deterministic knowledge harness has one generated XBatch world plus governed
 reusable knowledge:
@@ -383,8 +380,6 @@ Do not collapse these concepts:
 live SQL evidence        != KB
 schema discovery         != KB
 same-ticket history      != KB
-mem0                     != KB
-Qdrant                   != source of truth
 solution history         != automatically trusted knowledge
 ```
 

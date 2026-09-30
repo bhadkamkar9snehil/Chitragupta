@@ -146,7 +146,6 @@ The live end-to-end run also verified the intended rejection path: the reviewer 
 - Git-tracked `Knowledge/` is canonical domain/runtime reference.
 - SQL Solution articles are governed reusable known-issue knowledge.
 - Ticket/problem history is episodic evidence.
-- mem0 contains compact durable heuristics only.
-- Qdrant is retrieval/indexing, not source of truth.
+- mem0 and Qdrant were removed on 2026-09-30 (see `docs/decisions/2026-09-30-drop-qdrant-mem0.md`).
 
 Current-ticket factual claims still require live evidence when live verification is possible.

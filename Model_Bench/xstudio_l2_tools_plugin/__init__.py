@@ -8,7 +8,7 @@ retried the same broken shape with `timeout` wrappers, fell back to
 `pip install pyodbc`, hit Tirith's fail-closed dependency scan, and finally
 overflowed context. That is an agent-computer-interface defect, not a
 lifecycle defect, so it is fixed at the harness boundary rather than taught
-through mem0.
+to the model.
 
 The model calls small named typed tools. This plugin invokes the bridge itself using the
 current Hermes Python environment, so the model never composes paths, interpreters, pyodbc, or

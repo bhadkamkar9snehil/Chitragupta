@@ -3,8 +3,6 @@ model:
   provider: lmstudio
   base_url: http://100.111.69.102:1235/v1
   context_length: 65600
-memory:
-  provider: mem0
 approvals:
   deny:
     - '*sqlcmd*-q*update*'

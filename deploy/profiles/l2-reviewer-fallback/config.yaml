@@ -5,8 +5,6 @@ model:
   context_length: 65600
 agent:
   reasoning_effort: minimal
-memory:
-  provider: mem0
 approvals:
   deny:
     - '*sqlcmd*-q*update*'

@@ -1,6 +1,8 @@
 # Chitragupta Knowledge Base Implementation Plan
 
 Status: **Implementation contract**  
+> **Amended 2026-09-30:** Qdrant and mem0 are removed (`docs/decisions/2026-09-30-drop-qdrant-mem0.md`). Every Qdrant/`hermes_kb_v1` and mem0 item below is withdrawn; KB retrieval stays on the lexical retriever (`Model_Bench/kb_retrieval.py`) plus Jev applicability judgment, and GBrain serves the world. Reopen only with a measured retrieval-recall failure.
+
 Branch: `main`  
 Baseline validated locally: 2026-09-05  
 Owner: Chitragupta / Hermes L2 support pipeline

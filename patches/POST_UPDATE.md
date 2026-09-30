@@ -5,49 +5,7 @@ Things in this repo that live partly or entirely inside Hermes's own install
 Run these, in order, after any `hermes update` or when standing this up on
 new infra.
 
-## 1. Re-apply the mem0 LM Studio compatibility patch
-
-An update can reinstall/upgrade `mem0ai` inside Hermes's venv, wiping the
-patch below.
-
-```bash
-source ~/.hermes/hermes-agent/venv/bin/activate
-python3 patches/apply_mem0_json_object_patch.py
-```
-
-Idempotent -- safe to run even if already patched, and safe to run on a
-schedule so it self-heals without you having to remember it.
-
-## 2. Qdrant server + mem0 config
-
-**Check this after EVERY update, not just a fresh install.** mem0 memory
-depends on a Qdrant server, and both halves can break independently.
-
-```bash
-deploy/qdrant/healthcheck_qdrant.sh
-```
-
-The healthcheck exits non-zero if the service is down or the collection is
-not green, and warns when the collection exists but holds zero points.
-
-If the service is missing:
-
-```bash
-deploy/qdrant/install_qdrant.sh
-```
-
-Do not switch mem0 back to embedded/local-path Qdrant to work around a lock
-error. Embedded Qdrant is single-process while Kanban workers are separate
-OS processes from their gateway; that is the original failure mode.
-
-For a rebuilt profile install:
-
-```bash
-source ~/.hermes/hermes-agent/venv/bin/activate
-pip install qdrant-client mem0ai ollama
-```
-
-## 3. Re-deploy the deterministic L2 pipeline runtime
+## 1. Re-deploy the deterministic L2 pipeline runtime
 
 Run this after every update that touched profile/plugin/script directories,
 and on every fresh install:
@@ -74,7 +32,7 @@ The event plugin is only an accelerator. `ticket_scout.py` runs the same
 reconciler before every new claim, so the 2-minute scout is the durable
 backstop if a hook event is missed.
 
-## 4. Verify the Helpdesk workflow binding
+## 2. Verify the Helpdesk workflow binding
 
 The model does not choose Helpdesk status names.
 
@@ -91,7 +49,7 @@ values, especially `resolved_ticket_status`.
 work around this by enabling model-provided status overrides or guessing a
 status such as `Closed`/`Resolved`.
 
-## 5. Re-deploy the SQL layer + hardening overlays
+## 3. Re-deploy the SQL layer + hardening overlays
 
 Deploy:
 
@@ -114,7 +72,7 @@ The two hardening overlays are required:
 
 All are idempotent deployment units.
 
-## 6. Re-deploy remaining SOUL.md / plugins if needed
+## 4. Re-deploy remaining SOUL.md / plugins if needed
 
 For any profile-specific artifacts not covered by the pipeline deploy script,
 copy `deploy/profiles/<profile>/SOUL.md`, remaining `deploy/skills/xstudio/*`
@@ -122,7 +80,7 @@ skills, and relevant plugin code into the corresponding
 `~/.hermes/profiles/<profile>/...` paths. Restart the affected gateway after
 plugin/config changes.
 
-## 7. Re-create cron jobs if the scheduler was rebuilt
+## 5. Re-create cron jobs if the scheduler was rebuilt
 
 `deploy/cron_jobs.txt` is the reference schedule snapshot. The important
 correctness point is that the existing Ticket Scout job remains active: it
@@ -130,7 +88,7 @@ now reconciles approvals/rejections/repair before it attempts any claim, so
 separate publisher/reject polling jobs are no longer required for delivery
 correctness.
 
-## 8. Local validation before normal ticket flow
+## 6. Local validation before normal ticket flow
 
 Do not use a GitHub Action as a substitute for this environment-specific
 validation. Run it on the real WSL/Hermes/SQL/LM Studio machine:
@@ -155,7 +113,6 @@ DONE_INVESTIGATION_WITHOUT_REVIEWER
 
 ## Ongoing self-healing
 
-The mem0 compatibility patch remains update-fragile and should stay on its
-low-frequency self-healing job. Ticket lifecycle correctness is protected
+Ticket lifecycle correctness is protected
 separately by deterministic reconciliation on every scout tick and on every
 Kanban complete/block event.
