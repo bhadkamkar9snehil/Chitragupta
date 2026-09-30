@@ -34,7 +34,7 @@ $embed = Get-Cached "https://www.python.org/ftp/python/$pyVersion/python-$pyVers
 Expand-Archive $embed "$stage\engine\python"
 $pth = Get-ChildItem "$stage\engine\python\python*._pth"
 # The embeddable Python ignores PYTHONPATH and the script directory: list the application folders in its ._pth.
-((Get-Content $pth) -replace '^#import site', 'import site') + '..pp' + '..pp\Model_Bench' | Set-Content $pth
+((Get-Content $pth) -replace '^#import site', 'import site') + '..\app' + '..\app\Model_Bench' | Set-Content $pth
 python -m pip install --quiet --target "$stage\engine\python\Lib\site-packages" --only-binary=:all: --platform win_amd64 --python-version ($pyVersion -replace '\.\d+$') --implementation cp -r "$root\build\requirements.txt"
 
 Write-Host "== application"
@@ -61,7 +61,7 @@ Copy-Item "$cache\brain.zip" "$stage\gbrain\brain.zip"
 
 Write-Host "== first-run configuration template"
 [ordered]@{
-    gbrain = [ordered]@{ url = "http://127.0.0.1:3131"; token = (Get-Content "$cache\brain.token" -Raw).Trim() }
+    gbrain = [ordered]@{ url = "http://127.0.0.1:3131"; client_id = (Get-Content "$cache\brain.client")[0].Trim(); client_secret = (Get-Content "$cache\brain.client")[1].Trim() }
 } | ConvertTo-Json | Set-Content "$stage\chitragupta.json" -Encoding utf8
 Set-Content "$stage\version.txt" $Version
 Write-Host "staged: $([int]((Get-ChildItem $stage -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)) MB"

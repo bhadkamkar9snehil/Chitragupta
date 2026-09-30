@@ -36,9 +36,12 @@ for ($try = 1; $try -le 4; $try++) {
 $env:CHITRAGUPTA_GBRAIN_BIN = $Gbrain; $env:CHITRAGUPTA_GBRAIN_HOME = $work; Remove-Item env:CHITRAGUPTA_GBRAIN_URL -ErrorAction SilentlyContinue
 python "$root\Model_Bench\world_links.py"
 if ($LASTEXITCODE -ne 0) { throw "world_links.py reported missing link endpoints." }
-$token = [regex]::Match((G auth create chitragupta --scopes read | Out-String), 'gbrain_[A-Za-z0-9_\-]+').Value
-if (-not $token) { throw "Could not create the access token." }
-Set-Content "$PSScriptRoot\cache\brain.token" $token -NoNewline
+# A client granted the knowledge source: a plain bearer token is bound to the default source and cannot read links or pages.
+$out = G auth register-client chitragupta --grant-types client_credentials --scopes read --source xstudio-knowledge --federated-read xstudio-knowledge | Out-String
+$id = [regex]::Match($out, 'Client ID:\s+(\S+)').Groups[1].Value
+$secret = [regex]::Match($out, 'Client Secret:\s+(\S+)').Groups[1].Value
+if (-not $id -or -not $secret) { throw "Could not register the client." }
+Set-Content "$PSScriptRoot\cache\brain.client" "$id`n$secret" -NoNewline
 
 # Ship the data, not the machine-specific bits (config.json holds an absolute path; the engine rewrites it).
 $pkg = "$PSScriptRoot\cache\brain-pkg"

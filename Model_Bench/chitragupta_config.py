@@ -29,7 +29,7 @@ ENV = {
 
 
 def data_dir() -> Path:
-    """Where the engine keeps logs, traces and its lock: ProgramData\Chitragupta on Windows (the installer also sets
+    """Where the engine keeps logs, traces and its lock: the ProgramData Chitragupta folder on Windows (the installer also sets
     CHITRAGUPTA_DATA machine-wide so the API and the engine agree), ~/.chitragupta elsewhere."""
     if os.environ.get("CHITRAGUPTA_DATA"):
         return Path(os.environ["CHITRAGUPTA_DATA"])
