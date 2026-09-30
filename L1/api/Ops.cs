@@ -353,14 +353,17 @@ public static class Ops
         }
     }
 
-    static readonly string Home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    // Same folder the engine writes to (Model_Bench/chitragupta_config.py data_dir); the installer sets CHITRAGUPTA_DATA machine-wide.
+    static readonly string Data = Environment.GetEnvironmentVariable("CHITRAGUPTA_DATA") ?? (OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.GetEnvironmentVariable("PROGRAMDATA") ?? @"C:\ProgramData", "Chitragupta")
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".chitragupta"));
 
     public static async Task<object> RuntimeLogs(int? take)
     {
         var top = Math.Clamp(take ?? 160, 20, 400);
         var sources = await Task.WhenAll(
-            TailJsonl("Call trace", Path.Combine(Home, ".hermes", "logs", "l2_calltrace", DateTime.Now.ToString("yyyy-MM-dd") + ".jsonl"), top),
-            TailJsonl("Observer events", Path.Combine(Home, ".hermes", "plugin-data", "xstudio-l2-trace", "events.jsonl"), top)
+            TailJsonl("Call trace", Path.Combine(Data, "calltrace", DateTime.Now.ToString("yyyy-MM-dd") + ".jsonl"), top),
+            TailJsonl("Observer events", Path.Combine(Data, "trace", "events.jsonl"), top)
         );
         return new { at = DateTime.Now, sources };
     }
