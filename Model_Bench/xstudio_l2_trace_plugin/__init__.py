@@ -99,7 +99,10 @@ def _redact(value: str) -> str:
             value = pattern.sub("[REDACTED]", value)
     return value
 
-_DATA_DIR = Path.home() / ".hermes" / "plugin-data" / "xstudio-l2-trace"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from chitragupta_config import data_dir  # noqa: E402
+
+_DATA_DIR = data_dir() / "trace"
 _EVENTS_PATH = _DATA_DIR / "events.jsonl"
 
 

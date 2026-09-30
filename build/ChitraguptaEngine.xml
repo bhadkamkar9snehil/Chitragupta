@@ -1,0 +1,19 @@
+<service>
+  <id>ChitraguptaEngine</id>
+  <name>Chitragupta Engine</name>
+  <description>Ticket pipeline: dispatcher, scheduler and the GBrain knowledge service.</description>
+  <executable>%BASE%\python\python.exe</executable>
+  <arguments>"%BASE%\app\Model_Bench\engine.py"</arguments>
+  <workingdirectory>%BASE%\app\Model_Bench</workingdirectory>
+  <env name="PYTHONUNBUFFERED" value="1" />
+  <env name="CHITRAGUPTA_DATA" value="%ProgramData%\Chitragupta" />
+  <env name="CHITRAGUPTA_GBRAIN_BIN" value="%BASE%\..\gbrain\gbrain.exe" />
+  <env name="CHITRAGUPTA_GBRAIN_HOME" value="%ProgramData%\Chitragupta\gbrain" />
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="10 sec" />
+  <onfailure action="restart" delay="30 sec" />
+  <resetfailure>1 hour</resetfailure>
+  <stoptimeout>30 sec</stoptimeout>
+  <logpath>%ProgramData%\Chitragupta\logs</logpath>
+  <log mode="roll-by-size"><sizeThreshold>10240</sizeThreshold><keepFiles>5</keepFiles></log>
+</service>

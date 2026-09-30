@@ -1,0 +1,19 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+
+  <!-- One Setup.exe: installs the Microsoft ODBC driver the engine needs when it is missing, then Chitragupta. -->
+  <Bundle Name="Chitragupta" Manufacturer="Chitragupta" Version="$(Version)"
+          UpgradeCode="6E0B1D42-9C3A-4A57-8B7F-1D5C2E9A4F08">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication Theme="hyperlinkLicense" LicenseUrl="" />
+    </BootstrapperApplication>
+
+    <Chain>
+      <MsiPackage Id="OdbcDriver" SourceFile="$(CacheDir)\msodbcsql.msi" DisplayName="Microsoft ODBC Driver 18 for SQL Server" Vital="yes">
+        <MsiProperty Name="IACCEPTMSODBCSQLLICENSETERMS" Value="YES" />
+      </MsiPackage>
+      <!-- The MSI's own wizard (folder, console port) is shown, not a silent install. -->
+      <MsiPackage Id="Chitragupta" SourceFile="!(bindpath.Chitragupta)\Chitragupta.msi" Vital="yes" bal:DisplayInternalUICondition="1" />
+    </Chain>
+  </Bundle>
+</Wix>

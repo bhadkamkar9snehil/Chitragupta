@@ -34,6 +34,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent))
+import chitragupta_config  # noqa: E402
 import pyodbc
 
 SERVER = os.environ.get("MSSQL_MCP_SERVER", "10.2.6.204")
@@ -42,7 +44,7 @@ USERNAME = "sa"
 PASSWORD = os.environ.get("MSSQL_MCP_PASSWORD")
 STALE_MINUTES = 20  # fallback: summarize a run even without an explicit terminal event
 
-STATE_PATH = Path(__file__).parent / ".summarized_runs.json"
+STATE_PATH = chitragupta_config.data_dir() / "trace" / "summarized_runs.json"
 
 _TERMINAL_TOOLS = {"kanban_complete", "kanban_block"}
 

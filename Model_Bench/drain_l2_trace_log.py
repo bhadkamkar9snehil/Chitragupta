@@ -28,10 +28,12 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent))
+import chitragupta_config  # noqa: E402
 import pyodbc
 
-TRACE_LOG_PATH = Path.home() / ".hermes" / "plugin-data" / "xstudio-l2-trace" / "events.jsonl"
-CURSOR_PATH = Path(__file__).parent / ".l2_trace_drain_cursor.json"
+TRACE_LOG_PATH = chitragupta_config.data_dir() / "trace" / "events.jsonl"
+CURSOR_PATH = chitragupta_config.data_dir() / "trace" / "drain_cursor.json"
 
 SERVER = os.environ.get("MSSQL_MCP_SERVER", "10.2.6.204")
 DATABASE = "XStudio_Helpdesk"

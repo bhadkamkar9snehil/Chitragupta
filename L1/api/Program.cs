@@ -9,6 +9,10 @@ using L1Api;
 
 Connections.Apply();  // bootstrap settings file -> environment, before anything reads it
 var builder = WebApplication.CreateBuilder(args);
+builder.Host.UseWindowsService();  // a no-op when run from a console; the installed service runs as this
+// Same port the console always used, so existing XStudio embeds (http://host:3417/?user=...) keep working.
+if (Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is null && builder.Configuration["urls"] is null)
+    builder.WebHost.UseUrls($"http://0.0.0.0:{Environment.GetEnvironmentVariable("CHITRAGUPTA_PORT") ?? "3417"}");
 builder.Services.AddDataProtection();
 builder.Services.AddSingleton<Settings>();
 if (builder.Environment.IsDevelopment())  // `next dev` (another origin) calls the API directly

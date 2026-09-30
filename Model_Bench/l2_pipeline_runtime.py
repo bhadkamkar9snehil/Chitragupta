@@ -45,9 +45,10 @@ from typing import Any, Iterable, Optional
 
 
 try:
-    from Model_Bench import cards, direct_answer
+    from Model_Bench import cards, chitragupta_config, direct_answer
 except ImportError:  # scripts run from Model_Bench itself
     import cards
+    import chitragupta_config
     import direct_answer
 
 
@@ -3936,7 +3937,7 @@ def lifecycle_lock(args: argparse.Namespace):
     if args.dry_run or args.mode in {"status", "audit"}:
         yield
         return
-    path = Path(os.environ.get("CHITRAGUPTA_DATA") or Path.home() / ".chitragupta") / "lifecycle.lock"
+    path = chitragupta_config.data_dir() / "lifecycle.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+") as handle:
         try:

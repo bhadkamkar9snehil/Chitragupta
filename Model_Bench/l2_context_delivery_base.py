@@ -34,7 +34,7 @@ from l2_context_envelope import (
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_POLICY = ROOT / "deploy" / "l2_context_policy.json"
 DEPLOYED_POLICY = Path(__file__).resolve().parent / "l2_context_policy.json"
-DEFAULT_VAULT = Path.home() / ".hermes" / "l2-learning"
+DEFAULT_VAULT = data_dir() / "l2-learning"
 REQUESTER_FIELDS = (
     "BriefDetails",
     "Description",

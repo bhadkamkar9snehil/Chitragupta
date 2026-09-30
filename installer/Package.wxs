@@ -1,0 +1,93 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
+
+  <Package Name="Chitragupta" Manufacturer="Chitragupta" Version="$(Version)" Scope="perMachine"
+           UpgradeCode="A3F2C6B0-5B6E-4B1E-9D0A-2C7F8E9B1A11" Compressed="yes">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Chitragupta is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- The one setting the wizard asks for besides the folder. Default matches the old console port, so existing XStudio embeds keep working. -->
+    <Property Id="PORT" Value="3417" Secure="yes" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Chitragupta">
+
+        <Directory Id="ApiDir" Name="api">
+          <Component Id="ApiService" Bitness="always64">
+            <File Id="L1Api.exe" Source="$(StageDir)\api\L1Api.exe" KeyPath="yes" />
+            <ServiceInstall Id="ApiSvc" Name="ChitraguptaConsole" DisplayName="Chitragupta Console" Type="ownProcess" Start="auto"
+                            ErrorControl="normal" Description="Console, helpdesk chat and API." Account="LocalSystem" Vital="yes">
+              <ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
+                             RestartServiceDelayInSeconds="10" ResetPeriodInDays="1" />
+            </ServiceInstall>
+            <ServiceControl Id="ApiCtl" Name="ChitraguptaConsole" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+            <fw:FirewallException Id="ConsolePort" Name="Chitragupta Console" Port="[PORT]" Protocol="tcp" Scope="any" />
+            <Environment Id="PortEnv" Name="CHITRAGUPTA_PORT" Value="[PORT]" System="yes" Action="set" Part="all" />
+          </Component>
+          <Files Include="$(StageDir)\api\**">
+            <Exclude Files="$(StageDir)\api\L1Api.exe" />
+          </Files>
+        </Directory>
+
+        <Directory Id="EngineDir" Name="engine">
+          <Component Id="EngineService" Bitness="always64">
+            <File Id="ChitraguptaEngine.exe" Source="$(StageDir)\engine\ChitraguptaEngine.exe" KeyPath="yes" />
+            <ServiceInstall Id="EngineSvc" Name="ChitraguptaEngine" DisplayName="Chitragupta Engine" Type="ownProcess" Start="auto"
+                            ErrorControl="normal" Description="Ticket pipeline: dispatcher, scheduler and the GBrain knowledge service." Account="LocalSystem" Vital="yes" />
+            <ServiceControl Id="EngineCtl" Name="ChitraguptaEngine" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+          </Component>
+          <Files Include="$(StageDir)\engine\**">
+            <Exclude Files="$(StageDir)\engine\ChitraguptaEngine.exe" />
+          </Files>
+        </Directory>
+
+        <Directory Id="GbrainDir" Name="gbrain">
+          <Files Include="$(StageDir)\gbrain\**" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Settings and logs live outside the install folder and survive upgrade and uninstall. The Connections panel fills the file in. -->
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DataDir" Name="Chitragupta">
+        <Directory Id="LogsDir" Name="logs">
+          <Component Id="LogsFolder" Guid="B7D0C9E4-3C0A-4F6E-8E11-5A1D2F0C7A22" Permanent="yes"><CreateFolder /></Component>
+        </Directory>
+        <Component Id="InitialSettings" Guid="C1E4F8A2-7D53-4B0F-9A66-0F3B8D2E5C33" NeverOverwrite="yes" Permanent="yes">
+          <File Id="chitragupta.json" Source="$(StageDir)\chitragupta.json" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+
+    <ui:WixUI Id="WixUI_InstallDir" />
+    <!-- Welcome -> folder (no license text to accept) -> port -> install. -->
+    <UI>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="4" Condition="NOT Installed" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="4" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="PortDlg" Order="5" Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="PortDlg" Order="1" Condition="NOT Installed" />
+
+      <Dialog Id="PortDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Console port" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="340" Height="15" Transparent="yes" NoPrefix="yes" Text="People open the console and the helpdesk on this port." />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="PortLabel" Type="Text" X="20" Y="60" Width="330" Height="30" Transparent="yes" NoPrefix="yes"
+                 Text="The console is served at http://this-server:&lt;port&gt;/admin. Leave 3417 unless another program uses it. After installing, open the console and fill in Settings, Connections (database, language model server, Jev)." />
+        <Control Id="PortEdit" Type="Edit" X="20" Y="105" Width="60" Height="18" Property="PORT" Integer="yes" Text="{5}" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
+          <Publish Event="NewDialog" Value="InstallDirDlg" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+    </UI>
+  </Package>
+</Wix>

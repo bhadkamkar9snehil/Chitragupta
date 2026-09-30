@@ -59,7 +59,8 @@ _current: Path | None = None
 def _path() -> Path:
     """Today's file; on the first write of a new day, files older than yesterday are deleted."""
     global _current
-    base = Path(os.environ.get("L2_CALLTRACE_DIR") or Path.home() / ".hermes" / "logs" / "l2_calltrace")
+    from chitragupta_config import data_dir
+    base = Path(os.environ.get("L2_CALLTRACE_DIR") or data_dir() / "calltrace")
     today = base / f"{datetime.now(IST):%Y-%m-%d}.jsonl"
     if today != _current:
         base.mkdir(parents=True, exist_ok=True)

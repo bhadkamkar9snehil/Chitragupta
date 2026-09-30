@@ -46,3 +46,6 @@ L1/api/bin/
 L1/api/obj/
 tools/RepoPad/bin/
 tools/RepoPad/obj/
+build/cache/
+build/stage/
+build/out/

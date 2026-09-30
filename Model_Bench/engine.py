@@ -9,14 +9,20 @@ The lifecycle logic itself stays in l2_pipeline_runtime.py; this file only decid
 """
 from __future__ import annotations
 
+import atexit
+import hashlib
+import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import threading
 import time
+import zipfile
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -31,7 +37,7 @@ import l2_pipeline_runtime as rt  # noqa: E402
 SCOUT_EVERY = 120
 AUDIT_EVERY = 600
 POLL_SECONDS = 2
-DATA = Path(os.environ.get("CHITRAGUPTA_DATA") or Path.home() / ".chitragupta")
+DATA = chitragupta_config.data_dir()
 
 log = logging.getLogger("engine")
 _drain_lock = threading.Lock()
@@ -68,6 +74,54 @@ def drain() -> None:
         log.warning("trace drain unavailable: %s", exc)
     finally:
         _drain_lock.release()
+
+
+# The prebuilt index was embedded with this model; a different one needs `gbrain migrate embeddings`.
+GBRAIN_CONFIG = {"engine": "pglite", "embedding_model": "lmstudio:text-embedding-nomic-embed-text-v1.5", "embedding_dimensions": 768,
+                 "schema_pack": "xbatch-world", "mcp": {"publish_skills": True}, "self_upgrade": {"mode": "off"}}
+
+
+def seed_index(exe: str, home: Path) -> None:
+    """The index ships as brain.zip beside gbrain.exe (built once, embeddings included, so an install never runs the
+    half-hour sync). Extract it on first start and again whenever a new build ships a different one."""
+    seed = Path(exe).with_name("brain.zip")
+    marker = home / "brain.sha256"
+    if not seed.exists():
+        return
+    digest = hashlib.sha256(seed.read_bytes()).hexdigest()
+    if marker.exists() and marker.read_text().strip() == digest and (home / ".gbrain" / "brain.pglite").exists():
+        return
+    log.info("installing the knowledge index from %s", seed)
+    shutil.rmtree(home / ".gbrain", ignore_errors=True)
+    home.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(seed) as z:
+        z.extractall(home)
+    marker.write_text(digest)
+
+
+def gbrain_service() -> None:
+    """GBrain is a child of the engine. Its embedded database admits one process, so this one serves every client
+    (the engine's world walk, the console) over HTTP. The index ships prebuilt; this writes its config (which
+    holds an absolute path, so it is rewritten per install) and restarts the server if it dies."""
+    exe = os.environ.get("CHITRAGUPTA_GBRAIN_BIN") or shutil.which("gbrain")
+    home = Path(os.environ.get("CHITRAGUPTA_GBRAIN_HOME") or DATA / "gbrain")
+    index = home / ".gbrain" / "brain.pglite"
+    port = urlparse(os.environ.get("CHITRAGUPTA_GBRAIN_URL") or "http://127.0.0.1:3131").port or 3131
+    if exe:
+        seed_index(exe, home)
+    if not exe or not index.exists():
+        log.warning("GBrain not started (program %s, index %s): knowledge search is off", exe, index)
+        return
+    (home / ".gbrain" / "config.json").write_text(json.dumps({**GBRAIN_CONFIG, "database_path": str(index)}, indent=2), encoding="utf-8")
+    env = {**os.environ, "GBRAIN_HOME": str(home)}
+    while True:
+        with open(DATA / "logs" / "gbrain.log", "ab") as out:
+            proc = subprocess.Popen([exe, "serve", "--http", "--port", str(port)], env=env, stdout=out, stderr=subprocess.STDOUT)
+            atexit.register(proc.terminate)
+            log.info("GBrain serving on port %d (pid %d)", port, proc.pid)
+            code = proc.wait()
+        log.warning("GBrain exited with %s; restarting in 5s", code)
+        time.sleep(5)
 
 
 def work(card: dict[str, Any]) -> None:
@@ -117,6 +171,7 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             log.warning("SQL unavailable, retrying in 30s: %s", str(exc)[:200])
             time.sleep(30)
+    threading.Thread(target=gbrain_service, name="gbrain", daemon=True).start()
     threading.Thread(target=dispatcher, name="dispatcher", daemon=True).start()
     last_audit = 0.0
     while True:

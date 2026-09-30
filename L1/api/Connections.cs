@@ -70,7 +70,24 @@ public static class Connections
         }
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
         File.WriteAllText(Path, file.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        if (OperatingSystem.IsWindows()) Restrict(Path);
         Apply();
+    }
+
+    // The file holds the SQL password and API keys: only the account that wrote it, SYSTEM and Administrators may read it.
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static void Restrict(string path)
+    {
+        var security = new System.Security.AccessControl.FileSecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        foreach (var sid in new System.Security.Principal.SecurityIdentifier?[] {
+                     new(System.Security.Principal.WellKnownSidType.LocalSystemSid, null),
+                     new(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid, null),
+                     System.Security.Principal.WindowsIdentity.GetCurrent().User })
+            if (sid is not null)
+                security.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(sid,
+                    System.Security.AccessControl.FileSystemRights.FullControl, System.Security.AccessControl.AccessControlType.Allow));
+        new FileInfo(path).SetAccessControl(security);
     }
 
     static string Value(JsonObject? candidate, string section, string key, string env)
