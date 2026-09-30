@@ -41,10 +41,10 @@ if (-not $token) { throw "Could not create the access token." }
 Set-Content "$PSScriptRoot\cache\brain.token" $token -NoNewline
 
 # Ship the data, not the machine-specific bits (config.json holds an absolute path; the engine rewrites it).
-$pkg = "$PSScriptRoot\cachebrain-pkg"
+$pkg = "$PSScriptRoot\cache\brain-pkg"
 Remove-Item $pkg -Recurse -Force -ErrorAction SilentlyContinue
 robocopy "$work\.gbrain" "$pkg\.gbrain" /E /XF config.json .gbrain-resolve.sock /XD .gbrain-lock /NFL /NDL /NJH /NJS | Out-Null
-$zip = "$PSScriptRoot\cachebrain.zip"
+$zip = "$PSScriptRoot\cache\brain.zip"
 Remove-Item $zip -ErrorAction SilentlyContinue
 tar.exe -a -c -f $zip -C $pkg .gbrain  # Compress-Archive (5.1) rejects the pre-1980 timestamps inside PGLite
 Write-Host "brain.zip $([int]((Get-Item $zip).Length / 1MB)) MB, token saved."
