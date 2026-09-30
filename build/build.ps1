@@ -33,7 +33,8 @@ Write-Host "== python"
 $embed = Get-Cached "https://www.python.org/ftp/python/$pyVersion/python-$pyVersion-embed-amd64.zip" "python-embed.zip"
 Expand-Archive $embed "$stage\engine\python"
 $pth = Get-ChildItem "$stage\engine\python\python*._pth"
-(Get-Content $pth) -replace '^#import site', 'import site' | Set-Content $pth
+# The embeddable Python ignores PYTHONPATH and the script directory: list the application folders in its ._pth.
+((Get-Content $pth) -replace '^#import site', 'import site') + '..pp' + '..pp\Model_Bench' | Set-Content $pth
 python -m pip install --quiet --target "$stage\engine\python\Lib\site-packages" --only-binary=:all: --platform win_amd64 --python-version ($pyVersion -replace '\.\d+$') --implementation cp -r "$root\build\requirements.txt"
 
 Write-Host "== application"

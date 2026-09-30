@@ -49,3 +49,7 @@ tools/RepoPad/obj/
 build/cache/
 build/stage/
 build/out/
+installer/**/bin/
+installer/**/obj/
+installer/obj/
+installer/bin/

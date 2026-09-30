@@ -1,6 +1,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
-     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
+     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
   <Package Name="Chitragupta" Manufacturer="Chitragupta" Version="$(Version)" Scope="perMachine"
            UpgradeCode="A3F2C6B0-5B6E-4B1E-9D0A-2C7F8E9B1A11" Compressed="yes">
@@ -18,10 +19,9 @@
           <Component Id="ApiService" Bitness="always64">
             <File Id="L1Api.exe" Source="$(StageDir)\api\L1Api.exe" KeyPath="yes" />
             <ServiceInstall Id="ApiSvc" Name="ChitraguptaConsole" DisplayName="Chitragupta Console" Type="ownProcess" Start="auto"
-                            ErrorControl="normal" Description="Console, helpdesk chat and API." Account="LocalSystem" Vital="yes">
-              <ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
-                             RestartServiceDelayInSeconds="10" ResetPeriodInDays="1" />
-            </ServiceInstall>
+                            ErrorControl="normal" Description="Console, helpdesk chat and API." Account="LocalSystem" Vital="yes" />
+            <util:ServiceConfig ServiceName="ChitraguptaConsole" FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
+                                RestartServiceDelayInSeconds="10" ResetPeriodInDays="1" />
             <ServiceControl Id="ApiCtl" Name="ChitraguptaConsole" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
             <fw:FirewallException Id="ConsolePort" Name="Chitragupta Console" Port="[PORT]" Protocol="tcp" Scope="any" />
             <Environment Id="PortEnv" Name="CHITRAGUPTA_PORT" Value="[PORT]" System="yes" Action="set" Part="all" />

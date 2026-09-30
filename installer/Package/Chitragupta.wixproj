@@ -1,7 +1,7 @@
 <Project Sdk="WixToolset.Sdk/5.0.2">
   <PropertyGroup>
     <OutputName>Chitragupta</OutputName>
-    <StageDir>$(MSBuildProjectDirectory)\..\build\stage</StageDir>
+    <StageDir>$(MSBuildProjectDirectory)\..\..\build\stage</StageDir>
     <Version Condition="'$(Version)' == ''">0.1.0</Version>
     <DefineConstants>StageDir=$(StageDir);Version=$(Version)</DefineConstants>
     <InstallerPlatform>x64</InstallerPlatform>
@@ -9,5 +9,6 @@
   <ItemGroup>
     <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
     <PackageReference Include="WixToolset.Firewall.wixext" Version="5.0.2" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
   </ItemGroup>
 </Project>
