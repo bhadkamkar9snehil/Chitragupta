@@ -1,0 +1,135 @@
+---
+type: table
+title: "XMES_RM_Production_Summary"
+built: "2026-09-24T11:36:36"
+---
+
+# XMES_RM_Production_Summary
+
+Table in XStudio_Xbatch. Rows: 7.
+
+## Written by
+
+- XMES_RM_Production_Summary_Usp
+
+## Columns
+
+- ID varchar(36)
+- Name varchar(100)
+- ParentID varchar(36)
+- CreatedBy varchar(36)
+- ModifiedBy varchar(36)
+- CreatedOn datetime
+- ModifiedOn datetime
+- IsDeleted bit
+- IsSystem bit
+- AssignedUserID varchar(36)
+- HostAddress varchar(100)
+- DbSyncStatus varchar(500)
+- MobileSyncStatus varchar(100)
+- Source varchar(20)
+- EntryDateTime datetime
+- ReportDate date
+- IsProcessed bit
+- Product varchar(100)
+- Section varchar(100)
+- Grade varchar(100)
+- AvgBilletWt decimal
+- ActualWeightTon varchar(100)
+- PrimeProduction varchar(100)
+- ShortLengthGeneration decimal
+- HoldBundlesWtTon decimal
+- Rejections decimal
+- DayProduction decimal
+- CobblePcs int
+- CobbleBilletWt decimal
+- HotOutPcs int
+- HotOutBilletWt decimal
+- RolledBilletPcs int
+- RolledBilletWTMT decimal
+- BilletConsumed decimal
+- TotalDischargeTon decimal
+- yield decimal
+- ActualYieldPCT decimal
+- NGNm3 decimal
+- NGMMBTU decimal
+- PowerKWH decimal
+- ProcessWaterm3 decimal
+- PortableWaterm3 decimal
+- NGTarget decimal
+- NGMMBTUTon decimal
+- PowerTarget decimal
+- PowerKWHTon decimal
+- ProcessWaterm3Ton decimal
+- PortableWaterm3Ton decimal
+- NoofCobblePCs decimal
+- Column103 varchar(100)
+- Column102 varchar(100)
+- greaterthan12mCutlength int
+- LessThan12mCutlength int
+- m16 decimal
+- m155 decimal
+- m15 decimal
+- m145 decimal
+- m14 decimal
+- m135 decimal
+- m13 decimal
+- m12 decimal
+- m115 decimal
+- m11 decimal
+- m105 decimal
+- m10 decimal
+- m95 decimal
+- m9 decimal
+- m85 decimal
+- m8 decimal
+- CampaignDate date
+- CampaignId varchar(100)
+- CampaignNo int
+- TargetTons decimal
+- RatedTons decimal
+- OEE decimal
+- QualityRatio decimal
+- PerformanceRate decimal
+- ActualRollingRate decimal
+- RatedRollingRate decimal
+- AvailabilityPCT decimal
+- HotHoursMins decimal
+- Quality decimal
+- SMS decimal
+- PPC decimal
+- DispatchAndLogistics decimal
+- Crane decimal
+- Utility decimal
+- RollShop int
+- Electrical int
+- Mechanical int
+- Operation int
+- Unplanned int
+- NewSizeOrGradeDevelopment int
+- ProcessDelay int
+- StandOrPassChange int
+- SectionChange int
+- Planned int
+- Availability int
+- PlannedShutdown int
+- CalTime decimal
+- AvlPCT decimal
+- WirerodSize varchar(100)
+- SPWirerodConsKGPerCoil decimal
+- WireRodCons decimal
+- TrimmingAndShearLoss varchar(100)
+- EndCutPCT varchar(100)
+- EndCutTon varchar(100)
+- MillScale12PCT decimal
+- ENDCutTons decimal
+- CobbleTons decimal
+- HotChargingPCT decimal
+- HotChargingTon decimal
+- AvgSCTimeMinOrSC decimal
+- SCTimeMin decimal
+- NoofSCn int
+- CobbleRetensionTimeMinOrCobble decimal
+- CobbleTimeMin decimal
+- PortableWaterm3OrTon decimal
+- ProcessWaterm3OrTon decimal

@@ -1,0 +1,102 @@
+---
+type: table
+title: "RM_Rebar_Data"
+built: "2026-09-24T11:36:36"
+---
+
+# RM_Rebar_Data
+
+Table in XStudio_Xbatch. Rows: 1.
+
+## Columns
+
+- ID varchar(36)
+- Name varchar(100)
+- ParentID varchar(36)
+- CreatedBy varchar(36)
+- ModifiedBy varchar(36)
+- CreatedOn datetime
+- ModifiedOn datetime
+- IsDeleted bit
+- IsSystem bit
+- AssignedUserID varchar(36)
+- HostAddress varchar(100)
+- DbSyncStatus varchar(500)
+- MobileSyncStatus varchar(100)
+- Source varchar(20)
+- EquipmentID varchar(36)
+- RebarPostprCurrentA decimal
+- RebarPostprSpeedRpm decimal
+- RebarPostprTorqueNm decimal
+- RebarPostprSpeedMps decimal
+- RebarTmtWaterflowLine1Lpm decimal
+- RebarTmtWaterflow2Line2Lpm decimal
+- RebarTmtWaterflow3Line3Lpm decimal
+- RebarTmtWaterflow4Line4Lpm decimal
+- RebarTmtMainWaterflowOutLpm decimal
+- RebarTmtWaterpressBar decimal
+- RebarTmtWatertempC decimal
+- RebarDividingShear1CurrentA decimal
+- RebarDividingShear1SpeedRpm decimal
+- RebarDividingShear1TorqueNm decimal
+- RebarDividingShear1SpeedMps decimal
+- RebarFinishbyprtCurrentA decimal
+- RebarFinishbyprtSpeedRpm decimal
+- RebarFinishbyprtTorqueNm decimal
+- RebarFinishbyprtSpeedMps decimal
+- RebarTmtextCurrentA decimal
+- RebarTmtextSpeedRpm decimal
+- RebarTmtextTorqueNm decimal
+- RebarTmtextSpeedMps decimal
+- RebarShortBarDivCurrentA decimal
+- RebarShortBarDivSpeedRpm decimal
+- RebarShortBarDivTorqueNm decimal
+- RebarShortBarDivSpeedMps decimal
+- RebarCbapprt1CurrentA decimal
+- RebarCbapprt1SpeedRpm decimal
+- RebarCbapprt1TorqueNm decimal
+- RebarCbapprt1SpeedMps decimal
+- RebarCbapprt2CurrentA decimal
+- RebarCbapprt2SpeedRpm decimal
+- RebarCbapprt2TorqueNm decimal
+- RebarCbapprt2SpeedMps decimal
+- RebarCbapprt3CurrentA decimal
+- RebarCbapprt3SpeedRpm decimal
+- RebarCbapprt3TorqueNm decimal
+- RebarCbapprt3SpeedMps decimal
+- RebarCbapprt4CurrentA decimal
+- RebarCbapprt4SpeedRpm decimal
+- RebarCbapprt4TorqueNm decimal
+- RebarCbapprt4SpeedMps decimal
+- RebarCbapprt5CurrentA decimal
+- RebarCbapprt5SpeedRpm decimal
+- RebarCbapprt5TorqueNm decimal
+- RebarCbapprt5SpeedMps decimal
+- RebarCbapprt6CurrentA decimal
+- RebarCbapprt6SpeedRpm decimal
+- RebarCbapprt6TorqueNm decimal
+- RebarCbapprt6SpeedMps decimal
+- RebarCbrit1CurrentA decimal
+- RebarCbrit1SpeedRpm decimal
+- RebarCbrit1TorqueNm decimal
+- RebarCbrit1SpeedMps decimal
+- RebarCbrit2CurrentA decimal
+- RebarCbrit2SpeedRpm decimal
+- RebarCbrit2TorqueNm decimal
+- RebarCbrit2SpeedMps decimal
+- RebarCbrit3CurrentA decimal
+- RebarCbrit3SpeedRpm decimal
+- RebarCbrit3TorqueNm decimal
+- RebarCbrit3SpeedMps decimal
+- RebarCbrit4CurrentA decimal
+- RebarCbrit4SpeedRpm decimal
+- RebarCbrit4TorqueNm decimal
+- RebarCbrit4SpeedMps decimal
+- RebarCbrit5CurrentA decimal
+- RebarCbrit5SpeedRpm decimal
+- RebarCbrit5TorqueNm decimal
+- RebarCbrit5SpeedMps decimal
+- RebarCbrit6CurrentA decimal
+- RebarCbrit6SpeedRpm decimal
+- RebarCbrit6TorqueNm decimal
+- RebarCbrit6SpeedMps decimal

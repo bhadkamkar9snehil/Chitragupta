@@ -1,0 +1,36 @@
+---
+type: key
+title: "InspectionLot"
+built: "2026-09-24T11:36:36"
+---
+
+# InspectionLot
+
+Columns that hold the same identifier values (found by shared values), e.g. `40004271552`, `40004281505`, `40004281507`.
+
+- Heat_Chemistry_Quality_Data.InspectionLot
+- MES_SAP_Production_Trn_Tbl.InspectionLot
+- MES_SAP_UsageDecision_Trn_Tbl.InspectionLot
+- XMES_SAP_API_ResultRecording_Error.InspectionLot
+- XMES_SAP_API_UsageDecision_Error.InspectionLot
+- XStudio_List_Heat_Chemistry_Quality_CCM_Heat_Wise_Data_Vw.InspectionLot
+- XStudio_List_Heat_Chemistry_Quality_Data_Released_Vw.InspectionLot
+- XStudio_List_Heat_Chemistry_Quality_Data_RR_Posted_Vw.InspectionLot
+- XStudio_List_Heat_Chemistry_Quality_Data_RR_Vw.InspectionLot
+- XStudio_List_Heat_Chemistry_Quality_Data_Vw.InspectionLot
+- XStudio_List_Heat_Chemistry_Quality_EAF_Heat_Wise_Data_Vw.InspectionLot
+- XStudio_List_Heat_Chemistry_Quality_Heat_Wise_CCM_Data_Vw.InspectionLot
+- XStudio_List_Heat_Chemistry_Quality_Heat_Wise_Data_Vw.InspectionLot
+- XStudio_List_Heat_Chemistry_Quality_LRF_Heat_Wise_Data_Vw.InspectionLot
+- XStudio_List_MES_SAP_Production_RR_Posting_Vw.InspectionLot
+- XStudio_List_MES_SAP_Production_Trn_Tbl_FG_Vw.InspectionLot
+- XStudio_List_MES_SAP_Production_Trn_Tbl_Reversal_Vw.InspectionLot
+- XStudio_List_MES_SAP_Production_Trn_Tbl_RM_Vw.InspectionLot
+- XStudio_List_MES_SAP_Production_Trn_Tbl_Row_Template_Vw.InspectionLot
+- XStudio_List_MES_SAP_Production_Trn_Tbl_SAPPostingFail_Vw.InspectionLot
+- XStudio_List_MES_SAP_Production_Trn_Tbl_Vw.InspectionLot
+- XStudio_List_MES_SAP_Production_Trn_Tbl_Workorder_Vw.InspectionLot
+- XStudio_List_MES_SAP_UsageDecision_Trn_Tbl_Vw.InspectionLot
+- XStudio_List_XMES_SAP_API_ResultRecording_Error_Vw.InspectionLot
+- XStudio_List_XMES_SAP_API_UsageDecision_Error_Vw.InspectionLot
+- XStudio_MES_SAP_Production_Trn_Tbl_RM_Vw.InspectionLot

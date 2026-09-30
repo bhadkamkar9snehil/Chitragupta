@@ -1,0 +1,11 @@
+---
+type: screen
+title: "List_XMES_SAP_API_Batch_Characteristics_Error"
+built: "2026-09-24T11:36:36"
+---
+
+# List_XMES_SAP_API_Batch_Characteristics_Error
+
+XStudio screen 'List_XMES_SAP_API_Batch_Characteristics_Error' (SAP API Batch Characteristics Error; page List_Page_XMES_SAP_API_Batch_Characteristics_Error, list view List_XMES_SAP_API_Batch_Characteristics_Error).
+Shows rows of XStudio_List_XMES_SAP_API_Batch_Characteristics_Error_Vw.
+No filter: shows every row of its view.

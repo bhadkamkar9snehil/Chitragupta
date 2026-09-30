@@ -1,0 +1,149 @@
+---
+type: view
+title: "XStudio_CCM_SMS_Block_List_Vw"
+built: "2026-09-24T11:36:36"
+---
+
+# XStudio_CCM_SMS_Block_List_Vw
+
+View in XStudio_Xbatch. Rows: unknown.
+
+## Reads
+
+- CCM_SMS_Block
+- CCM_SMS_Mst_Tbl
+
+## Columns
+
+- Edit varchar(229)
+- ID varchar(36)
+- YearlyTargetTon decimal
+- Name varchar(100)
+- TPH decimal
+- Equipment_Name varchar(100)
+- Strand1WithdrawalPressure decimal
+- StartTime datetime
+- Strand2WithdrawalPressure decimal
+- EndTime datetime
+- Strand3WithdrawalPressure decimal
+- ReportDate date
+- Strand4WithdrawalPressure decimal
+- IsProcessed bit
+- Strand5WithdrawalPressure decimal
+- CCMHeatID decimal
+- Strand6WithdrawalPressure decimal
+- STD1BilletCount decimal
+- Strand1StraightnerPressure decimal
+- STD2BilletCount decimal
+- Strand2StraightnerPressure decimal
+- STD3BilletCount decimal
+- Strand3StraightnerPressure decimal
+- STD4BilletCount decimal
+- Strand4StraightnerPressure decimal
+- STD5BilletCount decimal
+- Strand5StraightnerPressure decimal
+- STD6BilletCount decimal
+- Strand6StraightnerPressure decimal
+- STD1CastingSpeed decimal
+- STD2CastingSpeed decimal
+- STD4CastingSpeed decimal
+- STD5CastingSpeed decimal
+- STD6CastingSpeed decimal
+- STD1OSCSpeed decimal
+- STD2OSCSpeed decimal
+- STD3OSCSpeed decimal
+- STD4OSCSpeed decimal
+- STD5OSCSpeed decimal
+- STD6OSCSpeed decimal
+- STD3CastingSpeed decimal
+- TotalBilletsCount decimal
+- Strand1BilletSpecificWeight decimal
+- Strand2BilletSpecificWeight decimal
+- Strand3BilletSpecificWeight decimal
+- Strand4BilletSpecificWeight decimal
+- Strand5BilletSpecificWeight decimal
+- Strand6BilletSpecificWeight decimal
+- Strand1ProductionTon decimal
+- Strand2ProductionTon decimal
+- Strand3ProductionTon decimal
+- Strand4ProductionTon decimal
+- Strand5ProductionTon decimal
+- Strand6ProductionTon decimal
+- TotalProductionTon decimal
+- CrossSection decimal
+- MonthlyTargetTon decimal
+- MTDPlannedTon decimal
+- TodayPlannedTon decimal
+- AskingRateTon decimal
+- Month varchar(100)
+- MTDAchievedPercentage decimal
+- RunningRateTon decimal
+- TodayAchievedPercentage decimal
+- Year decimal
+- YesterdayAchievedPercentage decimal
+- MouldWaterFlowL_MinSTD1 decimal
+- InletPressureSTD1 decimal
+- OutletPressureSTD1 decimal
+- InletTempT1STD1 decimal
+- OutletTempT2STD1 decimal
+- DeltaTSTD1 decimal
+- FlowZ1LtMinSTD1 decimal
+- FlowZ2LtMinSTD1 decimal
+- WeeklyTarget decimal
+- FlowZ3LtMinSTD1 decimal
+- TotalFlowLtMinSTD1 decimal
+- WeeklyAchievedProduction decimal
+- WeeklyAchievedpercentage decimal
+- FlowZ1LtMinSTD2 decimal
+- FlowZ2LtMinSTD2 decimal
+- FlowZ3LtMinSTD2 decimal
+- FlowZ1LtMinSTD3 decimal
+- FlowZ1LtMinSTD4 decimal
+- FlowZ1LtMinSTD5 decimal
+- FlowZ1LtMinSTD6 decimal
+- FlowZ2LtMinSTD3 decimal
+- FlowZ2LtMinSTD4 decimal
+- FlowZ2LtMinSTD5 decimal
+- FlowZ2LtMinSTD6 decimal
+- FlowZ3LtMinSTD3 decimal
+- FlowZ3LtMinSTD4 decimal
+- FlowZ3LtMinSTD5 decimal
+- FlowZ3LtMinSTD6 decimal
+- DeltaTSTD2 decimal
+- DeltaTSTD3 decimal
+- DeltaTSTD4 decimal
+- DeltaTSTD5 decimal
+- DeltaTSTD6 decimal
+- InletPressureSTD2 decimal
+- InletPressureSTD3 decimal
+- InletPressureSTD4 decimal
+- InletPressureSTD6 decimal
+- InletPressureSTD5 decimal
+- OutletPressureSTD2 decimal
+- OutletPressureSTD3 decimal
+- OutletPressureSTD4 decimal
+- OutletPressureSTD5 decimal
+- OutletPressureSTD6 decimal
+- InletTempT1STD2 decimal
+- InletTempT1STD3 decimal
+- InletTempT1STD4 decimal
+- InletTempT1STD5 decimal
+- InletTempT1STD6 decimal
+- OutletTempT2STD2 decimal
+- OutletTempT2STD3 decimal
+- OutletTempT2STD4 decimal
+- OutletTempT2STD5 decimal
+- OutletTempT2STD6 decimal
+- TotalFlowLtMinSTD2 decimal
+- TotalFlowLtMinSTD3 decimal
+- TotalFlowLtMinSTD4 decimal
+- TotalFlowLtMinSTD5 decimal
+- TotalFlowLtMinSTD6 decimal
+- MouldWaterFlowLMinSTD2 decimal
+- MouldWaterFlowLMinSTD3 decimal
+- MouldWaterFlowLMinSTD4 decimal
+- MouldWaterFlowLMinSTD5 decimal
+- MouldWaterFlowLMinSTD6 decimal
+- EquipmentID varchar(36)
+- Delete varchar(100)
+- Details varchar(-1)

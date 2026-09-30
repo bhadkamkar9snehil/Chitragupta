@@ -1,0 +1,40 @@
+---
+type: table
+title: "EAF_LogSheet_Ladle_Addition_Audit"
+built: "2026-09-24T11:36:36"
+---
+
+# EAF_LogSheet_Ladle_Addition_Audit
+
+Table in XStudio_Xbatch. Rows: 0.
+
+## Columns
+
+- ID varchar(36)
+- Name varchar(100)
+- ParentID varchar(36)
+- CreatedBy varchar(36)
+- ModifiedBy varchar(36)
+- CreatedOn datetime
+- ModifiedOn datetime
+- IsDeleted bit
+- IsSystem bit
+- AssignedUserID varchar(36)
+- HostAddress varchar(100)
+- DbSyncStatus varchar(500)
+- MobileSyncStatus varchar(100)
+- Source varchar(20)
+- EntryDateTime datetime
+- ReportDate date
+- IsProcessed bit
+- SiMn decimal
+- HCFeMn decimal
+- FeSi decimal
+- AIingots decimal
+- CPC decimal
+- CPC_Tag varchar(100)
+- CPC_TimeStamp datetime
+- CPC_Quality int
+- Lime decimal
+- Spar decimal
+- HeatID varchar(100)

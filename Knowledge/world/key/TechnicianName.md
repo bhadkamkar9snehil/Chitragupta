@@ -1,0 +1,77 @@
+---
+type: key
+title: "TechnicianName"
+built: "2026-09-24T11:36:36"
+---
+
+# TechnicianName
+
+Columns that hold the same identifier values (found by shared values), e.g. `0B81BCFB-8597-4A70-8E4E-C72E5231E541`, `1AAA4BA1-E521-414F-8B25-8DB9185B0642`, `3ADE6546-3C9A-49C4-A001-234025F2F901`.
+
+- Actual_Primary_Current.EngineerName
+- Actual_Primary_Current.TechnicianName
+- Actual_Secondary_Current.EngineerName
+- Actual_Secondary_Current.TechnicianName
+- Breakers_Details.EngineerName
+- Breakers_Details.TechnicianName
+- Control_and_Relay_Panels.EngineerName
+- Control_and_Relay_Panels.TechnicianName
+- EAF_Transformer.Attendant
+- EAF_Transformer_Reactor.Attendant
+- PTW_Details.EngineerName
+- PTW_Details.TechnicianName
+- Power_Meter_Reading_Time.EngineerName
+- Power_Meter_Reading_Time.TechnicianName
+- SVC_Plus_Status.EngineerName
+- SVC_Plus_Status.TechnicianName
+- Switchgear_Panel_Breaker_Status.EngineerName
+- Switchgear_Panel_Breaker_Status.TechnicianName
+- Transfomer_132_33KV.TechnicianName
+- Transformer.EngineerName
+- Transformer.TechnicianName
+- Transformer_125MVA.Attendant
+- Transformer_15MVA.Attendant
+- Transformer_15_24MVA.EngineerName
+- Transformer_15_24MVA.TechnicianName
+- Transformer_24MVA.Attendant
+- Transformer_63MVA.Attendant
+- Transformer_6_6kv.Attendants
+- Transformer_Hydron_125_MVA.EngineerName
+- Transformer_Hydron_125_MVA.TechnicianName
+- Transformer_LRF.Attendant
+- Transformer_Sprinkler_Station_Status.EngineerName
+- Transformer_Sprinkler_Station_Status.TechnicianName
+- XStudio_List_Actual_Primary_Current_Vw.EngineerName
+- XStudio_List_Actual_Primary_Current_Vw.TechnicianName
+- XStudio_List_Actual_Secondary_Current_Vw.EngineerName
+- XStudio_List_Actual_Secondary_Current_Vw.TechnicianName
+- XStudio_List_Breakers_Details_Vw.EngineerName
+- XStudio_List_Breakers_Details_Vw.TechnicianName
+- XStudio_List_Control_and_Relay_Panels_Vw.EngineerName
+- XStudio_List_Control_and_Relay_Panels_Vw.TechnicianName
+- XStudio_List_EAF_Transformer_Reactor_Vw.Attendant
+- XStudio_List_EAF_Transformer_Vw.Attendant
+- XStudio_List_Power_Meter_Reading_Time_Vw.EngineerName
+- XStudio_List_Power_Meter_Reading_Time_Vw.TechnicianName
+- XStudio_List_PTW_Details_Vw.EngineerName
+- XStudio_List_PTW_Details_Vw.TechnicianName
+- XStudio_List_SVC_Plus_Status_Vw.EngineerName
+- XStudio_List_SVC_Plus_Status_Vw.TechnicianName
+- XStudio_List_Switchgear_Panel_Breaker_Status_Vw.EngineerName
+- XStudio_List_Switchgear_Panel_Breaker_Status_Vw.TechnicianName
+- XStudio_List_Transfomer_KV_Vw.TechnicianName
+- XStudio_List_Transformer_125MVA_Vw.Attendant
+- XStudio_List_Transformer_15MVA_Vw.Attendant
+- XStudio_List_Transformer_24MVA_Vw.Attendant
+- XStudio_List_Transformer_63MVA_Vw.Attendant
+- XStudio_List_Transformer_Hydron_MVA_Vw.EngineerName
+- XStudio_List_Transformer_Hydron_MVA_Vw.TechnicianName
+- XStudio_List_Transformer_LRF_Vw.Attendant
+- XStudio_List_Transformer_MVA_Vw.EngineerName
+- XStudio_List_Transformer_MVA_Vw.TechnicianName
+- XStudio_List_Transformer_six_sixkv_Vw.Attendants
+- XStudio_List_Transformer_SIXthreeMVA_Vw.Attendant
+- XStudio_List_Transformer_Sprinkler_Station_Status_Vw.EngineerName
+- XStudio_List_Transformer_Sprinkler_Station_Status_Vw.TechnicianName
+- XStudio_List_Transformer_Vw.EngineerName
+- XStudio_List_Transformer_Vw.TechnicianName

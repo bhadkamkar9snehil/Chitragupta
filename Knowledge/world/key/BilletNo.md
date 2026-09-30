@@ -1,0 +1,47 @@
+---
+type: key
+title: "BilletNo"
+built: "2026-09-24T11:36:36"
+---
+
+# BilletNo
+
+Columns that hold the same identifier values (found by shared values), e.g. `1260773_00_01`, `1260781_00_01`, `1260817_00_01`.
+
+- Billet_NGConsumption_InFurnace.BilletNo
+- MES_SAP_Consumption_Trn_Tbl.BilletNo
+- XMES_Billet_Movement_Dtl_Tbl.ChargingBedBilletNo
+- XMES_Billet_Movement_Dtl_Tbl.Section1BilletNo
+- XMES_Billet_Movement_Dtl_Tbl.Section2BilletNo
+- XMES_Billet_Movement_Dtl_Tbl.ZonewiseBilletNo
+- XMES_Billet_Strand_tracking.BIlletNo
+- XMES_Live_Billet_Charging_Bed.BilletNo
+- XMES_Live_Charging_SECT1.BilletNo
+- XMES_Live_Charging_SECT2.BilletNo
+- XMES_RM_Furnace_Billet_Trn_Tbl.BilletNo
+- XMES_RM_Heated_Billet_trn_tbl.BilletNo
+- XMES_RM_Production_Data.BilletNo
+- Xbatch_Material_Inventory_Trn_Tbl.BilletNo
+- XStudio_List_Billet_NGConsumption_InFurnace_Vw.BilletNo
+- XStudio_List_XMES_Billet_Movement_Dtl_Tbl_Vw.ChargingBedBilletNo
+- XStudio_List_XMES_Billet_Movement_Dtl_Tbl_Vw.Section1BilletNo
+- XStudio_List_XMES_Billet_Movement_Dtl_Tbl_Vw.Section2BilletNo
+- XStudio_List_XMES_Billet_Movement_Dtl_Tbl_Vw.ZonewiseBilletNo
+- XStudio_List_XMES_Billet_Movement_Dtl_Tbl_Vw.BilletNo
+- XStudio_List_XMES_Billet_Strand_tracking_Vw.BIlletNo
+- XStudio_List_XMES_Billets_Movement_ChargingBed_To_Furnace_Vw.BilletNo
+- XStudio_List_XMES_Live_Billet_Charging_Bed_RowTemplate_Vw.BilletNo
+- XStudio_List_XMES_Live_Billet_Charging_Bed_Specific_Vw.BilletNo
+- XStudio_List_XMES_Live_Billet_Charging_Bed_Vw.BilletNo
+- XStudio_List_XMES_Live_Charging_SECT1_Vw.BilletNo
+- XStudio_List_XMES_Live_Charging_SECT2_Vw.BilletNo
+- XStudio_List_XMES_Live_Charging_SECTOne_RowTemplate_Vw.BilletNo
+- XStudio_List_XMES_Live_Charging_SECTwo_Rowtemplate_Vw.BilletNo
+- XStudio_List_XMES_RM_Furnace_Billet_Trn_Tbl_Vw.BilletNo
+- XStudio_List_XMES_RM_Heated_Billet_trn_tbl_Vw.BilletNo
+- XStudio_List_XMES_RM_Production_Data_RowTemplete_Vw.BilletNo
+- XStudio_List_XMES_RM_Production_Data_Shortbar_Bundle_Tracking_Vw.BilletNo
+- XStudio_List_XMES_RM_Production_Data_Vw.BilletNo
+- XStudio_RM_Billet_Tracking_Discharge_Vw.BilletNo
+- XStudio_RM_Billet_Tracking_Vw.BilletNo
+- XStudio_XMES_Billets_List_SAP_Posting_Vw.BilletNo

@@ -1,0 +1,409 @@
+---
+type: view
+title: "Vw_SMS_Production_Summary_Pivot"
+built: "2026-09-24T11:36:36"
+---
+
+# Vw_SMS_Production_Summary_Pivot
+
+View in XStudio_Xbatch. Rows: unknown.
+
+## Reads
+
+- SMS_Production_Summary
+
+## Columns
+
+- ReportDate date
+- NG BestDay decimal
+- NG BestMonth decimal
+- NG FTD Ton decimal
+- NG FTD Percentage decimal
+- NG MTD Ton decimal
+- NG MTD Percentage decimal
+- NG Target decimal
+- EAF ELECTRODES BestDay decimal
+- EAF ELECTRODES BestMonth decimal
+- EAF ELECTRODES FTD Ton decimal
+- EAF ELECTRODES FTD Percentage decimal
+- EAF ELECTRODES MTD Ton decimal
+- EAF ELECTRODES MTD Percentage decimal
+- EAF ELECTRODES Target decimal
+- HBI BestDay decimal
+- HBI BestMonth decimal
+- HBI FTD Ton decimal
+- HBI FTD Percentage decimal
+- HBI MTD Ton decimal
+- HBI MTD Percentage decimal
+- HBI Target decimal
+- LMY BestDay decimal
+- LMY BestMonth decimal
+- LMY FTD Ton decimal
+- LMY FTD Percentage decimal
+- LMY MTD Ton decimal
+- LMY MTD Percentage decimal
+- LMY Target decimal
+- LRF POWER BestDay decimal
+- LRF POWER BestMonth decimal
+- LRF POWER FTD Ton decimal
+- LRF POWER FTD Percentage decimal
+- LRF POWER MTD Ton decimal
+- LRF POWER MTD Percentage decimal
+- LRF POWER Target decimal
+- Dolime BestDay decimal
+- Dolime BestMonth decimal
+- Dolime FTD Ton decimal
+- Dolime FTD Percentage decimal
+- Dolime MTD Ton decimal
+- Dolime MTD Percentage decimal
+- Dolime Target decimal
+- PIG IRON BestDay decimal
+- PIG IRON BestMonth decimal
+- PIG IRON FTD Ton decimal
+- PIG IRON FTD Percentage decimal
+- PIG IRON MTD Ton decimal
+- PIG IRON MTD Percentage decimal
+- PIG IRON Target decimal
+- TOTAL SiMn BestDay decimal
+- TOTAL SiMn BestMonth decimal
+- TOTAL SiMn FTD Ton decimal
+- TOTAL SiMn FTD Percentage decimal
+- TOTAL SiMn MTD Ton decimal
+- TOTAL SiMn MTD Percentage decimal
+- TOTAL SiMn Target decimal
+- TPH BestDay decimal
+- TPH BestMonth decimal
+- TPH FTD Ton decimal
+- TPH FTD Percentage decimal
+- TPH MTD Ton decimal
+- TPH MTD Percentage decimal
+- TPH Target decimal
+- END CUTS BestDay decimal
+- END CUTS BestMonth decimal
+- END CUTS FTD Ton decimal
+- END CUTS FTD Percentage decimal
+- END CUTS MTD Ton decimal
+- END CUTS MTD Percentage decimal
+- END CUTS Target decimal
+- Planned Shutdown BestDay decimal
+- Planned Shutdown BestMonth decimal
+- Planned Shutdown FTD Ton decimal
+- Planned Shutdown FTD Percentage decimal
+- Planned Shutdown MTD Ton decimal
+- Planned Shutdown MTD Percentage decimal
+- Planned Shutdown Target decimal
+- Avg Power Drawn BestDay decimal
+- Avg Power Drawn BestMonth decimal
+- Avg Power Drawn FTD Ton decimal
+- Avg Power Drawn FTD Percentage decimal
+- Avg Power Drawn MTD Ton decimal
+- Avg Power Drawn MTD Percentage decimal
+- Avg Power Drawn Target decimal
+- TOTAL FeSi BestDay decimal
+- TOTAL FeSi BestMonth decimal
+- TOTAL FeSi FTD Ton decimal
+- TOTAL FeSi FTD Percentage decimal
+- TOTAL FeSi MTD Ton decimal
+- TOTAL FeSi MTD Percentage decimal
+- TOTAL FeSi Target decimal
+- CRANE MAINT BestDay decimal
+- CRANE MAINT BestMonth decimal
+- CRANE MAINT FTD Ton decimal
+- CRANE MAINT FTD Percentage decimal
+- CRANE MAINT MTD Ton decimal
+- CRANE MAINT MTD Percentage decimal
+- CRANE MAINT Target decimal
+- Total SMS Heats Tap BestDay decimal
+- Total SMS Heats Tap BestMonth decimal
+- Total SMS Heats Tap FTD Ton decimal
+- Total SMS Heats Tap FTD Percentage decimal
+- Total SMS Heats Tap MTD Ton decimal
+- Total SMS Heats Tap MTD Percentage decimal
+- Total SMS Heats Tap Target decimal
+- Lime EAF BestDay decimal
+- Lime EAF BestMonth decimal
+- Lime EAF FTD Ton decimal
+- Lime EAF FTD Percentage decimal
+- Lime EAF MTD Ton decimal
+- Lime EAF MTD Percentage decimal
+- Lime EAF Target decimal
+- Total Delays BestDay decimal
+- Total Delays BestMonth decimal
+- Total Delays FTD Ton decimal
+- Total Delays FTD Percentage decimal
+- Total Delays MTD Ton decimal
+- Total Delays MTD Percentage decimal
+- Total Delays Target decimal
+- Carbon injection EAF BestDay decimal
+- Carbon injection EAF BestMonth decimal
+- Carbon injection EAF FTD Ton decimal
+- Carbon injection EAF FTD Percentage decimal
+- Carbon injection EAF MTD Ton decimal
+- Carbon injection EAF MTD Percentage decimal
+- Carbon injection EAF Target decimal
+- CAC LRF BestDay decimal
+- CAC LRF BestMonth decimal
+- CAC LRF FTD Ton decimal
+- CAC LRF FTD Percentage decimal
+- CAC LRF MTD Ton decimal
+- CAC LRF MTD Percentage decimal
+- CAC LRF Target decimal
+- Opm BestDay decimal
+- Opm BestMonth decimal
+- Opm FTD Ton decimal
+- Opm FTD Percentage decimal
+- Opm MTD Ton decimal
+- Opm MTD Percentage decimal
+- Opm Target decimal
+- Top Carbon EAF BestDay decimal
+- Top Carbon EAF BestMonth decimal
+- Top Carbon EAF FTD Ton decimal
+- Top Carbon EAF FTD Percentage decimal
+- Top Carbon EAF MTD Ton decimal
+- Top Carbon EAF MTD Percentage decimal
+- Top Carbon EAF Target decimal
+- Avg Power ON Time BestDay decimal
+- Avg Power ON Time BestMonth decimal
+- Avg Power ON Time FTD Ton decimal
+- Avg Power ON Time FTD Percentage decimal
+- Avg Power ON Time MTD Ton decimal
+- Avg Power ON Time MTD Percentage decimal
+- Avg Power ON Time Target decimal
+- Liquid Metal BestDay decimal
+- Liquid Metal BestMonth decimal
+- Liquid Metal FTD Ton decimal
+- Liquid Metal FTD Percentage decimal
+- Liquid Metal MTD Ton decimal
+- Liquid Metal MTD Percentage decimal
+- Liquid Metal Target decimal
+- Avg Power OFF Time BestDay decimal
+- Avg Power OFF Time BestMonth decimal
+- Avg Power OFF Time FTD Ton decimal
+- Avg Power OFF Time FTD Percentage decimal
+- Avg Power OFF Time MTD Ton decimal
+- Avg Power OFF Time MTD Percentage decimal
+- Avg Power OFF Time Target decimal
+- TTT BestDay decimal
+- TTT BestMonth decimal
+- TTT FTD Ton decimal
+- TTT FTD Percentage decimal
+- TTT MTD Ton decimal
+- TTT MTD Percentage decimal
+- TTT Target decimal
+- Oxygen BestDay decimal
+- Oxygen BestMonth decimal
+- Oxygen FTD Ton decimal
+- Oxygen FTD Percentage decimal
+- Oxygen MTD Ton decimal
+- Oxygen MTD Percentage decimal
+- Oxygen Target decimal
+- Total Prime Production BestDay decimal
+- Total Prime Production BestMonth decimal
+- Total Prime Production FTD Ton decimal
+- Total Prime Production FTD Percentage decimal
+- Total Prime Production MTD Ton decimal
+- Total Prime Production MTD Percentage decimal
+- Total Prime Production Target decimal
+- Caster Yield BestDay decimal
+- Caster Yield BestMonth decimal
+- Caster Yield FTD Ton decimal
+- Caster Yield FTD Percentage decimal
+- Caster Yield MTD Ton decimal
+- Caster Yield MTD Percentage decimal
+- Caster Yield Target decimal
+- Prime Production (6m) BestDay decimal
+- Prime Production (6m) BestMonth decimal
+- Prime Production (6m) FTD Ton decimal
+- Prime Production (6m) FTD Percentage decimal
+- Prime Production (6m) MTD Ton decimal
+- Prime Production (6m) MTD Percentage decimal
+- Prime Production (6m) Target decimal
+- MECH BestDay decimal
+- MECH BestMonth decimal
+- MECH FTD Ton decimal
+- MECH FTD Percentage decimal
+- MECH MTD Ton decimal
+- MECH MTD Percentage decimal
+- MECH Target decimal
+- AUX+O2_Power BestDay decimal
+- AUX+O2_Power BestMonth decimal
+- AUX+O2_Power FTD Ton decimal
+- AUX+O2_Power FTD Percentage decimal
+- AUX+O2_Power MTD Ton decimal
+- AUX+O2_Power MTD Percentage decimal
+- AUX+O2_Power Target decimal
+- Heat Size BestDay decimal
+- Heat Size BestMonth decimal
+- Heat Size FTD Ton decimal
+- Heat Size FTD Percentage decimal
+- Heat Size MTD Ton decimal
+- Heat Size MTD Percentage decimal
+- Heat Size Target decimal
+- Cal Time BestDay decimal
+- Cal Time BestMonth decimal
+- Cal Time FTD Ton decimal
+- Cal Time FTD Percentage decimal
+- Cal Time MTD Ton decimal
+- Cal Time MTD Percentage decimal
+- Cal Time Target decimal
+- Skull BestDay decimal
+- Skull BestMonth decimal
+- Skull FTD Ton decimal
+- Skull FTD Percentage decimal
+- Skull MTD Ton decimal
+- Skull MTD Percentage decimal
+- Skull Target decimal
+- Lime LRF BestDay decimal
+- Lime LRF BestMonth decimal
+- Lime LRF FTD Ton decimal
+- Lime LRF FTD Percentage decimal
+- Lime LRF MTD Ton decimal
+- Lime LRF MTD Percentage decimal
+- Lime LRF Target decimal
+- LRF ELECTRODS BestDay decimal
+- LRF ELECTRODS BestMonth decimal
+- LRF ELECTRODS FTD Ton decimal
+- LRF ELECTRODS FTD Percentage decimal
+- LRF ELECTRODS MTD Ton decimal
+- LRF ELECTRODS MTD Percentage decimal
+- LRF ELECTRODS Target decimal
+- Std Delay BestDay decimal
+- Std Delay BestMonth decimal
+- Std Delay FTD Ton decimal
+- Std Delay FTD Percentage decimal
+- Std Delay MTD Ton decimal
+- Std Delay MTD Percentage decimal
+- Std Delay Target decimal
+- PPC BestDay decimal
+- PPC BestMonth decimal
+- PPC FTD Ton decimal
+- PPC FTD Percentage decimal
+- PPC MTD Ton decimal
+- PPC MTD Percentage decimal
+- PPC Target decimal
+- TOTAL CHARGE BestDay decimal
+- TOTAL CHARGE BestMonth decimal
+- TOTAL CHARGE FTD Ton decimal
+- TOTAL CHARGE FTD Percentage decimal
+- TOTAL CHARGE MTD Ton decimal
+- TOTAL CHARGE MTD Percentage decimal
+- TOTAL CHARGE Target decimal
+- External Scrap BestDay decimal
+- External Scrap BestMonth decimal
+- External Scrap FTD Ton decimal
+- External Scrap FTD Percentage decimal
+- External Scrap MTD Ton decimal
+- External Scrap MTD Percentage decimal
+- External Scrap Target decimal
+- Prime Production BestDay decimal
+- Prime Production BestMonth decimal
+- Prime Production FTD Ton decimal
+- Prime Production FTD Percentage decimal
+- Prime Production MTD Ton decimal
+- Prime Production MTD Percentage decimal
+- Prime Production Target decimal
+- Available Time BestDay decimal
+- Available Time BestMonth decimal
+- Available Time FTD Ton decimal
+- Available Time FTD Percentage decimal
+- Available Time MTD Ton decimal
+- Available Time MTD Percentage decimal
+- Available Time Target decimal
+- CCM Heats cast BestDay decimal
+- CCM Heats cast BestMonth decimal
+- CCM Heats cast FTD Ton decimal
+- CCM Heats cast FTD Percentage decimal
+- CCM Heats cast MTD Ton decimal
+- CCM Heats cast MTD Percentage decimal
+- CCM Heats cast Target decimal
+- Change to Billet Yield BestDay decimal
+- Change to Billet Yield BestMonth decimal
+- Change to Billet Yield FTD Ton decimal
+- Change to Billet Yield FTD Percentage decimal
+- Change to Billet Yield MTD Ton decimal
+- Change to Billet Yield MTD Percentage decimal
+- Change to Billet Yield Target decimal
+- Cold DRI BestDay decimal
+- Cold DRI BestMonth decimal
+- Cold DRI FTD Ton decimal
+- Cold DRI FTD Percentage decimal
+- Cold DRI MTD Ton decimal
+- Cold DRI MTD Percentage decimal
+- Cold DRI Target decimal
+- WTP BestDay decimal
+- WTP BestMonth decimal
+- WTP FTD Ton decimal
+- WTP Percentage decimal
+- WTP MTD Ton decimal
+- WTP MTD Percentage decimal
+- WTP Target decimal
+- ELECT BestDay decimal
+- ELECT BestMonth decimal
+- ELECT FTD Ton decimal
+- ELECT FTD Percentage decimal
+- ELECT MTD Ton decimal
+- ELECT MTD Percentage decimal
+- ELECT Target decimal
+- Flourspar BestDay decimal
+- Flourspar BestMonth decimal
+- Flourspar FTD Ton decimal
+- Flourspar FTD Percentage decimal
+- Flourspar MTD Ton decimal
+- Flourspar MTD Percentage decimal
+- Flourspar Target decimal
+- Cycle Time BestDay decimal
+- Cycle Time BestMonth decimal
+- Cycle Time FTD Ton decimal
+- Cycle Time FTD Percentage decimal
+- Cycle Time MTD Ton decimal
+- Cycle Time MTD Percentage decimal
+- Cycle Time Target decimal
+- Availability FTD Ton BestDay decimal
+- Availability FTD Ton BestMonth decimal
+- Availability FTD Ton decimal
+- Availability FTD Percentage decimal
+- Availability MTD Ton decimal
+- Availability MTD Percentage decimal
+- Availability Target decimal
+- AL ingots BestDay decimal
+- AL ingots BestMonth decimal
+- AL ingots FTD Ton decimal
+- AL ingots FTD Percentage decimal
+- AL ingots MTD Ton decimal
+- AL ingots MTD Percentage decimal
+- AL ingots Target decimal
+- EAF POWER BestDay decimal
+- EAF POWER BestMonth decimal
+- EAF POWER FTD Ton decimal
+- EAF POWER FTD Percentage decimal
+- EAF POWER MTD Ton decimal
+- EAF POWER MTD Percentage decimal
+- EAF POWER Target decimal
+- Forced Shutdown BestDay decimal
+- Forced Shutdown BestMonth decimal
+- Forced Shutdown FTD Ton decimal
+- Forced Shutdown FTD Percentage decimal
+- Forced Shutdown MTD Ton decimal
+- Forced Shutdown MTD Percentage decimal
+- Forced Shutdown Target decimal
+- TRM BestDay decimal
+- TRM BestMonth decimal
+- TRM FTD Ton decimal
+- TRM FTD Percentage decimal
+- TRM MTD Ton decimal
+- TRM MTD Percentage decimal
+- TRM Target decimal
+- Power ON Time Delat BestDay decimal
+- Power ON Time Delat BestMonth decimal
+- Power ON Time Delat FTD Ton decimal
+- Power ON Time Delat FTD Percentage decimal
+- Power ON Time Delat MTD Ton decimal
+- Power ON Time Delat MTD Percentage decimal
+- Power ON Time Delat Time Target decimal
+- Total BestDay decimal
+- Total BestMonth decimal
+- Total FTD Ton decimal
+- Total FTD Percentage decimal
+- Total MTD Ton decimal
+- Total MTD Percentage decimal
+- Total Target decimal

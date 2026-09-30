@@ -1,0 +1,155 @@
+---
+type: view
+title: "XStudio_List_Electrical_A_Shift_Check_List_Row_Template_Vw"
+built: "2026-09-24T11:36:36"
+---
+
+# XStudio_List_Electrical_A_Shift_Check_List_Row_Template_Vw
+
+View in XStudio_Xbatch. Rows: unknown.
+
+## Reads
+
+- Electrical_A_Shift_Check_List
+
+## Columns
+
+- TurretTundishCarWeighingSystemsStatus bit
+- LRFTransformerOilTemperature decimal
+- PumpDG1BatteryVoltage varchar(100)
+- SMSDG1BatteryVoltage varchar(100)
+- AirCompressor1Motor bit
+- BoosterFanMotorCurrent varchar(100)
+- STC1Status bit
+- EmergencyDGPump varchar(100)
+- MotorsandStartersPanelStatus bit
+- EAF varchar(100)
+- LadleTransferCarWeighingSystemStatus bit
+- EAFTransformerOilTemperature decimal
+- Edit varchar(247)
+- MotorsandPanels1 bit
+- InstrumentsandSensors1 bit
+- FurnaceCoolingwaterPumpMotors varchar(100)
+- SMSDG1BatteryElectrolyteLevel varchar(100)
+- EAFTransformerOilLevel decimal
+- BoosterFanMotorSpeed varchar(100)
+- AirCompressor2Motor bit
+- LRF varchar(100)
+- LadleCarMotorLimitSwitch bit
+- DateTime datetime
+- STC2Status bit
+- FieldSafetySonsorsFunctionalty bit
+- LRFTransformerOilLevel decimal
+- AMLCCamerasMonitorsandJBs bit
+- PumpDG1BatteryElectrolyteLevel varchar(100)
+- SMSDG2BatteryVoltage varchar(100)
+- Heaters1 bit
+- ScrapDieselTrolley3PanelSensorStatus bit
+- EmergencyWaterTankLevel varchar(100)
+- AirCompressor3Motor bit
+- LRFTransformerWindingTemperature varchar(100)
+- CCM varchar(100)
+- IDFanMotor1Current varchar(100)
+- EAFTransformerWindingTemperature varchar(100)
+- ViewData varchar(-1)
+- PumpDG2BatteryVoltage varchar(100)
+- MouldandSprayCoolingInstruments bit
+- STC1WeighingSystemStatus bit
+- AirCompressor4Motor bit
+- PumpDG2BatteryElectrolyteLevel varchar(100)
+- EAFDuctCoolingWaterPumpMotors varchar(100)
+- ID varchar(36)
+- LRFTransformerCoolingWaterFlow decimal
+- EAFTransformerCoolingWaterFlow decimal
+- MotorsandPanels2 bit
+- SMSDG2BatteryElectrolyteLevel varchar(100)
+- MouldOscillatorMotorsStatus bit
+- IDFanMotor1Speed varchar(100)
+- EAFTransformerTapChangerReading decimal
+- STC2WeighingSystemStatus bit
+- WithdrawlPinchRollMotorsStatus bit
+- SMSDG3BatteryVoltage varchar(100)
+- IDFanMotor2Current varchar(100)
+- NoofHeatsTapped int
+- Operatorfeedback varchar(100)
+- LRFTransformerTapChangerReading decimal
+- InstrumentsandSensors2 bit
+- PumpDG1ControlPanelSelectorSwitchPosition varchar(100)
+- AirCompressor5Motor bit
+- PumpDG2ControlPanelSelectorSwitchPosition varchar(100)
+- SMSDG3BatteryElectrolyteLevel varchar(100)
+- CopexMachineMotorsandPanelsStatus bit
+- TransformerCoolingwaterPumpMotors varchar(100)
+- AirCompressor6Motor bit
+- ShiftEngineers nvarchar(-1)
+- IDFanMotor2Speed varchar(100)
+- Heaters2 bit
+- TCMMCMotorsSensorsStatus bit
+- VaccumSwitchesStatus bit
+- SeriesReactorOilTemperature decimal
+- ShiftEngineersID varchar(-1)
+- SeriesReactorOilLevel decimal
+- AirCompressor7Motor bit
+- RollerTableMotorsStatus bit
+- SurgeCounterReadingRYBWeekly bit
+- IDFanMotor3Current varchar(100)
+- CopexMachineSensorsHMIStatus bit
+- ElectricalEquipmentsCWPumpMotors varchar(100)
+- SMSDG1ControlPanelSelectorSwitchPosition varchar(100)
+- PumpDG1DG2MainOutGoingMCCBON bit
+- PumpSynchronousPanelSelectorSwitchPostion varchar(100)
+- CopexMachineCoolingwaterTemperature decimal
+- LRFFireExtinguisherStatus bit
+- SMSDG2ControlPanelSelectorSwitchPosition varchar(100)
+- MechnicalEquipmentsCWPumpMotors varchar(100)
+- ContactPlateStatus bit
+- SeriesReactorCoolingWaterFlow decimal
+- IDFanMotor3Speed varchar(100)
+- AirCompressor8Motor bit
+- ShiftTechnician nvarchar(-1)
+- GEngineers nvarchar(-1)
+- AirCompressor1Controller bit
+- BilletLifterPusherLimitSwitchesStatus bit
+- SeriesReactorTapChangerReading decimal
+- LRFHouseKeeping bit
+- CCMMouldCoolingWaterPumpMotors varchar(100)
+- SMSDG3ControlPanelSelectorSwitchPosition varchar(100)
+- IDFanMotor4Current varchar(100)
+- GTechnician nvarchar(-1)
+- CCMMachineCoolingWaterPumpMotors varchar(100)
+- SMSDG12DG3MainOutGoingMCCBON bit
+- AirCompressor2Controller bit
+- CrossTransferLimitSwitchesStatus bit
+- IDFanMotor4Speed varchar(100)
+- VCBPanelStatus33Kv bit
+- SMSSynchronousPanelSelectorSwitchPostion varchar(100)
+- AirCompressor3Controller bit
+- BagHouse1PulsingOperation bit
+- HDRTAndCDRTRollersMotorsAndDriveStatus bit
+- CCMSprayCoolingWaterPumpMotors varchar(100)
+- ContractManpower nvarchar(-1)
+- EAFFireExtinguisherStatus bit
+- EAFHouseKeeping bit
+- AirCompressor4Controller bit
+- BagHouse2PulsingOperation bit
+- HCRTTurntableSingleBilletRoolerMotorsDriveStatus bit
+- CoolingTower12Motors varchar(100)
+- ShiftELectriciansid varchar(-1)
+- SVCCoolingWaterPumpMotors decimal
+- AirCompressor5Controller bit
+- GEngineersid varchar(-1)
+- HCContactPlatesStatus bit
+- BagHouse1StackEmissionAvgReading decimal
+- OxygenPlant12CWPumpMotors varchar(100)
+- AirCompressor6Controller bit
+- BagHouse2StackEmissionAvgReading decimal
+- AirCompressor7Controller bit
+- FESFireExtinguisherStatus bit
+- GElectrician varchar(-1)
+- AirCompressor8Controller bit
+- FESHouseKeeping bit
+- Details varchar(-1)
+- NameofShiftEngineers varchar(-1)
+- NameofShiftELectricians varchar(-1)
+- NameGElectricians varchar(-1)
+- NameGEngineers varchar(-1)

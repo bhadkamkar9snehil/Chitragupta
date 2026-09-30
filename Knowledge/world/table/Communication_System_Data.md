@@ -1,0 +1,112 @@
+---
+type: table
+title: "Communication_System_Data"
+built: "2026-09-24T11:36:36"
+---
+
+# Communication_System_Data
+
+Table in XStudio_Xbatch. Rows: 1.
+
+## Columns
+
+- ID varchar(36)
+- Name varchar(100)
+- ParentID varchar(36)
+- CreatedBy varchar(36)
+- ModifiedBy varchar(36)
+- CreatedOn datetime
+- ModifiedOn datetime
+- IsDeleted bit
+- IsSystem bit
+- AssignedUserID varchar(36)
+- HostAddress varchar(100)
+- DbSyncStatus varchar(500)
+- MobileSyncStatus varchar(100)
+- Source varchar(20)
+- EquipmentID varchar(36)
+- CCM_COMMON_PLC_ENABLE_STATUS decimal
+- CCM_COMMON_PLC_ERROR_CODE decimal
+- CCM_COMMON_PLC_ERROR_TEXT varchar(100)
+- CCM_COMMON_PLC_LICENSED_STATUS decimal
+- CCM_COMMON_PLC_STATUS decimal
+- CCM_CVS_PLC_ENABLE_STATUS decimal
+- CCM_CVS_PLC_ERROR_CODE decimal
+- CCM_CVS_PLC_ERROR_TEXT varchar(100)
+- CCM_CVS_PLC_LICENSED_STATUS decimal
+- CCM_CVS_PLC_STATUS decimal
+- CCM_STD_1_PLC_ENABLE_STATUS decimal
+- CCM_STD_1_PLC_ERROR_CODE decimal
+- CCM_STD_1_PLC_ERROR_TEXT varchar(100)
+- CCM_STD_1_PLC_LICENSED_STATUS decimal
+- CCM_STD_1_PLC_STATUS decimal
+- CCM_STD_2_PLC_ENABLE_STATUS decimal
+- CCM_STD_2_PLC_ERROR_CODE decimal
+- CCM_STD_2_PLC_ERROR_TEXT varchar(100)
+- CCM_STD_2_PLC_LICENSED_STATUS decimal
+- CCM_STD_2_PLC_STATUS decimal
+- CCM_STD_3_PLC_ENABLE_STATUS decimal
+- CCM_STD_3_PLC_ERROR_CODE decimal
+- CCM_STD_3_PLC_ERROR_TEXT varchar(100)
+- CCM_STD_3_PLC_LICENSED_STATUS decimal
+- CCM_STD_3_PLC_STATUS decimal
+- CCM_STD_4_PLC_ENABLE_STATUS decimal
+- CCM_STD_4_PLC_ERROR_CODE decimal
+- CCM_STD_4_PLC_ERROR_TEXT varchar(100)
+- CCM_STD_4_PLC_LICENSED_STATUS decimal
+- CCM_STD_4_PLC_STATUS decimal
+- CCM_STD_5_PLC_ENABLE_STATUS decimal
+- CCM_STD_5_PLC_ERROR_CODE decimal
+- CCM_STD_5_PLC_ERROR_TEXT varchar(100)
+- CCM_STD_5_PLC_LICENSED_STATUS decimal
+- CCM_STD_5_PLC_STATUS decimal
+- CCM_STD_6_PLC_ENABLE_STATUS decimal
+- CCM_STD_6_PLC_ERROR_CODE decimal
+- CCM_STD_6_PLC_ERROR_TEXT varchar(100)
+- CCM_STD_6_PLC_LICENSED_STATUS decimal
+- CCM_STD_6_PLC_STATUS decimal
+- EAF_PLC_ENABLE_STATUS decimal
+- EAF_PLC_ERROR_CODE decimal
+- EAF_PLC_ERROR_TEXT varchar(100)
+- EAF_PLC_LICENSED_STATUS decimal
+- Furnace_Combution_PLC_ENABLE_STATUS decimal
+- Furnace_Combution_PLC_ERROR_CODE decimal
+- Furnace_Combution_PLC_ERROR_TEXT varchar(100)
+- Furnace_Combution_PLC_LICENSED_STATUS decimal
+- Furnace_Combution_PLC_STATUS decimal
+- Furnace_Handling_PLC_ENABLE_STATUS decimal
+- Furnace_Handling_PLC_ERROR_CODE decimal
+- Furnace_Handling_PLC_LICENSED_STATUS decimal
+- Furnace_Handling_PLC_STATUS decimal
+- Furnace_Handlling_PLC_ERROR_TEXT varchar(100)
+- EAF_ISAC_PLC_ENABLE_STATUS decimal
+- EAF_ISAC_PLC_ERROR_CODE decimal
+- EAF_ISAC_PLC_ERROR_TEXT varchar(100)
+- EAF_ISAC_PLC_LICENSED_STATUS decimal
+- EAF_ISAC_PLC_STATUS decimal
+- LRF_PLC_ENABLE_STATUS decimal
+- LRF_PLC_ERROR_CODE decimal
+- LRF_PLC_ERROR_TEXT varchar(100)
+- LRF_PLC_LICENSED_STATUS decimal
+- LRF_PLC_STATUS decimal
+- LRF_MHS_PLC_ENABLE_STATUS decimal
+- LRF_MHS_PLC_ERROR_CODE decimal
+- LRF_MHS_PLC_ERROR_TEXT varchar(100)
+- LRF_MHS_PLC_LICENSED_STATUS decimal
+- LRF_MHS_PLC_STATUS decimal
+- EAF_MORE_PLC_ENABLE_STATUS decimal
+- EAF_MORE_PLC_ERROR_CODE decimal
+- EAF_MORE_PLC_ERROR_TEXT varchar(100)
+- EAF_MORE_PLC_LICENSED_STATUS decimal
+- EAF_MORE_PLC_STATUS decimal
+- EAF_PLC_STATUS decimal
+- WRM_CPU_1_PLC_ENABLE_STATUS decimal
+- WRM_CPU_1_PLC_ERROR_CODE decimal
+- WRM_CPU_1_PLC_ERROR_TEXT varchar(100)
+- WRM_CPU_1_PLC_LICENSED_STATUS decimal
+- WRM_CPU_1_PLC_STATUS decimal
+- WRM_CPU_2_PLC_ENABLE_STATUS decimal
+- WRM_CPU_2_PLC_ERROR_CODE decimal
+- WRM_CPU_2_PLC_ERROR_TEXT varchar(100)
+- WRM_CPU_2_PLC_LICENSED_STATUS decimal
+- WRM_CPU_2_PLC_STATUS decimal

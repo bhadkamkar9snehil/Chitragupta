@@ -1,0 +1,277 @@
+---
+type: table
+title: "CCM_Per_Heat"
+built: "2026-09-24T11:36:36"
+---
+
+# CCM_Per_Heat
+
+Table in XStudio_Xbatch. Rows: 6,862.
+
+## Identifiers it holds
+
+- HeatID: same values as key `HeatNo`
+- LadleSequenceText: same values as key `HeatSequence`
+
+## Written by
+
+- SP_SMS_Producation_Summary
+- XBatch_Add_Default_Heat_start_end_Usp
+- XBatch_Add_Heat_start_end_Usp
+- XBatch_CCM_Heat_Average_SuperHeat
+- XMES_BackCalculation_GLS_Usp
+- XMES_I_SAP_Billet_Production_Trn
+- XMES_Missing_Heat_Entry_USP
+- XMES_SAP_Posting_Sequence_Usp
+- XMES_U_SAP_Billet_Posting_Count_Usp
+- XSTUDIO_WORKFLOW_64B14ECC-2663-434D-B0DC-FF705136AA3A_SP (text)
+- XSTUDIO_WORKFLOW_6F954B26-CB87-40FC-8B73-26EE001C55DC_SP (text)
+- XSTUDIO_WORKFLOW_94F414DB-7BB1-4CCF-B50D-65A1E6101382_SP
+- XSTUDIO_WORKFLOW_B4724DFC-A609-44DA-A6D1-899EF9A79C90_SP
+- XSTUDIO_WORKFLOW_DEDE4001-3D55-41CB-8F02-2C2F8155E659_SP (text)
+- Xstudio_CCM_Per_Heat_USP
+
+## Read by
+
+- Per_Heat_LadleNo_Conformation_usp
+- SAP_Posting_Data_ByHeat_Usp
+- SMS_Data_list_View
+- SP_ReCalculate_CCM_SMS_Block_USP
+- SP_SMS_Producation_Summary
+- SP_Xbatch_SplitsBillets_From_CCM_To_Inventory
+- XBatch_Add_Default_Heat_start_end_Usp
+- XBatch_Add_Heat_start_end_Usp
+- XBatch_CCM_Heat_Average_SuperHeat
+- XBatch_Recalculate_Summary_CCM_Usp
+- XBatch_Recalculate_Summary_SMS_Target_Usp
+- XMES_AUTO_WO_AND_SO_CALCULATION
+- XMES_AUTO_WO_AND_SO_CALCULATION_old
+- XMES_BackCalculation_GLS_Usp
+- XMES_BackCalculation_Validation_GLS_Usp
+- XMES_CCM_BILLET_MASTER_CREATE_USP
+- XMES_I_Billet_ChargingBed_Usp
+- XMES_I_Billets_Tracking_Usp
+- XMES_I_ByProduct_Trn_Usp
+- XMES_I_PlantToPlantTransfer_Usp
+- XMES_I_SAP_Billet_Production_Trn
+- XMES_I_SAP_GLS_LS_Consumption_Trn_Usp
+- XMES_Missing_Heat_Entry_USP
+- XMES_Recalculate_heat_Usp
+- XMES_SAP_Posting_Sequence_Usp
+- XMES_U_SAP_Billet_Posting_Count_Usp
+- XMES_U_SAP_Billet_Production_Trn_Usp
+- XSTUDIO_WORKFLOW_64B14ECC-2663-434D-B0DC-FF705136AA3A_SP
+- XSTUDIO_WORKFLOW_6F954B26-CB87-40FC-8B73-26EE001C55DC_SP
+- XSTUDIO_WORKFLOW_94F414DB-7BB1-4CCF-B50D-65A1E6101382_SP
+- XSTUDIO_WORKFLOW_B4724DFC-A609-44DA-A6D1-899EF9A79C90_SP
+- XSTUDIO_WORKFLOW_DEDE4001-3D55-41CB-8F02-2C2F8155E659_SP
+- Xstudio_CCM_Per_Heat_USP
+- Xstudio_Day_CCM_Usp
+- Xstudio_Day_SMS_Target_Usp
+- Xstudio_Heat_Chemistry_Quality_Data_USP
+- Xstudio_Shift_CCM_Usp
+
+## Rows created by events
+
+- CCM:CCM_Per_Heat
+
+## Columns
+
+- ID varchar(36)
+- Name varchar(100)
+- ParentID varchar(36)
+- CreatedBy varchar(36)
+- ModifiedBy varchar(36)
+- CreatedOn datetime
+- ModifiedOn datetime
+- IsDeleted bit
+- IsSystem bit
+- AssignedUserID varchar(36)
+- HostAddress varchar(100)
+- DbSyncStatus varchar(500)
+- MobileSyncStatus varchar(100)
+- Source varchar(20)
+- EquipmentID varchar(36)
+- ReportDate varchar(100)
+- IsProcessed bit
+- StartTime datetime
+- EndTime datetime
+- Status varchar(100)
+- HeatID int
+- ArmNo decimal
+- ArmConsumption decimal
+- TotalBilletsCount decimal
+- Strand1CastingSpeed decimal
+- Strand2CastingSpeed decimal
+- Strand3CastingSpeed decimal
+- Strand5CastingSpeed decimal
+- Strand4CastingSpeed decimal
+- Strand6CastingSpeed decimal
+- Strand1BilletCounter int
+- Strand2BilletCounter int
+- Strand3BilletCounter int
+- Strand4BilletCounter int
+- Strand5BilletCounter int
+- Strand6BilletCounter int
+- STD1OSCSpeed decimal
+- STD2OSCSpeed decimal
+- STD3OSCSpeed decimal
+- STD4OSCSpeed decimal
+- STD5OSCSpeed decimal
+- STD6OSCSpeed decimal
+- TotalProduction decimal
+- MonthlyTarget decimal
+- MTDPlannedProduction decimal
+- TodayPlannedProduction decimal
+- WorkflowStatus varchar(50)
+- DeltaTSTD1 decimal
+- DeltaTSTD2 decimal
+- DeltaTSTD3 decimal
+- DeltaTSTD4 decimal
+- DeltaTSTD5 decimal
+- DeltaTSTD6 decimal
+- FlowZ1LtMinSTD1 decimal
+- FlowZ1LtMinSTD2 decimal
+- FlowZ1LtMinSTD3 decimal
+- FlowZ1LtMinSTD4 decimal
+- FlowZ1LtMinSTD5 decimal
+- FlowZ1LtMinSTD6 decimal
+- FlowZ2LtMinSTD1 decimal
+- FlowZ2LtMinSTD2 decimal
+- FlowZ2LtMinSTD3 decimal
+- FlowZ2LtMinSTD4 decimal
+- FlowZ2LtMinSTD5 decimal
+- FlowZ2LtMinSTD6 decimal
+- FlowZ3LtMinSTD1 decimal
+- FlowZ3LtMinSTD2 decimal
+- FlowZ3LtMinSTD3 decimal
+- FlowZ3LtMinSTD4 decimal
+- FlowZ3LtMinSTD5 decimal
+- FlowZ3LtMinSTD6 decimal
+- InletPressureSTD1 decimal
+- InletPressureSTD2 decimal
+- InletPressureSTD3 decimal
+- InletPressureSTD6 decimal
+- InletPressureSTD4 decimal
+- InletPressureSTD5 decimal
+- InletTempT1STD1 decimal
+- InletTempT1STD2 decimal
+- InletTempT1STD3 decimal
+- InletTempT1STD4 decimal
+- InletTempT1STD5 decimal
+- InletTempT1STD6 decimal
+- MouldWaterFlowLMinSTD1 decimal
+- MouldWaterFlowLMinSTD2 decimal
+- MouldWaterFlowLMinSTD3 decimal
+- MouldWaterFlowLMinSTD4 decimal
+- MouldWaterFlowLMinSTD5 decimal
+- MouldWaterFlowLMinSTD6 decimal
+- OutletPressureSTD1 decimal
+- OutletPressureSTD2 decimal
+- OutletPressureSTD3 decimal
+- OutletPressureSTD4 decimal
+- OutletPressureSTD5 decimal
+- OutletPressureSTD6 decimal
+- OutletTempT2STD1 decimal
+- OutletTempT2STD2 decimal
+- OutletTempT2STD3 decimal
+- OutletTempT2STD4 decimal
+- OutletTempT2STD5 decimal
+- OutletTempT2STD6 decimal
+- TotalFlowLtMinSTD1 decimal
+- TotalFlowLtMinSTD2 decimal
+- TotalFlowLtMinSTD3 decimal
+- TotalFlowLtMinSTD4 decimal
+- TotalFlowLtMinSTD5 decimal
+- TotalFlowLtMinSTD6 decimal
+- CrossSection int
+- CastingStartTime varchar(100)
+- Grade varchar(100)
+- LadleSequence int
+- TPH decimal
+- Strand1WithdrawalPressure decimal
+- Strand2WithdrawalPressure decimal
+- Strand3WithdrawalPressure decimal
+- Strand4WithdrawalPressure decimal
+- Strand5WithdrawalPressure decimal
+- Strand6WithdrawalPressure decimal
+- Strand1StraightnerPressure decimal
+- Strand2StraightnerPressure decimal
+- Strand3StraightnerPressure decimal
+- Strand4StraightnerPressure decimal
+- Strand5StraightnerPressure decimal
+- Strand6StraightnerPressure decimal
+- HeatReportDate date
+- WorkOrder varchar(-1)
+- ShortBilletCount int
+- HotBilletCount int
+- ColdBilletCount int
+- ScaleLossTon decimal
+- EndCutMeter decimal
+- TundishlossTon decimal
+- LaunderLossTon decimal
+- OtherLossesTon decimal
+- ActualBilletWeightTon decimal
+- CutLength int
+- Noof6mbilletsmeter int
+- Noof130mmbillets int
+- Noof140mmbillets int
+- Noof103MtrBillets int
+- Noof117MtrBillet int
+- SetWeightTon decimal
+- SAPWorkflowStatus varchar(50)
+- TotalPostedBilletCount int
+- TotalPostedBilletWeightTon decimal
+- RemainingPostedBilletWeightTon decimal
+- RemainingPostedBilletCount int
+- ActualBilletCount int
+- SalesOrder varchar(36)
+- RemainingDeclaredBilletWeightTon decimal
+- RemainingDeclaredBilletCount int
+- Material varchar(100)
+- BilletType1 varchar(100)
+- BilletType2 varchar(100)
+- BilletType3 varchar(100)
+- BilletType4 varchar(100)
+- NoofBillets1 int
+- NoofBillets2 int
+- NoofBillets3 int
+- NoofBillets4 int
+- CutLenght1 decimal
+- CutLenght2 decimal
+- CutLenght3 decimal
+- CutLenght4 decimal
+- CalcBilletsWeight1 decimal
+- CalcBilletsWeight2 decimal
+- CalcBilletsWeight3 decimal
+- CalcBilletsWeight4 decimal
+- PostToSAP1 bit
+- PostToSAP2 bit
+- PostToSAP3 bit
+- PostToSAP4 bit
+- Customer varchar(100)
+- LadleSequenceText varchar(100)
+- ProductionPlant varchar(36)
+- SAPPostingDate date
+- CastingStartTimeHHmm varchar(100)
+- ActualLiquidMetalWeight decimal
+- CasterYield decimal
+- CapturedTPH decimal
+- CastingDuration varchar(100)
+- EntryDateTime datetime
+- SuperHeat decimal
+- NoofStrands decimal
+- OldCapturedBilletCount int
+- OldCapturedBilletWeightTon decimal
+- TundishTemperature decimal
+- YearlyTarget decimal
+- WeeklyTarget decimal
+- TodayAchievedpercentage decimal
+- YesterdayAchievedpercentage decimal
+- WeeklyAchievedpercentage decimal
+- MTDAchievedpercentage decimal
+- WeeklyAchievedProduction decimal
+- AskingRate decimal
+- RunningRate decimal
+- Month varchar(100)
+- Year int

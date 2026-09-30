@@ -1,0 +1,34 @@
+---
+type: key
+title: "Material"
+built: "2026-09-24T11:36:36"
+---
+
+# Material
+
+Columns that hold the same identifier values (found by shared values), e.g. `10000521`, `10000524`, `10000525`.
+
+- XBatch_Material_Mst_Tbl.Number
+- XBatch_Work_Order_Mst_Tbl.MaterialName
+- XMES_SAP_API_GoodsMovement_Error.Material
+- XStudio_List_MES_SAP_By_Product_Trn_Tbl_CCM_Vw.Material
+- XStudio_List_MES_SAP_By_Product_Trn_Tbl_PostingFail_Vw.Material
+- XStudio_List_MES_SAP_Consumption_Trn_RM_Vw.Material
+- XStudio_List_MES_SAP_Consumption_Trn_Tbl_Billet_Vw.Material
+- XStudio_List_MES_SAP_Consumption_Trn_Tbl_RM_Vw.Material
+- XStudio_List_MES_SAP_Consumption_Trn_Tbl_Row_Template_Vw.Material
+- XStudio_List_MES_SAP_Consumption_Trn_Tbl_Vw.Material
+- XStudio_List_MES_SAP_Consumption_Trn_Tbl_WorkOrder_Vw.Material
+- XStudio_List_MES_SAP_Production_Trn_Tbl_Reversal_Vw.Material
+- XStudio_List_MES_SAP_Production_Trn_Tbl_SAPPostingFail_Vw.Material
+- XStudio_List_MES_SAP_Raw_Material_Consumption_Trn_Tbl_Vw.Material
+- XStudio_List_XBatch_Material_Inventory_HeatNowise_Billet_Tracking_Vw.Number
+- XStudio_List_XBatch_Material_Inventory_HeatNowise_Vw.Number
+- XStudio_List_XBatch_SAP_Work_Order_Mst_Tbl_Vw.MaterialName
+- XStudio_List_XMES_SAP_API_GoodsMovement_ByProduct_Error_Vw.Material
+- XStudio_List_XMES_SAP_API_GoodsMovement_Consumption_Error_Vw.Material
+- XStudio_List_XMES_SAP_API_GoodsMovement_Error_Vw.Material
+- XStudio_List_XMES_SAP_API_GoodsMovement_Production_Error_Vw.Material
+- XStudio_List_XMES_SAP_API_GoodsMovement_Reversal_Error_Vw.Material
+- XStudio_MES_SAP_Consumption_Trn_Tbl_RM_Vw.Material
+- XStudio_XBatch_SAP_Work_Order_Mobile_View_Vw.MaterialName

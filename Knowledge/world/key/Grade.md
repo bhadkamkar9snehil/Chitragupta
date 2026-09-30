@@ -1,0 +1,53 @@
+---
+type: key
+title: "Grade"
+built: "2026-09-24T11:36:36"
+---
+
+# Grade
+
+Columns that hold the same identifier values (found by shared values), e.g. `3S1/PS`, `3SP HC`, `3SP/P`.
+
+- Grade_Master.GradeName
+- XBatch_Material_Mst_Tbl.Grade
+- Vw_SMS_Grade_Protocol_Chemistry_Data.Grade
+- Vw_Tag_Printing.Grade
+- XStudio_Billet_Inventory_View_Audit_Vw.Grade
+- XStudio_Billet_Inventory_View_Vw.Grade
+- XStudio_List_Billet_Inventory_Audit_Vw.Grade
+- XStudio_List_Billet_Inventory_Vw.Grade
+- XStudio_List_Billets_In_Yard_Vw.Grade
+- XStudio_List_EAF_LogSheet_Quantity_Vw.GradeName
+- XStudio_List_Grade_Master_Vw.GradeName
+- XStudio_List_Grade_Test_Mapping_Vw.GradeName
+- XStudio_List_RM_Operator_HeatSelection_History_Vw.Grade
+- XStudio_List_RM_Operator_HeatSelection_Vw.Grade
+- XStudio_List_XBatch_inventory_BilletsDetails_CP_Vw.Grade
+- XStudio_List_XBatch_inventory_BilletsDetails_History_Vw.Grade
+- XStudio_List_XBatch_inventory_BilletsDetails_Vw.Grade
+- XStudio_List_XBatch_Inventory_Per_Heat_BilletsDetails_Vw.Grade
+- XStudio_List_XBatch_Material_Inventory_HeatNowise_Billet_Tracking_Vw.Grade
+- XStudio_List_XBatch_Material_Inventory_HeatNowise_Vw.Grade
+- XStudio_List_XBatch_Material_Inventory_Mst_Tbl_Audit_Vw.Grade
+- XStudio_List_XBatch_Material_Inventory_Mst_Tbl_Cold_billet_Vw.Grade
+- XStudio_List_XBatch_Material_Inventory_Mst_Tbl_U_Audit_Vw.Grade
+- XStudio_List_XBatch_Material_Inventory_Mst_Tbl_U_Vw.Grade
+- XStudio_List_XBatch_Material_Inventory_Mst_Tbl_Vw.Grade
+- XStudio_List_XBatch_Material_Item_Cons_Tbl_Vw.Grade
+- XStudio_List_XBatch_Material_Item_Cons_Trn_Tbl_Vw.Grade
+- XStudio_List_XBatch_Material_Item_Mst_Tbl_Vw.Grade
+- XStudio_List_XBatch_Material_Item_Prod_Trn_Tbl_Vw.Grade
+- XStudio_List_XBatch_Material_Mst_Tbl_Vw.Grade
+- XStudio_List_XBatch_Planned_Work_Order_Mst_Tbl_Vw.Grade
+- XStudio_List_XBatch_RM_Material_Inventory_Mst_Tbl_Vw.Grade
+- XStudio_List_XBatch_RM_Planned_Work_Order_Mst_Tbl_Vw.Grade
+- XStudio_List_XBatch_WRM_Material_Inventory_Mst_Tbl_Vw.Grade
+- XStudio_List_XBatch_YMS_CurrentStatus_Vw.Grade
+- XStudio_List_XMES_RM_Campaign_Plan_Trn_Vw.Grade
+- XStudio_List_XMES_RM_Campaign_Plan_WRM_Trn_Vw.Grade
+- XStudio_List_XMES_SMS_Grade_Protocol_Mst_Tbl_Vw.Grade
+- XStudio_XMes_Campaign_Plan_Tracking_RowTemplate_Vw.Grade
+- XStudio_XMes_Campaign_Plan_Tracking_Vw.Grade
+- XStudio_XMes_Campaign_Plan_Tracking_workorder_Active_compaign_Vw.Grade
+- XStudio_XMes_Campaign_Plan_Tracking_workorder_Vw.Grade
+- XStudio_XMes_Campaign_Plan_work_order_Vw.Grade
