@@ -57,7 +57,7 @@ def drain() -> None:
     if not _drain_lock.acquire(blocking=False):
         return
     try:
-        done = subprocess.run([sys.executable, str(HERE / "drain_and_summarize.py")], capture_output=True, text=True, timeout=180)
+        done = subprocess.run([sys.executable, str(HERE / "drain_and_summarize.py")], capture_output=True, text=True, timeout=600)
         if done.returncode:
             log.warning("trace drain failed: %s", (done.stderr or done.stdout).strip()[-400:])
     except (OSError, subprocess.TimeoutExpired) as exc:

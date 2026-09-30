@@ -391,16 +391,16 @@ public static class Ops
     };
 
     // ---------------------------------------------------------------- Kanban board (L2_Card_Tbl, owned by the engine)
-    // Epoch seconds are true UTC (SQL timestamps are IST wall time), which is what the board UI expects.
+    // The board UI renders epoch seconds as naive wall time (it strips the Z), and SQL timestamps are already IST wall time, so no offset.
     public static async Task<object> Board()
     {
         try
         {
             var rows = await Db.H("""
                 SELECT c.ID, c.Title, c.Status, c.Assignee, c.Priority, c.Skills, c.Body,
-                       DATEDIFF_BIG(second, '1970-01-01T05:30:00', c.CreatedOn) AS CreatedAt,
-                       (SELECT TOP 1 DATEDIFF_BIG(second, '1970-01-01T05:30:00', r.StartedOn) FROM dbo.L2_Card_Run_Tbl r WHERE r.CardID = c.ID ORDER BY r.ID DESC) AS StartedAt,
-                       (SELECT TOP 1 DATEDIFF_BIG(second, '1970-01-01T05:30:00', r.EndedOn) FROM dbo.L2_Card_Run_Tbl r WHERE r.CardID = c.ID AND r.EndedOn IS NOT NULL ORDER BY r.ID DESC) AS CompletedAt,
+                       DATEDIFF_BIG(second, '1970-01-01', c.CreatedOn) AS CreatedAt,
+                       (SELECT TOP 1 DATEDIFF_BIG(second, '1970-01-01', r.StartedOn) FROM dbo.L2_Card_Run_Tbl r WHERE r.CardID = c.ID ORDER BY r.ID DESC) AS StartedAt,
+                       (SELECT TOP 1 DATEDIFF_BIG(second, '1970-01-01', r.EndedOn) FROM dbo.L2_Card_Run_Tbl r WHERE r.CardID = c.ID AND r.EndedOn IS NOT NULL ORDER BY r.ID DESC) AS CompletedAt,
                        (SELECT TOP 1 r.Summary FROM dbo.L2_Card_Run_Tbl r WHERE r.CardID = c.ID AND r.Status IN ('crashed', 'timed_out', 'gave_up') ORDER BY r.ID DESC) AS LastFailure
                 FROM dbo.L2_Card_Tbl c
                 WHERE c.Status <> 'archived' AND (c.Status IN ('ready', 'running', 'blocked') OR c.CreatedOn >= DATEADD(day, -14, GETDATE()))

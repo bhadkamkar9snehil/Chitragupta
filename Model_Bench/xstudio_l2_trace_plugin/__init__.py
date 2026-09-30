@@ -210,6 +210,7 @@ except Exception:
 def _resolve_task_ids_blocking(kanban_task_id: str) -> None:
     run_id = ticket_id = None
     try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
         import cards  # Model_Bench/cards.py: the board is SQL now
         card = cards.get_card(kanban_task_id)
         for line in ((card or {}).get("body") or "").splitlines():
@@ -351,8 +352,8 @@ def on_api_request_error(**kwargs) -> None:
 # this adds, on top of infra-guardian's own periodic checks, reasonable.
 # ---------------------------------------------------------------------------
 _LMSTUDIO_MODELS_URL = "http://100.111.69.102:1235/v1/models"
-_POWERSHELL_EXE = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-_COMPUTE_SCRIPT_WIN_PATH = "C:/Users/Admin/Documents/Office/AIHelpdesk/Model_Bench/remote_compute_snapshot.ps1"
+_POWERSHELL_EXE = "powershell.exe" if os.name == "nt" else "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+_COMPUTE_SCRIPT_WIN_PATH = str(Path(__file__).resolve().parent.parent / "remote_compute_snapshot.ps1") if os.name == "nt" else "C:/Users/Admin/Documents/Office/AIHelpdesk/Model_Bench/remote_compute_snapshot.ps1"
 
 
 def _sample_lmstudio() -> Optional[Dict[str, Any]]:

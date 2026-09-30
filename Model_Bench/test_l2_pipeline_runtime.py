@@ -26,6 +26,13 @@ SUMMARY_SPEC.loader.exec_module(summary)
 
 
 class PipelineContractTests(unittest.TestCase):
+    def setUp(self):
+        # The board is SQL now: no test may reach it. Tests that need cards patch their own.
+        for name, value in (("list_cards", []), ("runs", []), ("create", {"id": "t_test"}), ("edit", None), ("archive", None)):
+            patcher = patch.object(mod.cards, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_incomplete_update_requires_concrete_continuation(self):
         proposal = {"response_type": "UPDATE", "evidence_status": "INCOMPLETE"}
         self.assertTrue(mod.continuation_issues(proposal))
@@ -1885,7 +1892,7 @@ class PipelineStallDetectionTests(unittest.TestCase):
             marker = comms_dir / ".stall_alert_last_written"
             marker.write_text(datetime.utcnow().isoformat(), encoding="utf-8")
             with patch.object(mod, "STALL_ALERT_MARKER", marker), \
-                 patch.object(mod, "REPO_ROOT_WSL", Path(tmp)):
+                 patch.object(mod, "REPO_ROOT", Path(tmp)):
                 written = mod._write_stall_alert(
                     {"active_run_count": 0, "eligible_waiting_count": 5, "minutes_since_last_claim": 30.0}
                 )
@@ -1898,7 +1905,7 @@ class PipelineStallDetectionTests(unittest.TestCase):
             comms_dir.mkdir()
             marker = comms_dir / ".stall_alert_last_written"
             with patch.object(mod, "STALL_ALERT_MARKER", marker), \
-                 patch.object(mod, "REPO_ROOT_WSL", Path(tmp)):
+                 patch.object(mod, "REPO_ROOT", Path(tmp)):
                 written = mod._write_stall_alert(
                     {"active_run_count": 0, "eligible_waiting_count": 5, "minutes_since_last_claim": 30.0}
                 )

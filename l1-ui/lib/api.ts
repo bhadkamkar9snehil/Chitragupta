@@ -1,4 +1,5 @@
 // Typed calls to the L1 API through /api/l1. Shapes mirror L1/api (Program.cs, Tickets.cs).
+const BASE = process.env.NEXT_PUBLIC_API_BASE ?? ""; // same origin in production; `next dev` sets it to the API
 export type User = { ID: string; Name: string; FullName: string | null; EmailID: string | null; ContactNo?: string | null };
 export type Tone = "attention" | "progress" | "pending" | "done";
 export type SourceRef = { Slug: string; Title: string; Type: string };
@@ -117,7 +118,7 @@ const FAILURE: Record<number, string> = {
 async function call<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`/api/l1/${path}`, {
+    res = await fetch(`${BASE}/api/l1/${path}`, {
       method: init?.method ?? "GET",
       headers: { "Content-Type": "application/json" },
       body: init?.body === undefined ? undefined : JSON.stringify(init.body),
@@ -176,7 +177,7 @@ export type TurnEvent =
 
 // One chat turn as server-sent events.
 export async function* turn(sessionId: string, body: { userId: string; text?: string; handoff?: boolean }, signal?: AbortSignal): AsyncGenerator<TurnEvent> {
-  const res = await fetch(`/api/l1/sessions/${sessionId}/turn`, {
+  const res = await fetch(`${BASE}/api/l1/sessions/${sessionId}/turn`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

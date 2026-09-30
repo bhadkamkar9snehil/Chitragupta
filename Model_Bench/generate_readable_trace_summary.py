@@ -28,6 +28,7 @@ Usage (intended as a --no-agent cron job, every ~3-5 min):
 import os
 import argparse
 import json
+import struct
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -254,6 +255,11 @@ def _jev_assessment_note(cur, run_id: str) -> str:
     )
 
 
+def _datetimeoffset(raw: bytes):
+    y, mo, d, h, mi, s, ns, oh, om = struct.unpack("<6hI2h", raw)
+    return datetime(y, mo, d, h, mi, s, ns // 1000, timezone(timedelta(hours=oh, minutes=om)))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dry-run", action="store_true")
@@ -264,6 +270,7 @@ def main():
         f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={SERVER};DATABASE={DATABASE};"
         f"UID={USERNAME};PWD={PASSWORD};TrustServerCertificate=yes;Connection Timeout=60"
     )
+    conn.add_output_converter(-155, _datetimeoffset)  # the Linux driver has no built-in datetimeoffset (SQL type -155)
     try:
         cur = conn.cursor()
         runs = find_runs_to_summarize(cur, state)

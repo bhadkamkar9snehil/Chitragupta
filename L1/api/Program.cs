@@ -10,7 +10,31 @@ using L1Api;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDataProtection();
 builder.Services.AddSingleton<Settings>();
+if (builder.Environment.IsDevelopment())  // `next dev` (another origin) calls the API directly
+    builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.SetIsOriginAllowed(_ => true).AllowAnyHeader().AllowAnyMethod()));
 var app = builder.Build();
+
+// The console is the static export of l1-ui, served here on one origin. Published: ./wwwroot; from the repo: l1-ui/out.
+var webRoot = Environment.GetEnvironmentVariable("CHITRAGUPTA_WEB") ?? new[] { Path.Combine(AppContext.BaseDirectory, "wwwroot") }
+    .Concat(Enumerable.Range(0, 6).Select(i => Path.GetFullPath(Path.Combine([AppContext.BaseDirectory, .. Enumerable.Repeat("..", i), "l1-ui", "out"]))))
+    .FirstOrDefault(Directory.Exists);
+app.Use(async (ctx, next) =>
+{
+    var path = ctx.Request.Path;
+    if (path.StartsWithSegments("/api/l1", out var rest)) ctx.Request.Path = "/api" + rest;  // browser-facing alias of /api/*
+    else if (webRoot is not null && !path.StartsWithSegments("/api") && !Path.HasExtension(path.Value) && path.Value is { Length: > 1 } v
+             && File.Exists(Path.Combine(webRoot, v.Trim('/') + ".html")))
+        ctx.Request.Path = path + ".html";  // /admin -> admin.html
+    await next();
+});
+if (webRoot is not null)
+{
+    var files = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(webRoot);
+    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = files });
+    app.UseStaticFiles(new StaticFileOptions { FileProvider = files });
+}
+if (app.Environment.IsDevelopment()) app.UseCors();
+app.UseRouting();  // after the rewrite above, so the aliased path is what gets routed
 // The API must start with nothing connected; SQL is configured after launch. Migrate in the background and retry.
 _ = Task.Run(async () =>
 {

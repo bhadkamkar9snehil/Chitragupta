@@ -34,10 +34,7 @@ class TracePluginTests(unittest.TestCase):
 
     def test_task_resolution_writes_context_and_correlation_events(self):
         events = []
-        result = type("Result", (), {
-            "returncode": 0,
-            "stdout": json.dumps({"body": "run_id: run-1\nticket_id: ticket-1"}),
-        })()
+        card = {"body": "run_id: run-1\nticket_id: ticket-1"}
         original_write = plugin._write_event
         original_cache = dict(plugin._TASK_CACHE)
         original_resolving = set(plugin._RESOLVING)
@@ -45,7 +42,9 @@ class TracePluginTests(unittest.TestCase):
             plugin._write_event = events.append
             plugin._TASK_CACHE.clear()
             plugin._RESOLVING.add("t_abc123")
-            with patch.object(plugin.subprocess, "run", return_value=result):
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import cards
+            with patch.object(cards, "get_card", return_value=card):
                 plugin._resolve_task_ids_blocking("t_abc123")
         finally:
             plugin._write_event = original_write
