@@ -35,7 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import pyodbc
 
-SERVER = "10.2.6.204"
+SERVER = os.environ.get("MSSQL_MCP_SERVER", "10.2.6.204")
 DATABASE = "XStudio_Helpdesk"
 USERNAME = "sa"
 PASSWORD = os.environ.get("MSSQL_MCP_PASSWORD")
@@ -262,7 +262,7 @@ def main():
     state = load_state()
     conn = pyodbc.connect(
         f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={SERVER};DATABASE={DATABASE};"
-        f"UID={USERNAME};PWD={PASSWORD};TrustServerCertificate=yes"
+        f"UID={USERNAME};PWD={PASSWORD};TrustServerCertificate=yes;Connection Timeout=60"
     )
     try:
         cur = conn.cursor()

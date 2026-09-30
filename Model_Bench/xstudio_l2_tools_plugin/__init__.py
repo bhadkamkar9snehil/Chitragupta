@@ -32,7 +32,7 @@ from typing import Any, Optional
 
 BRIDGE_PATH = os.environ.get(
     "L2_XSTUDIO_BRIDGE",
-    "/mnt/c/Users/Admin/Documents/Office/AIHelpdesk/Model_Bench/xstudio_l2_tool_bridge.py",
+    str(Path(__file__).resolve().parent.parent / "xstudio_l2_tool_bridge.py"),
 )
 TOOLSET = "xstudio_l2"
 # Investigator-only completion tool; reviewer profiles leave this toolset off.

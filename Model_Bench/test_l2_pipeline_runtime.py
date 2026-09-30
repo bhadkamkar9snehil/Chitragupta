@@ -357,7 +357,7 @@ class PipelineContractTests(unittest.TestCase):
                     "claims": [{"id": "C1", "status": "VERIFIED", "claim": "x", "evidence": [{"action_id": "A1"}]}]}
         actions = [{"ID": "A1", "ActionNo": 1, "SqlText": "SELECT 1", "Status": "SUCCESS"}]
         with patch.object(mod, "_queue_local_model_task", side_effect=lambda *a, **kw: {"QueueStatus": "QUEUED"}) as queue, \
-                patch.object(mod, "run_hermes"), \
+                patch.object(mod.cards, "create"), \
                 patch.object(mod, "run_orchestrator", return_value=actions), \
                 patch.object(mod, "_build_and_persist_stage_context", return_value=("", "", "/tmp/r.json")), \
                 patch.object(mod, "_load_context_receipt", return_value=self.ENVELOPE), \
@@ -418,25 +418,10 @@ class PipelineContractTests(unittest.TestCase):
             "ODBC Driver 18 for SQL Server",
         )
 
-    def test_wsl_orchestrator_transport_stays_native(self):
-        args = mod.default_args()
-        with patch.object(mod, "_is_windows", return_value=False), patch.object(mod.sys, "executable", "/usr/bin/python3"):
-            command = mod._base_orchestrator_args(args)
-        self.assertEqual(command[0], "/usr/bin/python3")
-        self.assertEqual(command[1], str(mod.REPO_ROOT_WSL / "Hermes_Orchestrator.py"))
-        self.assertFalse(any("python.exe" in part.lower() for part in command[:2]))
-
-    def test_lifecycle_task_list_is_scoped_to_l2_profiles(self):
-        completed = type("Completed", (), {"returncode": 0, "stderr": "", "stdout": "[]"})()
-        with patch.object(mod, "run_hermes", return_value=completed) as run:
+    def test_lifecycle_task_list_reads_the_board_with_the_status_filter(self):
+        with patch.object(mod.cards, "list_cards", return_value=[]) as board:
             self.assertEqual(mod.list_tasks("done"), [])
-        calls = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(len(calls), len(mod.INVESTIGATOR_PROFILES | mod.REVIEWER_PROFILES))
-        self.assertTrue(all("--assignee" in call and "--status" in call for call in calls))
-        self.assertEqual(
-            {call[call.index("--assignee") + 1] for call in calls},
-            mod.INVESTIGATOR_PROFILES | mod.REVIEWER_PROFILES,
-        )
+        board.assert_called_once_with("done")
 
     def test_priority_closes_work_before_new_claim(self):
         self.assertGreater(mod.REVIEW_PRIORITY, mod.REWORK_PRIORITY)
@@ -697,18 +682,6 @@ class PipelineContractTests(unittest.TestCase):
                 patch.object(mod, "check_gbrain_dependency", side_effect=RuntimeError("WORKER_DEPENDENCY_UNAVAILABLE")):
             self.assertEqual(mod.cli(["preflight"]), 1)
 
-    def test_scout_dependency_check_accepts_the_toolsets_deploy_writes(self):
-        # Live 19:35 IST: writer-only investigators lost xstudio_l2, the scout still demanded it,
-        # and claims paused. Check the real deploy output, not a mocked check.
-        import yaml
-        sys.path.insert(0, str(Path(mod.__file__).resolve().parent))
-        import patch_l2_worker_budget as budget
-        base = "\n".join(["model:", "  context_length: 1", "agent:", "  max_turns: 1",
-                          "platform_toolsets:", "  cli:", "    - terminal", ""])
-        for reviewer in (False, True):
-            toolsets = yaml.safe_load(budget.configure(base, reviewer=reviewer))["platform_toolsets"]["cli"]
-            self.assertTrue(mod.REQUIRED_WORKER_TOOLSETS[reviewer].issubset(toolsets), (reviewer, toolsets))
-
     def test_context_budget_is_smaller_for_compose_only_than_focused_reasoning(self):
         self.assertLess(
             mod._context_budget_for_mode("COMPOSE_ONLY"),
@@ -912,7 +885,7 @@ class PipelineContractTests(unittest.TestCase):
     def test_dispatch_local_model_does_nothing_when_sql_slot_busy(self):
         with patch.object(
             mod, "run_orchestrator", return_value={"AcquireStatus": "BUSY"}
-        ) as orchestrator, patch.object(mod, "run_hermes") as hermes:
+        ) as orchestrator, patch.object(mod.cards, "create") as hermes:
             result = mod._dispatch_next_local_model_task(mod.default_args(), tasks=[])
 
         self.assertEqual(result["status"], "BUSY")
@@ -951,7 +924,7 @@ class PipelineContractTests(unittest.TestCase):
             return {"LocalModelTaskID": "t_qwen"}
 
         with patch.object(mod, "run_orchestrator", side_effect=orchestrator) as orch, \
-             patch.object(mod, "run_hermes", return_value=HermesResult()) as hermes:
+             patch.object(mod.cards, "create", return_value={"id": "t_qwen"}) as hermes:
             result = mod._dispatch_next_local_model_task(mod.default_args(), tasks=[])
 
         self.assertEqual(result["status"], "DISPATCHED")
@@ -994,7 +967,7 @@ class PipelineContractTests(unittest.TestCase):
             return {"LocalModelState": "QUEUED"}
 
         with patch.object(mod, "run_orchestrator", side_effect=orchestrator), \
-             patch.object(mod, "run_hermes", return_value=HermesResult()):
+             patch.object(mod.cards, "create", side_effect=RuntimeError("create failed")):
             result = mod._dispatch_next_local_model_task(mod.default_args(), tasks=[])
 
         self.assertEqual(result["status"], "CREATE_FAILED_REQUEUED")
@@ -1206,7 +1179,7 @@ class PipelineContractTests(unittest.TestCase):
             mod,
             "_queue_local_model_task",
             return_value={"QueueStatus": "QUEUED"},
-        ) as queue, patch.object(mod, "run_hermes") as hermes, \
+        ) as queue, patch.object(mod.cards, "create") as hermes, \
              patch.object(mod, "run_orchestrator", side_effect=RuntimeError("no live SQL in a unit test")), \
              patch.object(mod, "_build_and_persist_stage_context", return_value=("", "", None)):
             result = mod.create_reviewer_card(
@@ -1265,13 +1238,6 @@ class PipelineContractTests(unittest.TestCase):
         )
         self.assertEqual(expected, "REAL_RESOLVED")
         self.assertEqual(argv, ["--new-ticket-status", "REAL_RESOLVED"])
-
-    def test_hermes_executable_resolution(self):
-        with patch.object(mod.shutil, "which", return_value="/custom/bin/hermes"):
-            self.assertEqual(mod._hermes_executable(), "/custom/bin/hermes")
-        with patch.object(mod.shutil, "which", return_value=None), \
-             patch.object(mod.Path, "exists", return_value=False):
-            self.assertEqual(mod._hermes_executable(), "hermes")
 
     def test_is_reviewer_rejection_detection(self):
         task_blocked = {"id": "t1", "status": "blocked", "assignee": mod.REVIEWER_PROFILE}

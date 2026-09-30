@@ -327,25 +327,25 @@ public static class Ops
         return Results.Ok(new { escalation = updated, ticket });
     }
 
-    static async Task<object> TailJsonl(string name, string bashPath, int top)
+    // Last `top` lines of a JSONL file, read from the tail so a large log costs the same as a small one.
+    static async Task<object> TailJsonl(string name, string path, int top)
     {
-        var psi = new ProcessStartInfo("wsl.exe") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        var script = $"file=\"{bashPath}\"; if [ -f \"$file\" ]; then echo __AVAILABLE__; tail -n {top} -- \"$file\"; else echo __MISSING__; fi";
-        foreach (var a in new[] { "-e", "bash", "-lc", script }) psi.ArgumentList.Add(a);
         try
         {
-            using var proc = Process.Start(psi)!;
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var output = await proc.StandardOutput.ReadToEndAsync(cts.Token);
-            var lines = output.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            var available = lines.FirstOrDefault() == "__AVAILABLE__";
+            if (!File.Exists(path)) return new { name, available = false, records = Array.Empty<object>() };
+            await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var take = (int)Math.Min(fs.Length, 512 * 1024);
+            fs.Seek(-take, SeekOrigin.End);
+            var buf = new byte[take];
+            await fs.ReadExactlyAsync(buf);
+            var lines = System.Text.Encoding.UTF8.GetString(buf).Split([(char)10], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var records = new List<object>();
-            foreach (var line in lines.Skip(1))
+            foreach (var line in lines.TakeLast(top))
             {
                 try { records.Add(new { raw = line, data = JsonNode.Parse(line) }); }
                 catch { records.Add(new { raw = line, data = (JsonNode?)null }); }
             }
-            return new { name, available, records };
+            return new { name, available = true, records };
         }
         catch (Exception ex)
         {
@@ -353,12 +353,14 @@ public static class Ops
         }
     }
 
+    static readonly string Home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
     public static async Task<object> RuntimeLogs(int? take)
     {
         var top = Math.Clamp(take ?? 160, 20, 400);
         var sources = await Task.WhenAll(
-            TailJsonl("Call trace", "$HOME/.hermes/logs/l2_calltrace/$(date +%F).jsonl", top),
-            TailJsonl("Observer events", "$HOME/.hermes/plugin-data/xstudio-l2-trace/events.jsonl", top)
+            TailJsonl("Call trace", Path.Combine(Home, ".hermes", "logs", "l2_calltrace", DateTime.Now.ToString("yyyy-MM-dd") + ".jsonl"), top),
+            TailJsonl("Observer events", Path.Combine(Home, ".hermes", "plugin-data", "xstudio-l2-trace", "events.jsonl"), top)
         );
         return new { at = DateTime.Now, sources };
     }
@@ -388,60 +390,36 @@ public static class Ops
             """),
     };
 
-    // ---------------------------------------------------------------- Hermes Kanban (SQLite board in WSL)
-    public static async Task<JsonNode?> Kanban(string command)
-    {
-        var psi = new ProcessStartInfo("wsl.exe") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var a in new[] { "-e", "bash", "-lc", "$HOME/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main kanban " + command + " --json 2>/dev/null" })
-            psi.ArgumentList.Add(a);
-        try
-        {
-            using var proc = Process.Start(psi)!;
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            var output = await proc.StandardOutput.ReadToEndAsync(cts.Token);
-            var start = output.IndexOfAny(['[', '{']);
-            return start < 0 ? null : JsonNode.Parse(output[start..]);
-        }
-        catch { return null; }
-    }
-
+    // ---------------------------------------------------------------- Kanban board (L2_Card_Tbl, owned by the engine)
+    // Epoch seconds are true UTC (SQL timestamps are IST wall time), which is what the board UI expects.
     public static async Task<object> Board()
     {
-        // One Hermes process is enough. The old implementation launched WSL twice in
-        // sequence (list + stats), so a cold board could pay the WSL/Python startup cost
-        // twice. Stats are a pure projection of the list we already fetched.
-        var tasks = await Kanban("list");
-        var list = (tasks as JsonArray ?? tasks?["tasks"]?.AsArray() ?? []).Select(t => new
+        try
         {
-            id = t?["id"]?.ToString(),
-            title = t?["title"]?.ToString(),
-            status = t?["status"]?.ToString(),
-            assignee = t?["assignee"]?.ToString(),
-            priority = t?["priority"]?.ToString(),
-            createdAt = t?["created_at"]?.GetValue<long?>(),
-            startedAt = t?["started_at"]?.GetValue<long?>(),
-            completedAt = t?["completed_at"]?.GetValue<long?>(),
-            error = t?["last_failure_error"]?.ToString(),
-            skills = t?["skills"],
-            body = Db.Trim(t?["body"]?.ToString(), 6000),
-        }).ToList();
-
-        var byStatus = list
-            .GroupBy(t => string.IsNullOrWhiteSpace(t.status) ? "unknown" : t.status!)
-            .ToDictionary(g => g.Key, g => g.Count());
-        var byAssignee = list
-            .Where(t => !string.IsNullOrWhiteSpace(t.assignee))
-            .GroupBy(t => t.assignee!)
-            .ToDictionary(
-                g => g.Key,
-                g => g.GroupBy(t => string.IsNullOrWhiteSpace(t.status) ? "unknown" : t.status!)
-                      .ToDictionary(s => s.Key, s => s.Count()));
-
-        return new
-        {
-            available = tasks is not null,
-            tasks = list,
-            stats = tasks is null ? null : new { by_status = byStatus, by_assignee = byAssignee },
-        };
+            var rows = await Db.H("""
+                SELECT c.ID, c.Title, c.Status, c.Assignee, c.Priority, c.Skills, c.Body,
+                       DATEDIFF_BIG(second, '1970-01-01T05:30:00', c.CreatedOn) AS CreatedAt,
+                       (SELECT TOP 1 DATEDIFF_BIG(second, '1970-01-01T05:30:00', r.StartedOn) FROM dbo.L2_Card_Run_Tbl r WHERE r.CardID = c.ID ORDER BY r.ID DESC) AS StartedAt,
+                       (SELECT TOP 1 DATEDIFF_BIG(second, '1970-01-01T05:30:00', r.EndedOn) FROM dbo.L2_Card_Run_Tbl r WHERE r.CardID = c.ID AND r.EndedOn IS NOT NULL ORDER BY r.ID DESC) AS CompletedAt,
+                       (SELECT TOP 1 r.Summary FROM dbo.L2_Card_Run_Tbl r WHERE r.CardID = c.ID AND r.Status IN ('crashed', 'timed_out', 'gave_up') ORDER BY r.ID DESC) AS LastFailure
+                FROM dbo.L2_Card_Tbl c
+                WHERE c.Status <> 'archived' AND (c.Status IN ('ready', 'running', 'blocked') OR c.CreatedOn >= DATEADD(day, -14, GETDATE()))
+                ORDER BY c.CreatedOn
+                """);
+            var list = rows.Select(r => new
+            {
+                id = r["ID"]?.ToString(), title = r["Title"]?.ToString(), status = r["Status"]?.ToString(),
+                assignee = r["Assignee"]?.ToString(), priority = r["Priority"]?.ToString(),
+                createdAt = r["CreatedAt"] as long?, startedAt = r["StartedAt"] as long?, completedAt = r["CompletedAt"] as long?,
+                error = r["LastFailure"]?.ToString(),
+                skills = (r["Skills"]?.ToString() ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries),
+                body = Db.Trim(r["Body"]?.ToString(), 6000),
+            }).ToList();
+            var byStatus = list.GroupBy(t => t.status ?? "unknown").ToDictionary(g => g.Key, g => g.Count());
+            var byAssignee = list.Where(t => !string.IsNullOrWhiteSpace(t.assignee)).GroupBy(t => t.assignee!)
+                .ToDictionary(g => g.Key, g => g.GroupBy(t => t.status ?? "unknown").ToDictionary(s => s.Key, s => s.Count()));
+            return new { available = true, tasks = list, stats = new { by_status = byStatus, by_assignee = byAssignee } };
+        }
+        catch { return new { available = false, tasks = Array.Empty<object>(), stats = (object?)null }; }
     }
 }

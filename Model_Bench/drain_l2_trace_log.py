@@ -30,10 +30,10 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import pyodbc
 
-TRACE_LOG_PATH = Path(r"\\wsl.localhost\Ubuntu\home\snehil\.hermes\plugin-data\xstudio-l2-trace\events.jsonl")
+TRACE_LOG_PATH = Path.home() / ".hermes" / "plugin-data" / "xstudio-l2-trace" / "events.jsonl"
 CURSOR_PATH = Path(__file__).parent / ".l2_trace_drain_cursor.json"
 
-SERVER = "10.2.6.204"
+SERVER = os.environ.get("MSSQL_MCP_SERVER", "10.2.6.204")
 DATABASE = "XStudio_Helpdesk"
 USERNAME = "sa"
 PASSWORD = os.environ.get("MSSQL_MCP_PASSWORD")
@@ -174,7 +174,7 @@ def main():
 
     conn = pyodbc.connect(
         f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={SERVER};DATABASE={DATABASE};"
-        f"UID={USERNAME};PWD={PASSWORD};TrustServerCertificate=yes"
+        f"UID={USERNAME};PWD={PASSWORD};TrustServerCertificate=yes;Connection Timeout=60"
     )
     inserted = 0
     try:

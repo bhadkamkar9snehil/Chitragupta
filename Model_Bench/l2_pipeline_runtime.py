@@ -45,8 +45,9 @@ from typing import Any, Iterable, Optional
 
 
 try:
-    from Model_Bench import direct_answer
-except ImportError:  # deployed scripts live beside direct_answer.py
+    from Model_Bench import cards, direct_answer
+except ImportError:  # scripts run from Model_Bench itself
+    import cards
     import direct_answer
 
 
@@ -58,10 +59,6 @@ def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, value))
 
 
-WINDOWS_PYTHON = "/mnt/c/Python314/python.exe"
-ORCHESTRATOR_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Hermes_Orchestrator.py"
-KB_RETRIEVER_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\kb_retrieval.py"
-JEV_WORKFLOW_BRIDGE_WIN = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench\jev_workflow_bridge.py"
 DEFAULT_SERVER = "10.2.6.204"
 DEFAULT_DATABASE = "XStudio_Helpdesk"
 DEFAULT_USER = "sa"
@@ -111,14 +108,11 @@ _LOCAL_MODEL_TERMINAL_TASK_STATES = LOCAL_MODEL_TERMINAL_TASK_STATES
 PUBLISHED_PROCESS_STATES = {"COMPLETED", "WAITING_USER"}
 LOCAL_MODEL_PENDING_STATES = {"QUEUED", "RUNNING"}
 
-REPO_ROOT_WSL = Path("/mnt/c/Users/Admin/Documents/Office/AIHelpdesk")
-# WSL-native (needs l2_gbrain.py -> the bun-installed gbrain CLI, which lives
-# under WSL, not Windows) -- unlike KB_RETRIEVER_WIN/JEV_WORKFLOW_BRIDGE_WIN,
-# which need Windows Python for pyodbc.
-CONTEXT_DELIVERY_CLI_WSL = REPO_ROOT_WSL / "Model_Bench" / "l2_context_delivery_cli.py"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+CONTEXT_DELIVERY_CLI = REPO_ROOT / "Model_Bench" / "l2_context_delivery_cli.py"
 BINDING_CANDIDATES = [
     Path(os.environ["L2_HELPDESK_WORKFLOW_BINDING"]) if os.environ.get("L2_HELPDESK_WORKFLOW_BINDING") else None,
-    REPO_ROOT_WSL / "deploy" / "helpdesk_workflow_binding.json",
+    REPO_ROOT / "deploy" / "helpdesk_workflow_binding.json",
     Path(__file__).resolve().parent / "helpdesk_workflow_binding.json",
     Path(__file__).resolve().parent.parent / "deploy" / "helpdesk_workflow_binding.json",
 ]
@@ -267,24 +261,20 @@ def get_run_actions(args: argparse.Namespace, run_id: str) -> list[dict[str, Any
 # Process / transport helpers
 # ---------------------------------------------------------------------------
 
-def _is_windows() -> bool:
-    return os.name == "nt"
-
-
 def _orch_python() -> str:
     return sys.executable
 
 
 def _orch_path() -> str:
-    return ORCHESTRATOR_WIN if _is_windows() else str(REPO_ROOT_WSL / "Hermes_Orchestrator.py")
+    return str(REPO_ROOT / "Hermes_Orchestrator.py")
 
 
 def _kb_retriever_path() -> str:
-    return KB_RETRIEVER_WIN if _is_windows() else str(REPO_ROOT_WSL / "Model_Bench" / "kb_retrieval.py")
+    return str(REPO_ROOT / "Model_Bench" / "kb_retrieval.py")
 
 
 def _jev_bridge_path() -> str:
-    return JEV_WORKFLOW_BRIDGE_WIN if _is_windows() else str(REPO_ROOT_WSL / "Model_Bench" / "jev_workflow_bridge.py")
+    return str(REPO_ROOT / "Model_Bench" / "jev_workflow_bridge.py")
 
 
 def _base_orchestrator_args(args: argparse.Namespace) -> list[str]:
@@ -342,84 +332,17 @@ def run_orchestrator(
         return text
 
 
-def _hermes_executable() -> str:
-    hermes_bin = shutil.which("hermes")
-    if hermes_bin:
-        return hermes_bin
-    for fallback in (
-        Path.home() / ".local" / "bin" / "hermes",
-        Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "hermes",
-    ):
-        if fallback.exists() and os.access(fallback, os.X_OK):
-            return str(fallback)
-    return "hermes"
-
-
-def run_hermes(argv: list[str], *, timeout: int = 30) -> subprocess.CompletedProcess[str]:
-    if _is_windows():
-        cmd = ["wsl", "-d", "Ubuntu", "--", "bash", "-lc", "hermes " + shlex.join(argv)]
-    else:
-        cmd = [_hermes_executable(), *argv]
-    return subprocess.run(
-        cmd, capture_output=True, text=True, timeout=timeout,
-        encoding="utf-8", errors="replace",
-    )
-
-
 def list_all_tasks(status: Optional[str] = None) -> list[dict[str, Any]]:
-    """Read the whole Kanban board only when an orphan check truly needs it."""
-    argv = ["kanban", "list"]
-    if status:
-        argv += ["--status", status]
-    argv += ["--json"]
-    r = run_hermes(argv)
-    if r.returncode != 0:
-        raise RuntimeError(f"kanban list failed: {r.stderr.strip()[:300]}")
-    try:
-        data = json.loads(r.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"kanban list returned invalid JSON: {r.stdout[:300]}") from exc
-    return data if isinstance(data, list) else []
+    return cards.list_cards(status)
 
 
 def list_tasks(status: Optional[str] = None) -> list[dict[str, Any]]:
-    """Return lifecycle-owned cards without serializing unrelated historical work.
-
-    The board retains large completed task bodies. A full ``kanban list`` can exceed
-    the lifecycle command timeout and wedge global WIP. All cards created by this
-    runtime are assigned to one of these profiles, so query each profile directly.
-    ``recover_orphan_runs`` performs a full-board fallback only for an active run
-    that has no such card at all.
-    """
-    tasks_by_id: dict[str, dict[str, Any]] = {}
-    for profile in sorted(INVESTIGATOR_PROFILES | REVIEWER_PROFILES):
-        argv = ["kanban", "list", "--assignee", profile]
-        if status:
-            argv += ["--status", status]
-        argv += ["--json"]
-        r = run_hermes(argv)
-        if r.returncode != 0:
-            raise RuntimeError(f"kanban list failed for {profile}: {r.stderr.strip()[:300]}")
-        try:
-            data = json.loads(r.stdout)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"kanban list returned invalid JSON for {profile}: {r.stdout[:300]}") from exc
-        for task in data if isinstance(data, list) else []:
-            task_id = str(task.get("id") or "")
-            if task_id:
-                tasks_by_id[task_id] = task
-    return list(tasks_by_id.values())
+    """Lifecycle-owned cards (the board holds nothing else)."""
+    return cards.list_cards(status)
 
 
 def get_runs(task_id: str) -> list[dict[str, Any]]:
-    r = run_hermes(["kanban", "runs", task_id, "--json"])
-    if r.returncode != 0:
-        raise RuntimeError(f"Kanban attempt history unavailable for {task_id}")
-    try:
-        data = json.loads(r.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Invalid Kanban attempt history for {task_id}") from exc
-    return data if isinstance(data, list) else []
+    return cards.runs(task_id)
 
 
 # ---------------------------------------------------------------------------
@@ -610,7 +533,7 @@ def query_active_runs(args: argparse.Namespace) -> list[dict[str, Any]]:
     return rows if isinstance(rows, list) else []
 
 
-STALL_ALERT_MARKER = REPO_ROOT_WSL / "Agent_Comms" / ".stall_alert_last_written"
+STALL_ALERT_MARKER = REPO_ROOT / "Agent_Comms" / ".stall_alert_last_written"
 STALL_AFTER_MINUTES = 15
 STALL_ALERT_COOLDOWN_MINUTES = 60
 
@@ -671,7 +594,7 @@ def _write_stall_alert(details: dict[str, Any]) -> bool:
             if (datetime.utcnow() - last_written).total_seconds() < STALL_ALERT_COOLDOWN_MINUTES * 60:
                 return False
 
-        comms_dir = REPO_ROOT_WSL / "Agent_Comms"
+        comms_dir = REPO_ROOT / "Agent_Comms"
         existing = sorted(comms_dir.glob("[0-9][0-9][0-9][0-9]-*.md"))
         next_id = (max(int(p.name[:4]) for p in existing) + 1) if existing else 1
         slug = f"{next_id:04d}-pipeline-stall-detected.md"
@@ -723,24 +646,6 @@ def _validate_local_task_spec(spec: dict[str, Any]) -> None:
         raise ValueError(f"unapproved local-model assignee: {spec['assignee']}")
     if not isinstance(spec.get("skills", []), list):
         raise ValueError("local-model task spec skills must be a list")
-
-
-def _local_task_argv(spec: dict[str, Any]) -> list[str]:
-    _validate_local_task_spec(spec)
-    argv = [
-        "kanban", "create", str(spec["title"]),
-        "--assignee", str(spec["assignee"]),
-        "--body", str(spec["body"]),
-        "--priority", str(int(spec["priority"])),
-    ]
-    for skill in spec.get("skills", []):
-        argv += ["--skill", str(skill)]
-    argv += [
-        "--idempotency-key", str(spec["idempotency_key"]),
-        "--max-runtime", str(spec["max_runtime"]),
-        "--json",
-    ]
-    return argv
 
 
 def _queue_local_model_task(
@@ -834,23 +739,18 @@ def _materialize_acquired_local_model_task(
         spec = json.loads(str(acquired.get("PendingLocalModelJson") or ""))
         if not isinstance(spec, dict):
             raise ValueError("work package is not an object")
-        argv = _local_task_argv(spec)
+        _validate_local_task_spec(spec)
     except (json.JSONDecodeError, ValueError, TypeError) as exc:
         return _invalid_local_model_package(args, run_id, exc)
 
-    created = run_hermes(argv)
-    if created.returncode != 0:
-        _finish_local_model_work(args, run_id=run_id, task_id=None, outcome="REQUEUE")
-        return {
-            "status": "CREATE_FAILED_REQUEUED",
-            "run_id": run_id,
-            "error": created.stderr.strip()[:500],
-        }
-
     try:
-        task_id = str((json.loads(created.stdout) or {}).get("id") or "")
-    except json.JSONDecodeError:
-        task_id = ""
+        task_id = str(cards.create(
+            title=spec["title"], assignee=spec["assignee"], body=spec["body"], priority=int(spec["priority"]),
+            skills=spec.get("skills", []), idempotency_key=spec["idempotency_key"], max_runtime=spec["max_runtime"],
+        ).get("id") or "")
+    except Exception as exc:  # noqa: BLE001 - a failed create requeues the work, as the CLI failure did
+        _finish_local_model_work(args, run_id=run_id, task_id=None, outcome="REQUEUE")
+        return {"status": "CREATE_FAILED_REQUEUED", "run_id": run_id, "error": str(exc)[:500]}
     if not task_id:
         _finish_local_model_work(args, run_id=run_id, task_id=None, outcome="REQUEUE")
         return {"status": "CREATE_UNPARSEABLE_REQUEUED", "run_id": run_id}
@@ -1046,7 +946,7 @@ def _run_world_walk(ticket: dict[str, Any], run_id: str | None, ticket_id: str) 
     world_walk trace event (Hermes_Agent_Trace_Trn_Tbl, ToolName WORLD_WALK_TRAIL). Fail-open."""
     try:
         proc = subprocess.run(
-            [_orch_python(), str(REPO_ROOT_WSL / "Model_Bench" / "world_walk.py")],
+            [_orch_python(), str(REPO_ROOT / "Model_Bench" / "world_walk.py")],
             input=json.dumps({"ticket_text": direct_answer.ticket_text(ticket), "run_id": run_id,
                               "ticket_id": ticket_id}, default=str),
             capture_output=True, text=True, timeout=WORLD_WALK_TIMEOUT_S,
@@ -1945,7 +1845,7 @@ def _build_and_persist_stage_context(
     }
     try:
         proc = subprocess.run(
-            [sys.executable, str(CONTEXT_DELIVERY_CLI_WSL)],
+            [sys.executable, str(CONTEXT_DELIVERY_CLI)],
             input=json.dumps(request, default=str),
             capture_output=True, text=True, timeout=60,
         )
@@ -2056,15 +1956,11 @@ def normalize_investigator_completions(
             print(f"[DRY RUN] normalize investigator task {task['id']}")
             repaired += 1
             continue
-        r = run_hermes([
-            "kanban", "edit", task["id"],
-            "--result", summary[:500],
-            "--metadata", json.dumps(metadata, separators=(",", ":")),
-        ])
-        if r.returncode == 0:
+        try:
+            cards.edit(task["id"], result=summary[:500], metadata=metadata)
             repaired += 1
-        else:
-            print(f"WARNING: normalize failed for {task['id']}: {r.stderr.strip()[:300]}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"WARNING: normalize failed for {task['id']}: {str(exc)[:300]}")
     return repaired
 
 
@@ -3358,8 +3254,11 @@ def check_worker_dependencies() -> None:
     stops the scout/recovery tick; its next scheduled invocation probes again.
     """
     import urllib.request
-    import yaml
-    bridge = REPO_ROOT_WSL / "Model_Bench" / "xstudio_l2_tool_bridge.py"
+    try:
+        from Model_Bench.agent_loop import profile_config
+    except ImportError:
+        from agent_loop import profile_config
+    bridge = REPO_ROOT / "Model_Bench" / "xstudio_l2_tool_bridge.py"
     probe = subprocess.run([sys.executable, str(bridge)],
         input=json.dumps({"operation": "query", "database": DEFAULT_DATABASE,
                           "sql": "SELECT 1 AS Healthy",
@@ -3369,13 +3268,8 @@ def check_worker_dependencies() -> None:
         raise RuntimeError("WORKER_DEPENDENCY_UNAVAILABLE: typed SQL probe failed; claims paused")
     checked = set()
     for profile in (INVESTIGATOR_PROFILE, REVIEWER_PROFILE):
-        config_path = Path.home() / ".hermes" / "profiles" / profile / "config.yaml"
-        config = yaml.safe_load(config_path.read_text())
-        toolsets = config.get("platform_toolsets", {}).get("cli", [])
-        if not REQUIRED_WORKER_TOOLSETS[profile == REVIEWER_PROFILE].issubset(toolsets):
-            raise RuntimeError(f"WORKER_DEPENDENCY_UNAVAILABLE: required tools absent in {profile}")
-        model = config["model"]
-        key = (model["base_url"], model["default"])
+        config = profile_config(profile)
+        key = (config["base_url"], config["model"])
         if key in checked:
             continue
         payload = {"model": key[1], "max_tokens": 256, "temperature": 0,
@@ -3452,7 +3346,7 @@ def _run_kb_retrieval(
 def _route_skill(route: str | None) -> str | None:
     if not route:
         return None
-    manifest_path = REPO_ROOT_WSL / "Knowledge" / "manifest.json"
+    manifest_path = REPO_ROOT / "Knowledge" / "manifest.json"
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except Exception:
@@ -3682,9 +3576,10 @@ def _archive_stale_cards_for_ticket(ticket_id: str, new_run_id: str) -> None:
     ]
     if not stale:
         return
-    r = run_hermes(["kanban", "archive", *stale])
-    if r.returncode != 0:
-        print(f"WARNING: stale-card cleanup failed: {r.stderr.strip()[:300]}")
+    try:
+        cards.archive(stale)
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: stale-card cleanup failed: {str(exc)[:300]}")
 
 
 
@@ -4041,20 +3936,28 @@ def lifecycle_lock(args: argparse.Namespace):
     if args.dry_run or args.mode in {"status", "audit"}:
         yield
         return
-    if _is_windows():
-        raise RuntimeError("Lifecycle mutation must run in the configured WSL service environment so it shares the lifecycle lock")
-    import fcntl
-    path = Path.home() / ".hermes" / "plugin-data" / "xstudio-l2-orchestrator" / "lifecycle.lock"
+    path = Path(os.environ.get("CHITRAGUPTA_DATA") or Path.home() / ".chitragupta") / "lifecycle.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+") as handle:
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:  # BlockingIOError on POSIX, PermissionError on Windows
             raise RuntimeError("LIFECYCLE_BUSY: another reconciler owns mutations; next scout tick will retry") from exc
         try:
             yield
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def cli(argv: Optional[list[str]] = None) -> int:

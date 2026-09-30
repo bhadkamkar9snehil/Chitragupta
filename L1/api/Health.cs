@@ -1,7 +1,7 @@
 // Pipeline health for the console: the two existing diagnostics, not a new one.
-//  - status:      the L2 runtime's own `l2_pipeline_runtime.py status` (WSL, the profile's .env)
+//  - status:      the L2 runtime's own `l2_pipeline_runtime.py status`
 //  - performance: `Model_Bench/benchmark_l2_performance.py --json` (the one live-health report; extend it, not this)
-// Both are read-only. Results are cached briefly so a page refresh cannot pile processes onto WSL or SQL.
+// Both are read-only. Results are cached briefly so a page refresh cannot pile processes onto the host or SQL.
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
@@ -13,19 +13,18 @@ public static class Health
     static readonly ConcurrentDictionary<string, (DateTime At, JsonNode? Data, string? Error)> Cache = new();
     static readonly SemaphoreSlim Gate = new(1, 1);
 
-    // The .env is CRLF; a raw `source` puts \r into the server name and every SQL login times out.
-    const string RuntimeStatus =
-        "cd ~ && set -a && source <(tr -d '\\r' < ~/.hermes/profiles/l2-investigator/.env) && set +a && " +
-        "python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status";
-
     public static Task<IResult> Status() => Cached("status", TimeSpan.FromSeconds(20), async () =>
     {
-        var psi = new ProcessStartInfo("wsl.exe");
-        foreach (var a in new[] { "-e", "bash", "-lc", RuntimeStatus }) psi.ArgumentList.Add(a);
+        var script = RepoFile("Model_Bench", "l2_pipeline_runtime.py");
+        if (script is null) return (null, "Model_Bench/l2_pipeline_runtime.py was not found next to the API.");
+        var psi = new ProcessStartInfo(Python) { WorkingDirectory = Path.GetDirectoryName(Path.GetDirectoryName(script))! };
+        foreach (var a in new[] { script, "status" }) psi.ArgumentList.Add(a);
         var (json, error) = await RunJson(psi, TimeSpan.FromSeconds(120));
         if (json is null) return (null, error);
         return json["ok"]?.GetValue<bool>() == true ? (json["result"], null) : (null, json["error"]?.ToString() ?? "The runtime reported a failure.");
     });
+
+    static string Python => Environment.GetEnvironmentVariable("CHITRAGUPTA_PYTHON") ?? "python";
 
     public static Task<IResult> Performance(double? hours)
     {
@@ -34,7 +33,7 @@ public static class Health
         {
             var script = RepoFile("Model_Bench", "benchmark_l2_performance.py");
             if (script is null) return (null, "Model_Bench/benchmark_l2_performance.py was not found next to the API.");
-            var psi = new ProcessStartInfo("python") { WorkingDirectory = Path.GetDirectoryName(Path.GetDirectoryName(script))! };
+            var psi = new ProcessStartInfo(Python) { WorkingDirectory = Path.GetDirectoryName(Path.GetDirectoryName(script))! };
             foreach (var a in new[] { script, "--hours", h.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json" }) psi.ArgumentList.Add(a);
             return await RunJson(psi, TimeSpan.FromSeconds(90));
         });

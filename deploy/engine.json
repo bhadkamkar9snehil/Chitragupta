@@ -1,0 +1,9 @@
+{
+  "lm_studio": { "base_url": "http://100.111.69.102:1235/v1" },
+  "defaults": { "model": "qwen/qwen3.5-9b", "max_tokens": 8192, "max_turns": 20, "context_length": 65792, "request_timeout": 600 },
+  "profiles": {
+    "l2-jev-investigator": { "soul": "deploy/profiles/l2-jev-investigator/SOUL.md" },
+    "l2-reviewer-primary": { "soul": "deploy/profiles/l2-reviewer-primary/SOUL.md" }
+  },
+  "skills_dir": "deploy/skills/xstudio"
+}

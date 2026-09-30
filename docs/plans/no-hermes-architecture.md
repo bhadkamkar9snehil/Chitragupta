@@ -107,3 +107,18 @@ Needed before building:
 ## 8. Branch policy
 
 `main` = with Hermes (deployed). `no-hermes` = this plan. This overrides the "Branch: `main` only" line in AGENTS.md/CLAUDE.md for this work; both files are updated together.
+
+## 9. Implementation log (no-hermes branch)
+
+2026-09-30. Hermes gateways were stopped and disabled (no double claiming). Built, in this order:
+
+- **`Model_Bench/cards.py`**: SQL board (`L2_Card_Tbl`, `L2_Card_Run_Tbl`, created on first use). Same card/run dict shape the runtime already read. One connection per thread, because a login over the Tailscale relay costs seconds. `claim()` is atomic (`UPDLOCK, READPAST`, priority then age).
+- **Runtime port (`l2_pipeline_runtime.py`)**: the `hermes kanban` calls (list, runs, create, edit, archive) became `cards` calls; `run_hermes` and every WSL/Windows path constant are gone (`REPO_ROOT` is derived from `__file__`); the lifecycle lock is portable (`msvcrt`/`fcntl`); the worker dependency probe reads `deploy/engine.json` instead of a Hermes profile.
+- **`Model_Bench/agent_loop.py`** (D2 amended: stdlib HTTP, no `openai` SDK; one `urllib` POST replaces the SDK, so the bundle needs one Python dependency fewer): one process per card. The xstudio tools plugin and the trace plugin **run unchanged** through a 15-line Hermes-compatible context (`register_tool`, `register_hook`), so every existing guard, repair and budget rule is kept; the four `kanban_*` tools are built in. LM Studio quirk found live: `reasoning_effort` must be sent as `none` (`off` is rejected with HTTP 400).
+- **`Model_Bench/engine.py`**: dispatcher (claim, run worker under the card's max runtime, reconcile at once, drain traces) plus scheduler (scout 2 min, audit 10 min). Starts with SQL down and waits.
+- **`deploy/engine.json`**: LM Studio URL, model and limits per role, replacing the Hermes profile `config.yaml`.
+- **Console (`L1/api`)**: `Board()` reads the card tables; runtime status, GBrain search and log tails run natively (no `wsl.exe`).
+- **GBrain S1 (native Windows)**: v0.50.5.0 cloned, `bun install` + `bun link` work; `gbrain init --pglite --embedding-model lmstudio:text-embedding-nomic-embed-text-v1.5 --embedding-dimensions 768` works; the `xbatch-world` schema pack validates; source registered. Sync/embed/search result recorded below when complete.
+
+Live findings: a ticket that hit the 400 crashed its first card and the runtime's own failure recovery created the rework card on the new board, i.e. the recovery path works end to end on SQL cards. Scout ticks take minutes over the relay; that latency, not the engine, dominates.
+

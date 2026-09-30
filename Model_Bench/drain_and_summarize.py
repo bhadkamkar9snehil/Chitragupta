@@ -8,8 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-PYTHON = "/mnt/c/Python314/python.exe"
-HERE = r"C:\Users\Admin\Documents\Office\AIHelpdesk\Model_Bench"
+PYTHON = sys.executable
+HERE = Path(__file__).resolve().parent
 
 
 def run(script: str) -> int:

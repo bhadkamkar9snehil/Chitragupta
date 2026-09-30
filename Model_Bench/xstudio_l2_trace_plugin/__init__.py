@@ -210,19 +210,14 @@ except Exception:
 def _resolve_task_ids_blocking(kanban_task_id: str) -> None:
     run_id = ticket_id = None
     try:
-        result = subprocess.run(
-            [_hermes_executable(), "kanban", "show", kanban_task_id, "--json"],
-            capture_output=True, text=True, timeout=8,
-        )
-        if result.returncode == 0:
-            data = json.loads(result.stdout)
-            body = data.get("body") or (data.get("task") or {}).get("body") or ""
-            for line in body.splitlines():
-                line = line.strip()
-                if line.lower().startswith("run_id:"):
-                    run_id = line.split(":", 1)[1].strip()
-                elif line.lower().startswith("ticket_id:"):
-                    ticket_id = line.split(":", 1)[1].strip()
+        import cards  # Model_Bench/cards.py: the board is SQL now
+        card = cards.get_card(kanban_task_id)
+        for line in ((card or {}).get("body") or "").splitlines():
+            line = line.strip()
+            if line.lower().startswith("run_id:"):
+                run_id = line.split(":", 1)[1].strip()
+            elif line.lower().startswith("ticket_id:"):
+                ticket_id = line.split(":", 1)[1].strip()
     except Exception:
         pass
     with _TASK_CACHE_LOCK:

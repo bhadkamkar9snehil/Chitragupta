@@ -1,5 +1,5 @@
 // L1's knowledge is the same generated XBatch world L2 walks: GBrain source `xstudio-knowledge`.
-// GBrain lives in WSL; one CLI call per turn. Jev decides which hits are relevant; code never ranks by hand.
+// GBrain runs natively; one CLI call per turn. Jev decides which hits are relevant; code never ranks by hand.
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 
@@ -9,13 +9,17 @@ public record Source(string Slug, string Title, string Type, string Snippet);
 
 public static class Knowledge
 {
+    // GBrain runs natively (Bun). Home and binary are overridable; the defaults are where the installer puts them.
+    static string Home => Environment.GetEnvironmentVariable("CHITRAGUPTA_GBRAIN_HOME")
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".chitragupta", "gbrain");
+    static string Bin => Environment.GetEnvironmentVariable("CHITRAGUPTA_GBRAIN_BIN")
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".bun", "bin", "gbrain.exe");
+
     public static async Task<List<Source>> Search(string query, string sourceId, int limit, CancellationToken ct = default)
     {
-        var psi = new ProcessStartInfo("wsl.exe") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var a in new[] { "-e", "bash", "-lc",
-                     "export GBRAIN_HOME=$HOME/.hermes/xstudio-gbrain PATH=$HOME/.bun/bin:$PATH; " +
-                     "gbrain search \"$1\" --source-id \"$2\" --limit \"$3\" --json 2>/dev/null", "gbrain", query, sourceId, limit.ToString() })
-            psi.ArgumentList.Add(a);
+        var psi = new ProcessStartInfo(Bin) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        psi.Environment["GBRAIN_HOME"] = Home;
+        foreach (var a in new[] { "search", query, "--source-id", sourceId, "--limit", limit.ToString(), "--json" }) psi.ArgumentList.Add(a);
         try
         {
             using var proc = Process.Start(psi)!;
