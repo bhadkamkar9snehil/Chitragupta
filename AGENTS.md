@@ -546,6 +546,7 @@ a ticket — that bypasses the scout's WIP/lifecycle gate.
 - **Read the doc or the code before running or asserting.** README "Gotchas" already named the Tailscale SQL address; `engine.py` already said `drain_and_summarize.py` is a one-shot job. Both were guessed instead.
 - **The engine runs `build\stage\engine\app`, a copy.** After editing `Model_Bench/`, copy it in (`robocopy` as `build\build.ps1` line 42 does, not a full rebuild, which wipes the running stage) and restart the engine. A fix not in the stage is not live.
 - **Never match processes by a path regex alone.** The restart-loop wrapper's command line contains `engine.py`, so killing "engine.py" kills the loop and the engine stays down. Stop the python process only, or rerun `build\dev-start.ps1`, which is idempotent.
+- **Restarting the engine leaves its `gbrain.exe` child orphaned**, still holding the single-process PGLite database. The new engine's GBrain then crash-loops (`exited with 1; restarting in 5s` in `engine.log`) and investigations lose the knowledge index. After stopping the engine, stop `gbrain.exe` whose parent no longer exists, before starting it again.
 - **Never print `C:\ProgramData\Chitragupta\chitragupta.json`** (plaintext SQL password and API keys). Read single keys, not the file.
 - **Dev environment is the owner's: act, do not ask permission for restage/restart.** Report what changed.
 - **No ad hoc scripts for inspection**: use `benchmark_l2_performance.py` (extend it) or an existing tool. A reusable seeder like `seed_l1_chats.py` is fine; scratch queries are not.
