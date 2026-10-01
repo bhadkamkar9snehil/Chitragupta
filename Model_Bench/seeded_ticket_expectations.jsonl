@@ -30,3 +30,22 @@
 {"ticket_no": "Ticket_30", "ticket_id": "11F6D8B6-0DA5-48A3-BC94-E29A0A7965BB", "case": "live:infra_slow", "expected": "infrastructure", "facts": {"data": false, "route": "infrastructure"}}
 {"ticket_no": "Ticket_31", "ticket_id": "F3E750EA-F9E4-45A5-AECD-084A0C46CABC", "case": "live:hardware_scanner", "expected": "hardware", "facts": {"data": false, "route": "hardware"}}
 {"ticket_no": "Ticket_32", "ticket_id": "49768328-54A9-48C3-9827-EC75A88507EC", "case": "live:change_new_report", "expected": "change_request", "facts": {"data": false, "route": "change_request"}}
+{"ticket_no": "Ticket_42", "ticket_id": "C72441E8-1E6E-4A87-9396-8EEBE6E47E82", "case": "MATCH", "expected": "CONFIRMED", "facts": {"ArcingTime": "22"}}
+{"ticket_no": "Ticket_43", "ticket_id": "F44A5FCF-30FD-436B-9187-6F162B3F963E", "case": "MISMATCH", "expected": "CORRECTED", "facts": {"ArcingTime": "21"}}
+{"ticket_no": "Ticket_44", "ticket_id": "BB8462D6-A8A7-4848-8702-5AAF601F8A2E", "case": "MISSING_ID", "expected": "QUESTION", "facts": {}}
+{"ticket_no": "Ticket_45", "ticket_id": "B58D441A-9515-44A8-80DB-858CFEE902BD", "case": "MISMATCH", "expected": "CORRECTED", "facts": {"PowerOnTime": "52:18"}}
+{"ticket_no": "Ticket_46", "ticket_id": "D37EC359-98BF-48D5-8476-3FBC7F90386A", "case": "MISMATCH", "expected": "CORRECTED", "facts": {"PowerOnTime": "50:14"}}
+{"ticket_no": "Ticket_47", "ticket_id": "B1CD514A-C4F6-437D-B447-37AFBF8CA147", "case": "MATCH", "expected": "CONFIRMED", "facts": {"PowerOnTime": "50:5"}}
+{"ticket_no": "Ticket_48", "ticket_id": "D3626975-1EBC-47A1-8A05-912A71340A71", "case": "MISSING_ID", "expected": "QUESTION", "facts": {}}
+{"ticket_no": "Ticket_49", "ticket_id": "983F6BAD-CF36-4CBA-B230-F015CE41D301", "case": "MATCH", "expected": "CONFIRMED", "facts": {"CutStartTime": "2026-07-08 19:08:54.127000"}}
+{"ticket_no": "Ticket_50", "ticket_id": "03FA94E5-3374-42BB-AA8D-8B959559EC07", "case": "MATCH", "expected": "CONFIRMED", "facts": {"CutStartTime": "2026-07-08 19:06:57.170000"}}
+{"ticket_no": "Ticket_51", "ticket_id": "C9041790-2D63-4324-B6AD-4D72D2274DDD", "case": "MATCH", "expected": "CONFIRMED", "facts": {"Quantity": "64", "Status": "RM ProductionOrder Created"}}
+{"ticket_no": "Ticket_52", "ticket_id": "23AA4570-D495-49E6-805C-C128C65A8100", "case": "MISMATCH", "expected": "CORRECTED", "facts": {"Quantity": "76", "Status": "RM ProductionOrder Created"}}
+{"ticket_no": "Ticket_53", "ticket_id": "FACAB4A1-788A-47BA-9A7E-9073423CFA61", "case": "MATCH", "expected": "CONFIRMED", "facts": {"Quantity": "1441", "Status": "RM ProductionOrder Created"}}
+{"ticket_no": "Ticket_54", "ticket_id": "5669E85B-0818-4B0D-9A47-F1513DA686D4", "case": "MATCH", "expected": "ANSWERED", "facts": {"MaterialDocument": "5003509951"}}
+{"ticket_no": "Ticket_55", "ticket_id": "D758915D-8517-43D8-B16F-291FA6D286DF", "case": "MATCH", "expected": "ANSWERED", "facts": {"MaterialDocument": "5003509895"}}
+{"ticket_no": "Ticket_56", "ticket_id": "1E7B9397-D6B7-44B1-977D-755A77BA8448", "case": "MATCH", "expected": "ANSWERED", "facts": {"MaterialDocument": "5003509894"}}
+{"ticket_no": "Ticket_57", "ticket_id": "1191AFD7-7DCE-41C0-BD3B-A21C40D133BF", "case": "MATCH", "expected": "CONFIRMED", "facts": {"ArcingTime": "16"}}
+{"ticket_no": "Ticket_58", "ticket_id": "76DF55C1-9CA5-41C5-BA85-B03941C558E2", "case": "MISMATCH", "expected": "CORRECTED", "facts": {"PowerOnTime": "50:15"}}
+{"ticket_no": "Ticket_59", "ticket_id": "31A8AD4C-9AE8-4D4B-B234-AB10D3DFA743", "case": "MATCH", "expected": "CONFIRMED", "facts": {"Quantity": "899", "Status": "RM ProductionOrder Created"}}
+{"ticket_no": "Ticket_60", "ticket_id": "6455FA44-4136-4FEA-B39F-C24163BFE9B9", "case": "MATCH", "expected": "ANSWERED", "facts": {"MaterialDocument": "5003509893"}}
