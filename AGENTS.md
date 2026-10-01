@@ -541,6 +541,16 @@ a ticket — that bypasses the scout's WIP/lifecycle gate.
 - **L3 "Proposal overclaims multi-table probe verification" (rework budget of 3 spent).** The reviewer (Jev) rejects a proposal that claims probes confirmed records in many tables when only `heat_context` plus one run action actually verified. The writer must cite only the actions it ran, or mark the claim INFERRED. This is a writer-quality failure, not an infra fault.
 - **Other recurring tool failures seen in the 48 h report:** `read_table` on names outside the schema allowlist (the model invents table names; the error returns `did_you_mean`), and `sap_api_context` bridge timeouts when SQL is slow over the Tailscale relay.
 
+### Agent habits that cost time (2026-10-01 session; do not repeat)
+
+- **Read the doc or the code before running or asserting.** README "Gotchas" already named the Tailscale SQL address; `engine.py` already said `drain_and_summarize.py` is a one-shot job. Both were guessed instead.
+- **The engine runs `build\stage\engine\app`, a copy.** After editing `Model_Bench/`, copy it in (`robocopy` as `build\build.ps1` line 42 does, not a full rebuild, which wipes the running stage) and restart the engine. A fix not in the stage is not live.
+- **Never match processes by a path regex alone.** The restart-loop wrapper's command line contains `engine.py`, so killing "engine.py" kills the loop and the engine stays down. Stop the python process only, or rerun `build\dev-start.ps1`, which is idempotent.
+- **Never print `C:\ProgramData\Chitragupta\chitragupta.json`** (plaintext SQL password and API keys). Read single keys, not the file.
+- **Dev environment is the owner's: act, do not ask permission for restage/restart.** Report what changed.
+- **No ad hoc scripts for inspection**: use `benchmark_l2_performance.py` (extend it) or an existing tool. A reusable seeder like `seed_l1_chats.py` is fine; scratch queries are not.
+- **Verify before saying "open" or "done"**: check the running process list and the health report, then state facts.
+
 ## 16. Deployment mirror
 
 `deploy/` is the reproducible mirror of artifacts that otherwise live under `~/.hermes/profiles/...`.
