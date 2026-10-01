@@ -452,7 +452,7 @@ def existing_brief_details(cur) -> set:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--server", default="10.2.6.204")
+    ap.add_argument("--server", default=os.environ.get("MSSQL_MCP_SERVER") or "10.2.6.204")
     ap.add_argument("--database", default="XStudio_Helpdesk")
     ap.add_argument("--xbatch-db", default="XStudio_Xbatch")
     ap.add_argument("--username", default="sa")

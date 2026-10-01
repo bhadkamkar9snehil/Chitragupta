@@ -77,7 +77,7 @@ def document_view(cur, database, view_name, top_n):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--server", default="10.2.6.204")
+    ap.add_argument("--server", default=os.environ.get("MSSQL_MCP_SERVER") or "10.2.6.204")
     ap.add_argument("--database", default="XStudio_Xbatch")
     ap.add_argument("--username", default="sa")
     ap.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))

@@ -533,6 +533,14 @@ terminal attempt at an interpreter, database driver, `sqlcmd`, or package
 install. Do not manufacture a production claim to test this, and do not raw-poll
 a ticket — that bypasses the scout's WIP/lifecycle gate.
 
+## 15a. Known operator tripwires (read before debugging "L2 is idle/failing")
+
+- **Off-office SQL is the Tailscale host `100.94.169.57`, never `10.2.6.204`/`10.2.6.164`.** Symptom: `08001` timeout in any script. Cause is usually a *stale shell environment*: a shell opened before the User env var changed still carries the old `MSSQL_MCP_SERVER`. Fix: reload from User scope (`[Environment]::GetEnvironmentVariable('MSSQL_MCP_SERVER','User')`, same for `_USER`/`_PASSWORD`) or open a new terminal. Never paste the password into a command. All Model_Bench scripts now default `--server` from `MSSQL_MCP_SERVER`.
+- **Idle board is not a bug.** `benchmark_l2_performance.py` "last claim N min ago" with 0 waiting just means no eligible tickets. Seeding dedups on ticket text, so re-seeding returns "0 created". To rerun existing test tickets use `reset_l2_test_tickets.py <Ticket_N...> --apply` (backs up, reversible); the engine picks them up on the next scout tick.
+- **`xstudio_submit_proposal` rejects `summary` under 160 chars** (`MIN_SUBSTANTIVE_COMPLETION_CHARS`). The schema used to hide that floor, so Qwen guessed one-liners (63-158 chars), burned tool calls from its 14-call budget on retries, and ended in L3. The floor and what to put in it are now in the schema description and the error text.
+- **L3 "Proposal overclaims multi-table probe verification" (rework budget of 3 spent).** The reviewer (Jev) rejects a proposal that claims probes confirmed records in many tables when only `heat_context` plus one run action actually verified. The writer must cite only the actions it ran, or mark the claim INFERRED. This is a writer-quality failure, not an infra fault.
+- **Other recurring tool failures seen in the 48 h report:** `read_table` on names outside the schema allowlist (the model invents table names; the error returns `did_you_mean`), and `sap_api_context` bridge timeouts when SQL is slow over the Tailscale relay.
+
 ## 16. Deployment mirror
 
 `deploy/` is the reproducible mirror of artifacts that otherwise live under `~/.hermes/profiles/...`.

@@ -76,7 +76,7 @@ def verify(run_id: str, server: str, database: str = "XStudio_Helpdesk",
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("run_id")
-    ap.add_argument("--server", default="10.2.6.204")
+    ap.add_argument("--server", default=os.environ.get("MSSQL_MCP_SERVER") or "10.2.6.204")
     ap.add_argument("--database", default="XStudio_Helpdesk")
     ap.add_argument("--username", default="sa")
     ap.add_argument("--password", default=os.environ.get("MSSQL_MCP_PASSWORD"))

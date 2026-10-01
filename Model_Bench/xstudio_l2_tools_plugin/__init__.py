@@ -98,7 +98,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "response_type": {"type": "string", "enum": [
                 "UPDATE", "QUESTION", "RESOLUTION", "L3_ESCALATION", "NEEDS_HUMAN_ACTION",
             ]},
-            "summary": _STRING,
+            "summary": {"type": "string", "description": "Investigation findings, AT LEAST 160 characters (2-3 sentences): which tables or records you checked, what each showed, and the conclusion. A one-line summary is rejected."},
             "reply_text": _STRING,
             "requester_question": {"type": "string", "description": "Specific question for the requester when a necessary identifier or fact is missing. Sets response_type=QUESTION and waits for their answer instead of retrying."},
             "next_investigation_step": {"type": "string", "description": "For an incomplete UPDATE, the concrete new evidence check the next attempt can perform without waiting for requester information. Required for publication."},
@@ -380,7 +380,8 @@ def _validate_submit_proposal_inputs(
             "ok": False,
             "error": (
                 f"summary must be at least {MIN_SUBSTANTIVE_COMPLETION_CHARS} characters of "
-                f"substantive investigation findings (got {len(summary)})"
+                f"substantive investigation findings (got {len(summary)}). Resubmit the same proposal with a "
+                "longer summary: name the tables/records checked, what each showed, and the conclusion"
             ),
             "retry_same_call": False,
         }), None
