@@ -1,6 +1,6 @@
 # Chitragupta without Hermes: architecture and plan
 
-Date: 2026-09-30. Branch: `no-hermes` (long-lived; `main` stays the Hermes version until parity).
+Date: 2026-09-30. Merged into `main` on 2026-10-02; `main` is now the only long-lived branch.
 Status: plan accepted; nothing below is built yet except where marked done.
 
 ## 1. Goal and constraints
@@ -106,7 +106,7 @@ Needed before building:
 
 ## 8. Branch policy
 
-`main` = with Hermes (deployed). `no-hermes` = this plan. This overrides the "Branch: `main` only" line in AGENTS.md/CLAUDE.md for this work; both files are updated together.
+Since 2026-10-02 there is one long-lived branch, `main`, which carries this architecture.
 
 ## 9. Implementation log (no-hermes branch)
 

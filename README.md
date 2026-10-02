@@ -42,7 +42,7 @@ XStudio's Helpdesk (`Complaint_Mst_Tbl`) stays the ticket system of record. Type
  └───────────────┬─────────────────────────────────────────────────────────┘
                  │ ticket row in Complaint_Mst_Tbl (+ link to the chat)
                  ▼
- L2  ·  Hermes + Jev + deterministic runtime (WSL)
+ L2  ·  the engine: Jev + deterministic runtime + local model
    ticket_scout (every 2 min) claims it atomically, within pipeline capacity
    Jev gates: triage, safety, does known knowledge apply
    world_walk: audited live reads of the tables the ticket's identifiers touch
@@ -101,7 +101,7 @@ Each investigation drawn as the circuit it ran through: **ticket → Jev gates �
 ![Live engineer: investigation circuit](docs/screenshots/console-live-engineer.png)
 
 #### Board
-Two views of the Hermes Kanban and the tickets:
+Two views of the card board and the tickets:
 
 - **Agent tasks:** in-flight / stuck / superseded / done at a glance. Blocked reviews are split into **stuck (needs a person)** and **superseded by a later review/rework cycle**, which is expected. Each card shows kind and cycle, the proposed outcome and evidence status, the worker and time taken.
 - **Ticket lifecycle:** open tickets grouped by support state, with the same panels and cards.
@@ -156,7 +156,7 @@ Demand calendar (requests per day, busiest day highlighted). Tickets, conversati
 ![Reports](docs/screenshots/console-reports.png)
 
 #### Runtime logs and Settings
-- **Runtime logs** tails the JSONL call trace and observer events written in WSL.
+- **Runtime logs** tails the JSONL call trace and observer events the engine writes.
 - **Settings** holds the L1 writer model (OpenAI-compatible: LM Studio, Ollama, OpenAI, Gemini, Groq, OpenRouter; or Anthropic, or the Codex CLI for a ChatGPT plan), GBrain knowledge, the helpdesk name, greeting and **accent colour**, and the embed snippet.
 
 ![Settings](docs/screenshots/console-settings.png)
@@ -172,7 +172,7 @@ Five responsibilities. Each has exactly one owner.
 | 1 | **XStudio Helpdesk** | `XStudio_Helpdesk.dbo.Complaint_Mst_Tbl` | the ticket and its user-visible state |
 | 2 | **Chitragupta control** | `Model_Bench/l2_pipeline_runtime.py` + SQL procedures | claim, capacity, queue, retry, recovery, review routing, publication |
 | 3 | **Jev: System One** | `Model_Bench/jev/*`, `L1/api` (L1 turn decisions) | typed judgments: route, relevance, execution depth, verdict, primary review. Never writes text or SQL |
-| 4 | **Hermes / local model: System Two** | Hermes profiles on LM Studio (Qwen) | composing and focused reasoning, only when Jev says the facts need it |
+| 4 | **Local model: System Two** | the engine's agent loop (`Model_Bench/agent_loop.py`) on LM Studio (Qwen) | composing and focused reasoning, only when Jev says the facts need it |
 | 5 | **Evidence and knowledge** | `xstudio_l2` typed tool, audited SQL, GBrain world, governed KB | what is true right now, and what is known |
 
 The L1 layer (`L1/api` + `l1-ui`) is an adapter over the same system, not a sixth responsibility. It owns chat turns, ticket creation from chat, the requester's view of tickets, and the console. It shows L2 read-only and never re-implements the lifecycle.
@@ -182,18 +182,25 @@ The normative lifecycle specification is **[`Knowledge/L2_PIPELINE_STATE_MACHINE
 ### Where things run
 
 ```text
-Windows laptop / server                          WSL (Ubuntu)
-├─ L1 API  (.NET, :5116)  ──── SQL ────┐         ├─ Hermes gateways (systemd --user)
-│    ├─ Jev (TypeSafe API)             │         │    l2-investigator      (hosts cron jobs)
-│    ├─ GBrain search ──── wsl.exe ────┼────────►│    l2-jev-investigator  (investigation / rework)
-│    ├─ runtime status ─── wsl.exe ────┼────────►│    l2-reviewer-primary  (local review fallback)
-│    └─ benchmark report (python)      │         ├─ l2_pipeline_runtime.py, ticket_scout.py (cron, 2 min)
-├─ l1-ui   (Next.js, :3417) ── /api/l1/* ─► API  ├─ GBrain (~/.hermes/xstudio-gbrain)
-└─ Jev bridge (Windows Python)                   └─ Hermes Kanban (SQLite)
-                                       │
-            SQL Server  XStudio_Helpdesk / XStudio_Xbatch  (reached over Tailscale)
-            LM Studio   on the desktop (Tailscale)  — Qwen, one inference slot
+Windows server (the installer registers two services; this laptop runs the same payload from build\stage)
+├─ Chitragupta API     (.NET, :3417)  serves the console UI as static files plus /api/*
+│    ├─ Jev (TypeSafe API)
+│    ├─ GBrain search ──── MCP over HTTP ───┐
+│    ├─ runtime status and logs, read natively
+│    └─ benchmark report
+└─ Chitragupta Engine  (Python, hosted by WinSW)
+     ├─ scheduler: ticket_scout every 2 min, audit every 10 min
+     ├─ dispatcher: claims a card, runs one worker process per card, reconciles at once
+     ├─ agent loop: LM Studio tool-calling loop with the typed xstudio_l2 tools
+     ├─ SQL card board (L2_Card_Tbl, L2_Card_Run_Tbl)
+     └─ GBrain (gbrain.exe serve --http, PGLite, single owner)
+
+ Configuration: ProgramData\Chitragupta\chitragupta.json, edited in console Settings → Connections
+ External:      SQL Server  XStudio_Helpdesk / XStudio_Xbatch  (reached over Tailscale)
+                LM Studio   on the desktop (Tailscale): Qwen chat model and the embedding model
 ```
+
+The API and engine start with nothing connected and wait; Connections brings them live.
 
 ---
 
@@ -223,7 +230,7 @@ investigator / rework ─► frozen proposal ─► Jev PRIMARY REVIEW
         LOCAL_REVIEW ─► local reviewer, only on ambiguity or conflict
 ```
 
-There is one Kanban board and one lifecycle authority. A local reviewer card is an exception path, not the normal route.
+There is one card board (in SQL) and one lifecycle authority. A local reviewer card is an exception path, not the normal route.
 
 ### Execution modes
 
@@ -236,7 +243,7 @@ There is one Kanban board and one lifecycle authority. A local reviewer card is 
 ### Invariants
 
 - **Two capacity domains.** Pipeline WIP (default 8 active runs, `L2_MAX_PIPELINE_WIP`) is separate from the one RUNNING local-model slot. The waiting threshold is `L2_MAX_QWEN_WAITING` (default 4). New investigations pause at the threshold; review and rework are still admitted so ongoing runs never starve.
-- **Frozen work.** The worker card is stored on the run before admission. A QUEUED run without a Kanban card is valid state.
+- **Frozen work.** The worker card is stored on the run before admission. A QUEUED run without a card is valid state.
 - **The review loop** uses `review_cycle`, not SQL `AttemptNo`. At most 3 cycles.
 - **UPDATE continuations** are capped at 3 per ticket version. The next one escalates to L3.
 - **Resolution binding fails closed.** A `RESOLUTION` cannot publish unless the live resolved status is bound (`deploy/helpdesk_workflow_binding.json`: eligible `Enter`, resolved `Closed`, waiting-user AskStatus `Ask`).
@@ -256,7 +263,7 @@ There is one Kanban board and one lifecycle authority. A local reviewer card is 
 
 ### The only way agents touch the database
 
-Workers reach SQL **only** through the typed `xstudio_l2` tool (`xstudio-l2-tools` plugin + `Model_Bench/xstudio_l2_tool_bridge.py`). The model never writes SQL or names columns: `xstudio_read_table(table)` lets the harness pick the filter and columns.
+Workers reach SQL **only** through the typed `xstudio_l2` tool (`deploy/plugins/xstudio-l2-tools` + `Model_Bench/xstudio_l2_tool_bridge.py`), loaded by the engine's agent loop. A worker has no terminal, file or package tool at all. The model never writes SQL or names columns: `xstudio_read_table(table)` lets the harness pick the filter and columns.
 
 | Need | Operation |
 |---|---|
@@ -272,7 +279,7 @@ The safety contract is structural:
 - procedures need an explicit allowlist;
 - identifiers are validated;
 - output is bounded, and identical repeated failures are circuit-broken;
-- model-driven use of interpreters, database drivers, `sqlcmd` or package installs is blocked by the plugin guard and `approvals.deny`.
+- the plugin guard rejects any attempt to reach the database another way.
 
 Publication and Jev are never worker tools.
 
@@ -318,7 +325,7 @@ For a claim about the current ticket, live SQL evidence outranks everything else
 | Console: desk | `GET /api/admin/tickets`, `/tickets/{id}`, `/conversations`, `/conversations/{id}`, `/stats`, `/lookups` |
 | Console: settings | `GET /api/admin/settings`, `PUT /settings/{section}`, `POST /ai/models`, `/ai/test`, `/knowledge/search` |
 | Operations | `GET /api/ops/overview`, `/runs`, `/runs/{id}`, `/live`, `/board`, `/l3`, `POST /l3/{id}`, `GET /tools`, `/logs` |
-| Pipeline health | `GET /api/ops/status` (runtime `status`, WSL), `GET /api/ops/performance?hours=N` (benchmark report). Read-only, cached 20–30 s, one at a time, with timeouts |
+| Pipeline health | `GET /api/ops/status` (runtime `status`), `GET /api/ops/performance?hours=N` (benchmark report). Read-only, cached 20–30 s, one at a time, with timeouts |
 
 ---
 
@@ -326,54 +333,52 @@ For a claim about the current ticket, live SQL evidence outranks everything else
 
 ### Prerequisites
 
-- Windows with **WSL (Ubuntu)**, **.NET 10 SDK**, **Node ≥ 20.19**, **Python 3.12+** with `pyodbc` and ODBC Driver 18.
+- Windows, **.NET 10 SDK**, **Node ≥ 20.19** (build only), **Python 3.14** with `pyodbc` and ODBC Driver 18.
 - SQL Server with `XStudio_Helpdesk` and `XStudio_Xbatch`, reachable at the **Tailscale** address (see *Gotchas*).
-- LM Studio with the local model (on the desktop, over Tailscale).
-- In WSL: Hermes Agent under `~/.hermes`, the three L2 profiles, GBrain at `~/.hermes/xstudio-gbrain`.
+- LM Studio with the chat model and the embedding model (on the desktop, over Tailscale).
+- Bun and the pinned GBrain checkout, only to rebuild the knowledge index (`build/build-brain.ps1`).
 
-### Environment
+### Configuration
 
-| Variable | Where | Used by |
+Open the console → **Settings → Connections**. Each connection (SQL, LM Studio, Jev, GBrain) has a **Test** button. Saving writes `ProgramData\Chitragupta\chitragupta.json`; the engine detects the change and restarts itself to apply it. Nothing needs to be connected for the services to start.
+
+| Setting | Where | Used by |
 |---|---|---|
-| `MSSQL_MCP_SERVER`, `MSSQL_MCP_USER`, `MSSQL_MCP_PASSWORD` | Windows user env | L1 API, benchmark, Jev bridge |
-| same keys | each WSL profile `~/.hermes/profiles/<p>/.env` | L2 runtime and workers |
-| `TYPESAFE_API_KEY` (+ optional `TYPESAFE_DEFAULT_MODEL`, `TYPESAFE_BASE_URL`) | Windows env | Jev |
-| `L2_MAX_PIPELINE_WIP` (8), `L2_MAX_QWEN_WAITING` (4), `CHITRAGUPTA_JEV_*` | WSL profile env | runtime tuning |
-| `L1_API_URL` (default `http://127.0.0.1:5116`) | UI env | Next.js proxy |
+| SQL server, user, password | Connections (`MSSQL_MCP_*`) | API, engine, benchmark, Jev bridge |
+| LM Studio base URL | Connections (`LMSTUDIO_BASE_URL`) | API, engine |
+| Jev key (`TYPESAFE_API_KEY`, optional `TYPESAFE_BASE_URL`) | Connections | Jev |
+| GBrain URL, token, OAuth client | Connections (`CHITRAGUPTA_GBRAIN_*`) | API, engine |
+| Model, context length, turn limit per role | `deploy/engine.json` | agent loop |
+| `L2_MAX_PIPELINE_WIP` (8), `L2_MAX_QWEN_WAITING` (4), `CHITRAGUPTA_JEV_*` | engine environment | runtime tuning |
+| `CHITRAGUPTA_DATA` | machine environment | logs, traces, lock (default `ProgramData\Chitragupta`) |
 
-Never commit `.env` files or put credentials in prompts, cards, tickets or traces.
+Never commit credentials or put them in prompts, cards, tickets or traces.
 
-### Start L1 locally
+### Build and install
 
-```bash
-dotnet run --project L1/api --launch-profile http
-npm --prefix l1-ui run dev -- -p 3417
+```powershell
+build\build-brain.ps1        # once: builds the prebuilt GBrain index (brain.zip)
+build\build.ps1              # stages the API + console, embedded Python, app code, WinSW, gbrain.exe into build\stage
 ```
 
-Open `http://localhost:3417/admin` (console) and `http://localhost:3417/?user=<XStudio user ID>` (helpdesk). Both are also in `.claude/launch.json` as `l1-api` and `l1-ui`. Embed in XStudio as a page control that loads the URL in an iFrame: `http://<host>:3417/?user={XStudioUserID}`. `public/embed.js` provides a floating launcher.
+`installer/Package` (WiX MSI: the two services, firewall rule, install-folder and port wizard; settings and logs in ProgramData survive upgrades) and `installer/Bundle` (Burn bundle: installs ODBC Driver 18, then the MSI) produce `Chitragupta-Setup.exe`.
 
-### Apply an update: one command
+### Run it without installing
 
-`apply-helpdesk-update.ps1` (also on the **RepoPad** desktop macropad):
-1. fast-forwards `main` and refuses a dirty tree;
-2. runs `npm run check` and `npm run build`;
-3. validates the API build;
-4. restarts the API;
-5. starts the UI if it isn't running.
+`build\dev-start.ps1 [-Open]` starts the API and the engine from `build\stage`, each in a small restart loop, and opens the console. The engine runs the staged **copy** of `Model_Bench`, so edits are live only after `build\build.ps1` and an engine restart. Nothing starts at logon unless you register `dev-start.ps1` as a scheduled task yourself.
 
-Nothing restarts if a check fails.
+For UI work: `dotnet run --project L1/api --launch-profile http` and `npm --prefix l1-ui run dev -- -p 3417`. Embed in XStudio as a page control that loads `http://<host>:3417/?user={XStudioUserID}` in an iFrame; `public/embed.js` provides a floating launcher.
 
-### L2 runtime and SQL
+### SQL
 
-```bash
-# SQL first: apply the generated bundle, then the postflight
-#   Knowledge/00_Hermes_L2_FULL_INSTALL.sql   (already includes 25_ and 55_ hardening; do not re-apply them)
-#   Knowledge/98_pipeline_postflight.sql
-# then the Hermes side (copies runtime/plugins/profiles, restarts gateways)
-bash Model_Bench/deploy_l2_pipeline_runtime.sh
+Apply the generated bundle, then the postflight. Edit the numbered SQL sources and regenerate the bundle; never hand-edit it.
+
+```text
+Knowledge/00_Hermes_L2_FULL_INSTALL.sql   (already includes 25_ and 55_ hardening; do not re-apply them)
+Knowledge/98_pipeline_postflight.sql
 ```
 
-Edit the numbered SQL sources and regenerate the bundle; never hand-edit the bundle. `.gitattributes` forces LF on `*.sh` and `*.sql`, because CRLF broke WSL scripts and install reproducibility. See `Knowledge/deploy-hermes-sql.md`.
+`.gitattributes` forces LF on `*.sh` and `*.sql`, so install bundles stay reproducible. See `Knowledge/deploy-hermes-sql.md`. The card tables are created on first use.
 
 ---
 
@@ -381,28 +386,27 @@ Edit the numbered SQL sources and regenerate the bundle; never hand-edit the bun
 
 **Look first:** console → **Pipeline health**, or the same data from the command line:
 
-```bash
-python Model_Bench/benchmark_l2_performance.py --hours 2          # the one live-health report; extend it, don't write ad hoc scripts
-python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status   # in WSL, with the profile .env loaded
+```powershell
+python Model_Bench/benchmark_l2_performance.py --hours 2     # the one live-health report; extend it, don't write ad hoc scripts
+build\stage\engine\python\python.exe build\stage\engine\app\Model_Bench\l2_pipeline_runtime.py status
 ```
 
 **Validate before deploying** (locally, against the real environment; GitHub Actions is not proof of live correctness):
 
-```bash
-bash Model_Bench/validate_l2_pipeline_local.sh            # fast gate
-bash Model_Bench/validate_l2_pipeline_local.sh --full     # full live gate
-python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
-npm --prefix l1-ui run check && npm --prefix l1-ui run build
+```powershell
+python -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
+npm --prefix l1-ui run check; npm --prefix l1-ui run build
+python Model_Bench/e2e/run_world.py                           # the GBrain retrieval cases
 ```
 
-**Restart a worker profile** (WSL): `systemctl --user restart hermes-gateway-<profile>.service`.
+**Restart the engine:** restart the `Chitragupta Engine` service (under `dev-start.ps1`, end the engine process and its loop starts it again).
 
 ### Gotchas that have cost real hours
 
-- **Use the Tailscale SQL address (`100.94.169.57`), not the office LAN address (`10.2.6.204`).** Off the office network the LAN address is unreachable. Every WSL cron tick then fails with `HYT00 Login timeout`, the board looks "idle", and time-since-last-claim keeps climbing. Windows and all three WSL profiles must point at the same Tailscale address.
-- **Profile `.env` files are CRLF.** A raw `source` puts `\r` into the server name. Load with `set -a; source <(tr -d '\r' < .env); set +a`.
-- **SQL timestamps (`CreatedOn`, `EventOn`) are already IST.** Do not add 5:30. WSL's `date` and cron output filenames are **UTC**, which is not clock drift.
+- **Use the Tailscale SQL address (`100.94.169.57`), not the office LAN address (`10.2.6.204`).** Off the office network the LAN address is unreachable. Every scout tick then fails with `HYT00 Login timeout`, the board looks "idle", and time-since-last-claim keeps climbing. The API and the engine must point at the same Tailscale address.
+- **SQL timestamps (`CreatedOn`, `EventOn`) are already IST.** Do not add 5:30. Python's `utcnow()` and some file timestamps are UTC, which is not clock drift.
 - **Model calls are traced without a duration.** The console estimates model time from the gaps between steps. The gap before a worker session starts is queue wait and is reported separately.
+- **GBrain (PGLite) admits one process.** Everything reaches it through the engine-supervised `gbrain serve --http`; a second direct opener gets `pglite_busy`.
 - **pyodbc hides procedure errors behind result sets** until `nextset()`. Drain before commit.
 - **GBrain `sync` reads committed git files.** Commit regenerated world pages before syncing.
 - **`XMES_Log_Trn_Tbl` is huge** (3.5 GB, PK only). Never `LIKE`-scan it live; use the build-time log index.
@@ -417,17 +421,22 @@ l1-ui/                        Next.js app: requester helpdesk (/) and support co
   components/ui/viz.tsx         the console's visual kit (panels, charts, gauges)
   components/console/circuit.tsx   the investigation circuit (live + replay)
 Model_Bench/
+  engine.py                   the engine service: scheduler, dispatcher, GBrain supervisor
+  agent_loop.py               one worker process per card: LM Studio tool-calling loop
+  cards.py                    the SQL card board
+  chitragupta_config.py       chitragupta.json → environment (Connections panel)
   l2_pipeline_runtime.py      the single deterministic lifecycle state machine
   ticket_scout.py             2-minute reconcile-first claim backstop
   world_walk.py, build_process_world.py, build_world_pages.py   the XBatch world
   jev/, jev_workflow_bridge.py   System One workflows + Windows bridge
   xstudio_l2_tool_bridge.py, xstudio_l2_tools_plugin/   the typed tool surface + guard
-  xstudio_l2_orchestrator_plugin/   event trigger into the same reconciler (acceleration only)
   benchmark_l2_performance.py  the live-health report
   validate_l2_pipeline_local.sh, test_l2_pipeline_runtime.py
 Knowledge/                    SQL sources + generated bundle, lifecycle spec, world, routing, design docs
-deploy/                       workflow binding, profiles, skills, plugins, cron mirror, GBrain schema pack
-apply-helpdesk-update.ps1     local apply (validate → restart)
+deploy/                       engine.json, workflow binding, worker prompts, skills, plugins, GBrain schema pack
+build/                        build.ps1 (stage the payload), build-brain.ps1 (prebuilt index), dev-start.ps1, WinSW config
+installer/                    WiX MSI (Package) and Burn bundle (Bundle)
+apply-helpdesk-update.ps1     dev apply for UI/API work (validate → restart)
 tools/RepoPad/                desktop macropad that runs the apply script
 docs/screenshots/             the screenshots in this README
 Plans/, Agent_Comms/          history and provenance only: not current instructions
@@ -455,6 +464,6 @@ Before changing the ticket pipeline, read `AGENTS.md`, `Knowledge/L2_PIPELINE_ST
 2. Keep pipeline capacity, single-slot model admission, frozen proposals, workflow binding, publication and audit safety intact unless a concrete defect requires otherwise.
 3. Validate locally and look at live state before deploying.
 
-**Retired, do not revive:** a separate `l2-review` board; `kanban_forward_bridge.py`; independently scheduled review dispatch; pre-created reviewer cards; backlog-`<3` claiming; `AttemptNo` as the review counter; model-named verifier profiles; `--draft-response` / `--approve-draft` choreography; agent-composed Python/pyodbc/sqlcmd transport; separate publisher/reject/repair cron jobs; poll-into-long-lived-chat. Documents under `Plans/` and `Agent_Comms/` may describe these as history.
+**Retired, do not revive:** pre-created reviewer cards; backlog-`<3` claiming; `AttemptNo` as the review counter; `--draft-response` / `--approve-draft` choreography; agent-composed Python/pyodbc/sqlcmd transport; separate publisher/reject/repair jobs; poll-into-long-lived-chat. Documents under `Plans/` and `Agent_Comms/` may describe these as history.
 
 The repository keeps one current explanation for each mechanism and one implementation authority for each lifecycle transition.

@@ -13,34 +13,34 @@ This file is a thin entry point by design: durable rules live in `AGENTS.md` fir
 
 ## Current deployment facts that matter
 
-- Branches: `main` (Hermes version, deployed) and `no-hermes` (handrolled engine, plan in `docs/plans/no-hermes-architecture.md`). Fixes to shared code land on `main` and merge into `no-hermes`.
-- Live lifecycle: centralized Kanban state machine in `Model_Bench/l2_pipeline_runtime.py`.
+- One long-lived branch: `main`. It runs as a native Windows engine plus API (design record: `docs/plans/no-hermes-architecture.md`); the installer is built from `installer/`, the payload from `build/`. On this laptop it runs from `build\stage` via `build\dev-start.ps1`, started by hand; the `Chitragupta` logon task is disabled.
+- Live lifecycle: centralized state machine in `Model_Bench/l2_pipeline_runtime.py`, executed by `Model_Bench/engine.py` over the SQL card board (`cards.py`); workers run in `agent_loop.py` against LM Studio.
 - Pipeline WIP: up to `8` active runs (`L2_MAX_PIPELINE_WIP`); exactly one RUNNING local-model (Qwen) slot, waiting threshold `4`.
 - Priorities: review `30`, rework `20`, new investigation `10`.
 - No-Qwen first: audited probes -> harness fact table -> Jev `direct_answer` picks the outcome -> fixed reply published. Jev never writes text; the local model runs only on NEEDS_REASONING.
 - XBatch investigation has one generated world: `Knowledge/process_world.json` -> `Knowledge/world/**` -> GBrain/world_walk. The retired semantic atlas/recipe registry is not a live dependency.
 - The model never writes SQL or names columns: `xstudio_read_table(table)` lets the harness pick filter and columns.
-- Worker profiles: `l2-jev-investigator`, `l2-reviewer-primary`; `l2-investigator` hosts the cron jobs. Gemma/primary/fallback profiles are retired.
+- Worker roles (prompts in `deploy/profiles/`, model settings in `deploy/engine.json`): `l2-jev-investigator`, `l2-reviewer-primary`. The engine's scheduler runs `ticket_scout` (2 min) and the audit (10 min).
 - Reviewer creation is deferred until investigator/rework completion is normalized and reviewable.
 - Reviewer receives frozen `proposal_json`; deterministic publisher publishes that same proposal.
 - Rework cycles use `review_cycle`, not SQL `AttemptNo`; max cycles = 3.
 - UPDATE continuations are capped at 3 per ticket version (no new requester input); the next UPDATE escalates to L3.
 - Stale/orphan recovery has one owner: `recover_orphan_runs` in the runtime. `--poll` no longer runs the blind `Hermes_L2_Recover_Stale_Runs_Usp` sweep.
 - `ticket_scout.py` is the 2-minute mutating reconciliation/claim backstop.
-- Separate 5-minute publish-safety-net and repair cron jobs were deliberately removed; do not recreate them.
-- L2 agents reach the database ONLY through the typed `xstudio_l2` tool (`xstudio-l2-tools` plugin + `Model_Bench/xstudio_l2_tool_bridge.py`). Model-driven terminal use of an interpreter, database driver, `sqlcmd`, or package install is blocked by the plugin guard and `approvals.deny`; benign terminal/file inspection still works. Raw agent SQL is read-only, arbitrary `EXEC` is unavailable, and `read_procedure` is an explicit allowlist. See `AGENTS.md` §8a.
+- Separate 5-minute publish-safety-net and repair jobs were deliberately removed; do not recreate them.
+- L2 agents reach the database ONLY through the typed `xstudio_l2` tool (`xstudio-l2-tools` plugin + `Model_Bench/xstudio_l2_tool_bridge.py`). Workers have no terminal, file or package tool, and the plugin guard rejects any other route to the database. Raw agent SQL is read-only, arbitrary `EXEC` is unavailable, and `read_procedure` is an explicit allowlist. See `AGENTS.md` §8a.
 - Qdrant and mem0 were removed on 2026-09-30 (`docs/decisions/2026-09-30-drop-qdrant-mem0.md`); do not reinstall them. Agent knowledge is the dispatch bundle, GBrain world, KB articles and ledgers only.
 - Reviewer completion audit is read-only.
 - Live-verified Helpdesk binding: eligible `Enter`, resolved `Closed`, waiting-user AskStatus `Ask`; L3/human-action ticket statuses remain unbound until proven live.
 - A `RESOLUTION` does not automatically create an approved KB article: curation writes a `Candidate`, promoted to `Approved` only when a verified resolution on a different ticket reuses it.
 - The generated SQL full-install bundle includes the `25` and `55` hardening sources.
-- `.gitattributes` forces LF on `*.sh` and `*.sql` because Windows CRLF conversion broke WSL scripts and install reproducibility.
+- `.gitattributes` forces LF on `*.sh` and `*.sql` because Windows CRLF conversion broke install reproducibility.
 
 ## Working agreements (full text: `AGENTS.md` §1b)
 
 - End goal: a self-sustaining L2 helpdesk. Jev decides and selects, the harness does the heavy lifting, Qwen only writes when reasoning is needed. Never tailor anything to synthetic test tickets.
 - Research and reuse before building; never guess settings. Dev SQL `10.2.6.204` is the owner's own: act without asking, never hand the owner commands you can run, never store a pasted credential.
-- Do not restart gateways, toggle cron, or load/unload LM Studio models unless asked. Reuse `benchmark_l2_performance.py`, `seed_real_xbatch_tickets.py`, `reset_l2_test_tickets.py`; no throwaway scripts.
+- Do not restart the engine/API services or load/unload LM Studio models unless asked. Reuse `benchmark_l2_performance.py`, `seed_real_xbatch_tickets.py`, `reset_l2_test_tickets.py`; no throwaway scripts.
 - `main` only; commit and push every finished change; audit other agents' branches and claims locally before merging. Research goes to Antigravity/Codex via `Agent_Comms/`, not to your own subagents.
 - Report in IST, plain English, short bullets.
 
@@ -68,10 +68,9 @@ Preserve the core invariants unless the user explicitly asks to redesign them.
 Validate locally against the real environment; do not use GitHub Actions as proof of live correctness.
 
 ```bash
-bash Model_Bench/validate_l2_pipeline_local.sh
-python3 -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
+python -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
 python Model_Bench/benchmark_l2_performance.py --hours 2   # live health; extend it, do not write ad hoc scripts
-python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
+build\stage\engine\python\python.exe build\stage\engine\app\Model_Bench\l2_pipeline_runtime.py status
 ```
 
 Console changes: `npx tsc --noEmit` and `npx eslint components lib` in `l1-ui/`, then check the screens at 1600, 768 and 375 px against real tickets (`AGENTS.md` §19).
