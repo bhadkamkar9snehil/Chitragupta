@@ -38,8 +38,9 @@ export function SettingsView({ tab, onTab }: { tab?: string; onTab: (t: string) 
   const current = TABS.some((t) => t.id === tab) ? tab! : "connections";
 
   useEffect(() => {
+    if (current === "connections" || settings) return;
     api.admin.settings().then(setSettings).catch((e: Error) => toast.error(e.message));
-  }, []);
+  }, [current, settings]);
 
   return (
     <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">

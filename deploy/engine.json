@@ -1,5 +1,5 @@
 {
-  "lm_studio": { "base_url": "http://100.111.69.102:1235/v1" },
+  "lm_studio": { "base_url": "http://127.0.0.1:1234/v1" },
   "defaults": { "model": "qwen/qwen3.5-9b", "max_tokens": 8192, "max_turns": 20, "context_length": 65792, "request_timeout": 600 },
   "profiles": {
     "l2-jev-investigator": { "soul": "deploy/profiles/l2-jev-investigator/SOUL.md" },

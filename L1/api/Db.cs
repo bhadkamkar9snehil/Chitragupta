@@ -8,7 +8,7 @@ public static class Db
 {
     static string Env(string name, string fallback = "") => Environment.GetEnvironmentVariable(name) ?? fallback;
     static string Conn(string db) =>
-        $"Server={Env("MSSQL_MCP_SERVER", "10.2.6.204")};Database={db};User Id={Env("MSSQL_MCP_USER", "sa")};" +
+        $"Server={Env("MSSQL_MCP_SERVER")};Database={db};User Id={Env("MSSQL_MCP_USER")};" +
         $"Password={Env("MSSQL_MCP_PASSWORD")};TrustServerCertificate=True;Encrypt=True;Connect Timeout=30";
 
     // Read per call: the Connections panel can change the server or password without a restart.

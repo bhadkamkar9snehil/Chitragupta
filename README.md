@@ -363,7 +363,7 @@ build\build.ps1              # stages the API + console, embedded Python, app co
 
 `installer/Package` (WiX MSI: the two services, firewall rule, install-folder and port wizard; settings and logs in ProgramData survive upgrades) and `installer/Bundle` (Burn bundle: installs ODBC Driver 18, then the MSI) produce `Chitragupta-Setup.exe`.
 
-See [Windows installation](docs/install-windows.md) for prerequisites, configuration, upgrade and validation. This laptop now uses the installed services; its previous development loops are stopped.
+See [Windows installation](docs/install-windows.md) for prerequisites, configuration, upgrade and validation. Release 0.1.3 is installed on the laptop and server. The active engine runs on `10.2.6.204`, console port 3418. The laptop engine is stopped/Manual and its SQL address is cleared; its shortcuts open the server. Previous development loops are stopped.
 
 ### Run it without installing
 

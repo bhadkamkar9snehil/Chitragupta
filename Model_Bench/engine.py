@@ -140,9 +140,7 @@ def gbrain_service() -> None:
             raise RuntimeError("GBrain did not return installation credentials")
         connection.update(url=f"http://127.0.0.1:{port}", client_id=client_id[1], client_secret=client_secret[1], seed_sha256=digest)
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(settings, indent=2), encoding="utf-8")
-        temporary.replace(path)
+        chitragupta_config.save(settings)
         CONFIG_MTIME = chitragupta_config.apply()
     while True:
         with open(DATA / "logs" / "gbrain.log", "ab") as out:

@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using L1Api;
 
+Connections.ProtectStoredSecrets();
 Connections.Apply();  // bootstrap settings file -> environment, before anything reads it
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService();  // a no-op when run from a console; the installed service runs as this
@@ -45,6 +46,7 @@ _ = Task.Run(async () =>
 {
     while (true)
     {
+        if (!Connections.SqlConfigured) { await Task.Delay(5_000); continue; }
         try { await Db.Migrate(); return; }
         catch (Exception e) { app.Logger.LogWarning("SQL unavailable, migration will retry in 30s: {Message}", e.Message); await Task.Delay(30_000); }
     }

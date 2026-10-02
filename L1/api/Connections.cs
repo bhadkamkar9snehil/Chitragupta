@@ -5,6 +5,8 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Data.SqlClient;
 
 namespace L1Api;
@@ -29,8 +31,26 @@ public static class Connections
 
     static JsonObject Read()
     {
-        try { return JsonNode.Parse(File.ReadAllText(Path)) as JsonObject ?? new(); }
-        catch { return new(); }
+        if (!File.Exists(Path)) return new();
+        var file = JsonNode.Parse(File.ReadAllText(Path)) as JsonObject ?? throw new InvalidDataException("Invalid Chitragupta settings file.");
+        foreach (var (section, key, _, secret) in Map)
+            if (secret && file[section]?[key]?.ToString() is { } value && value.StartsWith("dpapi:", StringComparison.Ordinal))
+            {
+                if (!OperatingSystem.IsWindows()) throw new InvalidOperationException("Windows-protected credentials must be configured on this machine.");
+                file[section]![key] = Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(value[6..]), null, DataProtectionScope.LocalMachine));
+            }
+        return file;
+    }
+
+    public static bool SqlConfigured => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MSSQL_MCP_SERVER"))
+        && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("MSSQL_MCP_PASSWORD"));
+
+    public static void ProtectStoredSecrets()
+    {
+        if (!OperatingSystem.IsWindows() || !File.Exists(Path)) return;
+        var stored = JsonNode.Parse(File.ReadAllText(Path));
+        if (Map.Any(m => m.Secret && stored?[m.Section]?[m.Key]?.ToString() is { Length: > 0 } v && !v.StartsWith("dpapi:", StringComparison.Ordinal)))
+            Save(new JsonObject());
     }
 
     /// <summary>Export the file to the environment. A missing file is normal on first run.</summary>
@@ -38,7 +58,7 @@ public static class Connections
     {
         var file = Read();
         foreach (var (section, key, env, _) in Map)
-            if (file[section]?[key]?.ToString() is { Length: > 0 } v) Environment.SetEnvironmentVariable(env, v);
+            if (file[section]?[key] is JsonNode node) Environment.SetEnvironmentVariable(env, node.ToString() is { Length: > 0 } v ? v : null);
     }
 
     // What the panel may see: everything except secrets, plus whether each secret is set.
@@ -70,8 +90,21 @@ public static class Connections
             sec[key] = value;
         }
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
-        File.WriteAllText(Path, file.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-        if (OperatingSystem.IsWindows()) Restrict(Path);
+        foreach (var (section, key, _, secret) in Map)
+            if (OperatingSystem.IsWindows() && secret && file[section]?[key]?.ToString() is { Length: > 0 } value)
+                file[section]![key] = "dpapi:" + Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes(value), null, DataProtectionScope.LocalMachine));
+        var temporary = Path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                using (File.Create(temporary)) { }
+                Restrict(temporary);
+            }
+            File.WriteAllText(temporary, file.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(temporary, Path, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
         Apply();
     }
 
