@@ -7,6 +7,13 @@ param([switch]$Open)
 $root = Split-Path $PSScriptRoot -Parent
 $stage = "$root\build\stage"
 $port = if ($env:CHITRAGUPTA_PORT) { $env:CHITRAGUPTA_PORT } else { "3417" }
+if (Get-Service ChitraguptaEngine -ErrorAction SilentlyContinue) {
+    $saved = Get-ItemProperty 'HKLM:\Software\Chitragupta' -Name ConsolePort -ErrorAction SilentlyContinue
+    if ($saved.ConsolePort) { $port = $saved.ConsolePort }
+    if ($Open) { Start-Process "http://localhost:$port/admin" }
+    Write-Host 'Chitragupta is installed. Use its Windows services.'
+    return
+}
 
 function Start-Loop([string]$Name, [string]$Exe, [string]$Arguments, [string]$WorkDir, [hashtable]$Env = @{}) {
     if (Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like "*Chitragupta-loop-$Name*" }) { return }

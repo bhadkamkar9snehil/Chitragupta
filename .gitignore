@@ -48,6 +48,7 @@ tools/RepoPad/bin/
 tools/RepoPad/obj/
 build/cache/
 build/stage/
+build/stage-release/
 build/out/
 installer/**/bin/
 installer/**/obj/

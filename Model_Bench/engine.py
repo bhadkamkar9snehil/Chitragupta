@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -114,6 +115,35 @@ def gbrain_service() -> None:
         return
     (home / ".gbrain" / "config.json").write_text(json.dumps({**GBRAIN_CONFIG, "database_path": str(index)}, indent=2), encoding="utf-8")
     env = {**os.environ, "GBRAIN_HOME": str(home)}
+    # The index is shared; credentials are created here on each installation, never shipped in the MSI.
+    # Auth CLI access finishes before the HTTP server opens the single-process PGLite database.
+    global CONFIG_MTIME
+    path = chitragupta_config.config_path()
+    settings = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
+    connection = settings.setdefault("gbrain", {})
+    marker = home / "brain.sha256"
+    digest = marker.read_text().strip() if marker.exists() else ""
+    if not connection.get("client_secret") or connection.get("seed_sha256") != digest:
+        def auth(*args: str) -> str:
+            result = subprocess.run([exe, "auth", *args], env=env, capture_output=True, text=True, timeout=60)
+            if result.returncode:
+                raise RuntimeError(f"GBrain credential provisioning failed ({result.returncode})")
+            return result.stdout
+
+        for client in json.loads(auth("clients", "--json"))["clients"]:
+            auth("revoke-client", client["client_id"])
+        output = auth("register-client", "chitragupta", "--grant-types", "client_credentials", "--scopes", "read",
+                      "--source", "xstudio-knowledge", "--federated-read", "xstudio-knowledge")
+        client_id = re.search(r"Client ID:\s+(\S+)", output)
+        client_secret = re.search(r"Client Secret:\s+(\S+)", output)
+        if not client_id or not client_secret:
+            raise RuntimeError("GBrain did not return installation credentials")
+        connection.update(url=f"http://127.0.0.1:{port}", client_id=client_id[1], client_secret=client_secret[1], seed_sha256=digest)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        temporary.replace(path)
+        CONFIG_MTIME = chitragupta_config.apply()
     while True:
         with open(DATA / "logs" / "gbrain.log", "ab") as out:
             proc = subprocess.Popen([exe, "serve", "--http", "--port", str(port)], env=env, stdout=out, stderr=subprocess.STDOUT)
@@ -164,20 +194,31 @@ def main() -> None:
     (DATA / "logs").mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         handlers=[logging.StreamHandler(), logging.FileHandler(DATA / "logs" / "engine.log", encoding="utf-8")])
+    knowledge = threading.Thread(target=gbrain_service, name="gbrain", daemon=True)
+    knowledge.start()
     while True:  # SQL is external: the engine starts even when it is down and waits for it
+        if not knowledge.is_alive():
+            raise RuntimeError("GBrain supervision stopped; see the service log")
+        if chitragupta_config.apply() != CONFIG_MTIME:
+            log.info("configuration changed, exiting for the service manager to restart")
+            sys.exit(75)
+        if not os.environ.get("MSSQL_MCP_SERVER") or not os.environ.get("MSSQL_MCP_PASSWORD"):
+            time.sleep(5)
+            continue
         try:
             log.info("recovered %d orphaned running card(s)", cards.recover_running())
             break
         except Exception as exc:  # noqa: BLE001
             log.warning("SQL unavailable, retrying in 30s: %s", str(exc)[:200])
             time.sleep(30)
-    threading.Thread(target=gbrain_service, name="gbrain", daemon=True).start()
     threading.Thread(target=dispatcher, name="dispatcher", daemon=True).start()
     last_audit = 0.0
     while True:
+        if not knowledge.is_alive():
+            raise RuntimeError("GBrain supervision stopped; see the service log")
         if chitragupta_config.apply() != CONFIG_MTIME:  # the Connections panel saved new settings: restart to use them
             log.info("configuration changed, exiting for the service manager to restart")
-            os._exit(75)
+            sys.exit(75)
         tick("scout", rt.scout)
         drain()
         if time.time() - last_audit >= AUDIT_EVERY:

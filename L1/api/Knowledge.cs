@@ -13,6 +13,7 @@ public static class Knowledge
 
     public static async Task<List<Source>> Search(string query, string sourceId, int limit, CancellationToken ct = default, string? url = null, string? token = null)
     {
+        Connections.Apply();  // the engine provisions the installation's knowledge credentials after API startup
         url ??= Environment.GetEnvironmentVariable("CHITRAGUPTA_GBRAIN_URL");
         token ??= Environment.GetEnvironmentVariable("CHITRAGUPTA_GBRAIN_TOKEN");
         if (string.IsNullOrWhiteSpace(url)) return [];

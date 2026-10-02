@@ -9,22 +9,30 @@
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <!-- The one setting the wizard asks for besides the folder. Default matches the old console port, so existing XStudio embeds keep working. -->
-    <Property Id="PORT" Value="3417" Secure="yes" />
+    <Property Id="SAVEDPORT">
+      <RegistrySearch Id="SavedPort" Root="HKLM" Key="Software\Chitragupta" Name="ConsolePort" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="PORT" Secure="yes" />
+    <SetProperty Id="PORT" Value="[SAVEDPORT]" After="AppSearch" Condition="NOT PORT AND SAVEDPORT" />
+    <SetProperty Id="PORT" Action="DefaultPORT" Value="3417" After="SetPORT" Condition="NOT PORT" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Launch Condition="PORT &gt;= 1 AND PORT &lt;= 65535" Message="Choose a console port from 1 to 65535." />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Chitragupta">
+        <Component Id="VersionFile" Bitness="always64"><File Source="$(StageDir)\version.txt" /></Component>
 
         <Directory Id="ApiDir" Name="api">
           <Component Id="ApiService" Bitness="always64">
             <File Id="L1Api.exe" Source="$(StageDir)\api\L1Api.exe" KeyPath="yes" />
             <ServiceInstall Id="ApiSvc" Name="ChitraguptaConsole" DisplayName="Chitragupta Console" Type="ownProcess" Start="auto"
-                            ErrorControl="normal" Description="Console, helpdesk chat and API." Account="LocalSystem" Vital="yes" />
+                            ErrorControl="normal" Description="Console, helpdesk chat and API." Account="LocalSystem" Vital="yes" Arguments="--urls http://0.0.0.0:[PORT]" />
             <util:ServiceConfig ServiceName="ChitraguptaConsole" FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
                                 RestartServiceDelayInSeconds="10" ResetPeriodInDays="1" />
             <ServiceControl Id="ApiCtl" Name="ChitraguptaConsole" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
             <fw:FirewallException Id="ConsolePort" Name="Chitragupta Console" Port="[PORT]" Protocol="tcp" Scope="any" />
             <Environment Id="PortEnv" Name="CHITRAGUPTA_PORT" Value="[PORT]" System="yes" Action="set" Part="all" />
+            <RegistryValue Root="HKLM" Key="Software\Chitragupta" Name="ConsolePort" Type="string" Value="[PORT]" />
           </Component>
           <Files Include="$(StageDir)\api\**">
             <Exclude Files="$(StageDir)\api\L1Api.exe" />
@@ -36,6 +44,9 @@
             <File Id="ChitraguptaEngine.exe" Source="$(StageDir)\engine\ChitraguptaEngine.exe" KeyPath="yes" />
             <ServiceInstall Id="EngineSvc" Name="ChitraguptaEngine" DisplayName="Chitragupta Engine" Type="ownProcess" Start="auto"
                             ErrorControl="normal" Description="Ticket pipeline: dispatcher, scheduler and the GBrain knowledge service." Account="LocalSystem" Vital="yes" />
+            <util:ServiceConfig ServiceName="ChitraguptaEngine" FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
+                                RestartServiceDelayInSeconds="10" ResetPeriodInDays="1" />
+            <ServiceConfig ServiceName="ChitraguptaEngine" FailureActionsWhen="failedToStopOrReturnedError" OnInstall="yes" OnReinstall="yes" />
             <ServiceControl Id="EngineCtl" Name="ChitraguptaEngine" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
           </Component>
           <Files Include="$(StageDir)\engine\**">
@@ -52,11 +63,16 @@
     <!-- Settings and logs live outside the install folder and survive upgrade and uninstall. The Connections panel fills the file in. -->
     <StandardDirectory Id="CommonAppDataFolder">
       <Directory Id="DataDir" Name="Chitragupta">
+        <Component Id="DataPermissions" Guid="A34BFA39-0549-45E4-8A06-4596C30F3112" Permanent="yes">
+          <CreateFolder><PermissionEx Sddl="D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" /></CreateFolder>
+        </Component>
         <Directory Id="LogsDir" Name="logs">
           <Component Id="LogsFolder" Guid="B7D0C9E4-3C0A-4F6E-8E11-5A1D2F0C7A22" Permanent="yes"><CreateFolder /></Component>
         </Directory>
         <Component Id="InitialSettings" Guid="C1E4F8A2-7D53-4B0F-9A66-0F3B8D2E5C33" NeverOverwrite="yes" Permanent="yes">
-          <File Id="chitragupta.json" Source="$(StageDir)\chitragupta.json" KeyPath="yes" />
+          <File Id="chitragupta.json" Source="$(StageDir)\chitragupta.json" KeyPath="yes">
+            <PermissionEx Sddl="D:P(A;;FA;;;SY)(A;;FA;;;BA)" />
+          </File>
         </Component>
       </Directory>
     </StandardDirectory>

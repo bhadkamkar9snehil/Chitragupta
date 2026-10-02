@@ -182,7 +182,7 @@ The normative lifecycle specification is **[`Knowledge/L2_PIPELINE_STATE_MACHINE
 ### Where things run
 
 ```text
-Windows server (the installer registers two services; this laptop runs the same payload from build\stage)
+Windows server or laptop (the installer registers two services)
 ├─ Chitragupta Console (.NET API, :3417)  serves the console UI as static files plus /api/*
 │    ├─ Jev (TypeSafe API)
 │    ├─ GBrain search ──── MCP over HTTP ───┐
@@ -363,9 +363,13 @@ build\build.ps1              # stages the API + console, embedded Python, app co
 
 `installer/Package` (WiX MSI: the two services, firewall rule, install-folder and port wizard; settings and logs in ProgramData survive upgrades) and `installer/Bundle` (Burn bundle: installs ODBC Driver 18, then the MSI) produce `Chitragupta-Setup.exe`.
 
+See [Windows installation](docs/install-windows.md) for prerequisites, configuration, upgrade and validation. This laptop now uses the installed services; its previous development loops are stopped.
+
 ### Run it without installing
 
 `build\dev-start.ps1 [-Open]` starts the API and the engine from `build\stage`, each in a small restart loop, and opens the console. The engine runs the staged **copy** of `Model_Bench`, so edits are live only after `build\build.ps1` and an engine restart. Nothing starts at logon unless you register `dev-start.ps1` as a scheduled task yourself.
+
+When the installed engine service exists, this script opens the installed console instead of starting development processes. Never run two engines against the same Helpdesk database.
 
 For UI work: `dotnet run --project L1/api --launch-profile http` and `npm --prefix l1-ui run dev -- -p 3417`. Embed in XStudio as a page control that loads `http://<host>:3417/?user={XStudioUserID}` in an iFrame; `public/embed.js` provides a floating launcher.
 

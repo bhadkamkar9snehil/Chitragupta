@@ -13,7 +13,7 @@ This file is a thin entry point by design: durable rules live in `AGENTS.md` fir
 
 ## Current deployment facts that matter
 
-- One long-lived branch: `main`. It runs as a native Windows engine plus API (design record: `docs/plans/no-hermes-architecture.md`); the installer is built from `installer/`, the payload from `build/`. On this laptop it runs from `build\stage` via `build\dev-start.ps1`, started by hand; the `Chitragupta` logon task is disabled.
+- One long-lived branch: `main`. It runs as a native Windows engine plus API (design record: `docs/plans/no-hermes-architecture.md`); the installer is built from `installer/`, the payload from `build/`. This laptop uses the installed `ChitraguptaConsole` and `ChitraguptaEngine` services in Program Files. The development loops are stopped and the `Chitragupta` logon task remains disabled.
 - Live lifecycle: centralized state machine in `Model_Bench/l2_pipeline_runtime.py`, executed by `Model_Bench/engine.py` over the SQL card board (`cards.py`); workers run in `agent_loop.py` against LM Studio.
 - Pipeline WIP: up to `8` active runs (`L2_MAX_PIPELINE_WIP`); exactly one RUNNING local-model (Qwen) slot, waiting threshold `4`.
 - Priorities: review `30`, rework `20`, new investigation `10`.
