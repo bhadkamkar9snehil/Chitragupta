@@ -183,7 +183,7 @@ The normative lifecycle specification is **[`Knowledge/L2_PIPELINE_STATE_MACHINE
 
 ```text
 Windows server (the installer registers two services; this laptop runs the same payload from build\stage)
-├─ Chitragupta API     (.NET, :3417)  serves the console UI as static files plus /api/*
+├─ Chitragupta Console (.NET API, :3417)  serves the console UI as static files plus /api/*
 │    ├─ Jev (TypeSafe API)
 │    ├─ GBrain search ──── MCP over HTTP ───┐
 │    ├─ runtime status and logs, read natively
