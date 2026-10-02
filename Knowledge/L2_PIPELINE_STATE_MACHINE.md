@@ -49,7 +49,7 @@ Chitragupta is organized around exactly five architectural responsibilities:
                                   │
                                   ▼
                      ┌───────────────────────────┐
-                     │ 4. HERMES / QWEN          │
+                     │ 4. LOCAL MODEL (QWEN)     │
                      │    SYSTEM TWO             │
                      │                           │
                      │ compose                   │
@@ -72,9 +72,9 @@ Chitragupta is organized around exactly five architectural responsibilities:
 
 The surrounding implementation mechanisms are not additional architecture:
 - **SQL locks / leases / runtime tables** = persistence and coordination
-- **Kanban** = execution transport for Hermes workers
+- **SQL card board** (`L2_Card_Tbl`, `cards.py`) = execution transport for engine workers
 - **Trace pipeline** = observability
-- **Cron / event hook** = lifecycle triggering and liveness
+- **Engine scheduler and dispatcher** (`Model_Bench/engine.py`) = lifecycle triggering and liveness
 - **Tests / postflight** = verification
 - **Deployment scripts** = deployment
 
@@ -86,12 +86,13 @@ The current LM Studio deployment has one safe local inference slot. Chitragupta 
 
 ### Worker failure recovery (2026-09-07)
 
-All mutating CLI entrypoints take the same WSL process lock, including scout,
-completion hooks and operator reconciliation. SQL lookup failure aborts the pass;
-it is never evidence that a run is inactive. Windows mutation entrypoints refuse
-execution; invoke the configured WSL environment to share ownership.
+All mutating entrypoints take the same lifecycle lock (a file lock in the
+engine's data folder), including the scout, the post-worker reconcile and
+operator reconciliation. SQL lookup failure aborts the pass; it is never
+evidence that a run is inactive. A busy lock means another owner is already
+working, so the caller skips that tick.
 
-New cards allow one Hermes process attempt. A blocked card with an ended crashed,
+New cards allow one worker process attempt. A blocked card with an ended crashed,
 failed or timed-out attempt is recovered by central reconciliation into a fresh
 rework card under the same SQL run. Running attempts and explicit reviewer
 rejections do not enter this path. Rework uses the existing bounded cycle budget
@@ -105,14 +106,14 @@ not proof that a model will solve an arbitrary ticket.
 
 Primary investigator and reviewer sessions currently have a 65,792-token context
 budget, 8,192-token output cap and 20-turn limit (verified in the deployed profiles
-on 2026-09-18). Their available tools are file, skills,
-Kanban and typed XStudio evidence. These bounds must be validated against actual
+on 2026-09-18; now set per role in `deploy/engine.json`). Their available tools are
+the typed XStudio evidence tools and the four card tools. These bounds must be validated against actual
 worker traces whenever the model deployment changes.
 
 Default runtime capacities:
 
 ```text
-active Hermes runs       8   (L2_MAX_PIPELINE_WIP)
+active pipeline runs     8   (L2_MAX_PIPELINE_WIP)
 RUNNING local-Qwen work  1   (hard SQL-serialized invariant)
 QUEUED local-Qwen work   4*  (priority-aware L2_MAX_QWEN_WAITING threshold)
 ```
@@ -182,7 +183,7 @@ SQL LOCAL-MODEL ADMISSION
 l2-jev-investigator / rework / local-review task
   COMPOSE_ONLY or FOCUSED_REASONING
           |
-          | kanban_complete / kanban_block
+          | card complete / block (submit_proposal)
           v
 normalize / validate frozen proposal
           |
@@ -365,7 +366,7 @@ review 30 > rework 20 > new investigation 10
 then LocalModelQueuedOn ASC
 ```
 
-A QUEUED run with no Kanban card is intentional, not an orphan. The card is created only after SQL admission. Terminal cards release the slot during reconciliation; a stale RUNNING lease is requeued only when no live local-model Kanban task still owns that run.
+A QUEUED run with no card is intentional, not an orphan. The card is created only after SQL admission. Terminal cards release the slot during reconciliation; a stale RUNNING lease is requeued only when no live local-model card still owns that run.
 
 ## 6. Local deep-review fallback
 
@@ -388,8 +389,8 @@ The reviewer should inspect the exact uncertainty that caused fallback and perfo
 Its only lifecycle outputs are:
 
 ```text
-kanban_complete -> approve frozen proposal
-kanban_block    -> reject with one actionable reason
+card complete (kanban_complete) -> approve frozen proposal
+card block    (kanban_block)    -> reject with one actionable reason
 ```
 
 The reviewer never publishes or mutates Helpdesk state.
@@ -564,7 +565,7 @@ Current synchronous order:
      - queue local reviewer only for fallback
 6. process local-review rejections
 7. process local-review approvals through the same publisher
-8. recover true SQL/Kanban orphans
+8. recover true SQL/card orphans
 9. admit at most one next local-Qwen task
 ```
 
@@ -572,7 +573,7 @@ Do not restore separate publisher/reject/reviewer schedulers.
 
 ## 15. Event delivery and backstop
 
-`xstudio-l2-orchestrator` triggers reconciliation after successful Kanban completion/block events.
+The engine's dispatcher runs the reconciler immediately after every worker process ends.
 
 Event delivery is the fast path.
 
@@ -584,11 +585,11 @@ Age alone never makes a run stale.
 
 A run is protected from orphan recovery if:
 
-1. it is referenced by an active Kanban card (`KANBAN_RUN_PROTECTING_STATES = {'todo', 'ready', 'blocked', 'triage', 'running', 'review', 'scheduled', 'done'}`);
+1. it is referenced by an active card (`KANBAN_RUN_PROTECTING_STATES = {'todo', 'ready', 'blocked', 'triage', 'running', 'review', 'scheduled', 'done'}`);
 2. it is queued in SQL waiting for local-model admission (`LocalModelState='QUEUED'`); or
 3. it was requeued in the current reconciliation pass from a stale lease.
 
-A run is auto-failed for clean retry only when it is active in SQL, has neither active Kanban representation nor QUEUED local-model state, and exceeds the orphan grace period (45 minutes).
+A run is auto-failed for clean retry only when it is active in SQL, has neither an active card nor QUEUED local-model state, and exceeds the orphan grace period (45 minutes).
 
 ## 17. Candidate filtering / UPDATE continuation
 
@@ -600,29 +601,28 @@ Both are part of the generated full-install bundle. Within the same operational 
 
 ## 18. Deployment and validation
 
-From the repo under WSL:
+From the repo on the Windows host:
 
-```bash
+```powershell
 # Inner edit/test loop.
-bash Model_Bench/validate_l2_pipeline_local.sh
+python -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
 
-# Full live pre-deployment validation.
-bash Model_Bench/validate_l2_pipeline_local.sh --full
+# Stage the payload (code, prompts, skills, API + console), then restart the engine to run it.
+build\build.ps1
 
-# Deploy without restarting, then re-run live-only validation if desired.
-bash Model_Bench/deploy_l2_pipeline_runtime.sh --no-restart
-bash Model_Bench/validate_l2_pipeline_local.sh --live-only
-
-python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
+# Runtime status from the staged engine.
+build\stage\engine\python\python.exe build\stage\engine\app\Model_Bench\l2_pipeline_runtime.py status
 ```
 
-Normal reconciliation is active-run scoped. It snapshots Kanban tasks and active SQL runs once, then examines only cards belonging to those active run IDs. Historical completed cards are not re-queried on every scout/validation tick; the separate audit owns historical reviewer/SQL divergence checks.
+The engine runs the staged copy, so a change is live only after `build\build.ps1` and an engine restart.
 
-Jev is harness-owned. `TYPESAFE_API_KEY` must come from the Windows Python/service environment; there is no repository credential fallback.
+Normal reconciliation is active-run scoped. It snapshots cards and active SQL runs once, then examines only cards belonging to those active run IDs. Historical completed cards are not re-queried on every scout/validation tick; the separate audit owns historical reviewer/SQL divergence checks.
+
+Jev is harness-owned. `TYPESAFE_API_KEY` comes from the Connections settings (`chitragupta.json`) or the service environment; there is no repository credential fallback.
 
 Run `Knowledge/98_pipeline_postflight.sql` and `Knowledge/99_postflight.sql` after SQL deployment as appropriate.
 
-Correctness still requires validation on the real Hermes/Kanban/SQL/WSL/LM Studio host.
+Correctness still requires validation on the real engine, SQL Server and LM Studio host.
 
 ## 19. Historical designs that are not current
 

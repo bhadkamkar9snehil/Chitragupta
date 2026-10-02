@@ -1,24 +1,26 @@
-# Hermes L2 Validation Guide
+# L2 Validation Guide
 
 This file is a validation procedure, not a permanent PASS certificate. Runtime, model, workflow, and live SQL state can change after any commit.
 
 ## Local validation authority
 
-Run from the checked-out repository in the real Windows/WSL/Hermes environment:
+Run from the checked-out repository on the real Windows host (engine, SQL Server, LM Studio):
 
-```bash
-bash Model_Bench/validate_l2_pipeline_local.sh
+```powershell
+python -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
+python Model_Bench/e2e/run_world.py          # GBrain retrieval cases
+python Model_Bench/benchmark_l2_performance.py --hours 2
+build\stage\engine\python\python.exe build\stage\engine\app\Model_Bench\l2_pipeline_runtime.py status
 ```
 
-That script performs:
+Together these cover:
 
-- Python syntax checks for current lifecycle/tooling files;
 - deterministic lifecycle contract tests;
 - typed `xstudio_l2` contract tests;
-- knowledge manifest/retrieval checks;
-- read-only workflow discovery;
-- read-only pipeline status;
-- reconcile dry-run.
+- knowledge retrieval checks;
+- read-only pipeline status and the lifecycle invariants (each must be 0).
+
+(`validate_l2_pipeline_local.sh` is the retired WSL gate and is not used.)
 
 Do not treat a GitHub Actions result as the production validation authority for this project.
 
@@ -35,7 +37,7 @@ Knowledge/98_pipeline_postflight.sql
 Then check:
 
 ```bash
-python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
+build\stage\engine\python\python.exe build\stage\engine\app\Model_Bench\l2_pipeline_runtime.py status
 ```
 
 Expected contract:
@@ -52,7 +54,7 @@ workflow binding ready = true
 execution_modes = QWEN_FREE, COMPOSE_ONLY, FOCUSED_REASONING
 ```
 
-No unexplained active SQL run should exist without corresponding Kanban lifecycle state.
+No unexplained active SQL run should exist without a corresponding card or QUEUED local-model state.
 
 ## Architecture regression checks
 

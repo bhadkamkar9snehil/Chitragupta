@@ -51,7 +51,7 @@ Hermes_L2_SQL_Action_Trn_Tbl         audited SQL actions performed by harness co
 
 A response row also acts as the durable L2 run row. It carries claim/liveness state, structured investigation state, retry eligibility, and eventual response/completion state. This avoids a second queue/run database alongside the Helpdesk.
 
-Kanban is orchestration state in Hermes; SQL remains authoritative for the ticket/run record.
+The card board (`L2_Card_Tbl`, `L2_Card_Run_Tbl`) is orchestration state for the engine's workers; the run row remains authoritative for the ticket/run record.
 
 ## Additional support persistence
 

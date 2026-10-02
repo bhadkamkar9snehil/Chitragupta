@@ -1,16 +1,16 @@
 ---
 type: "Playbook"
-title: "Deploy Hermes L2 SQL Runtime"
-description: "Deployment sequence for the Hermes Helpdesk SQL runtime and deterministic L2 lifecycle."
+title: "Deploy the L2 SQL Runtime and Engine"
+description: "Deployment sequence for the Helpdesk SQL runtime, the engine service and the deterministic L2 lifecycle."
 tags:
-  - hermes
+  - engine
   - deployment
   - sql
 status: current
 verified: "2026-09-05"
 ---
 
-# Deploy Hermes L2 SQL Runtime
+# Deploy the L2 SQL Runtime and Engine
 
 Target database:
 
@@ -86,10 +86,10 @@ Run:
 Knowledge/98_pipeline_postflight.sql
 ```
 
-Then verify the Hermes-side pipeline from WSL:
+Then verify the pipeline from the staged engine:
 
-```bash
-python3 ~/.hermes/profiles/l2-investigator/scripts/l2_pipeline_runtime.py status
+```powershell
+build\stage\engine\python\python.exe build\stage\engine\app\Model_Bench\l2_pipeline_runtime.py status
 ```
 
 Expected lifecycle contract:
@@ -107,24 +107,22 @@ execution_modes = QWEN_FREE, COMPOSE_ONLY, FOCUSED_REASONING
 
 No unexplained `ACTIVE_SQL_WITH_NO_KANBAN` anomaly should remain.
 
-## 4. Deploy Hermes-side runtime, plugins, profiles, and skills
+## 4. Build and run the engine
 
-From the repository under WSL:
-
-```bash
-bash Model_Bench/deploy_l2_pipeline_runtime.sh
+```powershell
+build\build.ps1          # stages API + console, embedded Python, app code, prompts, skills, plugins, WinSW, gbrain.exe
+build\dev-start.ps1      # run from build\stage (or install Chitragupta-Setup.exe on a server)
 ```
 
-This deploys:
+The payload contains:
 
-- the central lifecycle runtime and small compatibility entrypoints;
-- the event reconciler plugin;
-- the typed `xstudio_l2` investigation plugin and bridge configuration;
-- current investigator/reviewer SOULs and skills;
-- workflow-binding fallback;
-- current profile configuration changes.
+- the central lifecycle runtime, the engine (`engine.py`), the worker (`agent_loop.py`) and the SQL card board (`cards.py`);
+- the typed `xstudio_l2` investigation plugin and bridge, and the trace plugin;
+- the investigator/reviewer prompts (`deploy/profiles/*/SOUL.md`), skills and `deploy/engine.json`;
+- the workflow-binding fallback;
+- the prebuilt GBrain index (`build\build-brain.ps1`).
 
-The deployment script is intended to be idempotent.
+Connections (SQL, LM Studio, Jev, GBrain) are entered afterwards in the console under Settings, which writes `chitragupta.json`. The card tables are created on first use. The engine runs the staged copy, so a code change is live only after `build\build.ps1` and an engine restart.
 
 ## 5. Current lifecycle
 
@@ -161,17 +159,18 @@ See `Knowledge/L2_PIPELINE_STATE_MACHINE.md` for the normative lifecycle.
 
 Run:
 
-```bash
-bash Model_Bench/validate_l2_pipeline_local.sh
+```powershell
+python -m unittest -v Model_Bench/test_l2_pipeline_runtime.py
+npm --prefix l1-ui run check
 ```
 
-This is the project validation authority before deployment. Do not substitute a GitHub Actions result for inspection of the real local Windows/WSL/Hermes environment.
+This is the project validation authority before deployment. Do not substitute a GitHub Actions result for inspection of the real local Windows engine, SQL Server and LM Studio environment.
 
 For the next naturally arriving ticket, confirm its trace uses `xstudio_l2` for database/schema work and does not attempt to recreate Python/pyodbc/sqlcmd transport.
 
 ## 7. Service identity and permissions
 
-Use the real Hermes/XStudio service identity where the audited SQL runtime accepts a user ID.
+Use the real XStudio service identity where the audited SQL runtime accepts a user ID.
 
 The SQL login must have only the operational permissions required by the deterministic runtime across the relevant XStudio databases.
 

@@ -79,14 +79,14 @@ Distilled from the owner's instructions across the project (Sept 2026). They app
 - An escalation must say why: "L2 could not solve it" and "the cause is known but a person must change something" are different outcomes and stay different everywhere (queues, chips, charts).
 
 **Research, then reuse**
-- Before building, look for what already exists: official docs, native Hermes features, `XS_Builder`, GBrain, Jev, existing scripts. Prefer a proven tool with tweaks over a hand-built one. Never guess a setting or parameter: ground it in documentation, then record the finding.
+- Before building, look for what already exists: official docs, the libraries already in use, `XS_Builder`, GBrain, Jev, existing scripts. Prefer a proven tool with tweaks over a hand-built one. Never guess a setting or parameter: ground it in documentation, then record the finding.
 - Propose a new system only after showing the existing one cannot do the job (GBrain holds XBatch data, not prose; do not add a second knowledge store).
 
 **Act, do not ask**
 - The SQL Server at `10.2.6.204` is the owner's own development server, not a shared resource. Running `XS_Builder`, direct table writes where no SP exists, and adding permission rules for these are pre-authorized.
 - Do the work yourself: run, commit, push, restart. When the owner must run something, give one correct PowerShell block.
 - Credentials pasted into a chat never go into memory, docs, code or commits (§17).
-- Do not churn services. Restart a gateway only for a deploy; do not toggle cron jobs; do not load or unload LM Studio models (the owner controls the model and preset: check what is loaded, exactly one model). When the owner says stop, stay stopped.
+- Do not churn services. Restart the engine or API only for a deploy; do not toggle scheduled tasks; do not load or unload LM Studio models (the owner controls the model and preset: check what is loaded, exactly one model). When the owner says stop, stay stopped.
 
 **Reuse tools, no throwaway scripts (extends §11)**
 - Live health: `Model_Bench/benchmark_l2_performance.py` (extend it). Ticket seeding: `Model_Bench/seed_real_xbatch_tickets.py`. Reset test tickets: `Model_Bench/reset_l2_test_tickets.py`. Copy, never edit in place, the owner's export scripts.
@@ -152,8 +152,8 @@ Ticket Scout / reconcile
 - Review priority = `30`.
 - Pipeline capacity and local-model capacity are separate. SQL claim admission defaults to 8 active runs; all local Qwen purposes share one SQL-serialized RUNNING slot.
 - `COMPOSE_ONLY`, `FOCUSED_REASONING`, investigator rework, and local-review fallback all consume that same one local-model slot. `QWEN_FREE` consumes none.
-- Local-model work is frozen into `PendingLocalModelJson` before admission. Never create investigator/rework/reviewer Kanban cards outside the shared admission path.
-- Queued local-model work is valid active-run state even when no Kanban card exists yet. Do not classify it as an orphan.
+- Local-model work is frozen into `PendingLocalModelJson` before admission. Never create investigator/rework/reviewer cards outside the shared admission path.
+- Queued local-model work is valid active-run state even when no card exists yet. Do not classify it as an orphan.
 - Review priority `30` > rework `20` > new investigation `10` determines the single-Qwen queue order.
 - Jev recommends one execution depth in the same investigation-assessment call: `QWEN_FREE`, `COMPOSE_ONLY`, or `FOCUSED_REASONING`. Deterministic code owns the final gate.
 - `QWEN_FREE` (no-Qwen) is the target path: after the audited probes, the harness builds a fact table (fields the ticket names, recorded vs reported values, action IDs), Jev's `direct_answer` workflow picks CONFIRMED/CORRECTED/ANSWERED/NOT_FOUND/NEEDS_REASONING, and the harness renders a fixed reply with VERIFIED claims and publishes it. Jev never writes text; outcomes the facts contradict are refused. Only NEEDS_REASONING (or no audited facts) goes to the local model.
@@ -167,8 +167,8 @@ Ticket Scout / reconcile
 - `MAX_REVIEW_CYCLES = 3`; rejection at cycle 2 escalates instead of creating cycle 3.
 - `MAX_UPDATE_CONTINUATIONS = 3` published `UPDATE`s per ticket version (no new requester input); the next `UPDATE` escalates through the same L3 handoff.
 - A rework is not complete until its fresh proposal receives a fresh Jev primary review; a local reviewer is added only if that review falls back.
-- The old `l2-review` board and `kanban_forward_bridge.py` are retired.
-- All investigator/reviewer/rework tasks live on the normal Kanban board.
+- The old `l2-review` board and `kanban_forward_bridge.py` are retired and gone.
+- All investigator/reviewer/rework tasks live on the one SQL card board (`L2_Card_Tbl`, `cards.py`). Card-tool names (`kanban_show`, `kanban_complete`, `kanban_block`, `kanban_comment`) are kept for prompt stability; `complete` and `block` are harness actions behind a validated `submit_proposal`.
 
 ## 3. Reconciliation is the lifecycle backstop
 
@@ -181,23 +181,28 @@ The central reconciler owns lifecycle sequencing synchronously. Current order:
 4. run Jev primary reviews and apply direct approve/rework/escalation or queue local-review fallback
 5. process local-review rejections
 6. process local-review approvals through the same deterministic publisher
-7. recover true SQL/Kanban orphans
+7. recover true SQL/card orphans
 8. admit at most one next local-Qwen task
 ```
 
 The old design launched repair/reject/publisher as independent concurrent processes. Do not restore that pattern.
 
-`Model_Bench/xstudio_l2_orchestrator_plugin/` triggers the same reconciler immediately after successful `kanban_complete` / `kanban_block`. Event delivery is an optimization, not a correctness dependency.
+The engine's dispatcher (`Model_Bench/engine.py`) runs the same reconciler immediately after every worker process ends. That is acceleration, not a correctness dependency. (`Model_Bench/xstudio_l2_orchestrator_plugin/` is the retired event hook and is not loaded by the engine.)
 
 The 2-minute `ticket_scout.py` job runs reconciliation before every claim attempt and is the durable mutating backstop.
 
-Current L2 cron policy:
+Current engine schedule (`Model_Bench/engine.py`, one process, plain loops):
 
-- `L2 Ticket Scout` — mutating lifecycle backstop, every 2 minutes.
-- `L2 Kanban Completion Audit` — read-only reviewer/SQL divergence audit, every 10 minutes.
-- Legacy compatibility scripts (`repair_incomplete_completions.py`, `kanban_approval_publisher.py`, `kanban_reject_bridge.py`, `enforce_publish_safety_net.py`) have been retired and deleted. All lifecycle triggering runs strictly through `ticket_scout.py` or event-driven `reconcile_l2_pipeline.py`.
+- **Scout**: the mutating lifecycle backstop, every 2 minutes (`SCOUT_EVERY`).
+- **Completion audit**: read-only reviewer/SQL divergence audit, every 10 minutes (`AUDIT_EVERY`).
+- **Trace drain**: after each scout and each worker, so SQL traces stay current.
+- **Dispatcher**: polls the card board every 2 seconds; one worker process per claimed card, bounded by the card's max runtime; reconcile immediately afterwards.
+- **GBrain supervisor**: keeps `gbrain serve --http` running.
+- Every lifecycle call runs under the lifecycle lock (`msvcrt` on Windows, `fcntl` elsewhere); a busy lock means another owner is already working, so the tick is skipped.
+- A changed `chitragupta.json` (Connections panel) makes the engine exit with code 75 so the service host or `dev-start.ps1` loop restarts it with the new settings.
+- Legacy compatibility scripts (`repair_incomplete_completions.py`, `kanban_approval_publisher.py`, `kanban_reject_bridge.py`, `enforce_publish_safety_net.py`) are retired and deleted. Lifecycle triggering runs only through the scout or the dispatcher's post-worker reconcile.
 
-See `deploy/cron_jobs.txt`.
+`deploy/cron_jobs.txt` is a historical snapshot of the previous scheduler and is not read by anything.
 
 ## 4. Helpdesk workflow status is deterministic
 
@@ -222,7 +227,7 @@ needs_human_action_status     null / unbound
 `strict_resolution_status_binding = true` means a `RESOLUTION` must fail closed if the resolved status binding is unavailable. Never permit:
 
 ```text
-Hermes = COMPLETED / RESOLUTION
+Pipeline = COMPLETED / RESOLUTION
 Helpdesk = still visibly unresolved
 ```
 
@@ -230,7 +235,7 @@ Helpdesk = still visibly unresolved
 
 The deterministic publisher publishes only a semantically approved frozen proposal—either a Jev-primary direct approval that passes deterministic safety gates or a local-review fallback approval—through `Hermes_Orchestrator.py --publish-response --force-run-id`.
 
-After publication, verify persisted SQL state; Kanban narration is not the final truth.
+After publication, verify persisted SQL state; card summaries are not the final truth.
 
 For a `RESOLUTION`, the expected postcondition includes:
 
@@ -252,12 +257,12 @@ A resolved ticket is **not automatically a KB article**. KB promotion is governe
 
 Age alone does not make a run stale.
 
-Any Kanban task referencing a run protects that run, including `todo`, `ready`, `running`, `blocked`, `review`, scheduled work, and a done reviewer awaiting deterministic publication.
+Any card referencing a run protects that run, including `todo`, `ready`, `running`, `blocked`, `review`, scheduled work, and a done reviewer awaiting deterministic publication.
 
 A SQL run is recoverable as a true orphan only when:
 
 1. it is still active in SQL;
-2. no Kanban task at any stage references that exact `run_id`;
+2. no card at any stage references that exact `run_id`;
 3. it is not in `LocalModelState = 'QUEUED'`; and
 4. the orphan grace period has elapsed.
 
@@ -306,11 +311,12 @@ exploration tools were removed on 2026-09-23 (most of those calls failed).
 
 L2 agents do not build database transport. They call named typed tools in the
 `xstudio_l2` toolset, registered by the `xstudio-l2-tools` plugin
-(`Model_Bench/xstudio_l2_tools_plugin/`), which invokes the native WSL
-bridge (`Model_Bench/xstudio_l2_tool_bridge.py`) internally using the backend
-Hermes Python and Microsoft ODBC Driver 18. The bridge reuses
-the guarded primitives already in `Hermes_Orchestrator.py` rather than being a
-parallel SQL implementation.
+(`Model_Bench/xstudio_l2_tools_plugin/`) inside the engine's worker process
+(`Model_Bench/agent_loop.py`), which invokes the bridge
+(`Model_Bench/xstudio_l2_tool_bridge.py`) using the engine's embedded Python and
+Microsoft ODBC Driver 18. The bridge reuses the guarded primitives already in
+`Hermes_Orchestrator.py` (a legacy file name that now only holds the audited
+SQL publish/guard code) rather than being a parallel SQL implementation.
 
 Why this exists: on 2026-09-05, Ticket_424 and Ticket_441 showed the lifecycle
 working correctly while the investigator burned 1,026,911 tokens / 27 tool
@@ -322,14 +328,14 @@ agent-computer-interface defect, not a lifecycle defect.
 
 Rules:
 
-- The model never composes Windows/WSL paths, interpreters, driver imports, SQL
-  credentials, `sqlcmd`, or package installation. Those terminal forms are
-  blocked by the plugin's `pre_tool_call` guard, with `approvals.deny` entries
-  in each active profile config as defense in depth.
-- Benign terminal and file inspection (`ls`, `cat`, `grep`, `git`, reading
-  documentation) stays available. The guard targets transport, not the shell.
+- The model never composes paths, interpreters, driver imports, SQL
+  credentials, `sqlcmd`, or package installation. The worker has no terminal,
+  file-write or package tool at all, and the plugin's `pre_tool_call` guard
+  rejects any attempt to reach the database another way.
+- The worker's only tools are the typed `xstudio_*` tools and the four card
+  tools (`kanban_show`, `kanban_complete`, `kanban_block`, `kanban_comment`).
 - Deterministic harness subprocesses executed by trusted runtime/plugin code are
-  unaffected; the restriction is on model-driven terminal fallback.
+  unaffected.
 - Raw SQL exposed to the model is read-only. Write/DDL/`EXEC` keywords are
   rejected after string literals are blanked, so a keyword inside quoted text is
   not a false positive.
@@ -427,7 +433,7 @@ Rules:
 
 Active Jev state on the run row is stored in JevTriageJson, JevInvestigationJson, JevReviewJson, JevTraceJson, and JevKBCurationJson, plus ReviewMode, JevReviewDecision, JevReviewConfidence, JevRiskScore, LocalReviewRequired, JevModel, and JevReviewedOn.
 
-The investigator profile is l2-jev-investigator. l2-reviewer-primary is the deep-review exception path, not a mandatory step.
+The investigator role is l2-jev-investigator. l2-reviewer-primary is the deep-review exception path, not a mandatory step.
 
 TYPESAFE_API_KEY must come from the process/service environment visible to Windows Python. Never commit an API key or add a repository credential fallback. Never echo credentials or copy them into prompts/cards/trace JSON.
 ## 10. SQL write discipline
@@ -444,18 +450,16 @@ Do not litter the synced project directory with one-off investigation scripts or
 
 Use terminal one-liners or a real temporary directory. If a utility is reusable, place it intentionally under `Model_Bench/` and document/test it.
 
-## 12. Current profiles and model handling
+## 12. Current roles and model handling
 
-Active role names:
+Active worker roles (prompts in `deploy/profiles/<role>/SOUL.md`, model, context and turn limits in `deploy/engine.json`):
 
 ```text
 l2-jev-investigator
 l2-reviewer-primary
 ```
 
-`l2-investigator` runs no worker sessions; its gateway hosts the scheduled jobs (ticket scout, completion audit) and its `scripts/` directory.
-
-`l2-investigator-primary`, `l2-reviewer-fallback`, `l2-gemma` and `l2-gemma-verifier` were retired on 2026-09-23 (archived under `~/.hermes/retired_profiles_2026-09-23/`). Old model-based role names are historical only.
+The engine itself (scheduler, dispatcher) runs no model. The other directories under `deploy/profiles/` (`l2-investigator`, `l2-investigator-primary`, `l2-reviewer-fallback`) are leftovers; model-based role names such as `l2-gemma` are historical only.
 
 Do not hardcode the current LM Studio model into architecture documentation. The loaded model can change. Verify it live at the configured LM Studio endpoint before diagnosing model mismatch.
 
@@ -463,7 +467,7 @@ Do not hardcode the current LM Studio model into architecture documentation. The
 
 Use this hierarchy when documents disagree:
 
-1. live SQL/Hermes state for runtime facts;
+1. live SQL state for runtime facts;
 2. `Model_Bench/l2_pipeline_runtime.py` for lifecycle behavior;
 3. `Knowledge/L2_PIPELINE_STATE_MACHINE.md` for the documented lifecycle contract;
 4. `deploy/helpdesk_workflow_binding.json` for workflow status binding;
@@ -548,11 +552,11 @@ a ticket — that bypasses the scout's WIP/lifecycle gate.
 
 ## 16. Deployment mirror
 
-`deploy/` holds the artifacts the engine ships and reads: `engine.json`, worker prompts, skills, plugins, the workflow binding and the GBrain schema pack.
+`deploy/` holds the artifacts the engine ships and reads: `engine.json`, worker prompts, skills, the typed-tool and trace plugin manifests, the workflow binding and the GBrain schema pack. `build/build.ps1` stages them into the installer payload.
 
-After changing profile SOUL/config/skills/plugins or the cron schedule, update the matching file under `deploy/` and inspect the diff before committing. The mirror covers the L2 plugins — `xstudio-l2-orchestrator`, `xstudio-l2-tools`, and `xstudio-l2-trace` — so a fresh install cannot come up without the typed investigation and trace boundaries. Jev network work is harness-owned and remains out-of-band from the trace hook.
+After changing a worker prompt, `engine.json`, a skill or a plugin, rebuild the payload with `build\build.ps1` and restart the engine; the engine runs the staged copy, not the working tree. Inspect the `deploy/` diff before committing. A fresh install must not be able to come up without the typed investigation and trace boundaries (`xstudio-l2-tools`, `xstudio-l2-trace`). Jev network work is harness-owned and remains out-of-band from the trace hook.
 
-`Model_Bench/deploy_l2_pipeline_runtime.sh` installs the lifecycle scripts, three plugins, SOULs, skills, the workflow-binding fallback, and the profile-config entries, then restarts the active worker gateways unless `--no-restart` is passed. It is idempotent. Config edits are applied by `Model_Bench/patch_profile_config.py`, which is deliberately a targeted text editor rather than a YAML round-trip: the live configs carry explanatory comments (Security/Tirith, fallback-model providers) that a load-and-dump silently destroys.
+`Model_Bench/deploy_l2_pipeline_runtime.sh`, `patch_profile_config.py`, `patch_tool_search_off.py`, `patch_l2_worker_budget.py` and `validate_l2_pipeline_local.sh` are the retired WSL deploy path; do not use them. Port or delete them when touched.
 
 ## 16a. Ponytail audit standard
 
@@ -601,7 +605,7 @@ For every Ponytail cleanup, update tests, deploy mirrors, documentation, and AGE
 
 Do not commit or print credentials.
 
-Scripts use environment-provided SQL credentials. WSL may not see the same environment as Windows Python, so subprocess construction must omit `--password` when no value is present; never pass Python `None` as an argv element.
+Scripts use environment-provided SQL credentials. Subprocess construction must omit `--password` when no value is present (the engine applies `chitragupta.json` to the environment first); never pass Python `None` as an argv element.
 
 ## 18. When changing the lifecycle
 
@@ -623,7 +627,7 @@ If a proposed change violates one of these, update the state-machine contract an
 
 The requester Helpdesk (`/`) and the support console (`/admin`) are one Next.js app; it proxies `/api/l1/*` to the .NET API, which reads and writes `XStudio_Helpdesk`.
 
-**Run (two standalone processes; never from an IDE or agent preview pane, which stops them when idle)**
+**Run for UI/API development (two standalone processes; never from an IDE or agent preview pane, which stops them when idle). The shipped build serves the static console from the API on one port instead, see `build/dev-start.ps1`**
 
 ```powershell
 dotnet run --project L1/api/L1Api.csproj --launch-profile http     # API on :5116

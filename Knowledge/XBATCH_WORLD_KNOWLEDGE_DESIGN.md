@@ -12,7 +12,7 @@ If the generator cannot see something, the world says "unknown", it does not gue
 
 ## Where it lives
 
-GBrain (`~/.hermes/xstudio-gbrain`), source `world`, one page per node, typed links between them.
+GBrain (the engine-supervised `gbrain serve --http`, data in `ProgramData\Chitragupta\gbrain`), source `world`, one page per node, typed links between them.
 
 | Node page | Generated from |
 |---|---|

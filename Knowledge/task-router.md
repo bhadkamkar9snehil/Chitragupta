@@ -68,7 +68,7 @@ Rules:
 | Billet yard/furnace/location/transfer/genealogy/count/weight | `billet_inventory` | `xstudio-sohar-heat-execution` | billet section, Billets Cast Count section, `view_catalog.md` | billet inventory, transfer-history and genealogy views |
 | Chemistry/spectro/result/UD/RR/deviation | `quality` | `xstudio-quality-delay-workorder` | quality section, `view_catalog.md` | chemistry/spectro/deviation views, quality/SAP rows |
 | Delay/OEE/downtime/equipment/agency/shift performance | `performance` | `xstudio-quality-delay-workorder` | delay/OEE section, `view_catalog.md` | `XBatch_Delay_Analysis_Vw`, delay/master tables |
-| Hermes runtime/audit/Kanban/memory/orchestration | `hermes_runtime` | `xstudio-l2-ticket-workflow` | `hermes-runtime-database-design.md`, `hermes-sp-catalog.md` | Hermes response/action/trace tables |
+| L2 runtime/audit/cards/memory/orchestration | `hermes_runtime` | `xstudio-l2-ticket-workflow` | `hermes-runtime-database-design.md`, `hermes-sp-catalog.md` | Hermes response/action/trace tables |
 | Unknown/cross-domain symptom | `discover` | `xstudio-sql-write-discipline` | `xbatch-investigation-surfaces.md`, `view_catalog.md` | typed schema/object discovery |
 
 ## Strong identifiers beat vague classification
