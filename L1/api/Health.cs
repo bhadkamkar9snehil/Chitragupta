@@ -24,7 +24,8 @@ public static class Health
         return json["ok"]?.GetValue<bool>() == true ? (json["result"], null) : (null, json["error"]?.ToString() ?? "The runtime reported a failure.");
     });
 
-    static string Python => Environment.GetEnvironmentVariable("CHITRAGUPTA_PYTHON") ?? "python";
+    static string Python => Environment.GetEnvironmentVariable("CHITRAGUPTA_PYTHON")
+        ?? RepoFile("engine", "python", "python.exe") ?? "python";
 
     public static Task<IResult> Performance(double? hours)
     {
@@ -78,13 +79,15 @@ public static class Health
         catch (Exception ex) { return (null, Db.Trim(ex.Message, 400)); }
     }
 
-    // The API runs from the repo (dotnet run) or its bin folder; find the repo file either way.
+    // Support both the source checkout and the installed sibling engine/app payload.
     static string? RepoFile(params string[] parts)
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
         {
             var path = Path.Combine([dir.FullName, .. parts]);
             if (File.Exists(path)) return path;
+            var installed = Path.Combine([dir.FullName, "engine", "app", .. parts]);
+            if (File.Exists(installed)) return installed;
         }
         return null;
     }
